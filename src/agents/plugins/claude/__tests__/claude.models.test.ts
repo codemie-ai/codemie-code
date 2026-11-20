@@ -23,11 +23,15 @@ vi.mock('../../../../providers/plugins/sso/sso.http-client.js', async (importOri
   };
 });
 
-const ssoMock = vi.hoisted(() => ({ getStoredCredentials: vi.fn() }));
-vi.mock('../../../../providers/plugins/sso/sso.auth.js', () => ({
-  CodeMieSSO: class {
-    getStoredCredentials = (...args: unknown[]) => ssoMock.getStoredCredentials(...args);
-  },
+const storeMock = vi.hoisted(() => ({
+  retrieveSSOCredentials: vi.fn(),
+  retrieveJWTCredentials: vi.fn(async (): Promise<unknown> => null),
+}));
+// The SSO resolver reads stored logins from CredentialStore: per-URL cookie slot first, JWT slot
+// second (both empty here unless a test seeds them).
+vi.mock('../../../../utils/security.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../../utils/security.js')>()),
+  CredentialStore: { getInstance: () => storeMock },
 }));
 
 const ONE_MILLION = 1_000_000;
@@ -439,28 +443,30 @@ describe('SSO catalog lookup (profile baseUrl first)', () => {
 
   beforeEach(() => {
     fetchCodeMieLlmModelsMock.mockReset();
-    ssoMock.getStoredCredentials.mockReset();
+    storeMock.retrieveSSOCredentials.mockReset();
+    storeMock.retrieveJWTCredentials.mockReset();
+    storeMock.retrieveJWTCredentials.mockResolvedValue(null);
   });
 
   it('fetches models for a baseUrl-only profile with CODEMIE_URL unset', async () => {
-    ssoMock.getStoredCredentials.mockResolvedValue(creds);
+    storeMock.retrieveSSOCredentials.mockResolvedValue(creds);
     fetchCodeMieLlmModelsMock.mockResolvedValue([routerModel]);
     const { listRouterModelIds } = await import('../claude.models.js');
 
     const ids = await listRouterModelIds(ssoEnv({}));
 
     expect(ids).toEqual(['router-x']);
-    expect(ssoMock.getStoredCredentials).toHaveBeenCalledWith(expect.stringMatching(/^https:\/\/p\d+\.example\.com$/));
+    expect(storeMock.retrieveSSOCredentials).toHaveBeenCalledWith(expect.stringMatching(/^https:\/\/p\d+\.example\.com$/));
   });
 
   it('ignores the proxy-rewritten CODEMIE_BASE_URL', async () => {
-    ssoMock.getStoredCredentials.mockResolvedValue(creds);
+    storeMock.retrieveSSOCredentials.mockResolvedValue(creds);
     fetchCodeMieLlmModelsMock.mockResolvedValue([routerModel]);
     const { listRouterModelIds } = await import('../claude.models.js');
 
     await listRouterModelIds(ssoEnv({}, { CODEMIE_BASE_URL: 'http://localhost:4321' }));
 
-    for (const [url] of ssoMock.getStoredCredentials.mock.calls) {
+    for (const [url] of storeMock.retrieveSSOCredentials.mock.calls) {
       expect(url).not.toContain('localhost');
     }
   });
@@ -469,7 +475,7 @@ describe('SSO catalog lookup (profile baseUrl first)', () => {
     const { listRouterModelIds } = await import('../claude.models.js');
 
     expect(await listRouterModelIds({})).toEqual([]);
-    expect(ssoMock.getStoredCredentials).not.toHaveBeenCalled();
+    expect(storeMock.retrieveSSOCredentials).not.toHaveBeenCalled();
   });
 });
 

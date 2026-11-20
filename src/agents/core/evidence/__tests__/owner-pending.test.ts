@@ -2,7 +2,7 @@
  * EPMCDME-16776 R2 / AC9: hook events of a login whose owner cannot be resolved yet are held durably (bound to that exact
  * login) and replayed by the daemon tick once the owner resolves, with NO new hook. Real: OtlpAgentAdapter hook flow,
  * resolveHookCredentials, withVerifiedOwner, stampEvidence, owner-pending store, OtlpInterceptor tick, spool append,
- * record-store, forwarderIdentity. Mocked: stored-credential read, daemon state, `/v1/user`, processSessionTick (no HTTP).
+ * record-store, forwarderIdentity. Mocked: stored-login resolution, daemon state, `/v1/user`, processSessionTick (no HTTP).
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const m = vi.hoisted(() => ({
-  stored: undefined as unknown,
+  stored: undefined as unknown as import('@/providers/plugins/sso/auth/types.js').SSOAuth | null | undefined,
   userInfo: vi.fn(),
   tick: vi.fn(),
 }));
@@ -45,10 +45,9 @@ vi.mock('@/utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), er
 vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({
   readState: async () => ({ syncCodeMieUrl: 'https://sync.example.com' }),
 }));
-vi.mock('@/providers/plugins/sso/sso.auth.js', () => ({
-  CodeMieSSO: class {
-    getStoredCredentials = async () => m.stored ?? null;
-  },
+vi.mock('@/providers/plugins/sso/auth/index.js', async (orig) => ({
+  ...(await orig<typeof import('@/providers/plugins/sso/auth/index.js')>()),
+  resolveSSOAuthForUrl: async () => m.stored ?? null,
 }));
 vi.mock('@/providers/core/codemie-auth-helpers.js', async (orig) => ({
   ...(await orig<object>()),
@@ -72,10 +71,11 @@ const { forwarderIdentity } = await import('@/providers/plugins/sso/proxy/plugin
 const { readStatus } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/session-status.js');
 const { readRecord, recordKey } = await import('../record-store.js');
 const { apiIdentity, ownerHash } = await import('../api-identity.js');
+const { toSSOAuth } = await import('@/providers/plugins/sso/auth/selection.js');
 
 const API = 'https://codemie.example.com/code-assistant-api';
 const SESSION = 'sess-r2';
-const login = (cookie: string) => ({ cookies: { _oauth2_proxy: cookie }, apiUrl: API });
+const login = (cookie: string, apiUrl = API) => toSSOAuth({ type: 'cookie', record: { cookies: { _oauth2_proxy: cookie }, apiUrl } }, apiUrl);
 const user = (email: string) => ({ userId: 'u', name: 'n', username: 'x', email, applications: [], applications_admin: [] });
 
 class HookAdapter extends OtlpAgentAdapter<{ cwd: string; payload: Record<string, unknown>[] }> {
@@ -105,7 +105,13 @@ const deps = { ensureOtlpProxy: async () => undefined, forwardOtlpEventsToSpool:
 const hook = (a: HookAdapter, n = 1) =>
   a.processOtlpEvent(JSON.stringify({ cwd: home, payload: [{ session_id: SESSION, n, timestamp: '2026-11-03T10:00:00.000Z' }] }), deps as never);
 const pendingFiles = () => (existsSync(pendingOwnerDir()) ? readdirSync(pendingOwnerDir()).flatMap((d) => readdirSync(join(pendingOwnerDir(), d)).map((f) => join(pendingOwnerDir(), d, f))) : []);
-const daemon = () => new OtlpPlugin().createInterceptor({ credentials: m.stored, config: { targetApiUrl: API } } as never) as unknown as { tick: () => Promise<void> };
+const daemon = () => {
+  const snapshot = m.stored; // the interceptor's refresher snapshot at daemon start
+  return new OtlpPlugin().createInterceptor({
+    credentialRefresher: { get: () => snapshot },
+    config: { targetApiUrl: API },
+  } as never) as unknown as { tick: () => Promise<void> };
+};
 const spooled = () => (existsSync(streamFile(SESSION, 'hooks')) ? readFileSync(streamFile(SESSION, 'hooks'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []);
 const later = (ms: number) => vi.setSystemTime(Date.now() + ms);
 
@@ -243,7 +249,7 @@ describe('isolation', () => {
     m.userInfo.mockRejectedValueOnce(new Error('down'));
     await hook(new HookAdapter());
 
-    m.stored = { cookies: { _oauth2_proxy: 'cookie-A' }, apiUrl: 'https://other.example.com/code-assistant-api' };
+    m.stored = login('cookie-A', 'https://other.example.com/code-assistant-api');
     m.userInfo.mockResolvedValue(user('a@example.com'));
     later(OWNER_LOOKUP_COOLDOWN_MS + 1);
     await daemon().tick();

@@ -54,6 +54,13 @@ async function startHarness(configOverrides: Partial<ProxyConfig> = {}): Promise
   let count = 0;
 
   const upstream = http.createServer((req, res) => {
+    // The proxy's own owner lookup (`GET /v1/user`, made at start for a token with no email claim)
+    // is not a request that went through the plugin chain; only count what the client sent.
+    if (req.url === '/v1/user') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({}));
+      return;
+    }
     count += 1;
     lastHeaders = req.headers;
     res.writeHead(200, { 'Content-Type': 'application/json' });

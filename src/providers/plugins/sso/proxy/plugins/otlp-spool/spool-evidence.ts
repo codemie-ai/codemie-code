@@ -1,6 +1,6 @@
 import { apiIdentity, ownerHash } from '@/agents/core/evidence/api-identity.js';
 import { resolveEmailFromCredentials } from '@/agents/core/identity-resolver.js';
-import type { JWTCredentials, SSOCredentials } from '@/providers/core/types.js';
+import type { SSOAuth } from '@/providers/plugins/sso/auth/index.js';
 import type { SessionStatus } from './session-status.js';
 import { readRange } from './spool-files.js';
 
@@ -26,7 +26,7 @@ export async function pendingHooksMarkedLocked(sessionId: string, status: Sessio
  * (`resolveHookCredentials` mirrors the daemon's credential choice). `null` = no key can be built.
  */
 export function forwarderIdentity(
-  credentials: SSOCredentials | JWTCredentials
+  credentials: SSOAuth
 ): { api_identity: string; owner_hash: string } | null {
   const email = resolveEmailFromCredentials(credentials);
   if (!email) return null;

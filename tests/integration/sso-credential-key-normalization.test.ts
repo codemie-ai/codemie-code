@@ -30,7 +30,8 @@ vi.mock('keytar', () => ({
 }));
 
 import { CredentialStore } from '../../src/utils/security.js';
-import { CodeMieSSO } from '../../src/providers/plugins/sso/sso.auth.js';
+import { clearSSOAuth, resolveSSOAuthForUrl } from '../../src/providers/plugins/sso/auth/index.js';
+import type { CookieSSOAuth } from '../../src/providers/plugins/sso/auth/index.js';
 import { getCodemiePath } from '../../src/utils/paths.js';
 import type { SSOCredentials } from '../../src/providers/core/types.js';
 
@@ -77,19 +78,19 @@ describe('EPMCDME-14132: credential storage key is path-independent', () => {
   it('finds credentials stored under a path-bearing URL (the reported bug)', async () => {
     await CredentialStore.getInstance().storeSSOCredentials(credentials(), API_URL);
 
-    const found = await new CodeMieSSO().getStoredCredentials(API_URL);
+    const found = await resolveSSOAuthForUrl(API_URL);
 
     expect(found).not.toBeNull();
-    expect(found?.cookies.codemie_access_token).toBe('test-token');
+    expect((found as CookieSSOAuth).cookies.codemie_access_token).toBe('test-token');
   });
 
   it('clears credentials stored under the base URL when given the API URL', async () => {
     await CredentialStore.getInstance().storeSSOCredentials(credentials(), BASE_URL);
-    expect(await new CodeMieSSO().getStoredCredentials(API_URL)).not.toBeNull();
+    expect(await resolveSSOAuthForUrl(API_URL)).not.toBeNull();
 
-    await new CodeMieSSO().clearStoredCredentials(API_URL);
+    await clearSSOAuth(API_URL);
 
-    expect(await new CodeMieSSO().getStoredCredentials(API_URL)).toBeNull();
+    expect(await resolveSSOAuthForUrl(API_URL)).toBeNull();
   });
 });
 
@@ -150,20 +151,20 @@ describe('EPMCDME-14132: credentials written under the pre-fix key stay reachabl
     await rm(currentFile, { force: true });
   });
 
-  // Exercised through CodeMieSSO, not CredentialStore directly: the production
+  // Exercised through the SSO auth resolver, not CredentialStore directly: the production
   // caller is what decides whether the legacy key is ever probed.
   it('reads a credential stored under the legacy key', async () => {
     await seedLegacyCredential();
 
-    const found = await new CodeMieSSO().getStoredCredentials(API_URL);
+    const found = await resolveSSOAuthForUrl(API_URL);
 
-    expect(found?.cookies.codemie_access_token).toBe('legacy-token');
+    expect((found as CookieSSOAuth).cookies.codemie_access_token).toBe('legacy-token');
   });
 
   it('deletes the legacy entry on logout so it cannot linger', async () => {
     await seedLegacyCredential();
 
-    await new CodeMieSSO().clearStoredCredentials(API_URL);
+    await clearSSOAuth(API_URL);
 
     expect(await exists(legacyFile)).toBe(false);
     expect(await exists(currentFile)).toBe(false);

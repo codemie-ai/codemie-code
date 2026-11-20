@@ -23,3 +23,15 @@ export function resolveJwtToken(config: CodeMieConfigOptions): string | undefine
   const trimmed = envToken?.trim();
   return (trimmed && trimmed.length > 0 ? trimmed : undefined) ?? config.jwtConfig?.token;
 }
+
+/**
+ * Reads the bearer-auth profile's stored token (written by `codemie setup`). Null when there is
+ * none. A failing store read throws, so each caller decides how to treat it. Without a URL the
+ * global JWT slot is read, as `CredentialStore.retrieveJWTCredentials` does. Not for SSO-issued
+ * tokens: those are resolved by the SSO auth resolver.
+ */
+export async function loadStoredJwtToken(url?: string): Promise<string | null> {
+  const { CredentialStore } = await import('@/utils/security.js');
+  const jwtCreds = await CredentialStore.getInstance().retrieveJWTCredentials(url);
+  return jwtCreds?.token || null;
+}

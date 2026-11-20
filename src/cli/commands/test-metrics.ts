@@ -92,26 +92,26 @@ async function runTestMetrics(options: {
   }
 
   // 3. Retrieve SSO credentials
-  const { CodeMieSSO } = await import('../../providers/plugins/sso/sso.auth.js');
-  const sso = new CodeMieSSO();
-  const credentials = await sso.getStoredCredentials(ssoUrl);
+  const { resolveSSOAuthForUrl, describeAuthForLog } = await import('../../providers/plugins/sso/auth/index.js');
+  const auth = await resolveSSOAuthForUrl(ssoUrl);
 
-  if (!credentials?.cookies) {
+  if (!auth) {
     throw new Error('No SSO credentials found. Run: codemie setup');
   }
 
-  const apiUrl = credentials.apiUrl;
+  const apiUrl = auth.apiUrl;
   if (!apiUrl) {
     throw new Error('No API URL in stored credentials');
   }
 
-  const cookieHeader = Object.entries(credentials.cookies)
-    .map(([key, value]) => `${key}=${value}`)
-    .join('; ');
-
   if (options.verbose) {
     console.log(chalk.dim(`API URL: ${apiUrl}`));
-    console.log(chalk.dim(`Cookies: ${Object.keys(credentials.cookies).length} stored cookie(s), values redacted`));
+    const description = describeAuthForLog(auth);
+    console.log(chalk.dim(
+      description.cookieCount !== undefined
+        ? `Auth: ${description.type} (${description.cookieCount} stored cookie(s), values redacted)`
+        : `Auth: ${description.type} (token redacted)`
+    ));
   }
 
   // 4. Build test metric payload
@@ -161,7 +161,9 @@ async function runTestMetrics(options: {
     console.log(chalk.bold('\nEquivalent curl:'));
     console.log(`curl -X POST '${url}' \\`);
     console.log(`  -H 'Content-Type: application/json' \\`);
-    console.log(`  -H 'Cookie: <redacted>' \\`);
+    for (const name of Object.keys(auth.headers)) {
+      console.log(`  -H '${name.charAt(0).toUpperCase()}${name.slice(1)}: <redacted>' \\`);
+    }
     console.log(`  -H 'User-Agent: codemie-cli/${cliVersion}' \\`);
     console.log(`  -H 'X-CodeMie-CLI: codemie-cli/${cliVersion}' \\`);
     console.log(`  -H 'X-CodeMie-Client: ${clientType}' \\`);
@@ -178,7 +180,7 @@ async function runTestMetrics(options: {
     'User-Agent': `codemie-cli/${cliVersion}`,
     'X-CodeMie-CLI': `codemie-cli/${cliVersion}`,
     'X-CodeMie-Client': clientType,
-    'Cookie': cookieHeader
+    ...auth.headers
   };
 
   const response = await fetch(url, {

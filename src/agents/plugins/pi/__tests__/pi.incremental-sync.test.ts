@@ -35,10 +35,15 @@ vi.mock('@/providers/plugins/sso/session/SessionSyncer.js', () => ({
   },
 }));
 
-const mockGetStoredCredentials = vi.fn();
-vi.mock('@/providers/plugins/sso/sso.auth.js', () => ({
-  CodeMieSSO: class {
-    getStoredCredentials = mockGetStoredCredentials;
+const mockRetrieveSSOCredentials = vi.fn();
+// The SSO resolver reads the per-URL cookie slot, then the JWT slot (always empty here).
+vi.mock('@/utils/security.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/security.js')>()),
+  CredentialStore: {
+    getInstance: () => ({
+      retrieveSSOCredentials: mockRetrieveSSOCredentials,
+      retrieveJWTCredentials: async () => null,
+    }),
   },
 }));
 
@@ -113,7 +118,7 @@ beforeEach(() => {
   discoverSessions.mockReset();
   parseSessionFile.mockReset();
   mockSync.mockReset();
-  mockGetStoredCredentials.mockReset();
+  mockRetrieveSSOCredentials.mockReset();
   mockLoadSession.mockReset();
   mockDetectGitBranch.mockReset();
   vi.mocked(logger.debug).mockClear();
@@ -391,7 +396,7 @@ describe('stopping while a tick is in flight', () => {
 
   beforeEach(() => {
     readPiRunLedger.mockResolvedValue(ledger({ transcripts: ['/pi/a.jsonl'] }));
-    mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc' } });
+    mockRetrieveSSOCredentials.mockResolvedValue({ cookies: { session: 'abc' } });
   });
 
   it('never starts an upload once a stop has been requested', async () => {
@@ -547,7 +552,7 @@ describe('upload', () => {
   });
 
   it('uploads as codemie-pi once per tick when credentials are available', async () => {
-    mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
+    mockRetrieveSSOCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
     mockSync.mockResolvedValue({ success: true, message: 'ok' });
 
     const { startPiIncrementalSync } = await import('../pi.incremental-sync.js');
@@ -560,7 +565,7 @@ describe('upload', () => {
     );
 
     await waitFor(() => mockSync.mock.calls.length >= 1);
-    expect(mockGetStoredCredentials).toHaveBeenCalledWith('https://codemie.example.com');
+    expect(mockRetrieveSSOCredentials).toHaveBeenCalledWith('https://codemie.example.com');
     expect(mockSync).toHaveBeenCalledWith(
       sessionId,
       expect.objectContaining({
@@ -575,7 +580,7 @@ describe('upload', () => {
   });
 
   it('hands the sender a supersede check that re-reads the same credentials', async () => {
-    mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
+    mockRetrieveSSOCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
     mockSync.mockResolvedValue({ success: true, message: 'ok' });
 
     const { startPiIncrementalSync } = await import('../pi.incremental-sync.js');
@@ -590,12 +595,12 @@ describe('upload', () => {
     const context = mockSync.mock.calls[0][1];
     expect(typeof context.credentialsSuperseded).toBe('function');
 
-    const readsBefore = mockGetStoredCredentials.mock.calls.length;
-    mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'newer' } });
+    const readsBefore = mockRetrieveSSOCredentials.mock.calls.length;
+    mockRetrieveSSOCredentials.mockResolvedValue({ cookies: { session: 'newer' } });
     await expect(context.credentialsSuperseded('session=abc123')).resolves.toBe(true);
     await expect(context.credentialsSuperseded('session=newer')).resolves.toBe(false);
-    expect(mockGetStoredCredentials.mock.calls.length).toBeGreaterThan(readsBefore);
-    expect(mockGetStoredCredentials.mock.calls.at(-1)).toEqual(['https://codemie.example.com']);
+    expect(mockRetrieveSSOCredentials.mock.calls.length).toBeGreaterThan(readsBefore);
+    expect(mockRetrieveSSOCredentials.mock.calls.at(-1)).toEqual(['https://codemie.example.com']);
   });
 
   it('skips the upload when no sync URLs are configured', async () => {
@@ -604,12 +609,12 @@ describe('upload', () => {
 
     await waitFor(() => processSession.mock.calls.length >= 1);
     await new Promise((resolve) => setTimeout(resolve, 40));
-    expect(mockGetStoredCredentials).not.toHaveBeenCalled();
+    expect(mockRetrieveSSOCredentials).not.toHaveBeenCalled();
     expect(mockSync).not.toHaveBeenCalled();
   });
 
   it('skips the upload when no SSO credentials are stored', async () => {
-    mockGetStoredCredentials.mockResolvedValue(null);
+    mockRetrieveSSOCredentials.mockResolvedValue(null);
 
     const { startPiIncrementalSync } = await import('../pi.incremental-sync.js');
     startPiIncrementalSync(
@@ -625,7 +630,7 @@ describe('upload', () => {
   });
 
   it('keeps ticking after an upload failure, so the payloads are retried', async () => {
-    mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc' } });
+    mockRetrieveSSOCredentials.mockResolvedValue({ cookies: { session: 'abc' } });
     mockSync.mockRejectedValue(new Error('network failure'));
 
     const { startPiIncrementalSync } = await import('../pi.incremental-sync.js');

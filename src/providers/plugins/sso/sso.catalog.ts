@@ -8,10 +8,8 @@
 
 import type { LlmModel } from './sso.http-client.js';
 import { fetchCodeMieLlmModels } from './sso.http-client.js';
-import {
-  getPlatformUrlFromEnv,
-  getStoredPlatformCredentialsFromEnv,
-} from '../../core/codemie-auth-helpers.js';
+import { getPlatformUrlFromEnv } from '../../core/codemie-auth-helpers.js';
+import { authMaterial, explicitJwtAuth, resolveSSOAuthFromEnv } from './auth/index.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
 
@@ -50,13 +48,14 @@ export async function fetchCodeMieCatalogForEnv(
 
   if (jwtToken && jwtBaseUrl) {
     logger.debug(`${logPrefix} Fetching CodeMie model list via JWT auth`, { project });
-    return fetchCodeMieLlmModels(jwtBaseUrl, jwtToken, project);
+    const explicit = explicitJwtAuth(jwtToken, jwtBaseUrl);
+    return fetchCodeMieLlmModels(explicit.apiUrl, authMaterial(explicit), project);
   }
 
-  const found = await getStoredPlatformCredentialsFromEnv(env);
-  if (found) {
-    logger.debug(`${logPrefix} Fetching CodeMie model list via SSO auth`, { project });
-    return fetchCodeMieLlmModels(found.credentials.apiUrl, found.credentials.cookies, project);
+  const auth = await resolveSSOAuthFromEnv(env);
+  if (auth) {
+    logger.debug(`${logPrefix} Fetching CodeMie model list via stored ${auth.type} auth`, { project });
+    return fetchCodeMieLlmModels(auth.apiUrl, authMaterial(auth), project);
   }
 
   const platformUrl = getPlatformUrlFromEnv(env);

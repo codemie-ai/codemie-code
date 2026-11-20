@@ -8,12 +8,15 @@ import { Readable } from 'node:stream';
 
 vi.mock('../proxy/otlp-cold-start.js', () => ({ ensureOtlpProxy: vi.fn() }));
 
-const readAnalyticsCookieAuth = vi.hoisted(() => vi.fn());
+const readAnalyticsAuth = vi.hoisted(() => vi.fn());
 const metricsSenderOptions = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 const sendSessionStart = vi.hoisted(() => vi.fn());
 const sendSessionEnd = vi.hoisted(() => vi.fn());
 
-vi.mock('@/providers/plugins/sso/session/cookie-auth.js', () => ({ readAnalyticsCookieAuth }));
+vi.mock('@/providers/plugins/sso/session/analytics-auth.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/providers/plugins/sso/session/analytics-auth.js')>()),
+  readAnalyticsAuth,
+}));
 vi.mock('@/providers/plugins/sso/index.js', () => ({
   MetricsSender: vi.fn(function (this: Record<string, unknown>, options: Record<string, unknown>) {
     metricsSenderOptions.push(options);
@@ -122,7 +125,7 @@ describe('hook command stored-credentials wiring', () => {
     process.env.CODEMIE_HOME = codemieHome;
     mkdirSync(TMP, { recursive: true });
     mkdirSync(getCodemiePath('sessions'), { recursive: true });
-    readAnalyticsCookieAuth.mockResolvedValue({ cookies: 'a=1; b=2', credentialsSuperseded: superseded });
+    readAnalyticsAuth.mockResolvedValue({ kind: 'cookies', cookies: 'a=1; b=2', credentialsSuperseded: superseded });
   });
 
   afterEach(async () => {
@@ -198,7 +201,7 @@ describe('hook command stored-credentials wiring', () => {
   it('sync context takes cookies and the superseded callback from the helper', async () => {
     const context = await runStop('wiring-sync');
 
-    expect(readAnalyticsCookieAuth).toHaveBeenCalledWith(baseConfig.ssoUrl, baseConfig.env, providerArgs);
+    expect(readAnalyticsAuth).toHaveBeenCalledWith(baseConfig.ssoUrl, baseConfig.env, providerArgs);
     expect(context.cookies).toBe('a=1; b=2');
     expect(context.credentialsSuperseded).toBe(superseded);
   });
@@ -206,7 +209,7 @@ describe('hook command stored-credentials wiring', () => {
   it('sync context with preset cookies reads nothing and carries no callback', async () => {
     const context = await runStop('wiring-sync-preset', { cookies: 'preset=1' });
 
-    expect(readAnalyticsCookieAuth).not.toHaveBeenCalled();
+    expect(readAnalyticsAuth).not.toHaveBeenCalled();
     expect(context.cookies).toBe('preset=1');
     expect(context.credentialsSuperseded).toBeUndefined();
   });
@@ -218,8 +221,27 @@ describe('hook command stored-credentials wiring', () => {
     expect(context.credentialsSuperseded).toBeUndefined();
   });
 
+  it('sync context takes the JWT, with no cookies and no callback, when the helper finds bearer auth', async () => {
+    readAnalyticsAuth.mockResolvedValue({ kind: 'bearer', jwtToken: 'jwt-1', readTimedOut: false });
+
+    const context = await runStop('wiring-sync-jwt');
+
+    expect(context.cookies).toBe('');
+    expect(context.jwtToken).toBe('jwt-1');
+    expect(context.credentialsSuperseded).toBeUndefined();
+  });
+
+  it('sync context with an API key carries no JWT', async () => {
+    readAnalyticsAuth.mockResolvedValue({ kind: 'bearer', jwtToken: 'jwt-1', readTimedOut: false });
+
+    const context = await runStop('wiring-sync-apikey-jwt', { apiKey: 'local-key' });
+
+    expect(context.apiKey).toBe('local-key');
+    expect(context.jwtToken).toBeUndefined();
+  });
+
   it('sync context stays empty when the helper finds nothing', async () => {
-    readAnalyticsCookieAuth.mockResolvedValue({ cookies: '', credentialsSuperseded: superseded });
+    readAnalyticsAuth.mockResolvedValue({ kind: 'none', readTimedOut: false });
 
     const context = await runStop('wiring-sync-empty');
 
@@ -229,7 +251,7 @@ describe('hook command stored-credentials wiring', () => {
   it('SessionStart sender takes cookies and the callback from the helper', async () => {
     await runSessionStart('wiring-start');
 
-    expect(readAnalyticsCookieAuth).toHaveBeenCalledWith(baseConfig.ssoUrl, baseConfig.env, providerArgs);
+    expect(readAnalyticsAuth).toHaveBeenCalledWith(baseConfig.ssoUrl, baseConfig.env, providerArgs);
     expect(metricsSenderOptions).toHaveLength(1);
     expect(metricsSenderOptions[0]).toMatchObject({ cookies: 'a=1; b=2', credentialsSuperseded: superseded });
     expect(sendSessionStart).toHaveBeenCalledTimes(1);
@@ -238,13 +260,24 @@ describe('hook command stored-credentials wiring', () => {
   it('SessionStart with preset cookies uses them and carries no callback', async () => {
     await runSessionStart('wiring-start-preset', { cookies: 'preset=1' });
 
-    expect(readAnalyticsCookieAuth).not.toHaveBeenCalled();
+    expect(readAnalyticsAuth).not.toHaveBeenCalled();
     expect(metricsSenderOptions[0]).toMatchObject({ cookies: 'preset=1' });
     expect(metricsSenderOptions[0].credentialsSuperseded).toBeUndefined();
   });
 
+  it('SessionStart sender takes the JWT with empty cookies when the helper finds bearer auth', async () => {
+    readAnalyticsAuth.mockResolvedValue({ kind: 'bearer', jwtToken: 'jwt-1', readTimedOut: false });
+
+    await runSessionStart('wiring-start-jwt');
+
+    expect(metricsSenderOptions).toHaveLength(1);
+    expect(metricsSenderOptions[0]).toMatchObject({ cookies: '', jwtToken: 'jwt-1' });
+    expect(metricsSenderOptions[0].credentialsSuperseded).toBeUndefined();
+    expect(sendSessionStart).toHaveBeenCalledTimes(1);
+  });
+
   it('SessionStart sends nothing when the helper finds no cookies', async () => {
-    readAnalyticsCookieAuth.mockResolvedValue({ cookies: '', credentialsSuperseded: superseded });
+    readAnalyticsAuth.mockResolvedValue({ kind: 'none', readTimedOut: false });
 
     await runSessionStart('wiring-start-empty');
 
@@ -255,7 +288,7 @@ describe('hook command stored-credentials wiring', () => {
   it('SessionEnd sender takes cookies and the callback from the helper', async () => {
     await runSessionEnd('wiring-end');
 
-    expect(readAnalyticsCookieAuth).toHaveBeenCalledWith(baseConfig.ssoUrl, baseConfig.env, providerArgs);
+    expect(readAnalyticsAuth).toHaveBeenCalledWith(baseConfig.ssoUrl, baseConfig.env, providerArgs);
     expect(metricsSenderOptions).toHaveLength(1);
     expect(metricsSenderOptions[0]).toMatchObject({ cookies: 'a=1; b=2', credentialsSuperseded: superseded });
     expect(sendSessionEnd).toHaveBeenCalledTimes(1);
@@ -269,8 +302,19 @@ describe('hook command stored-credentials wiring', () => {
     expect(metricsSenderOptions[0].credentialsSuperseded).toBeUndefined();
   });
 
+  it('SessionEnd sender takes the JWT with empty cookies when the helper finds bearer auth', async () => {
+    readAnalyticsAuth.mockResolvedValue({ kind: 'bearer', jwtToken: 'jwt-1', readTimedOut: false });
+
+    await runSessionEnd('wiring-end-jwt');
+
+    expect(metricsSenderOptions).toHaveLength(1);
+    expect(metricsSenderOptions[0]).toMatchObject({ cookies: '', jwtToken: 'jwt-1' });
+    expect(metricsSenderOptions[0].credentialsSuperseded).toBeUndefined();
+    expect(sendSessionEnd).toHaveBeenCalledTimes(1);
+  });
+
   it('SessionEnd sends nothing when the helper finds no cookies', async () => {
-    readAnalyticsCookieAuth.mockResolvedValue({ cookies: '', credentialsSuperseded: superseded });
+    readAnalyticsAuth.mockResolvedValue({ kind: 'none', readTimedOut: false });
 
     await runSessionEnd('wiring-end-empty');
 

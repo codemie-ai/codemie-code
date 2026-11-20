@@ -1,6 +1,5 @@
 import { userInfo } from 'node:os';
-import type { SSOCredentials, JWTCredentials } from '@/providers/core/types.js';
-import { isSSOCredentials, isJWTCredentials } from '@/providers/core/types.js';
+import type { SSOAuth } from '@/providers/plugins/sso/auth/types.js';
 
 export type IdentitySource = 'jwt' | 'git' | 'codemie_cli' | 'os' | '';
 
@@ -31,38 +30,24 @@ export function decodeJwtClaims(token: string): Record<string, unknown> {
 }
 
 /**
- * Pull `email` straight off a JWT credential's claims, or off the SSO
- * session's `codemie_access_token` cookie claims (`email`, falling back to
- * `preferred_username`), or the backend-verified `email` attached to the SSO credentials. Shared by the tier-1 `jwt` identity tier below and
- * by the adapter's plain `user_email` field — both resolve the same claim.
+ * Pull `email` off the auth's identity token claims (`email`, falling back to `preferred_username`),
+ * or the backend-verified `email` attached to the auth. The identity token is the SSO session's
+ * `codemie_access_token` cookie, or the bearer token itself. Shared by the tier-1 `jwt` identity tier
+ * below and by the adapter's plain `user_email` field — both resolve the same claim.
  */
-export function resolveEmailFromCredentials(
-  credentials: SSOCredentials | JWTCredentials | null
-): string {
-  if (!credentials) {
+export function resolveEmailFromCredentials(auth: SSOAuth | null): string {
+  if (!auth) {
     return '';
   }
-  if (isJWTCredentials(credentials)) {
-    const claims = decodeJwtClaims(credentials.token);
-    if (typeof claims['email'] === 'string' && claims['email']) {
-      return claims['email'];
+  if (auth.identityToken) {
+    const claims = decodeJwtClaims(auth.identityToken);
+    const email = claims['email'] ?? claims['preferred_username'];
+    if (typeof email === 'string' && email) {
+      return email;
     }
   }
-  if (isSSOCredentials(credentials)) {
-    const accessToken = credentials.cookies['codemie_access_token'];
-    if (accessToken) {
-      const claims = decodeJwtClaims(accessToken);
-      const email = claims['email'] ?? claims['preferred_username'];
-      if (typeof email === 'string' && email) {
-        return email;
-      }
-    }
-    // oauth2-proxy logins carry no claim: the email the backend reported for these cookies.
-    if (credentials.email) {
-      return credentials.email;
-    }
-  }
-  return '';
+  // oauth2-proxy logins carry no claim: the email the backend reported for this credential.
+  return auth.email ?? '';
 }
 
 /**
@@ -155,11 +140,11 @@ export function resolveOsUser(): string {
  * Never throws — every tier swallows its own failures internally.
  */
 export async function resolveIdentity(
-  credentials: SSOCredentials | JWTCredentials | null,
+  auth: SSOAuth | null,
   cwd: string
 ): Promise<ResolvedIdentity> {
   try {
-    const jwtIdentity = resolveEmailFromCredentials(credentials);
+    const jwtIdentity = resolveEmailFromCredentials(auth);
     if (jwtIdentity) {
       return { developerName: jwtIdentity, identitySource: 'jwt' };
     }

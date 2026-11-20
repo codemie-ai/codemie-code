@@ -20,13 +20,22 @@ vi.mock('@/utils/processes.js', async (orig) => ({
   ...(await orig<typeof import('@/utils/processes.js')>()),
   getRawGitOrigin: async () => 'https://git.example.com/org/repo.git',
 }));
-vi.mock('../../hook-credentials.js', () => ({
-  resolveHookCredentials: async () => ({
-    cookies: { codemie_access_token: `h.${Buffer.from(JSON.stringify({ email: 'dev@example.com' })).toString('base64url')}.s` },
-    apiUrl: 'https://analytics.example.com',
-    timestamp: 0,
-  }),
-}));
+vi.mock('../../hook-credentials.js', async () => {
+  const { toSSOAuth } = await import('@/providers/plugins/sso/auth/selection.js');
+  return {
+    resolveHookCredentials: async () =>
+      toSSOAuth(
+        {
+          type: 'cookie',
+          record: {
+            cookies: { codemie_access_token: `h.${Buffer.from(JSON.stringify({ email: 'dev@example.com' })).toString('base64url')}.s` },
+            apiUrl: 'https://analytics.example.com',
+          },
+        },
+        'https://analytics.example.com',
+      ),
+  };
+});
 vi.mock('../../session-project-pin.js', () => ({
   readPinnedProjectName: async () => pin.project,
   pinProjectName: async (_s: string, p: string) => p,

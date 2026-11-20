@@ -1,7 +1,7 @@
 /**
  * EPMCDME-16776: an oauth2-proxy login (no codemie_access_token cookie) must still own its hook evidence record,
  * and the forwarder must find that record by its own key. Real: resolveHookCredentials, withVerifiedOwner, stampEvidence,
- * record-store, forwarderIdentity. Mocked: the stored-credential read, daemon state and the `/v1/user` network call.
+ * record-store, forwarderIdentity. Mocked: the credential store, daemon state and the `/v1/user` network call.
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -37,9 +37,15 @@ vi.mock('@/utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), er
 vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({
   readState: async () => ({ syncCodeMieUrl: 'https://sync.example.com' }),
 }));
-vi.mock('@/providers/plugins/sso/sso.auth.js', () => ({
-  CodeMieSSO: class {
-    getStoredCredentials = async (url: string) => m.stored.get(url) ?? null;
+vi.mock('@/utils/security.js', async (orig) => ({
+  ...(await orig<typeof import('@/utils/security.js')>()),
+  CredentialStore: {
+    getInstance: () => ({
+      retrieveSSOCredentials: async (url?: string) => (url ? (m.stored.get(url) ?? null) : null),
+      retrieveJWTCredentials: async () => null,
+      clearSSOCredentials: async () => undefined,
+      clearJWTCredentials: async () => undefined,
+    }),
   },
 }));
 vi.mock('@/providers/core/codemie-auth-helpers.js', async (orig) => ({
@@ -52,12 +58,16 @@ const { readRecord, recordKey } = await import('../record-store.js');
 const { ownerHash, apiIdentity } = await import('../api-identity.js');
 const { resolveHookCredentials } = await import('../../hook-credentials.js');
 const { withVerifiedOwner, OWNER_LOOKUP_COOLDOWN_MS } = await import('@/providers/core/credential-owner.js');
+const { toSSOAuth } = await import('@/providers/plugins/sso/auth/selection.js');
+const { explicitJwtAuth, resolveSSOAuthForUrl } = await import('@/providers/plugins/sso/auth/resolver.js');
 const { forwarderIdentity } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-io.js');
 
 const API = 'https://codemie.example.com/code-assistant-api';
 const SYNC = 'https://sync.example.com';
 const ROUTING = { routed: false, routing_proof: 'unproven' as const };
 const proxyCreds = (cookie: string, apiUrl = API) => ({ cookies: { _oauth2_proxy: cookie }, apiUrl });
+/** The stored record as the resolver hands it out. */
+const proxyAuth = (cookie: string, apiUrl = API) => toSSOAuth({ type: 'cookie', record: proxyCreds(cookie, apiUrl) }, apiUrl);
 const userOf = (email: string, username = 'someone') => ({
   userId: 'u', name: 'n', username, email, applications: [], applications_admin: [],
 });
@@ -88,7 +98,7 @@ describe('oauth2-proxy login (stored without email, e.g. a pre-fix login)', () =
     expect(m.userInfo).toHaveBeenCalledWith(API, { _oauth2_proxy: 'cookie-A' }, expect.objectContaining({ followRedirects: false, emailOnly: true }));
 
     // the daemon loads the same stored login independently and decorates it the same way
-    const daemonCreds = await withVerifiedOwner(m.stored.get(SYNC) as ReturnType<typeof proxyCreds>);
+    const daemonCreds = await withVerifiedOwner((await resolveSSOAuthForUrl(SYNC))!);
     const id = forwarderIdentity(daemonCreds)!;
     expect(id.owner_hash).toBe(ownerHash('dev.a@example.com'));
     expect(await readRecord(recordKey(id.api_identity, id.owner_hash, 'sess-1'))).toMatchObject({ kind: 'existing' });
@@ -100,7 +110,7 @@ describe('oauth2-proxy login (stored without email, e.g. a pre-fix login)', () =
     m.stored.set(SYNC, proxyCreds('cookie-A'));
     m.userInfo.mockResolvedValue({ ...userOf('x@y.z', 'dev_a'), email: undefined });
     expect(await stamp()).toMatchObject({ ok: false, reason: 'no_owner' });
-    expect(forwarderIdentity(await withVerifiedOwner(proxyCreds('cookie-A')))).toBeNull();
+    expect(forwarderIdentity(await withVerifiedOwner(proxyAuth('cookie-A')))).toBeNull();
   });
 });
 
@@ -118,8 +128,8 @@ describe('adapters without evidence (e.g. Copilot) share the verified owner', ()
 
 describe('fresh login', () => {
   it('login-time lookup means hooks make no request at all', async () => {
-    const creds = proxyCreds('cookie-A');
-    m.stored.set(SYNC, creds);
+    const creds = proxyAuth('cookie-A');
+    m.stored.set(SYNC, proxyCreds('cookie-A'));
     m.userInfo.mockResolvedValue(userOf('a@example.com'));
     await withVerifiedOwner(creds); // what CodeMieSSO.authenticate does after storing
     m.userInfo.mockClear();
@@ -129,8 +139,8 @@ describe('fresh login', () => {
   });
 
   it('a login-time lookup failure is retried by the hook, not silently skipped', async () => {
-    const creds = proxyCreds('cookie-A');
-    m.stored.set(SYNC, creds);
+    const creds = proxyAuth('cookie-A');
+    m.stored.set(SYNC, proxyCreds('cookie-A'));
     m.userInfo.mockRejectedValueOnce(new Error('offline'));
     await withVerifiedOwner(creds);
     vi.useFakeTimers({ now: Date.now() + OWNER_LOOKUP_COOLDOWN_MS + 1, toFake: ['Date'] });
@@ -142,7 +152,7 @@ describe('fresh login', () => {
 describe('identity is bound to the exact login', () => {
   it('re-login to another user: new cookies resolve the new owner, never the old one', async () => {
     m.userInfo.mockResolvedValueOnce(userOf('a@example.com'));
-    expect(forwarderIdentity(await withVerifiedOwner(proxyCreds('cookie-A')))!.owner_hash).toBe(ownerHash('a@example.com'));
+    expect(forwarderIdentity(await withVerifiedOwner(proxyAuth('cookie-A')))!.owner_hash).toBe(ownerHash('a@example.com'));
 
     m.stored.set(SYNC, proxyCreds('cookie-B'));
     m.userInfo.mockResolvedValueOnce(userOf('b@example.com'));
@@ -153,7 +163,7 @@ describe('identity is bound to the exact login', () => {
 
   it('re-login whose lookup fails does not inherit the previous login\'s email', async () => {
     m.userInfo.mockResolvedValueOnce(userOf('a@example.com'));
-    await withVerifiedOwner(proxyCreds('cookie-A'));
+    await withVerifiedOwner(proxyAuth('cookie-A'));
 
     m.stored.set(SYNC, proxyCreds('cookie-B'));
     m.userInfo.mockRejectedValue(new Error('offline'));
@@ -163,18 +173,18 @@ describe('identity is bound to the exact login', () => {
 
   it('the old login still resolves to its own owner after another login replaced the record', async () => {
     m.userInfo.mockResolvedValueOnce(userOf('a@example.com'));
-    await withVerifiedOwner(proxyCreds('cookie-A'));
+    await withVerifiedOwner(proxyAuth('cookie-A'));
     m.userInfo.mockResolvedValueOnce(userOf('b@example.com'));
-    await withVerifiedOwner(proxyCreds('cookie-B'));
+    await withVerifiedOwner(proxyAuth('cookie-B'));
     m.userInfo.mockResolvedValueOnce(userOf('a@example.com'));
-    expect(forwarderIdentity(await withVerifiedOwner(proxyCreds('cookie-A')))!.owner_hash).toBe(ownerHash('a@example.com'));
+    expect(forwarderIdentity(await withVerifiedOwner(proxyAuth('cookie-A')))!.owner_hash).toBe(ownerHash('a@example.com'));
   });
 
   it('distinct environments keep distinct owners and api identities', async () => {
     const other = 'https://other.example.com/code-assistant-api';
     m.userInfo.mockResolvedValueOnce(userOf('a@example.com')).mockResolvedValueOnce(userOf('b@example.com'));
-    const a = forwarderIdentity(await withVerifiedOwner(proxyCreds('same-cookie')))!;
-    const b = forwarderIdentity(await withVerifiedOwner(proxyCreds('same-cookie', other)))!;
+    const a = forwarderIdentity(await withVerifiedOwner(proxyAuth('same-cookie')))!;
+    const b = forwarderIdentity(await withVerifiedOwner(proxyAuth('same-cookie', other)))!;
     expect(a.owner_hash).toBe(ownerHash('a@example.com'));
     expect(b.owner_hash).toBe(ownerHash('b@example.com'));
     expect(a.api_identity).not.toBe(b.api_identity);
@@ -191,7 +201,7 @@ describe('lookup failures invent no owner and are bounded', () => {
     m.stored.set(SYNC, proxyCreds('cookie-A'));
     m.userInfo.mockImplementation(answer);
     expect(await stamp()).toMatchObject({ ok: false, reason: 'no_owner' });
-    expect(forwarderIdentity(await withVerifiedOwner(proxyCreds('cookie-A')))).toBeNull();
+    expect(forwarderIdentity(await withVerifiedOwner(proxyAuth('cookie-A')))).toBeNull();
   });
 
   it('repeated hooks inside the cooldown cost no request; the next attempt after it recovers', async () => {
@@ -213,21 +223,22 @@ describe('compatibility', () => {
   const claim = (email: string) => `h.${Buffer.from(JSON.stringify({ email })).toString('base64url')}.s`;
 
   it('codemie_access_token claim wins and needs no request', async () => {
-    const creds = { cookies: { codemie_access_token: claim('Tok@example.com'), _oauth2_proxy: 'c' }, apiUrl: API };
+    const creds = toSSOAuth({ type: 'cookie', record: { cookies: { codemie_access_token: claim('Tok@example.com'), _oauth2_proxy: 'c' }, apiUrl: API } }, API);
     expect(forwarderIdentity(await withVerifiedOwner(creds))!.owner_hash).toBe(ownerHash('tok@example.com'));
     expect(m.userInfo).not.toHaveBeenCalled();
   });
 
-  it('JWT credentials are untouched', async () => {
-    const jwt = { token: claim('jwt@example.com'), apiUrl: API };
+  // Deliberate behaviour change (plan, "Behaviour changes" 2): a JWT login now has an owner too, from its claim.
+  it('a JWT login owns its evidence from the token claim and needs no request', async () => {
+    const jwt = explicitJwtAuth(claim('jwt@example.com'), API);
     expect(await withVerifiedOwner(jwt)).toBe(jwt);
     expect(forwarderIdentity(jwt)!.owner_hash).toBe(ownerHash('jwt@example.com'));
     expect(m.userInfo).not.toHaveBeenCalled();
   });
 
-  it('credentials without cookies are never looked up', async () => {
-    const creds = { cookies: {}, apiUrl: API };
-    expect(await withVerifiedOwner(creds)).toBe(creds);
+  it('a stored login without usable cookies resolves to no credentials and is never looked up', async () => {
+    m.stored.set(SYNC, { cookies: {}, apiUrl: API });
+    expect(await resolveHookCredentials()).toBeNull();
     expect(m.userInfo).not.toHaveBeenCalled();
   });
 

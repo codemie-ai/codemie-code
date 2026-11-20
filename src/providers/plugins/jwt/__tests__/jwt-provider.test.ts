@@ -282,7 +282,9 @@ describe('selectJwtProfileProject (EPMCDME-15411, AC11)', () => {
       prompt: prompt as never, select: select as never, env: { MY_TOKEN: ' tok ' },
     });
     expect(project).toBe('p1');
-    expect(select).toHaveBeenCalledWith({ apiUrl: 'https://a.example.com/code-assistant-api', jwtToken: 'tok' });
+    expect(select).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'jwt', apiUrl: 'https://a.example.com/code-assistant-api', token: 'tok', source: 'explicit' })
+    );
   });
 
   it('a pasted token is used once and not returned or stored', async () => {

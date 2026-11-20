@@ -1,7 +1,7 @@
 /**
  * Shared throttled re-reader of stored SSO credentials.
  *
- * PR #655 (EPMCDME-15316) fixed the LLM-request path (SSOAuthInterceptor) to re-read credentials
+ * PR #655 (EPMCDME-15316) fixed the LLM-request path (now AuthInjectionPlugin) to re-read credentials
  * from disk instead of injecting the daemon-startup snapshot forever, so a successful browser
  * re-login takes effect without restarting the proxy. Every OTHER proxied-request consumer kept
  * its own independent startup snapshot (session/metrics sync, the Claude/Codex model-catalogue
@@ -19,11 +19,19 @@
  * one, since OTLP forwarding runs on its own tick independent of the request path this class
  * was built for.
  *
- * JWT credentials are a static API key, not something a browser re-login rotates — `refresh()`
- * is a no-op for them (returns the same object every time).
+ * A credential handed in explicitly (`--jwt-token`/`CODEMIE_JWT_TOKEN`, or the bearer-auth
+ * profile's stored token: `source: 'explicit'`) is a static API key with no login flow to rotate
+ * it, and the store must never override it: `refresh()`/`refreshNow()` never read the store for
+ * it (nor for a refresher built with `staticCredentials`). A stored SSO login, cookies or a JWT
+ * (the browser callback stores a JWT when a reverse proxy strips cookies entirely), is rotatable
+ * by a re-login under the very same sign-in lock (`getLastSignInAt`, shape-agnostic), so it gets
+ * the identical throttled-reread/bypass logic.
+ *
+ * A re-read adopts whatever credential type `resolveSSOAuth` now selects: a re-login that switched
+ * from cookies to a JWT (or back) takes effect without a proxy restart, because the one auth
+ * interceptor injects whatever `SSOAuth.headers` the adopted credential carries.
  */
-import { getStoredPlatformCredentials } from '../../../../core/codemie-auth-helpers.js';
-import type { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
+import { resolveSSOAuth, type SSOAuth } from '../../auth/index.js';
 import { logger } from '../../../../../utils/logger.js';
 import { getAnalyticsAuthStatus } from '../../../../../utils/analytics-auth-status.js';
 import { getLastSignInAt } from '../../sso.detached-login.js';
@@ -37,10 +45,12 @@ export interface CredentialRefreshParams {
   provider?: string;
   baseUrl: string;
   codeMieUrl?: string;
+  /** The credentials were handed in explicitly; never re-read the store (same as `source: 'explicit'`) */
+  staticCredentials?: boolean;
 }
 
-export class CredentialRefresher<T extends SSOCredentials | JWTCredentials> {
-  private current: T;
+export class CredentialRefresher {
+  private current: SSOAuth;
   private lastRefreshedAt = 0;
   private sawAuthInvalid = false;
   /** Last lock `succeededAt` handled (read for, or already in the initial snapshot); a different non-null value means a newer sign-in. */
@@ -50,22 +60,22 @@ export class CredentialRefresher<T extends SSOCredentials | JWTCredentials> {
   private readsStarted = 0;
   private lastAssignedRead = 0;
   /** A read `refresh()` started because of a sign-in signal; concurrent `refresh()` calls join it. */
-  private bypassRead: Promise<T> | null = null;
+  private bypassRead: Promise<SSOAuth> | null = null;
   /** The sign-in stamp `bypassRead` was started under. */
   private bypassStamp: number | null = null;
   /** A read started by `refreshNow()`; only other `refreshNow()` calls join it. */
-  private refreshNowRead: Promise<T | null> | null = null;
-  private readonly readStore: () => Promise<T | null>;
+  private refreshNowRead: Promise<SSOAuth | null> | null = null;
+  private readonly readStore: () => Promise<SSOAuth | null>;
   /** The initial snapshot already reflects any sign-in that finished before this time. */
   private readonly createdAt = Date.now();
 
-  constructor(initialCredentials: T, private readonly params: CredentialRefreshParams) {
-    this.current = initialCredentials;
+  constructor(initial: SSOAuth, private readonly params: CredentialRefreshParams) {
+    this.current = initial;
     this.readStore = readWithDeadline(() => this.readStoredCredentials(), PROXY_STORE_READ_DEADLINE_MS);
   }
 
   /** Last known-good credentials — the daemon-startup snapshot until the first successful refresh. */
-  get(): T {
+  get(): SSOAuth {
     return this.current;
   }
 
@@ -103,9 +113,9 @@ export class CredentialRefresher<T extends SSOCredentials | JWTCredentials> {
    * agent often sends several requests at once, and each old-cookie request would be rejected
    * again); calls arriving during a plain throttle read get the snapshot at once.
    */
-  async refresh(): Promise<T> {
-    if (!('cookies' in this.current)) {
-      return this.current; // JWT — static, nothing to refresh
+  async refresh(): Promise<SSOAuth> {
+    if (this.isStatic()) {
+      return this.current;
     }
 
     const [markerInvalid, stamp] = await Promise.all([this.readMarkerInvalid(), getLastSignInAt(this.params)]);
@@ -158,14 +168,14 @@ export class CredentialRefresher<T extends SSOCredentials | JWTCredentials> {
    * result unless a later-started read adopted a newer one first), or null when the read failed, timed out or came back empty. Never joins a
    * `refresh()` read: a throttle read begun before a sign-in would hand back the old snapshot.
    */
-  refreshNow(): Promise<T | null> {
-    if (!('cookies' in this.current)) {
+  refreshNow(): Promise<SSOAuth | null> {
+    if (this.isStatic()) {
       return Promise.resolve(null);
     }
     if (this.refreshNowRead) {
       return this.refreshNowRead;
     }
-    const pending = (async (): Promise<T | null> => {
+    const pending = (async (): Promise<SSOAuth | null> => {
       const stamp = await getLastSignInAt(this.params);
       const fresh = await this.readAndAssign(stamp);
       if (fresh) {
@@ -187,7 +197,7 @@ export class CredentialRefresher<T extends SSOCredentials | JWTCredentials> {
    * snapshot, and only then does the sign-in stamp it was started under count as handled. Empty,
    * failed and timed-out reads keep the last known-good credentials and leave the stamp unspent.
    */
-  private async readAndAssign(stamp: number | null): Promise<T | null> {
+  private async readAndAssign(stamp: number | null): Promise<SSOAuth | null> {
     const readNumber = ++this.readsStarted;
     const startedAt = Date.now();
     const fresh = await this.readStore();
@@ -195,6 +205,9 @@ export class CredentialRefresher<T extends SSOCredentials | JWTCredentials> {
       this.lastFailedReadAt = Math.max(this.lastFailedReadAt, startedAt);
     } else if (readNumber > this.lastAssignedRead) {
       this.lastAssignedRead = readNumber;
+      if (fresh.type !== this.current.type) {
+        logger.info(`[credential-refresh] credential type changed: ${this.current.type} -> ${fresh.type}`);
+      }
       this.current = fresh;
       if (stamp !== null) {
         this.lastActedStamp = stamp;
@@ -204,10 +217,15 @@ export class CredentialRefresher<T extends SSOCredentials | JWTCredentials> {
     return fresh ? this.current : null;
   }
 
-  private async readStoredCredentials(): Promise<T | null> {
+  /** An explicit credential, or a refresher built as static, is never re-read from the store. */
+  private isStatic(): boolean {
+    return Boolean(this.params.staticCredentials) || this.current.source === 'explicit';
+  }
+
+  private async readStoredCredentials(): Promise<SSOAuth | null> {
     try {
-      const stored = await getStoredPlatformCredentials(this.params);
-      return (stored?.credentials as T | undefined) ?? null;
+      // The resolver picks the credential type (see the class doc comment); any type is adopted.
+      return await resolveSSOAuth(this.params);
     } catch (error) {
       logger.debug('[credential-refresh] Failed to re-read stored SSO credentials; using the last known-good snapshot', error);
       return null;

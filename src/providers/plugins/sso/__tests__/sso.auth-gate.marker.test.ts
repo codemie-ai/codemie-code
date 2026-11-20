@@ -3,12 +3,20 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const getStoredCredentials = vi.fn();
+// The cookie login stored for a URL (the resolver's per-URL read); no JWT and no global-slot login.
+const getStoredCredentials = vi.hoisted(() => vi.fn());
 
-vi.mock('@/providers/plugins/sso/sso.auth.js', () => ({
-  CodeMieSSO: vi.fn(function () {
-    return { getStoredCredentials };
-  }),
+vi.mock('@/utils/security.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/security.js')>()),
+  CredentialStore: {
+    getInstance: () => ({
+      retrieveSSOCredentials: async (url?: string): Promise<unknown> =>
+        url === undefined ? null : ((await getStoredCredentials(url)) ?? null),
+      retrieveJWTCredentials: async (): Promise<unknown> => null,
+      clearSSOCredentials: vi.fn(),
+      clearJWTCredentials: vi.fn(),
+    }),
+  },
 }));
 vi.mock('@/providers/plugins/sso/sso.detached-login.js', () => ({
   startDetachedSsoLogin: vi.fn(),

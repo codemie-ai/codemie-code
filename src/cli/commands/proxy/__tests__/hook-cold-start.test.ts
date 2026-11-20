@@ -14,7 +14,7 @@ vi.mock('../../../../utils/config.js', () => ({
 }));
 vi.mock('../../../../providers/core/codemie-auth-helpers.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../../providers/core/codemie-auth-helpers.js')>()),
-  getStoredPlatformCredentials: vi.fn().mockResolvedValue({ token: 't' }),
+  getStoredPlatformAuthCredentials: vi.fn().mockResolvedValue({ credentials: { token: 't', apiUrl: 'https://codemie.example.invalid' }, url: 'https://codemie.example.invalid' }),
 }));
 vi.mock('@/utils/processes.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/utils/processes.js')>()),

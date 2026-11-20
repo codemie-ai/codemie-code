@@ -173,6 +173,37 @@ describe('ConversationApiClient request timers', () => {
     });
   });
 
+  describe('auth headers', () => {
+    const upsertOk = okResponse({ conversation_id: 'c', new_messages: 0, total_messages: 0, created: false });
+    const sentHeaders = (): Record<string, string> =>
+      (fetchMock.mock.calls[0][1] as { headers: Record<string, string> }).headers;
+
+    it('sends the JWT as a Bearer Authorization header when it is the only credential', async () => {
+      fetchMock.mockResolvedValue(upsertOk);
+      await createApiClient({ baseUrl: 'http://127.0.0.1:1', jwtToken: 'jwt-tok', retryAttempts: 1 }).upsertConversation('c', []);
+
+      expect(sentHeaders().authorization).toBe('Bearer jwt-tok');
+      expect(sentHeaders().Cookie).toBeUndefined();
+    });
+
+    it('prefers cookies over the JWT', async () => {
+      fetchMock.mockResolvedValue(upsertOk);
+      await createApiClient({ baseUrl: 'http://127.0.0.1:1', cookies: 's=1', jwtToken: 'jwt-tok', retryAttempts: 1 }).upsertConversation('c', []);
+
+      expect(sentHeaders().Cookie).toBe('s=1');
+      expect(sentHeaders().authorization).toBeUndefined();
+    });
+
+    it('prefers an api key over cookies and the JWT', async () => {
+      fetchMock.mockResolvedValue(upsertOk);
+      await createApiClient({ baseUrl: 'http://127.0.0.1:1', apiKey: 'dev', cookies: 's=1', jwtToken: 'jwt-tok', retryAttempts: 1 }).upsertConversation('c', []);
+
+      expect(sentHeaders()['user-id']).toBe('dev');
+      expect(sentHeaders().Cookie).toBeUndefined();
+      expect(sentHeaders().authorization).toBeUndefined();
+    });
+  });
+
   describe('updateConversationMetadata (after a synced history)', () => {
     const synced = { conversation_id: 'conv-1', new_messages: 1, total_messages: 1, created: true };
 

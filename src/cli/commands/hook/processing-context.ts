@@ -1,7 +1,7 @@
 import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
-import type { CredentialsSupersededCheck } from '@/providers/plugins/sso/session/cookie-auth.js';
+import { analyticsAuthFields, fixedCookieAuth } from '@/providers/plugins/sso/session/analytics-auth.js';
 import type { HookProcessingConfig } from '../hook.js';
-import { loadAnalyticsCookies } from './analytics-cookies.js';
+import { loadAnalyticsAuth } from './analytics-auth.js';
 import { configSendPathApiUrl, getConfigValue } from './config-value.js';
 
 /**
@@ -43,20 +43,22 @@ export async function buildProcessingContext(
   }
 
   // Build context with SSO credentials if available
-  let cookies = config?.cookies || '';
-  let credentialsSuperseded: CredentialsSupersededCheck | undefined;
+  const configCookies = config?.cookies || '';
 
   // If CodeMie analytics auth is configured and credentials are not provided,
-  // try to load the stored SSO cookies. This also supports native providers
-  // such as anthropic-subscription, where CodeMie auth is analytics-only.
-  if (ssoUrl && apiUrl && !cookies) {
-    ({ cookies, credentialsSuperseded } = await loadAnalyticsCookies('[hook]', ssoUrl, config));
-  }
+  // try to load the stored SSO credential (cookies or JWT).
+  // This also supports native providers such as anthropic-subscription, where CodeMie auth is
+  // analytics-only.
+  const auth = ssoUrl && apiUrl && !configCookies
+    ? await loadAnalyticsAuth('[hook]', ssoUrl, config)
+    : fixedCookieAuth(configCookies);
+  const { cookies, jwtToken, credentialsSuperseded } = analyticsAuthFields(auth);
 
   return {
     apiBaseUrl: apiUrl,
     cookies,
     apiKey,
+    ...(!apiKey && jwtToken && { jwtToken }),
     ...(!apiKey && credentialsSuperseded && { credentialsSuperseded }),
     clientType,
     version: cliVersion,

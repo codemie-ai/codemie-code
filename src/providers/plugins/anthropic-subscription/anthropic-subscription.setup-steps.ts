@@ -75,9 +75,13 @@ export const AnthropicSubscriptionSetupSteps: ProviderSetupSteps = {
         throw new ConfigurationError(`CodeMie authentication failed: ${authResult.error || 'Unknown error'}`);
       }
 
+      if (!authResult.auth) {
+        throw new ConfigurationError('API URL or credentials not found in authentication result');
+      }
+
       logger.success('CodeMie authentication successful');
       logger.info('Fetching available projects...');
-      ({ project: codeMieProject, userEmail } = await selectCodeMieProject(authResult));
+      ({ project: codeMieProject, userEmail } = await selectCodeMieProject(authResult.auth));
       logger.success('Analytics sync enabled for CodeMie platform');
     }
 

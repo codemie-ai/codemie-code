@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { toSSOAuth } from '@/providers/plugins/sso/auth/selection.js';
 
 const snapshotPendingHookRecordsMock = vi.fn();
 const snapshotPendingBytesMock = vi.fn();
@@ -70,7 +71,7 @@ vi.mock('@/utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-const credentials = { cookies: { codemie_access_token: 'tok' }, apiUrl: 'https://api', timestamp: 0 };
+const credentials = toSSOAuth({ type: 'cookie', record: { cookies: { codemie_access_token: 'tok' }, apiUrl: 'https://api', timestamp: 0 } }, 'https://api');
 
 /** A spool line as the daemon stores it: the envelope around the wire event built at hook time. */
 function spoolLine(wireEvent: Record<string, unknown>): string {

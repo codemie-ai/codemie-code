@@ -18,6 +18,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import type { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import type { ProxyContext } from '../proxy-types.js';
 import type { CredentialRefresher } from './credential-refresh.js';
+import { authMaterial } from '../../auth/index.js';
 import { fetchCodeMieLlmModels } from '../../sso.http-client.js';
 import {
   desktopModelDisplayName,
@@ -81,7 +82,7 @@ export class DesktopModelsPlugin implements ProxyPlugin {
 
 class DesktopModelsInterceptor implements ProxyInterceptor {
   name = 'desktop-models';
-  private readonly credentials?: CredentialRefresher<NonNullable<PluginContext['credentials']>>;
+  private readonly credentials?: CredentialRefresher;
 
   constructor(private readonly context: PluginContext) {
     this.credentials = context.credentialRefresher;
@@ -123,9 +124,7 @@ class DesktopModelsInterceptor implements ProxyInterceptor {
       if (!this.credentials) throw new Error('no CodeMie credentials');
       const credentials = await this.credentials.refresh();
       const apiUrl = credentials.apiUrl || this.context.config.targetApiUrl;
-      const catalog = 'cookies' in credentials
-        ? await fetchCodeMieLlmModels(apiUrl, credentials.cookies, project)
-        : await fetchCodeMieLlmModels(apiUrl, credentials.token, project);
+      const catalog = await fetchCodeMieLlmModels(apiUrl, authMaterial(credentials), project);
       const extraIds = await this.loadExtraModelIds();
       const models = withDesktopExtraModels(selectDesktopClaudeModels(toDesktopModels(catalog)), catalog, extraIds);
       logger.info(

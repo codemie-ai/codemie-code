@@ -17,12 +17,41 @@ vi.mock('inquirer', () => ({
   default: { prompt: vi.fn() },
 }));
 
-const mockGetStoredCredentials = vi.fn();
-vi.mock('../../plugins/sso/sso.auth.js', () => ({
-  CodeMieSSO: class {
-    getStoredCredentials = mockGetStoredCredentials;
+// In-memory CredentialStore: records keyed by the URL they were stored under; every per-URL read is logged.
+const { cookieRecords, jwtRecords, lookups } = vi.hoisted(() => ({
+  cookieRecords: new Map<string, unknown>(),
+  jwtRecords: new Map<string, unknown>(),
+  lookups: [] as Array<{ slot: 'cookie' | 'jwt'; url: string }>,
+}));
+vi.mock('../../../utils/security.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../utils/security.js')>()),
+  CredentialStore: {
+    getInstance: () => ({
+      retrieveSSOCredentials: async (url?: string) => {
+        if (url) lookups.push({ slot: 'cookie', url });
+        return url ? (cookieRecords.get(url) ?? null) : null;
+      },
+      retrieveJWTCredentials: async (url?: string) => {
+        if (url) lookups.push({ slot: 'jwt', url });
+        return url ? (jwtRecords.get(url) ?? null) : null;
+      },
+      clearSSOCredentials: async (url?: string) => {
+        if (url) cookieRecords.delete(url);
+      },
+      clearJWTCredentials: async (url?: string) => {
+        if (url) jwtRecords.delete(url);
+      },
+    }),
   },
 }));
+
+const cookieLookups = (): string[] => lookups.filter((l) => l.slot === 'cookie').map((l) => l.url);
+const jwtLookups = (): string[] => lookups.filter((l) => l.slot === 'jwt').map((l) => l.url);
+function resetStore(): void {
+  cookieRecords.clear();
+  jwtRecords.clear();
+  lookups.length = 0;
+}
 
 import {
   codeMieUrlFromApiBase,
@@ -34,11 +63,19 @@ import {
   getPlatformUrlCandidates,
   getPlatformUrlFromEnv,
   getPlatformUrlCandidatesFromEnv,
-  getStoredPlatformCredentials,
-  getStoredPlatformCredentialsFromEnv,
-  getStoredAnalyticsCredentials,
   resolveProjectListAuth,
 } from '../codemie-auth-helpers.js';
+import {
+  resolveSSOAuth,
+  resolveSSOAuthFromEnv,
+  resolveAnalyticsSSOAuth,
+  explicitJwtAuth,
+} from '../../plugins/sso/auth/index.js';
+import { toSSOAuth } from '../../plugins/sso/auth/selection.js';
+
+/** A cookie login as the resolver would hand it out. */
+const cookieAuth = (cookies: Record<string, string>, apiUrl: string) =>
+  toSSOAuth({ type: 'cookie', record: { cookies, apiUrl } }, apiUrl);
 
 describe('codeMieUrlFromApiBase', () => {
   it('is the inverse of ensureApiBase', () => {
@@ -94,7 +131,7 @@ describe('buildAuthHeaders', () => {
 
     expect(headers['Content-Type']).toBe('application/json');
     expect(headers['X-CodeMie-Client']).toBe('codemie-cli');
-    expect(headers.cookie).toBe('session=abc;token=xyz');
+    expect(headers.cookie).toBe('session=abc; token=xyz');
     expect(headers.authorization).toBeUndefined();
   });
 
@@ -240,13 +277,7 @@ describe('selectCodeMieProject', () => {
 
   it('throws ConfigurationError when apiUrl is missing', async () => {
     await expect(
-      selectCodeMieProject({ cookies: { session: 'abc' } } as any)
-    ).rejects.toThrow(ConfigurationError);
-  });
-
-  it('throws ConfigurationError when cookies are missing', async () => {
-    await expect(
-      selectCodeMieProject({ apiUrl: 'https://api.example.com' } as any)
+      selectCodeMieProject(cookieAuth({ session: 'abc' }, ''))
     ).rejects.toThrow(ConfigurationError);
   });
 
@@ -266,10 +297,7 @@ describe('selectCodeMieProject', () => {
       }),
     });
 
-    const result = await selectCodeMieProject({
-      apiUrl: 'https://api.example.com',
-      cookies: { session: 'abc' },
-    } as any);
+    const result = await selectCodeMieProject(cookieAuth({ session: 'abc' }, 'https://api.example.com'));
 
     expect(result).toEqual({ project: 'only-project', userEmail: 'test' });
     // Verify console.log was called (interactive UX feedback)
@@ -295,10 +323,7 @@ describe('selectCodeMieProject', () => {
     });
 
     await expect(
-      selectCodeMieProject({
-        apiUrl: 'https://api.example.com',
-        cookies: { session: 'abc' },
-      } as any)
+      selectCodeMieProject(cookieAuth({ session: 'abc' }, 'https://api.example.com'))
     ).rejects.toThrow('No projects found for your account');
   });
 
@@ -318,10 +343,7 @@ describe('selectCodeMieProject', () => {
       }),
     });
 
-    const result = await selectCodeMieProject({
-      apiUrl: 'https://api.example.com',
-      cookies: { session: 'abc' },
-    } as any);
+    const result = await selectCodeMieProject(cookieAuth({ session: 'abc' }, 'https://api.example.com'));
 
     // Only one project after dedup → auto-selected
     expect(result).toEqual({ project: 'shared-project', userEmail: 'test' });
@@ -416,67 +438,112 @@ describe('platform URL resolution from env', () => {
   });
 });
 
-describe('getStoredPlatformCredentials', () => {
+
+describe('resolveSSOAuth', () => {
   const P = 'https://profile.example.com';
   const W = 'https://workspace.example.com';
   const creds = { cookies: { a: 'b' }, apiUrl: `${P}/code-assistant-api` };
+  const jwtCreds = { token: 'jwt-tok', apiUrl: `${W}/code-assistant-api` };
 
-  beforeEach(() => {
-    mockGetStoredCredentials.mockReset();
-  });
+  beforeEach(resetStore);
 
   it('returns credentials found under P with the URL used', async () => {
-    mockGetStoredCredentials.mockResolvedValueOnce(creds);
-    const result = await getStoredPlatformCredentials({ provider: 'ai-run-sso', baseUrl: P });
-    expect(result).toEqual({ credentials: creds, url: P });
-    expect(mockGetStoredCredentials).toHaveBeenCalledWith(P);
+    cookieRecords.set(P, creds);
+    const result = await resolveSSOAuth({ provider: 'ai-run-sso', baseUrl: P });
+    expect(result).toMatchObject({ type: 'cookie', cookies: creds.cookies, apiUrl: creds.apiUrl, url: P });
+    expect(cookieLookups()).toEqual([P]);
   });
 
   it('falls back to W when P misses (split host)', async () => {
-    mockGetStoredCredentials.mockResolvedValueOnce(null).mockResolvedValueOnce(creds);
-    const result = await getStoredPlatformCredentials({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: W });
-    expect(result).toEqual({ credentials: creds, url: W });
-    expect(mockGetStoredCredentials.mock.calls.map(c => c[0])).toEqual([P, W]);
+    cookieRecords.set(W, { ...creds, apiUrl: `${P}/code-assistant-api` });
+    const result = await resolveSSOAuth({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: W });
+    expect(result).toMatchObject({ type: 'cookie', cookies: creds.cookies, url: W });
+    expect(cookieLookups()).toEqual([P, W]);
   });
 
   it('does not probe W when P hits', async () => {
-    mockGetStoredCredentials.mockResolvedValueOnce(creds);
-    await getStoredPlatformCredentials({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: W });
-    expect(mockGetStoredCredentials).toHaveBeenCalledTimes(1);
+    cookieRecords.set(P, creds);
+    await resolveSSOAuth({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: W });
+    expect(cookieLookups()).toEqual([P]);
   });
 
   it('looks up a shared origin only once', async () => {
-    mockGetStoredCredentials.mockResolvedValue(null);
-    const result = await getStoredPlatformCredentials({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: `${P}/` });
+    const result = await resolveSSOAuth({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: `${P}/` });
     expect(result).toBeNull();
-    expect(mockGetStoredCredentials).toHaveBeenCalledTimes(1);
+    expect(cookieLookups()).toHaveLength(1);
   });
 
   it('returns null without lookup when there are no candidates', async () => {
-    const result = await getStoredPlatformCredentials({ provider: 'ai-run-sso' });
+    const result = await resolveSSOAuth({ provider: 'ai-run-sso' });
     expect(result).toBeNull();
-    expect(mockGetStoredCredentials).not.toHaveBeenCalled();
+    expect(cookieLookups()).toEqual([]);
   });
 
   it('never probes the vendor baseUrl for subscription providers', async () => {
-    mockGetStoredCredentials.mockResolvedValue(null);
-    await getStoredPlatformCredentials({
+    await resolveSSOAuth({
       provider: 'anthropic-subscription',
       baseUrl: 'https://api.anthropic.com',
       codeMieUrl: W,
     });
-    expect(mockGetStoredCredentials.mock.calls.map(c => c[0])).toEqual([W]);
+    expect(cookieLookups()).toEqual([W]);
   });
 
   it('resolves from env using the profile baseUrl', async () => {
-    mockGetStoredCredentials.mockResolvedValueOnce(creds);
+    cookieRecords.set(P, creds);
     const env = { CODEMIE_PROFILE_CONFIG: JSON.stringify({ provider: 'ai-run-sso', baseUrl: P }) } as NodeJS.ProcessEnv;
-    const result = await getStoredPlatformCredentialsFromEnv(env);
-    expect(result).toEqual({ credentials: creds, url: P });
+    const result = await resolveSSOAuthFromEnv(env);
+    expect(result).toMatchObject({ type: 'cookie', cookies: creds.cookies, url: P });
+  });
+
+  describe('JWT fallback (cookie-stripping reverse proxy)', () => {
+    it('returns usable SSO cookies without probing the JWT slot', async () => {
+      cookieRecords.set(P, creds);
+      const result = await resolveSSOAuth({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: W });
+      expect(result).toMatchObject({ type: 'cookie', url: P });
+      expect(jwtLookups()).toEqual([P]);
+    });
+
+    it('falls back to a JWT across the URL candidates when no SSO session exists', async () => {
+      // Stored under the workspace URL but issued for the profile host (split host).
+      jwtRecords.set(W, { token: 'jwt-tok', apiUrl: `${P}/code-assistant-api` });
+      const result = await resolveSSOAuth({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: W });
+      expect(result).toMatchObject({ type: 'jwt', token: 'jwt-tok', url: W, apiUrl: `${P}/code-assistant-api` });
+      expect(jwtLookups()).toEqual([P, W]);
+    });
+
+    // Deliberate behaviour change (plan, "Behaviour changes" 1): a JWT now gets the profile-origin filter.
+    it('ignores a JWT issued for another host than the profile', async () => {
+      jwtRecords.set(W, jwtCreds);
+      expect(await resolveSSOAuth({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: W })).toBeNull();
+    });
+
+    it('treats a stored SSO record with empty or unusable cookies as absent and uses the JWT', async () => {
+      cookieRecords.set(P, { cookies: { 'bad\nname': 'x' }, apiUrl: P });
+      jwtRecords.set(P, { token: 'jwt-tok', apiUrl: P });
+      const result = await resolveSSOAuth({ provider: 'ai-run-sso', baseUrl: P });
+      expect(result).toMatchObject({ type: 'jwt', token: 'jwt-tok', url: P });
+    });
+
+    it('treats a stored SSO record without a cookies field as absent instead of throwing', async () => {
+      cookieRecords.set(P, { apiUrl: P });
+      jwtRecords.set(P, { token: 'jwt-tok', apiUrl: P });
+      const result = await resolveSSOAuth({ provider: 'ai-run-sso', baseUrl: P });
+      expect(result).toMatchObject({ type: 'jwt', token: 'jwt-tok', url: P });
+    });
+
+    it('returns null when neither cookies nor a JWT are stored', async () => {
+      expect(await resolveSSOAuth({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: W })).toBeNull();
+    });
+
+    it('resolves a JWT from env using the profile baseUrl', async () => {
+      jwtRecords.set(P, { token: 'jwt-tok', apiUrl: `${P}/code-assistant-api` });
+      const env = { CODEMIE_PROFILE_CONFIG: JSON.stringify({ provider: 'ai-run-sso', baseUrl: P }) } as NodeJS.ProcessEnv;
+      expect(await resolveSSOAuthFromEnv(env)).toMatchObject({ type: 'jwt', token: 'jwt-tok', url: P });
+    });
   });
 });
 
-describe('getStoredAnalyticsCredentials', () => {
+describe('resolveAnalyticsSSOAuth', () => {
   const P = 'https://prod.example.com';
   const W = 'https://preview.example.com';
   const prodCreds = { cookies: { a: 'prod' }, apiUrl: `${P}/code-assistant-api` };
@@ -484,32 +551,30 @@ describe('getStoredAnalyticsCredentials', () => {
   const profileEnv = (provider = 'ai-run-sso') =>
     ({ CODEMIE_PROFILE_CONFIG: JSON.stringify({ provider, baseUrl: P }) }) as NodeJS.ProcessEnv;
 
-  beforeEach(() => {
-    mockGetStoredCredentials.mockReset();
-  });
+  beforeEach(resetStore);
 
   it('uses the profile login without touching the workspace login', async () => {
-    mockGetStoredCredentials.mockResolvedValueOnce(prodCreds);
-    const result = await getStoredAnalyticsCredentials(W, profileEnv());
-    expect(result).toEqual({ credentials: prodCreds, url: P });
-    expect(mockGetStoredCredentials).toHaveBeenCalledTimes(1);
+    cookieRecords.set(P, prodCreds);
+    const result = await resolveAnalyticsSSOAuth(W, profileEnv());
+    expect(result).toMatchObject({ type: 'cookie', cookies: prodCreds.cookies, url: P });
+    expect(cookieLookups()).toEqual([P]);
   });
 
   it('does not borrow another environment\'s workspace login for the profile', async () => {
-    mockGetStoredCredentials.mockImplementation(async (url: string) => (url === W ? previewCreds : null));
-    const result = await getStoredAnalyticsCredentials(W, profileEnv());
+    cookieRecords.set(W, previewCreds);
+    const result = await resolveAnalyticsSSOAuth(W, profileEnv());
     expect(result).toBeNull();
   });
 
   it('accepts a workspace-stored login issued for the profile host (split host)', async () => {
-    mockGetStoredCredentials.mockImplementation(async (url: string) => (url === W ? prodCreds : null));
-    const result = await getStoredAnalyticsCredentials(W, profileEnv());
-    expect(result).toEqual({ credentials: prodCreds, url: W });
+    cookieRecords.set(W, prodCreds);
+    const result = await resolveAnalyticsSSOAuth(W, profileEnv());
+    expect(result).toMatchObject({ type: 'cookie', cookies: prodCreds.cookies, url: W });
   });
 
   it('prefers explicit provider/baseUrl over the env', async () => {
-    mockGetStoredCredentials.mockResolvedValueOnce(prodCreds);
-    const result = await getStoredAnalyticsCredentials(W, {} as NodeJS.ProcessEnv, {
+    cookieRecords.set(P, prodCreds);
+    const result = await resolveAnalyticsSSOAuth(W, {} as NodeJS.ProcessEnv, {
       provider: 'ai-run-sso',
       baseUrl: P,
     });
@@ -517,35 +582,49 @@ describe('getStoredAnalyticsCredentials', () => {
   });
 
   it('stays workspace-only for non-CodeMie providers', async () => {
-    mockGetStoredCredentials.mockResolvedValue(previewCreds);
-    const result = await getStoredAnalyticsCredentials(W, profileEnv('anthropic-subscription'));
-    expect(result).toEqual({ credentials: previewCreds, url: W });
-    expect(mockGetStoredCredentials.mock.calls.map(c => c[0])).toEqual([W]);
+    cookieRecords.set(W, previewCreds);
+    const result = await resolveAnalyticsSSOAuth(W, profileEnv('anthropic-subscription'));
+    expect(result).toMatchObject({ type: 'cookie', cookies: previewCreds.cookies, url: W });
+    expect(cookieLookups()).toEqual([W]);
+  });
+
+  it('falls back to a JWT stored for the profile host', async () => {
+    jwtRecords.set(P, { token: 'jwt-tok', apiUrl: `${P}/code-assistant-api` });
+    const result = await resolveAnalyticsSSOAuth(W, profileEnv());
+    expect(result).toMatchObject({ type: 'jwt', token: 'jwt-tok', url: P });
   });
 });
 
 describe('resolveProjectListAuth — credential host rule (EPMCDME-15411)', () => {
-  beforeEach(() => {
-    mockGetStoredCredentials.mockReset();
-  });
+  beforeEach(resetStore);
 
   it('ai-run-sso: uses only the profile baseUrl credential, never the shared URL', async () => {
-    mockGetStoredCredentials.mockImplementation(async (url: string) =>
-      url.startsWith('https://b.example.com') ? { cookies: { s: 'b' }, apiUrl: 'https://b.example.com' } : null
-    );
+    cookieRecords.set('https://b.example.com', { cookies: { s: 'b' }, apiUrl: 'https://b.example.com' });
     const auth = await resolveProjectListAuth({
       provider: 'ai-run-sso',
       baseUrl: 'https://a.example.com/code-assistant-api',
       codeMieUrl: 'https://b.example.com',
     });
     expect(auth).toBeUndefined();
-    expect(mockGetStoredCredentials.mock.calls.every(([url]) => String(url).startsWith('https://a.example.com'))).toBe(true);
+    expect(cookieLookups().every((url) => url.startsWith('https://a.example.com'))).toBe(true);
   });
 
   it('ai-run-sso: sends the profile cookies to the profile API host', async () => {
-    mockGetStoredCredentials.mockResolvedValue({ cookies: { s: 'a' }, apiUrl: 'https://a.example.com/code-assistant-api' });
+    cookieRecords.set('https://a.example.com/code-assistant-api', {
+      cookies: { s: 'a' },
+      apiUrl: 'https://a.example.com/code-assistant-api',
+    });
     const auth = await resolveProjectListAuth({ provider: 'ai-run-sso', baseUrl: 'https://a.example.com/code-assistant-api' });
-    expect(auth).toEqual({ apiUrl: 'https://a.example.com/code-assistant-api', cookies: { s: 'a' } });
+    expect(auth).toMatchObject({ type: 'cookie', apiUrl: 'https://a.example.com/code-assistant-api', cookies: { s: 'a' } });
+  });
+
+  it('ai-run-sso: lists with the stored JWT when no SSO cookies exist', async () => {
+    jwtRecords.set('https://a.example.com/code-assistant-api', {
+      token: 'jwt-tok',
+      apiUrl: 'https://a.example.com/code-assistant-api',
+    });
+    const auth = await resolveProjectListAuth({ provider: 'ai-run-sso', baseUrl: 'https://a.example.com/code-assistant-api' });
+    expect(auth).toMatchObject({ type: 'jwt', apiUrl: 'https://a.example.com/code-assistant-api', token: 'jwt-tok' });
   });
 
   it('AC11: a JWT profile on host A with a shared URL on host B targets A only', async () => {
@@ -555,28 +634,47 @@ describe('resolveProjectListAuth — credential host rule (EPMCDME-15411)', () =
       codeMieUrl: 'https://b.example.com',
       jwtToken: 'tok',
     });
-    expect(auth).toEqual({ apiUrl: 'https://a.example.com/code-assistant-api', jwtToken: 'tok' });
-    expect(mockGetStoredCredentials).not.toHaveBeenCalled();
+    expect(auth).toMatchObject({
+      type: 'jwt',
+      apiUrl: 'https://a.example.com/code-assistant-api',
+      token: 'tok',
+      source: 'explicit',
+    });
+    expect(cookieLookups()).toEqual([]);
+    expect(jwtLookups()).toEqual([]);
   });
 
   it('JWT without a token has no list auth', async () => {
     expect(await resolveProjectListAuth({ provider: 'bearer-auth', baseUrl: 'https://a.example.com' })).toBeUndefined();
   });
 
-  it('subscription: uses analytics credentials for the resolved CodeMie URL, never the vendor baseUrl', async () => {
-    mockGetStoredCredentials.mockResolvedValue({ cookies: { s: 'c' }, apiUrl: 'https://codemie.example.com/code-assistant-api' });
+  it('subscription: uses stored credentials for the resolved CodeMie URL, never the vendor baseUrl', async () => {
+    cookieRecords.set('https://codemie.example.com', {
+      cookies: { s: 'c' },
+      apiUrl: 'https://codemie.example.com/code-assistant-api',
+    });
     const auth = await resolveProjectListAuth({
       provider: 'anthropic-subscription',
       baseUrl: 'https://api.anthropic.com',
       codeMieUrl: 'https://codemie.example.com',
     });
-    expect(mockGetStoredCredentials).toHaveBeenCalledWith('https://codemie.example.com');
-    expect(auth).toEqual({ apiUrl: 'https://codemie.example.com/code-assistant-api', cookies: { s: 'c' } });
+    expect(cookieLookups()).toEqual(['https://codemie.example.com']);
+    expect(auth).toMatchObject({ type: 'cookie', apiUrl: 'https://codemie.example.com/code-assistant-api', cookies: { s: 'c' } });
+  });
+
+  it('subscription: lists with the JWT stored for the CodeMie URL', async () => {
+    jwtRecords.set('https://codemie.example.com', { token: 'jwt-tok', apiUrl: '' });
+    const auth = await resolveProjectListAuth({
+      provider: 'anthropic-subscription',
+      baseUrl: 'https://api.anthropic.com',
+      codeMieUrl: 'https://codemie.example.com',
+    });
+    expect(jwtLookups()).toEqual(['https://codemie.example.com']);
+    expect(auth).toMatchObject({ type: 'jwt', apiUrl: 'https://codemie.example.com/code-assistant-api', token: 'jwt-tok' });
   });
 
   it('subscription without a CodeMie URL or stored login has no list auth', async () => {
     expect(await resolveProjectListAuth({ provider: 'anthropic-subscription', baseUrl: 'https://api.anthropic.com' })).toBeUndefined();
-    mockGetStoredCredentials.mockResolvedValue(null);
     expect(await resolveProjectListAuth({ provider: 'moonshot-subscription', codeMieUrl: 'https://c.example.com' })).toBeUndefined();
   });
 });
@@ -591,11 +689,27 @@ describe('selectCodeMieProject — bearer token (JWT setup, AC11)', () => {
       statusCode: 200,
       data: JSON.stringify({ username: 'u@example.com', applications: ['only'], applications_admin: [] }),
     });
-    const result = await selectCodeMieProject({ apiUrl: 'https://a.example.com/code-assistant-api', jwtToken: 'tok' });
+    const result = await selectCodeMieProject(explicitJwtAuth('tok', 'https://a.example.com/code-assistant-api'));
     expect(result).toEqual({ project: 'only', userEmail: 'u@example.com' });
     const [url, headers] = mockGetRaw.mock.calls[0] as [string, Record<string, string>];
     expect(url).toBe('https://a.example.com/code-assistant-api/v1/user');
     expect(headers.Authorization ?? headers.authorization).toBe('Bearer tok');
+    expect(headers.cookie ?? headers.Cookie).toBeUndefined();
+  });
+
+  it('lists projects with the bearer token of an SSO login that yielded a JWT', async () => {
+    mockGetRaw.mockResolvedValue({
+      statusCode: 200,
+      data: JSON.stringify({ username: 'u@example.com', applications: ['only'], applications_admin: [] }),
+    });
+    const auth = toSSOAuth(
+      { type: 'jwt', record: { token: 'sso-jwt', apiUrl: 'https://a.example.com/code-assistant-api' } },
+      'https://a.example.com',
+    );
+    const result = await selectCodeMieProject(auth);
+    expect(result).toEqual({ project: 'only', userEmail: 'u@example.com' });
+    const [, headers] = mockGetRaw.mock.calls[0] as [string, Record<string, string>];
+    expect(headers.Authorization ?? headers.authorization).toBe('Bearer sso-jwt');
     expect(headers.cookie ?? headers.Cookie).toBeUndefined();
   });
 });

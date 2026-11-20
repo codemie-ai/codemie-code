@@ -234,6 +234,7 @@ export class MetricsSyncProcessor implements SessionProcessor {
         baseUrl: context.apiBaseUrl,
         cookies: context.cookies,
         apiKey: context.apiKey,
+        jwtToken: context.jwtToken,
         timeout: 30000,
         retryAttempts: context.stopAtFirstFailure ? 0 : 3, // a timer run ends at its first outcome that is not ok
         version: context.version,

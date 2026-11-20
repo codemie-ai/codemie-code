@@ -6,6 +6,8 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { toSSOAuth } from '@/providers/plugins/sso/auth/selection.js';
+import type { SSOAuth } from '@/providers/plugins/sso/auth/types.js';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -62,7 +64,7 @@ async function load() {
 }
 type M = Awaited<ReturnType<typeof load>>;
 
-const credentials = () => h.creds as import('../../../../../../core/types.js').SSOCredentials;
+const credentials = () => h.creds as SSOAuth;
 const identity = (m: M) => m.io.forwarderIdentity(credentials())!;
 const keyOf = (m: M, sid: string) => m.rec.recordKey(identity(m).api_identity, identity(m).owner_hash, sid);
 
@@ -112,7 +114,7 @@ beforeEach(() => {
   for (const k of ['CODEMIE_PROJECT', 'CLAUDE_PROJECT_DIR', 'CODEMIE_SESSION_ID']) delete process.env[k];
   process.env.CODEMIE_HOME = home;
   process.env.OTLP_SEND_MAX_ATTEMPTS = '0';
-  h.creds = { cookies: { codemie_access_token: jwt('dev@example.com') }, apiUrl: 'https://analytics.example.com', timestamp: 0 };
+  h.creds = toSSOAuth({ type: 'cookie', record: { cookies: { codemie_access_token: jwt('dev@example.com') }, apiUrl: 'https://analytics.example.com', timestamp: 0 } }, 'https://analytics.example.com');
   h.cfg.project = 'proj-orig';
   h.be.policy = { status: 200, body: { organizations: ['corp'], version: 'v1', publication_contracts: ['1'] } };
   h.fetch.mockReset();

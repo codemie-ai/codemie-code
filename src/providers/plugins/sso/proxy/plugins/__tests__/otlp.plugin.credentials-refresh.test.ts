@@ -9,6 +9,8 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import type { ProxyContext } from '../../proxy-types.js';
 import type { ProxyHTTPClient } from '../../proxy-http-client.js';
 import type { PluginContext } from '../types.js';
+import type { CredentialRefresher } from '../credential-refresh.js';
+import type { SSOAuth } from '@/providers/plugins/sso/auth/types.js';
 
 const areCredentialsStaleMock = vi.fn();
 const clearCredentialsStaleMock = vi.fn();
@@ -34,6 +36,20 @@ vi.mock('@/utils/logger.js', () => ({
 }));
 
 const { OtlpPlugin } = await import('../otlp.plugin.js');
+const { toSSOAuth } = await import('@/providers/plugins/sso/auth/selection.js');
+
+/**
+ * A stored cookie login as the resolver builds it. The email is set so `withVerifiedOwner` returns
+ * the credential as-is instead of calling `/v1/user`.
+ */
+function cookieAuth(cookies: Record<string, string>): SSOAuth {
+  return toSSOAuth({ type: 'cookie', record: { cookies, apiUrl: 'https://api', email: 'dev@example.com' } }, 'https://api');
+}
+
+/** The shared refresher as sso.proxy.ts wires it; the forwarder only reads its snapshot. */
+function refresherOf(auth: SSOAuth): CredentialRefresher {
+  return { get: () => auth } as unknown as CredentialRefresher;
+}
 
 function fakeResponse(): ServerResponse & { statusCode: number; body: string } {
   const res = {
@@ -76,7 +92,7 @@ describe('OtlpInterceptor — credential refresh', () => {
     areCredentialsStaleMock.mockReturnValue(false);
     const plugin = new OtlpPlugin();
     const interceptor = plugin.createInterceptor({
-      credentials: { cookies: {}, apiUrl: 'https://api' },
+      credentialRefresher: refresherOf(cookieAuth({})),
       config: { targetApiUrl: 'https://api' },
     } as unknown as PluginContext);
 
@@ -88,13 +104,13 @@ describe('OtlpInterceptor — credential refresh', () => {
 
   it('refreshes and clears the stale flag on the next inbound request once credentials go stale', async () => {
     areCredentialsStaleMock.mockReturnValue(true);
-    const freshCreds = { cookies: { codemie_access_token: 'new' }, apiUrl: 'https://api' };
+    const freshCreds = cookieAuth({ codemie_access_token: 'new' });
     resolveFreshCredentialsMock.mockResolvedValue(freshCreds);
     const config = { targetApiUrl: 'https://api', syncCodeMieUrl: 'https://org.example.com' };
 
     const plugin = new OtlpPlugin();
     const interceptor = plugin.createInterceptor({
-      credentials: { cookies: {}, apiUrl: 'https://api' },
+      credentialRefresher: refresherOf(cookieAuth({})),
       config,
     } as unknown as PluginContext);
 
@@ -133,7 +149,7 @@ describe('OtlpInterceptor — credential refresh', () => {
 
   it("tick() retries stale credentials and forwards sessions with the refreshed ones", async () => {
     areCredentialsStaleMock.mockReturnValue(true);
-    const freshCreds = { cookies: { codemie_access_token: 'new' }, apiUrl: 'https://api' };
+    const freshCreds = cookieAuth({ codemie_access_token: 'new' });
     resolveFreshCredentialsMock.mockResolvedValue(freshCreds);
     listSessionIdsMock.mockResolvedValue(['s1']);
     const config = { targetApiUrl: 'https://api' };
@@ -151,7 +167,7 @@ describe('OtlpInterceptor — credential refresh', () => {
 });
 
 describe('OtlpInterceptor — bounded shutdown flush', () => {
-  const credentials = { cookies: {}, apiUrl: 'https://api' };
+  const credentials = cookieAuth({ session: 'c' });
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -168,7 +184,7 @@ describe('OtlpInterceptor — bounded shutdown flush', () => {
     listSessionIdsMock.mockImplementation(
       () => new Promise((resolve) => setTimeout(() => resolve(['s1']), 10))
     );
-    const interceptor = new OtlpPlugin().createInterceptor({ credentials } as unknown as PluginContext);
+    const interceptor = new OtlpPlugin().createInterceptor({ credentialRefresher: refresherOf(credentials) } as unknown as PluginContext);
 
     const stopped = interceptor.onProxyStop!();
     await vi.advanceTimersByTimeAsync(10);
@@ -180,7 +196,7 @@ describe('OtlpInterceptor — bounded shutdown flush', () => {
 
   it('gives up on a flush that never settles at 5000 ms', async () => {
     listSessionIdsMock.mockImplementation(() => new Promise(() => {}));
-    const interceptor = new OtlpPlugin().createInterceptor({ credentials } as unknown as PluginContext);
+    const interceptor = new OtlpPlugin().createInterceptor({ credentialRefresher: refresherOf(credentials) } as unknown as PluginContext);
 
     let resolved = false;
     void interceptor.onProxyStop!().then(() => {

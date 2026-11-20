@@ -28,7 +28,7 @@ vi.mock('../opencode.session.js', () => ({
 }));
 
 const mockSync = vi.fn();
-const mockGetStoredCredentials = vi.fn();
+const mockRetrieveSSOCredentials = vi.fn();
 
 vi.mock('../../../../providers/plugins/sso/session/SessionSyncer.js', () => ({
   SessionSyncer: class {
@@ -36,9 +36,14 @@ vi.mock('../../../../providers/plugins/sso/session/SessionSyncer.js', () => ({
   },
 }));
 
-vi.mock('../../../../providers/plugins/sso/sso.auth.js', () => ({
-  CodeMieSSO: class {
-    getStoredCredentials = mockGetStoredCredentials;
+// The SSO resolver reads the per-URL cookie slot, then the JWT slot (always empty here).
+vi.mock('../../../../utils/security.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../../utils/security.js')>()),
+  CredentialStore: {
+    getInstance: () => ({
+      retrieveSSOCredentials: mockRetrieveSSOCredentials,
+      retrieveJWTCredentials: async () => null,
+    }),
   },
 }));
 
@@ -77,6 +82,7 @@ describe('opencode.incremental-sync', () => {
     // The upload path lazily imports the credential helper; load it once up front so
     // the fake-timer ticks below don't have to wait for real module I/O.
     await import('../../../../providers/core/codemie-auth-helpers.js');
+    await import('../../../../providers/plugins/sso/auth/index.js');
   });
 
   beforeEach(() => {
@@ -86,7 +92,7 @@ describe('opencode.incremental-sync', () => {
     locateSessionTranscript.mockReset();
     processSession.mockReset();
     mockSync.mockReset();
-    mockGetStoredCredentials.mockReset();
+    mockRetrieveSSOCredentials.mockReset();
     delete process.env.CODEMIE_OPENCODE_SYNC_ENABLED;
     delete process.env.CODEMIE_OPENCODE_SYNC_INTERVAL_MS;
     testCounter++;
@@ -271,7 +277,7 @@ describe('opencode.incremental-sync', () => {
       process.env.CODEMIE_OPENCODE_SYNC_INTERVAL_MS = '5000';
       locateSessionTranscript.mockResolvedValue({ transcript: '/tmp/opencode.db', sessionIds: ['ses_run'] });
       processSession.mockResolvedValue({ success: true, processors: {}, totalRecords: 1, failedProcessors: [] });
-      mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc' } });
+      mockRetrieveSSOCredentials.mockResolvedValue({ cookies: { session: 'abc' } });
       mockSync.mockRejectedValue(new Error('network failure'));
 
       const { startOpenCodeIncrementalSync } = await import('../opencode.incremental-sync.js');
@@ -292,7 +298,7 @@ describe('opencode.incremental-sync', () => {
       process.env.CODEMIE_OPENCODE_SYNC_INTERVAL_MS = '5000';
       locateSessionTranscript.mockResolvedValue({ transcript: '/tmp/opencode.db', sessionIds: ['ses_run'] });
       processSession.mockResolvedValue({ success: true, processors: {}, totalRecords: 1, failedProcessors: [] });
-      mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
+      mockRetrieveSSOCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
       mockSync.mockResolvedValue({ success: true, message: 'ok' });
 
       const { startOpenCodeIncrementalSync } = await import('../opencode.incremental-sync.js');
@@ -304,7 +310,7 @@ describe('opencode.incremental-sync', () => {
       } as never);
 
       await runTicks(5000, 1);
-      expect(mockGetStoredCredentials).toHaveBeenCalledWith('https://codemie.example.com');
+      expect(mockRetrieveSSOCredentials).toHaveBeenCalledWith('https://codemie.example.com');
       expect(mockSync).toHaveBeenCalledWith(
         currentSessionId,
         expect.objectContaining({
@@ -322,7 +328,7 @@ describe('opencode.incremental-sync', () => {
       process.env.CODEMIE_OPENCODE_SYNC_INTERVAL_MS = '5000';
       locateSessionTranscript.mockResolvedValue({ transcript: '/tmp/opencode.db', sessionIds: ['ses_run'] });
       processSession.mockResolvedValue({ success: true, processors: {}, totalRecords: 1, failedProcessors: [] });
-      mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
+      mockRetrieveSSOCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
       mockSync.mockResolvedValue({ success: true, message: 'ok' });
 
       const { startOpenCodeIncrementalSync } = await import('../opencode.incremental-sync.js');
@@ -336,12 +342,12 @@ describe('opencode.incremental-sync', () => {
       const context = mockSync.mock.calls[0][1];
       expect(typeof context.credentialsSuperseded).toBe('function');
 
-      const readsBefore = mockGetStoredCredentials.mock.calls.length;
-      mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'newer' } });
+      const readsBefore = mockRetrieveSSOCredentials.mock.calls.length;
+      mockRetrieveSSOCredentials.mockResolvedValue({ cookies: { session: 'newer' } });
       await expect(context.credentialsSuperseded('session=abc123')).resolves.toBe(true);
       await expect(context.credentialsSuperseded('session=newer')).resolves.toBe(false);
-      expect(mockGetStoredCredentials.mock.calls.length).toBeGreaterThan(readsBefore);
-      expect(mockGetStoredCredentials.mock.calls.at(-1)).toEqual(['https://codemie.example.com']);
+      expect(mockRetrieveSSOCredentials.mock.calls.length).toBeGreaterThan(readsBefore);
+      expect(mockRetrieveSSOCredentials.mock.calls.at(-1)).toEqual(['https://codemie.example.com']);
     });
 
     it('uploads with the clientType returned by buildContext() (e.g. codemie-opencode-acp)', async () => {
@@ -352,7 +358,7 @@ describe('opencode.incremental-sync', () => {
       process.env.CODEMIE_OPENCODE_SYNC_INTERVAL_MS = '5000';
       locateSessionTranscript.mockResolvedValue({ transcript: '/tmp/opencode.db', sessionIds: ['ses_run'] });
       processSession.mockResolvedValue({ success: true, processors: {}, totalRecords: 1, failedProcessors: [] });
-      mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
+      mockRetrieveSSOCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
       mockSync.mockResolvedValue({ success: true, message: 'ok' });
 
       const { startOpenCodeIncrementalSync } = await import('../opencode.incremental-sync.js');
@@ -389,7 +395,7 @@ describe('opencode.incremental-sync', () => {
 
       await runTicks(5000, 1);
       expect(processSession.mock.calls.length).toBeGreaterThanOrEqual(1);
-      expect(mockGetStoredCredentials).not.toHaveBeenCalled();
+      expect(mockRetrieveSSOCredentials).not.toHaveBeenCalled();
       expect(mockSync).not.toHaveBeenCalled();
     });
 
@@ -397,7 +403,7 @@ describe('opencode.incremental-sync', () => {
       process.env.CODEMIE_OPENCODE_SYNC_INTERVAL_MS = '5000';
       locateSessionTranscript.mockResolvedValue({ transcript: '/tmp/opencode.db', sessionIds: ['ses_run'] });
       processSession.mockResolvedValue({ success: true, processors: {}, totalRecords: 1, failedProcessors: [] });
-      mockGetStoredCredentials.mockResolvedValue(null);
+      mockRetrieveSSOCredentials.mockResolvedValue(null);
 
       const { startOpenCodeIncrementalSync } = await import('../opencode.incremental-sync.js');
       startOpenCodeIncrementalSync({

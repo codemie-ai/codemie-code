@@ -37,10 +37,14 @@ vi.mock('@/utils/logger.js', () => ({
   },
 }));
 
-vi.mock('@/providers/core/codemie-auth-helpers.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/providers/core/codemie-auth-helpers.js')>()),
-  getStoredAnalyticsCredentials: vi.fn(async () => ({ credentials: { cookies: { session: 'abc' } } })),
-}));
+vi.mock('@/providers/plugins/sso/auth/index.js', async (importOriginal) => {
+  const { toSSOAuth } = await import('@/providers/plugins/sso/auth/selection.js');
+  return {
+    ...(await importOriginal<typeof import('@/providers/plugins/sso/auth/index.js')>()),
+    resolveAnalyticsSSOAuth: vi.fn(async () =>
+      toSSOAuth({ type: 'cookie', record: { cookies: { session: 'abc' }, apiUrl: 'https://codemie.example.com/code-assistant-api' } }, 'https://codemie.example.com')),
+  };
+});
 
 /** The legacy gate as the start pass sees it: the real one unless a test names the native ids that wait on the backend. */
 const gate = vi.hoisted(() => ({ waiting: new Set<string>() }));

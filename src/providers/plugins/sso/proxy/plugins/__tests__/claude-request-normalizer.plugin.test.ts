@@ -14,12 +14,15 @@ import { PluginContext, ProxyInterceptor } from '../types.js';
 import { ProxyContext } from '../../proxy-types.js';
 import { logger } from '../../../../../../utils/logger.js';
 
-const { fetchCodeMieLlmModels, getStoredPlatformCredentials } = vi.hoisted(() => ({
+const { fetchCodeMieLlmModels, resolveSSOAuth } = vi.hoisted(() => ({
   fetchCodeMieLlmModels: vi.fn(),
-  getStoredPlatformCredentials: vi.fn(),
+  resolveSSOAuth: vi.fn(),
 }));
 vi.mock('../../../sso.http-client.js', () => ({ fetchCodeMieLlmModels }));
-vi.mock('@/providers/core/codemie-auth-helpers.js', () => ({ getStoredPlatformCredentials }));
+vi.mock('@/providers/plugins/sso/auth/resolver.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/providers/plugins/sso/auth/resolver.js')>()),
+  resolveSSOAuth,
+}));
 vi.mock('@/utils/analytics-auth-status.js', () => ({
   getAnalyticsAuthStatus: vi.fn().mockResolvedValue(null),
 }));
@@ -28,6 +31,7 @@ vi.mock('@/providers/plugins/sso/sso.detached-login.js', () => ({
 }));
 
 import { CredentialRefresher } from '../credential-refresh.js';
+import { toSSOAuth } from '@/providers/plugins/sso/auth/selection.js';
 
 /** Helper: create a minimal PluginContext */
 function createPluginContext(clientType?: string, model?: string): PluginContext {
@@ -67,7 +71,7 @@ describe('ClaudeRequestNormalizerPlugin', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    getStoredPlatformCredentials.mockResolvedValue(null);
+    resolveSSOAuth.mockResolvedValue(null);
     plugin = new ClaudeRequestNormalizerPlugin();
   });
 
@@ -832,7 +836,7 @@ describe('ClaudeRequestNormalizerPlugin', () => {
       vi.useFakeTimers();
       fetchCodeMieLlmModels.mockResolvedValue([{ deployment_name: 'claude-opus-5-deployment', enabled: true }]);
 
-      const credentials = { cookies: { auth: 'stale-cookie' }, apiUrl: 'https://api.anthropic.com' } as never;
+      const credentials = toSSOAuth({ type: 'cookie', record: { cookies: { auth: 'stale-cookie' }, apiUrl: 'https://api.anthropic.com' } }, 'https://api.anthropic.com');
       const context: PluginContext = {
         ...createPluginContext('claude-desktop'),
         credentials,
@@ -850,10 +854,9 @@ describe('ClaudeRequestNormalizerPlugin', () => {
 
       // A browser re-login completed; advance past both the credential-refresh throttle (5s)
       // and the model-cache TTL (10min) so the next request's loadModels() call re-fetches.
-      getStoredPlatformCredentials.mockResolvedValueOnce({
-        credentials: { cookies: { auth: 'fresh-cookie' }, apiUrl: 'https://api.anthropic.com' },
-        url: 'https://api.anthropic.com',
-      });
+      resolveSSOAuth.mockResolvedValueOnce(
+        toSSOAuth({ type: 'cookie', record: { cookies: { auth: 'fresh-cookie' }, apiUrl: 'https://api.anthropic.com' } }, 'https://api.anthropic.com')
+      );
       await vi.advanceTimersByTimeAsync(11 * 60 * 1000);
       await interceptor.onRequest!(createProxyContext({ model: 'claude-opus-5', messages: [] }));
 
@@ -867,7 +870,7 @@ describe('ClaudeRequestNormalizerPlugin', () => {
       // always built from `credentials` regardless of type, so a JWT-only profile still gets it.
       fetchCodeMieLlmModels.mockResolvedValue([{ deployment_name: 'claude-opus-5-deployment', enabled: true }]);
 
-      const jwtCredentials = { token: 'jwt-token', apiUrl: 'https://api.anthropic.com' } as never;
+      const jwtCredentials = toSSOAuth({ type: 'jwt', record: { token: 'jwt-token', apiUrl: 'https://api.anthropic.com' } }, 'https://api.anthropic.com');
       const context: PluginContext = {
         ...createPluginContext('claude-desktop'),
         credentials: jwtCredentials,

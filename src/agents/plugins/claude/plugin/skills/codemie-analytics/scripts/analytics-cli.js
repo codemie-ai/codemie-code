@@ -258,7 +258,7 @@ function resolveAuth() {
     return null;
   }
 
-  // Cookie-only credentials have a synthetic expiresAt; see effectiveExpiresAt in src/providers/plugins/sso/sso.auth.ts
+  // Cookie-only credentials have a synthetic expiresAt; see recordExpiresAt in src/providers/plugins/sso/auth/selection.ts
   if (credentials.cookies.codemie_access_token && credentials.expiresAt && Date.now() > credentials.expiresAt) {
     process.stderr.write('[analytics-cli] SSO credentials expired. Run `codemie setup` to re-authenticate.\n');
     return null;

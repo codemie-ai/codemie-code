@@ -6,6 +6,7 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { toSSOAuth } from '@/providers/plugins/sso/auth/selection.js';
 import { mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -34,7 +35,7 @@ vi.mock('@/utils/logger.js', () => ({ logger: { debug: vi.fn(), info: vi.fn(), w
 
 const SESSION = 'sess-r3';
 const API = 'https://api.example.com/code-assistant-api';
-const credentials = { cookies: { _oauth2_proxy: 'cookie-A' }, apiUrl: API, email: 'a@example.com' };
+const credentials = toSSOAuth({ type: 'cookie', record: { cookies: { _oauth2_proxy: 'cookie-A' }, apiUrl: API, email: 'a@example.com' } }, API);
 const T0 = Date.UTC(2026, 10, 3, 9);
 const MIN = 60_000;
 const DAY = 24 * 60 * MIN;

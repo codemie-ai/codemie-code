@@ -1,7 +1,7 @@
 import { readState } from '@/cli/commands/proxy/daemon-manager.js';
-import type { SSOCredentials } from '@/providers/core/types.js';
 import { withVerifiedOwner } from '@/providers/core/credential-owner.js';
-import { CodeMieSSO } from '@/providers/plugins/sso/sso.auth.js';
+import { resolveSSOAuthForUrl } from '@/providers/plugins/sso/auth/index.js';
+import type { SSOAuth } from '@/providers/plugins/sso/auth/types.js';
 import { logger } from '@/utils/logger.js';
 
 /**
@@ -12,22 +12,21 @@ import { logger } from '@/utils/logger.js';
  * first, then the target API credentials (`syncCredentials || credentials`). Daemon state
  * carries both URLs; `inspect-desktop.ts` uses the same `syncCodeMieUrl || targetUrl` pairing.
  * Keep the three in step. Only SSO is reachable here: the OTLP daemon is spawned without
- * `--auth-method`, so it always runs as `sso`.
+ * `--auth-method`, so it always runs as `sso`. Both stored SSO credential types resolve here:
+ * cookies, and the JWT a reverse proxy in front of the backend issued instead.
  *
- * Side effect: `getStoredCredentials` clears expired SSO credentials, as it does at daemon start.
+ * Side effect: the resolver clears expired SSO credentials, as it does at daemon start.
  *
  * Carries the signed-in email (`withVerifiedOwner`) so oauth2-proxy logins have an owner.
  *
  * Never throws; `null` makes identity fall through to the git, codemie_cli and os tiers.
  */
-export async function resolveHookCredentials(): Promise<SSOCredentials | null> {
+export async function resolveHookCredentials(): Promise<SSOAuth | null> {
   try {
     const state = await readState();
-    const sso = new CodeMieSSO();
-    const syncCredentials = state?.syncCodeMieUrl ? await sso.getStoredCredentials(state.syncCodeMieUrl) : null;
-    const credentials =
-      syncCredentials ?? (state?.targetUrl ? await sso.getStoredCredentials(state.targetUrl) : null);
-    return credentials ? await withVerifiedOwner(credentials) : null;
+    const syncAuth = state?.syncCodeMieUrl ? await resolveSSOAuthForUrl(state.syncCodeMieUrl) : null;
+    const auth = syncAuth ?? (state?.targetUrl ? await resolveSSOAuthForUrl(state.targetUrl) : null);
+    return auth ? await withVerifiedOwner(auth) : null;
   } catch (error) {
     logger.debug(`[hook-credentials] credential lookup failed: ${error instanceof Error ? error.message : String(error)}`);
     return null;

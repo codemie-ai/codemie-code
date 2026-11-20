@@ -45,7 +45,7 @@ The CodeMie Proxy is a **plugin-based HTTP streaming proxy** that sits between A
 
 - ✅ **KISS (Keep It Simple)**: Core does ONE thing - forwards HTTP with streaming
 - ✅ **SOLID**: Single Responsibility, Open/Closed via plugins, Dependency Injection
-- ✅ **Zero Buffering**: True HTTP streaming with no body buffering (buffering is an opt-in exception for a few auth/reasoning-state hooks, see §6.5 and §6.9)
+- ✅ **Zero Buffering**: True HTTP streaming with no body buffering (buffering is an opt-in exception for a few auth/reasoning-state hooks, see §6.1 and §6.8)
 - ✅ **Plugin-Based**: Core is stable, features added via plugins
 - ✅ **Fail-Safe**: Plugin failures don't break proxy flow
 
@@ -71,7 +71,7 @@ The CodeMie Proxy is a **plugin-based HTTP streaming proxy** that sits between A
 │  │  [3]   MCP Auth               → MCP OAuth proxy & URL rewrite│
 │  │  [5]   Endpoint Blocker       → block unwanted endpoints early│
 │  │  [7]   Gateway Key            → validate local daemon bearer key│
-│  │  [10]  SSO Auth / JWT Auth    → Inject cookies / bearer token│
+│  │  [10]  Auth Injection         → Inject cookies / bearer token│
 │  │  [14]  Claude/Kimi/Codex Normalizers → per-agent body fixes │
 │  │  [15]  Request Sanitizer      → strip unsupported reasoning params│
 │  │  [16]  Codex/Copilot Encrypted-Content Sanitizers → reasoning replay retry│
@@ -198,7 +198,7 @@ The CodeMie Proxy is a **plugin-based HTTP streaming proxy** that sits between A
 **Plugin Priority Levels** (current, see §6 for the full plugin list):
 
 - **0-3**: MCP protocol handling (MCP Auth: 3)
-- **4-10**: Endpoint blocking, gateway/local auth, and upstream authentication (Endpoint Blocker: 5, Gateway Key: 7, SSO Auth: 10, JWT Auth: 10)
+- **4-10**: Endpoint blocking, gateway/local auth, and upstream authentication (Endpoint Blocker: 5, Gateway Key: 7, Auth Injection: 10)
 - **11-19**: Per-agent request normalization and sanitization (Claude/Kimi/Codex Normalizers: 14, Request Sanitizer: 15, Codex/Copilot Encrypted-Content Sanitizers: 16, VS Code Request Normalizer: 17)
 - **20-50**: Header manipulation and observability (Header Injection: 20, Logging: 50)
 - **100**: Session sync (SSO Session Sync: 100)
@@ -366,7 +366,7 @@ Detailed Flow:
    │   (GatewayKeyPlugin returning a 401 before auth injection runs); any
    │   plugin returning false here falls through to onRequest() below
    ├─ Run onRequest() hooks (priority order), e.g.:
-   │   ├─ SSOAuthPlugin / JWTAuthPlugin: inject cookies / bearer token
+   │   ├─ AuthInjectionPlugin: inject the resolved SSO credential (cookies / bearer token)
    │   ├─ Claude/Kimi/Codex request normalizers: fix up model-specific body fields
    │   ├─ RequestSanitizerPlugin: strip unsupported reasoning params
    │   ├─ Codex/Copilot encrypted-content sanitizers: forward reasoning state as-is
@@ -445,9 +445,9 @@ Benefits:
 - Real-time data delivery
 
 Exceptions (deliberate, narrow buffering):
-- MCP Auth buffers small JSON auth-metadata responses to rewrite embedded URLs (§6.5)
+- MCP Auth buffers small JSON auth-metadata responses to rewrite embedded URLs (§6.1)
 - Codex/Copilot encrypted-content sanitizers buffer a response only after detecting a
-  reasoning-state replay rejection, to retry with state stripped (§6.9)
+  reasoning-state replay rejection, to retry with state stripped (§6.8)
 ```
 
 ---
@@ -559,32 +559,25 @@ It implements `handleRequest`, not `onRequest`: clients send these requests with
 
 **Hook used**: `handleRequest`, not `onRequest` — this plugin runs in the earlier full-bypass phase (§4.1) so an invalid key is rejected (401) before any auth-injection or normalization plugin sees the request. On a valid key it returns `false` and the request falls through to the normal `onRequest` pipeline.
 
-### 6.4 SSO Auth Plugin
+### 6.4 Auth Injection Plugin
 
-**Priority**: 10 (must run early, alongside JWT Auth)
-**File**: `sso-auth.plugin.ts`
+**Priority**: 10 (must run early)
+**File**: `auth-injection.plugin.ts` (id `@codemie/proxy-auth`)
 
-**Purpose**: Inject SSO cookies into requests for enterprise authentication
+**Purpose**: One interceptor for every upstream credential type. It replaces the former separate SSO-cookie and JWT-bearer plugins; the SSO auth module (`src/providers/plugins/sso/auth/`) is the only place that decides whether the credential is cookies or a JWT.
 
 **Behavior**:
 
-- Reads cookies from PluginContext credentials
-- Builds Cookie header from key-value pairs
-- Only runs when SSO credentials present
-- Executes in onRequest() hook
+- Calls the shared `CredentialRefresher.refresh()` on every request, which returns the current `SSOAuth` (throttled re-read of the credential store, so a re-login that changed the credential type reaches live requests without a proxy restart)
+- Applies `SSOAuth.headers` (a `cookie` header for cookies, an `authorization: Bearer ...` header for a JWT) to the request and records the credential on `context.sentAuth`, so later hooks can tell which credential a rejected request carried
+- Rejects an expired credential locally only when `source: 'explicit'` (`--jwt-token`, `CODEMIE_JWT_TOKEN`, the bearer-auth profile's token; nothing can rotate those). A store-sourced login is sent upstream even when expired, so the server's rejection drives `SSOSessionExpiryPlugin`'s re-login
+- Registers a no-op interceptor when no credential refresher exists (non-SSO providers)
+- Executes in the `onRequest()` hook
 
 **Architecture**:
 
-- Single responsibility: Cookie injection
-- No state maintained between requests
-- Fails if credentials missing
-
-### 6.5 JWT Auth Plugin
-
-**Priority**: 10 (alternative to SSO Auth — mutually exclusive per `ProxyConfig.authMethod`)
-**File**: `jwt-auth.plugin.ts`
-
-**Purpose**: Injects a Bearer `Authorization` header from a JWT token (CLI arg, `CODEMIE_JWT_TOKEN` env var, or credential store) instead of SSO cookies, for the `authMethod: 'jwt'` path.
+- Single responsibility: header injection; no branching on credential type outside the SSO auth module's own output (`SSOAuth.headers`) apart from logging
+- No per-request state beyond the refresher's cache
 
 ### 6.6 Per-Agent Request Normalizers
 
@@ -698,7 +691,7 @@ On `/v1/metrics` the proxy does not inject `X-CodeMie-Client`, `X-CodeMie-Reposi
 - ✅ **Unified Orchestration**: Sessions are discovered and read once, then handed to multiple pluggable processors (metrics, conversations) — zero duplicated I/O
 - ✅ **Agent-Agnostic**: Adapters support Claude, Gemini, and others behind a common interface
 - ✅ **Session-Level Sync**: Plugin is session-scoped (syncs only current session); other sessions' stranded / undelivered records are delivered by the wrapper's start pass through this launch's own send path, same CodeMie host only
-- ✅ **SSO-Only Operation**: Only runs when credentials are SSO cookies (guards against JWT-only sessions)
+- ✅ **Credential-Agnostic**: Runs for any resolved SSO credential (cookies or JWT); the refresher supplies whichever type the store holds now
 - ✅ **Opt-Out via createInterceptor()**: Throws `ConfigurationError` (not a separate flag) when session ID, SSO credentials, client type, or sync-enabled config is missing — the plugin simply isn't registered for that session
 
 #### 6.12.2 Architecture
@@ -1035,8 +1028,7 @@ src/providers/plugins/sso/proxy/
     ├── mcp-auth.plugin.ts                             # priority 3
     ├── endpoint-blocker.plugin.ts                     # priority 5
     ├── gateway-key.plugin.ts                          # priority 7
-    ├── sso-auth.plugin.ts                             # priority 10
-    ├── jwt-auth.plugin.ts                             # priority 10
+    ├── auth-injection.plugin.ts                       # priority 10
     ├── claude-request-normalizer.plugin.ts            # priority 14
     ├── kimi-request-normalizer.plugin.ts               # priority 14
     ├── codex-request-normalizer.plugin.ts              # priority 14
@@ -1308,7 +1300,7 @@ src/providers/plugins/sso/session/
 **Solution**: Re-authenticate with auth command
 
 **Problem**: Session sync not working
-**Diagnosis**: Check plugin enabled in config/env; confirm credentials are SSO (not JWT)
+**Diagnosis**: Check plugin enabled in config/env; confirm an SSO login exists (cookies or JWT) for the session's CodeMie URL
 **Solution**: Enable via `CODEMIE_SESSION_SYNC_ENABLED` or `profiles[name].session.sync.enabled`
 
 **Problem**: Daemon restarts repeatedly / marked unhealthy

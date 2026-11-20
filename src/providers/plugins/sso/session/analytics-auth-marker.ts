@@ -22,7 +22,9 @@ export interface RejectedCredentials {
   cookies?: string;
   /** API key the rejected request carried (localhost development) */
   apiKey?: string;
-  /** Whether a newer sign-in replaced `cookies`; absent means "never superseded" */
+  /** JWT bearer token the rejected request carried (reverse-proxy-stripped-cookies fallback) */
+  jwtToken?: string;
+  /** Whether a newer sign-in replaced `cookies` (or `jwtToken`); absent means "never superseded" */
   credentialsSuperseded?: CredentialsSupersededCheck;
 }
 
@@ -33,7 +35,7 @@ interface SupersededAnswer {
 }
 
 /**
- * Answers per check callback and sent cookie header. Keyed by the callback so clients that share one
+ * Answers per check callback and sent auth value. Keyed by the callback so clients that share one
  * (a client per sync pass, rebuilt over the same context) share its answers too, and the entries are
  * released with the callback.
  */
@@ -49,7 +51,7 @@ async function askSuperseded(check: CredentialsSupersededCheck, sent: string): P
 }
 
 /**
- * Whether a newer sign-in replaced the cookies that were sent; never throws. The check reads the
+ * Whether a newer sign-in replaced the cookies or token that were sent; never throws. The check reads the
  * credential store, and a sync pass can fail many requests, so failures running together share one
  * in-flight check. Only a true answer is kept for the TTL: it cannot turn false again, while a false
  * one goes stale the moment a sign-in finishes, so it is dropped as soon as it settles.
@@ -84,18 +86,19 @@ async function wasSuperseded(check: CredentialsSupersededCheck, sent: string): P
 /**
  * Writes the analytics invalid-auth marker for a credential rejection, unless the rejection says
  * nothing about the stored credentials: the request carried none (an unreadable store looks the
- * same as an empty one), or a newer sign-in already replaced the cookies it carried.
+ * same as an empty one), or a newer sign-in already replaced the credential it carried.
  * Resolves true when the marker was written.
  */
 export async function markAuthInvalidUnlessSuperseded(rejected: RejectedCredentials): Promise<boolean> {
-  const { reason, baseUrl, cookies, apiKey, credentialsSuperseded } = rejected;
+  const { reason, baseUrl, cookies, apiKey, jwtToken, credentialsSuperseded } = rejected;
 
   if (!apiKey) {
-    if (!cookies) {
+    if (!cookies && !jwtToken) {
       logger.debug('[analytics-auth-marker] The rejected request carried no credentials; not marking analytics auth invalid');
       return false;
     }
-    if (credentialsSuperseded && await wasSuperseded(credentialsSuperseded, cookies)) {
+    const sent = cookies || jwtToken;
+    if (sent && credentialsSuperseded && await wasSuperseded(credentialsSuperseded, sent)) {
       logger.debug('[analytics-auth-marker] Credentials were replaced by a newer sign-in; not marking analytics auth invalid');
       return false;
     }

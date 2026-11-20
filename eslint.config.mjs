@@ -2,6 +2,9 @@ import eslint from '@eslint/js';
 import tseslint from '@typescript-eslint/eslint-plugin';
 import tsparser from '@typescript-eslint/parser';
 
+const SSO_AUTH_MESSAGE =
+  'Resolve SSO credentials via @/providers/plugins/sso/auth (resolveSSOAuth & co); do not inspect credential shape outside the SSO auth module.';
+
 export default [
   eslint.configs.recommended,
   // Test files without project requirement (must come first to match before src/**/*.ts)
@@ -70,6 +73,33 @@ export default [
       'no-useless-catch': 'warn',
       'no-case-declarations': 'warn',
       'no-useless-escape': 'warn',
+    },
+  },
+  // SSO credential shape is decided in one place. Everything outside the SSO auth module resolves
+  // credentials through `resolveSSOAuth` & co instead of touching the store or sniffing the shape.
+  // Allowed: src/utils/security.ts (the credential store), the SSO auth module, the JWT provider
+  // (it owns bearer-auth profile tokens) and tests.
+  {
+    files: ['src/**/*.ts'],
+    ignores: [
+      'src/utils/security.ts',
+      'src/providers/plugins/sso/auth/**',
+      'src/providers/plugins/jwt/**',
+      'src/**/*.test.ts',
+      '**/__tests__/**',
+    ],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'CallExpression[callee.property.name=/^(retrieve|store|clear)(SSO|JWT)Credentials$/]',
+          message: SSO_AUTH_MESSAGE,
+        },
+        {
+          selector: "BinaryExpression[operator='in'][left.value=/^(cookies|token|jwtToken)$/]",
+          message: SSO_AUTH_MESSAGE,
+        },
+      ],
     },
   },
   // Pi loads this asset in its own process, where a syntax error makes Pi exit(1) and

@@ -5,6 +5,7 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { toSSOAuth } from '@/providers/plugins/sso/auth/selection.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -171,7 +172,7 @@ describe('evidence header serialization', () => {
 
 describe('hourly re-probe while held on organization_encoding_unsupported', () => {
   const ns = { api_identity: 'https://a.example.com/api', owner_hash: 'b'.repeat(64) };
-  const creds = { cookies: { codemie_access_token: 'x' }, apiUrl: 'https://a.example.com/api' } as never;
+  const creds = toSSOAuth({ type: 'cookie', record: { cookies: { codemie_access_token: 'x' }, apiUrl: 'https://a.example.com/api' } }, 'https://a.example.com/api');
   const T0 = 1_800_000_000_000;
   let home: string;
   let saved: string | undefined;

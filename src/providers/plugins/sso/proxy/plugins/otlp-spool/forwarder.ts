@@ -2,7 +2,7 @@ import { rawProjectHeader } from '@/utils/header-value.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import type { ClassResult } from '@/agents/core/evidence/classify.js';
-import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
+import type { SSOAuth } from '../../../auth/index.js';
 import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
 import {
   OTEL_STREAMS,
@@ -62,13 +62,10 @@ async function postToBackend(
   url: string,
   body: string | Buffer,
   contentType: string,
-  credentials: SSOCredentials | JWTCredentials,
+  credentials: SSOAuth,
   extra: Record<string, string>
 ): Promise<WireResponse> {
   const headers = authHeadersFor(credentials);
-  if (!headers) {
-    throw new Error('Unsupported credential type');
-  }
   Object.assign(headers, extra);
   headers['Content-Type'] = contentType;
 
@@ -160,7 +157,7 @@ interface SendRequest {
   url: string;
   body: string | Buffer;
   contentType: string;
-  credentials: SSOCredentials | JWTCredentials;
+  credentials: SSOAuth;
   /** Session-bound project, for the pre-send check (and the legacy Project header). */
   project: string;
   range: { cursor: number; end: number; filtered: boolean };
@@ -385,7 +382,7 @@ async function verifiedHookPrefix(
 async function forwardHooks(
   sessionId: string,
   baseUrl: string,
-  credentials: SSOCredentials | JWTCredentials,
+  credentials: SSOAuth,
   evidence?: EvidenceContext,
   guard?: RecordGuard
 ): Promise<SendOutcome | 'idle'> {
@@ -456,7 +453,7 @@ async function forwardOtelStream(
   sessionId: string,
   stream: OtelStream,
   baseUrl: string,
-  credentials: SSOCredentials | JWTCredentials,
+  credentials: SSOAuth,
   evidence?: EvidenceContext,
   guard?: RecordGuard
 ): Promise<SendOutcome | 'idle'> {
@@ -496,7 +493,7 @@ async function forwardOtelJsonStream(
   sessionId: string,
   stream: OtelJsonStream,
   baseUrl: string,
-  credentials: SSOCredentials | JWTCredentials,
+  credentials: SSOAuth,
   evidence?: EvidenceContext,
   guard?: RecordGuard
 ): Promise<SendOutcome | 'idle'> {
@@ -570,7 +567,7 @@ async function recordedGuard(sessionId: string, endpoint: AnalyticsEndpoint): Pr
 export async function forwardSession(
   sessionId: string,
   hooksOnly: boolean,
-  credentials: SSOCredentials | JWTCredentials,
+  credentials: SSOAuth,
   classification?: ClassResult,
   resolved?: AnalyticsEndpoint
 ): Promise<void> {

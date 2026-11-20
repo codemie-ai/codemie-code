@@ -4,18 +4,20 @@ const readStateMock = vi.fn();
 const getStoredCredentialsMock = vi.fn();
 
 vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({ readState: readStateMock }));
-vi.mock('@/providers/plugins/sso/sso.auth.js', () => ({
-  CodeMieSSO: class {
-    getStoredCredentials = getStoredCredentialsMock;
-  },
+vi.mock('@/providers/plugins/sso/auth/index.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/providers/plugins/sso/auth/index.js')>()),
+  resolveSSOAuthForUrl: getStoredCredentialsMock,
 }));
 vi.mock('@/utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
 const { resolveHookCredentials } = await import('../hook-credentials.js');
+const { toSSOAuth } = await import('@/providers/plugins/sso/auth/selection.js');
 
-const creds = (apiUrl: string) => ({ cookies: {}, apiUrl, timestamp: 0 });
+// The record carries an email, so withVerifiedOwner has an owner already and makes no request.
+const creds = (apiUrl: string) =>
+  toSSOAuth({ type: 'cookie', record: { cookies: { s: 'x' }, apiUrl, email: 'dev@example.com' } }, apiUrl);
 
 describe('resolveHookCredentials', () => {
   beforeEach(() => {

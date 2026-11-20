@@ -154,6 +154,7 @@ export interface MetricsApiConfig {
   baseUrl: string;       // API base URL
   cookies?: string;      // SSO cookies (session token)
   apiKey?: string;       // API key for localhost development (user-id header)
+  jwtToken?: string;     // JWT bearer token, used instead of cookies (reverse-proxy-stripped-cookies fallback)
   timeout?: number;      // Request timeout (ms)
   retryAttempts?: number; // RETRIES after the first request (0 = one request, no retry); default 3
   retryDelays?: number[]; // Backoff delays [1s, 2s, 5s]

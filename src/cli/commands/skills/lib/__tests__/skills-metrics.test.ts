@@ -27,11 +27,16 @@ vi.mock('@/utils/processes.js', () => ({
   detectGitRemoteRepo: (...args: unknown[]) => mockDetectGitRemote(...args),
 }));
 
-vi.mock('@/providers/plugins/sso/sso.auth.js', () => ({
-  CodeMieSSO: class {
-    getStoredCredentials = (...args: unknown[]) => mockGetStoredCredentials(...args);
-  },
-}));
+// The stored cookie record the mock returns becomes a real cookie SSOAuth.
+vi.mock('@/providers/plugins/sso/auth/index.js', async () => {
+  const { toSSOAuth } = await import('@/providers/plugins/sso/auth/selection.js');
+  return {
+    resolveSSOAuthForUrl: async (url: string) => {
+      const record = await mockGetStoredCredentials(url);
+      return record ? toSSOAuth({ type: 'cookie', record }, url) : null;
+    },
+  };
+});
 
 vi.mock('@/providers/core/codemie-auth-helpers.js', () => ({
   ensureApiBase: (raw: string) => mockEnsureApiBase(raw),
@@ -199,8 +204,8 @@ describe('skill events emitter (transport behavior)', () => {
     await emitFailed(session, { scope: 'project', error_code: 'unknown' });
 
     const [, init] = fetchSpy.mock.calls[0]!;
-    expect(init.headers.Cookie).toMatch(/session=abc/);
-    expect(init.headers.Cookie).toMatch(/other=def/);
+    expect(init.headers.cookie).toMatch(/session=abc/);
+    expect(init.headers.cookie).toMatch(/other=def/);
     expect(init.headers['Content-Type']).toBe('application/json');
     expect(init.headers['X-CodeMie-Client']).toBe('codemie-cli');
   });

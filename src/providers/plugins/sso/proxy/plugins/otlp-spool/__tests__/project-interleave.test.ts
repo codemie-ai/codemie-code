@@ -5,6 +5,7 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { toSSOAuth } from '@/providers/plugins/sso/auth/selection.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -49,7 +50,7 @@ vi.mock('@/utils/logger.js', () => ({
 }));
 
 const SESSION = 'sess-1';
-const credentials = { cookies: { codemie_access_token: 'tok' }, apiUrl: 'https://api', timestamp: 0 };
+const credentials = toSSOAuth({ type: 'cookie', record: { cookies: { codemie_access_token: 'tok' }, apiUrl: 'https://api', timestamp: 0 } }, 'https://api');
 
 function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;

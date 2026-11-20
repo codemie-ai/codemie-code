@@ -4,8 +4,8 @@ import { forwarderIdentity } from './spool-io.js';
 import { ORG_ENCODING_V1, organizationSendable } from '@/agents/core/evidence/org-encoding.js';
 import { classify, decide, workConsentNeed, type ClassResult, type Consumer, type Evidence } from '@/agents/core/evidence/classify.js';
 import type { EvidenceRecord } from '@/agents/core/evidence/record-store.js';
-import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
-import { isSSOCredentials, isJWTCredentials } from '../../../../../core/types.js';
+import { authMaterial } from '../../../auth/material.js';
+import type { SSOAuth } from '../../../auth/types.js';
 import { buildAuthHeaders, ensureApiBase } from '../../../../../core/codemie-auth-helpers.js';
 import { LEGACY_REPROBE_MS, getPolicyState, refreshPolicy, type NamespaceId, type PolicyState } from './policy-cache.js';
 import { forwardDecisionWithoutPolicy, readVerdictState, recordVerdict, replaceVerdict } from './verdict-store.js';
@@ -33,17 +33,16 @@ export type SessionClassification =
   | { action: 'hold'; reason: 'classification_unresolved' | 'work_consent_required' | 'personal_not_forwardable' | 'verdict_unavailable' | 'organization_encoding_unsupported' }
   | { action: 'suppress' };
 
-export function authHeadersFor(credentials: SSOCredentials | JWTCredentials): Record<string, string> | null {
-  if (isSSOCredentials(credentials)) return buildAuthHeaders(credentials.cookies);
-  if (isJWTCredentials(credentials)) return buildAuthHeaders(credentials.token);
-  return null;
+/** Request headers (CLI identification plus the Cookie header or bearer token) for an SSO credential. */
+export function authHeadersFor(auth: SSOAuth): Record<string, string> {
+  return buildAuthHeaders(authMaterial(auth));
 }
 
 /** Usable policy from the cache; fetched (bounded by the cache's timeout/backoff) when none is usable. */
 export async function sessionPolicyState(
   ns: NamespaceId,
   baseUrl: string,
-  credentials: SSOCredentials | JWTCredentials,
+  credentials: SSOAuth,
   force?: true,
   reprobe?: boolean,
   needContract?: boolean
@@ -136,7 +135,7 @@ export interface AnalyticsEndpoint {
  * and base path) to equal the credentials' api_identity that keys the record, stamp, verdict and policy
  * cache. `null` = mismatch or stale daemon/credentials: the caller sends and fetches nothing.
  */
-export async function resolveAnalyticsEndpoint(credentials: SSOCredentials | JWTCredentials): Promise<AnalyticsEndpoint | null> {
+export async function resolveAnalyticsEndpoint(credentials: SSOAuth): Promise<AnalyticsEndpoint | null> {
   const { readState } = await import('../../../../../../cli/commands/proxy/daemon-manager.js');
   const state = await readState();
   // Sync producers: syncApiUrl = the profile's resolved CodeMie API URL (ssoConfig.apiUrl, config.js
