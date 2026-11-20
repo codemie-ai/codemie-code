@@ -15,7 +15,8 @@ import { dirname } from 'node:path';
 import { logger } from '@/utils/logger.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { getCodemiePath } from '@/utils/paths.js';
-import { canonicalizePath, isPathInside } from './project-allowlist.js';
+import { withPidLock } from '@/utils/pid-lock.js';
+import { addProjectPath, canonicalizePath, isPathInside, type ConnectorScopeRead } from './project-allowlist.js';
 
 const CONFIG_VERSION = 1;
 
@@ -106,6 +107,14 @@ export async function readCopilotConnectorScope(
   return { kind: 'ok', value: record };
 }
 
+/** The scope a write that keeps the project list stores: an enabled project-scope record as it is, else scope `user`. */
+export async function readKeptCopilotConnectorScope(connectorId: string): Promise<CopilotConnectorScope> {
+  const existing = await readCopilotConnectorScope(connectorId);
+  return existing.kind === 'ok' && existing.value.enabled && existing.value.scope === 'project'
+    ? existing.value
+    : { enabled: true, scope: 'user' };
+}
+
 /**
  * Merge-writes one connector's scope record; other connectors' records are preserved.
  * Refuses to overwrite an existing file that is unreadable or corrupt, so another connector's
@@ -156,6 +165,47 @@ export async function writeCopilotConnectorScope(connectorId: string, scope: Cop
     await unlink(tempPath).catch(() => undefined);
     throw error;
   }
+}
+
+/**
+ * One connector's tracking scope for `proxy analytics` and `proxy doctor`. A connector that is not
+ * connected reads as `user` with no paths (the scope `connect` defaults to); a corrupt record is
+ * `invalid`. Never throws.
+ */
+export async function readCopilotConnectorScopeForAnalytics(connectorId: string): Promise<ConnectorScopeRead> {
+  const read = await readCopilotConnectorScope(connectorId);
+  if (read.kind === 'corrupt') {
+    return { invalid: `Copilot connector config cannot be read: ${getCopilotConnectorsConfigPath()}` };
+  }
+  if (read.value.enabled && read.value.scope === 'project') {
+    return { scope: 'project', paths: read.value.paths };
+  }
+  return { scope: 'user', paths: [] };
+}
+
+/**
+ * Adds `projectPath` to a connected project-scope connector's own list; other connectors' records are
+ * preserved. Refuses a connector that is not in project scope. A no-op when already listed.
+ */
+export async function addCopilotConnectorProject(connectorId: string, projectPath: string): Promise<void> {
+  const configPath = getCopilotConnectorsConfigPath();
+  // Serialized across CodeMie processes: two concurrent adds must not lose either project.
+  await withPidLock(
+    `${configPath}.lock`,
+    async () => {
+      const read = await readCopilotConnectorScope(connectorId);
+      if (read.kind === 'corrupt') {
+        throw new ConfigurationError(`Copilot connector config is corrupt and was not changed: ${configPath}`);
+      }
+      if (!read.value.enabled || read.value.scope !== 'project') {
+        throw new ConfigurationError(`${connectorId} does not track a project list, so nothing was added.`);
+      }
+      const paths = await addProjectPath(read.value.paths, projectPath);
+      if (paths.length === read.value.paths.length) return;
+      await writeCopilotConnectorScope(connectorId, { enabled: true, scope: 'project', paths });
+    },
+    () => new ConfigurationError(`${configPath} is being changed by another CodeMie process and was not changed. Retry in a moment.`)
+  );
 }
 
 /**
