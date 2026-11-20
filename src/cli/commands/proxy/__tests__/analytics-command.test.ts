@@ -860,6 +860,36 @@ describe('createProxyAnalyticsCommand', () => {
       expect(errors()).toContain('codemie proxy connect');
     });
 
+    describe('with only Claude Desktop connected', () => {
+      async function desktopGateway(read: () => Promise<{ port: number } | null>): Promise<void> {
+        const { readDesktopGateway } = await import('../connectors/desktop.js');
+        vi.mocked(readDesktopGateway).mockImplementation(read);
+      }
+
+      it.each(['disable', 'enable'] as const)('flagless %s writes the Claude preference and does not report nothing connected', async (verb) => {
+        await desktopGateway(async () => ({ port: 4001 }));
+        await runCommand([verb]);
+        expect(await readPreferences()).toMatchObject({ enabled: verb === 'enable' });
+        expect(errors()).not.toContain('No analytics connector is connected');
+        expect(output()).toContain('Claude Code');
+        expect(process.exitCode).toBeUndefined();
+      });
+
+      it('a failing gateway read counts as not connected: the connect hint stays', async () => {
+        await desktopGateway(async () => { throw new Error('EACCES'); });
+        await runCommand(['disable']);
+        expect(process.exitCode).toBe(1);
+        expect(errors()).toContain('No analytics connector is connected');
+      });
+
+      it('flagless exclude still needs a connected connector', async () => {
+        await desktopGateway(async () => ({ port: 4001 }));
+        await runCommand(['exclude', '/work/a']);
+        expect(process.exitCode).toBe(1);
+        expect(errors()).toContain('codemie proxy connect');
+      });
+    });
+
     it('disable acts on every connected connector and says which it changed', async () => {
       await connectClaude();
       await connectCopilot({ 'copilot-cli-otlp': { enabled: true, scope: 'user' } });

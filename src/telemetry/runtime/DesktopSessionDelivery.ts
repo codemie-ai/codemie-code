@@ -22,6 +22,7 @@ import type {
   LocalTelemetryDiscoveredSession
 } from '@/telemetry/runtime/types.js';
 import type { DesktopSessionMetrics } from '@/telemetry/runtime/DesktopSessionMetrics.js';
+import type { AnalyticsSwitch } from '@/telemetry/runtime/analytics-switch.js';
 import { desktopEndTime, isForeignRecord, type RecordKind } from '@/telemetry/runtime/desktop-session.js';
 import { logger } from '@/utils/logger.js';
 import { isOwnerAlive } from '@/utils/processes.js';
@@ -35,7 +36,8 @@ export class DesktopSessionDelivery {
     private readonly sessionStore: SessionStore,
     private readonly syncer: SessionSyncer,
     private readonly adapter: LocalTelemetryAdapter,
-    private readonly metrics: DesktopSessionMetrics
+    private readonly metrics: DesktopSessionMetrics,
+    private readonly forwardOnly?: Pick<AnalyticsSwitch, 'checkpointFields'>
   ) {}
 
   /** `sync: false` keeps it local: the pending data is written, nothing is sent. */
@@ -100,7 +102,7 @@ export class DesktopSessionDelivery {
   private async deliverLocked(record: Session, options: { flush: boolean }): Promise<void> {
     const sessionId = record.sessionId;
     if (!(await this.metrics.canDeliver())) {
-      logger.info('[desktop-telemetry] No usable analytics credentials; record kept for a re-login, nothing sent', { sessionId });
+      logger.info('[desktop-telemetry] Analytics off or no usable credentials; nothing sent', { sessionId });
       await this.sessionStore.saveSession(record);
       if (options.flush) {
         await this.flushTranscript(record, false);
@@ -294,6 +296,82 @@ export class DesktopSessionDelivery {
   }
 
   /**
+   * Closes every live record of this client and host locally, nothing sent, with no drop mark: an `active` record
+   * is saved `completed` (`desktop-analytics-disabled`) at its last activity, then each is renamed `completed_*`.
+   * An `active` record owned by another live process is left to it. True when no such record is left live: one
+   * whose reconcile lock is held or whose files did not move counts as unclosed. Never throws.
+   */
+  async closeLiveRecordsLocally(trackedActivity?: ReadonlyMap<string, number>): Promise<boolean> {
+    let names: string[];
+    try {
+      names = await readdir(getCodemiePath('sessions'));
+    } catch {
+      return true;
+    }
+    let allClosed = true;
+    for (const name of names) {
+      if (!isLiveRecordFileName(name)) {
+        continue;
+      }
+      const sessionId = name.slice(0, -'.json'.length);
+      try {
+        if (!(await this.closeRecordLocally(sessionId, trackedActivity))) {
+          allClosed = false;
+        }
+      } catch (error) {
+        allClosed = false;
+        logger.warn('[desktop-telemetry] Local close of a record failed', {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+    return allClosed;
+  }
+
+  /** One record of {@link closeLiveRecordsLocally}, under its reconcile lock; false when it is left live. */
+  private async closeRecordLocally(sessionId: string, trackedActivity?: ReadonlyMap<string, number>): Promise<boolean> {
+    const listed = await readLiveRecord(sessionId);
+    if (!listed || listed.agentName !== this.config.clientType || isForeignRecord(listed, this.metrics.credentialsUrl)) {
+      return true;
+    }
+    const lock = await acquirePidLock(reconcileLockPath(sessionId), { mode: 'try' });
+    if (!lock) {
+      logger.debug('[desktop-telemetry] Record held by another process; not closed', { sessionId });
+      return false;
+    }
+    try {
+      const record = await readLiveRecord(sessionId);
+      if (!record) {
+        return true;
+      }
+      let closing = record;
+      if (record.status === 'active') {
+        if (record.ownerPid !== undefined && record.ownerPid !== process.pid
+          && await isOwnerAlive({ pid: record.ownerPid, startedAt: record.ownerStartedAt })) {
+          return true;
+        }
+        closing = {
+          ...record,
+          status: 'completed',
+          reason: 'desktop-analytics-disabled',
+          endTime: desktopEndTime(record, trackedActivity?.get(sessionId))
+        };
+        await this.sessionStore.saveSession(closing);
+      } else if (record.status !== 'completed' || record.ownerPid === undefined) {
+        return true;
+      }
+      if (!(await leaveQueue(closing, undefined, Date.now()))) {
+        logger.warn('[desktop-telemetry] Record not renamed while analytics are off; kept live', { sessionId });
+        return false;
+      }
+      return true;
+    } finally {
+      await lock.release();
+    }
+  }
+
+  /**
    * The ids of the live records this pass acts on: every start-time kind first, uncapped, so no dead daemon's
    * `active` record is left for the first poll; then the `undelivered` ones, newest `startTime` first, at most
    * {@link RECONCILE_PER_START}, which bounds the pass's sends.
@@ -366,7 +444,7 @@ export class DesktopSessionDelivery {
         sessionId: record.sessionId,
         ownerPid: record.ownerPid,
       });
-      await this.finalizeLocked(record, 'desktop-daemon-restart');
+      await this.finalizeLocked(this.forwardOnlyRecord(record), 'desktop-daemon-restart');
     } else if (kind === 'foreign-gone') {
       logger.info('[desktop-telemetry] Record of another CodeMie host\'s gone daemon — closed locally, its daemon delivers it', {
         sessionId: record.sessionId,
@@ -395,7 +473,16 @@ export class DesktopSessionDelivery {
         reason: record.reason,
       });
       // A record the CLI closed locally was never flushed
-      await this.deliverLocked(record, { flush: record.reason === 'desktop-daemon-gone' });
+      const flush = record.reason === 'desktop-daemon-gone';
+      await this.deliverLocked(flush ? this.forwardOnlyRecord(record) : record, { flush });
     }
+  }
+
+  /** A record about to be flushed, moved to forward-only when it spans a toggle the daemon did not see. */
+  private forwardOnlyRecord(record: Session): Session {
+    const fields = this.forwardOnly?.checkpointFields(record);
+    return fields && record.runtimeCheckpoint
+      ? { ...record, runtimeCheckpoint: { ...record.runtimeCheckpoint, ...fields } }
+      : record;
   }
 }
