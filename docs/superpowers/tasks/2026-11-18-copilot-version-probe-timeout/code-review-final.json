@@ -1,0 +1,204 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "CR-001 resolved (check round); CR-003 fixed afterwards without a further automated round (targeted tests + lint pass, Stage 7 covers); CR-002 fix-later. No commits per user policy."
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "CR-001 fix-now; CR-002, CR-003 fix-later (accept all recommended)"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "CR-001 resolved (check round); CR-003 fixed afterwards without a further automated round (targeted tests + lint pass, Stage 7 covers); CR-002 fix-later. No commits per user policy."
+    }
+  ],
+  "reviewed_head": "170f1ff2d85d7964778fc6a79b665bd8bfa81745",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "CR-001 resolved: exec.test.ts now asserts the SIGTERM-ignoring child is dead by pid and adds a stdout-holding child test, with no platform skip. Advisory CR-002 and CR-003 were not in the fix set.",
+  "confidence": "medium",
+  "check_confidence": "high",
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 1,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/utils/__tests__/exec.test.ts",
+      "title": "Timeout kill tests assert nothing about SIGKILL or process exit",
+      "problem": "The SIGTERM-ignoring child test only awaits the rejection and sleeps without asserting the child was killed, and is skipped on Windows. No test covers a child holding stdout open not keeping the process alive, which is the AC6 mechanism required by the spec's test list.",
+      "impact": "The core hardening (SIGKILL escalation, pipe destroy, unref) can regress with all tests green; the user requested unit tests for this behavior.",
+      "recommendation": "Assert the child is actually dead after the grace period (pid liveness check) and add a stdout-holding-child test; avoid vacuous skips where feasible.",
+      "status": "resolved",
+      "check_notes": "exec.test.ts asserts killed child pid is dead (SIGKILL after grace) and a stdout-holding child does not keep the call pending; no platform skip.",
+      "fix": {
+        "change": "exec tests now assert killed child pid is dead and stdout-holding child does not keep call pending",
+        "test": "src/utils/__tests__/exec.test.ts"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/utils/exec.ts",
+      "line": 183,
+      "title": "Windows shell wrapper kill may orphan grandchild",
+      "problem": "With shell:true on Windows, the timeout kill targets only the shell wrapper, so a grandchild version process may survive.",
+      "impact": "Orphaned process lingers, but pipes are destroyed and child unref'd so the CLI still exits; trigger limited to shell-spawned probes on Windows.",
+      "recommendation": "Consider taskkill /T /F on win32 when shell is used.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/utils/exec.ts",
+      "line": 187,
+      "title": "closeStdin alone triggers kill hardening",
+      "problem": "terminate() runs when closeStdin OR killGraceMs is set, so closeStdin alone destroys pipes and unrefs on timeout; spec ties this to killGraceMs.",
+      "impact": "No current caller sets closeStdin without killGraceMs, so no behavior consequence today.",
+      "recommendation": "Key the hardening on killGraceMs or document the intent.",
+      "status": "unresolved",
+      "fix": {
+        "change": "exec timeout kill hardening keyed on killGraceMs alone; closeStdin only changes stdin stdio",
+        "test": "src/utils/__tests__/exec.test.ts (closeStdin alone keeps plain kill on timeout; killGraceMs enables pipe release)"
+      },
+      "disposition": {
+        "rationale": "user requested fixing now; cheap single-line change",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "AC1: codemie list finishes with a hung copilot",
+      "status": "pending-stage-7",
+      "notes": "Needs fake-copilot runtime harness"
+    },
+    {
+      "kind": "spec",
+      "item": "AC2: codemie update finishes, skips Copilot",
+      "status": "pending-stage-7",
+      "notes": "Needs runtime harness evidence"
+    },
+    {
+      "kind": "spec",
+      "item": "AC3: BaseAgentAdapter.getVersion bounded the same way",
+      "status": "pass",
+      "notes": "Uses VERSION_PROBE_OPTIONS; test asserts call"
+    },
+    {
+      "kind": "spec",
+      "item": "AC4: answer within limit parsed as today",
+      "status": "pass",
+      "notes": "Parsing unchanged"
+    },
+    {
+      "kind": "spec",
+      "item": "AC5: timed-out probe prints no new error/warning",
+      "status": "pass",
+      "notes": "Only logger.debug added"
+    },
+    {
+      "kind": "spec",
+      "item": "AC6: SIGTERM-ignoring child, CLI exits within limit, SIGKILL sent",
+      "status": "pending-stage-7",
+      "notes": "Implemented in terminate(); no automated proof"
+    },
+    {
+      "kind": "spec",
+      "item": "AC7: extra wait per agent at most the limit",
+      "status": "pass",
+      "notes": "Timeout rejects at 5s"
+    },
+    {
+      "kind": "spec",
+      "item": "AC8: stdin EOF for probes",
+      "status": "pass",
+      "notes": "closeStdin in both call sites; exec.test covers EOF"
+    },
+    {
+      "kind": "spec",
+      "item": "AC9: other exec callers unchanged",
+      "status": "pass",
+      "notes": "Default path unchanged"
+    },
+    {
+      "kind": "spec",
+      "item": "Approach: hardening keyed on killGraceMs",
+      "status": "partial",
+      "notes": "closeStdin alone also triggers terminate()"
+    },
+    {
+      "kind": "spec",
+      "item": "Approach: shared VERSION_PROBE_OPTIONS in exec.ts",
+      "status": "pass",
+      "notes": "Exported and imported at both sites"
+    },
+    {
+      "kind": "spec",
+      "item": "Tests: exec timeout, SIGKILL, stdout-holding child, EOF, no-options",
+      "status": "partial",
+      "notes": "SIGKILL test vacuous; no stdout-holding test"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "na",
+      "notes": "no commits in range diff_base..HEAD; uncommitted working-tree edits"
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "js import extensions, explicit types, interface for ExecOptions, no console.log or any; judged from changed-file list and targeted greps"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "shell:false by default; fixed probe args; no credentials logged"
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "Edge-case, acceptance and standards ran; no gaps. One blocking test gap (SIGKILL/open-stdout tests assert nothing), 2 advisory, 0 deferred, 2 dismissed; AC1, AC2, AC6 await Stage 7 runtime evidence.",
+    "confidence": "medium",
+    "risk_flags": []
+  }
+}

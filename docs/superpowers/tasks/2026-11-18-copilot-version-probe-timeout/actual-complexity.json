@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated": "2026-11-19T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 12,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 6,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "technical_risk", "reason": "Process lifecycle handling in shared exec utility (SIGTERM then SIGKILL escalation, pipe destroy/unref, stdin EOF) has subtle cross-platform behavior, but is additive via opt-in options and easily reverted." },
+    { "dimension": "file_change_estimate", "reason": "6 files (3 source, 3 test) across src/utils and src/agents/core and plugins/copilot-cli; ~267 insertions, mostly tests." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

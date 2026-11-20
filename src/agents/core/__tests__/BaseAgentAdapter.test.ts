@@ -3,7 +3,8 @@ import { spawn } from 'child_process';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { getCommandPath } from '../../../utils/processes.js';
+import { getCommandPath, exec as mockedExec } from '../../../utils/processes.js';
+import { VERSION_PROBE_OPTIONS } from '../../../utils/exec.js';
 import { BaseAgentAdapter } from '../BaseAgentAdapter.js';
 import type { AgentMetadata } from '../types.js';
 import { logger } from '../../../utils/logger.js';
@@ -236,6 +237,30 @@ describe('BaseAgentAdapter', () => {
       // Original should be unchanged (verify shallow copy worked)
       expect(originalMetadata.silentMode).toBe(false);
       expect(adapter.getMetadata().silentMode).toBe(true);
+    });
+  });
+
+  describe('getVersion', () => {
+    const versionMetadata: AgentMetadata = {
+      name: 'ver',
+      displayName: 'Ver Agent',
+      description: 'Version probe tests',
+      npmPackage: null,
+      cliCommand: 'ver-bin',
+      envMapping: {},
+      supportedProviders: ['openai'],
+    };
+
+    it('bounds the probe with VERSION_PROBE_OPTIONS and returns the parsed version', async () => {
+      vi.mocked(mockedExec).mockResolvedValueOnce({ code: 0, stdout: ' 1.2.3 ', stderr: '' });
+      const version = await new TestAdapter(versionMetadata).getVersion();
+      expect(mockedExec).toHaveBeenCalledWith('ver-bin', ['--version'], VERSION_PROBE_OPTIONS);
+      expect(version).toBe('1.2.3');
+    });
+
+    it('returns null when the probe times out', async () => {
+      vi.mocked(mockedExec).mockRejectedValueOnce(new Error('Command timed out after 5000ms'));
+      expect(await new TestAdapter(versionMetadata).getVersion()).toBeNull();
     });
   });
 
