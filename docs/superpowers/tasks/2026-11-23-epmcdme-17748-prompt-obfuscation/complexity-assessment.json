@@ -1,0 +1,68 @@
+{
+  "schema": 1,
+  "task": "Add an opt-in (global/per-project, off by default) secret+PII obfuscation layer with typed and failure placeholders under every codemie-code CLI analytics route plus a canonical sample set, and extend ticket attribution to Azure DevOps AB#123 and GitHub/GitLab #123 / org/repo#123 references.",
+  "generated": "2026-11-20T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 6, "label": "XXL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 3, "label": "M" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 27,
+  "size": "XL",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "split-required",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Base XL: new shared obfuscation abstraction in utils/security plus wiring into the hook-adapter base (OtlpAgentAdapter/maskAndBoundFields, ~5 collectors and Claude Desktop cowork), copilot-cli free-text masking, proxy OTLP JSON masking and the currently byte-blind protobuf path, local analytics report and sync, the analytics setup step with global/per-project config, and ticket-parser/story-resolver/repo-fields. Bumped to XXL because it affects multiple collectors/agents and touches core shared utilities." },
+    { "dimension": "technical_risk", "reason": "Closest pattern is the always-on secrets masking (security.ts EMBEDDED_SECRET_PATTERNS, maskOtlpJson); it covers secrets only. PII rules (email, phone, IPv4/IPv6, card, IBAN) with look-alike exclusions, idempotence, typed and failure placeholders with drop-only-on-placeholder-failure semantics, and protobuf decode/mask/re-encode have no precedent. Base L, bumped for security/compliance (data-protection) to XL." },
+    { "dimension": "file_change_estimate", "reason": "16+ modified across utils, agents/core, several collector plugins, proxy plugins, cli/commands/analytics (report, sync, setup) and config; 6+ new (obfuscation rule module, protobuf masking module, canonical sample set fixture, obfuscation config resolver, per-collector pre-mask attribution tests and sample-set tests)." },
+    { "dimension": "affected_layers", "reason": "CLI interaction (setup step), service (hook adapters, ticket attribution), local persistence (global/project config, report/sync outputs) and the proxy/OTLP export boundary with a cross-cutting concern added in each; no schema migration, so L rather than XL." },
+    { "dimension": "requirements_clarity", "reason": "ACs are concrete and no open questions remain; M because the 'configured tracker' notion in AC6 and the protobuf masking approach are design decisions not settled by the analysis." },
+    { "dimension": "dependencies", "reason": "Protobuf obfuscation likely needs an OTLP protobuf decode/encode library (or OpenTelemetry transformer) not confirmed present; otherwise only new config keys." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from XL to XXL: affects multiple workflows/agents (every hook collector, cowork, proxy) and touches core shared utilities (utils/security.ts)",
+    "Technical Risk bumped from L to XL: security/compliance (PII and secret obfuscation for data-protection rules)",
+    "Borderline 26/27: leaned higher because Technical Risk is XL and Component Scope is XXL. Calibration: nearest bundled XL example (epmcdme-10303-integrate-new-cloud-service) also totals 27 with a different distribution (heavier dependencies, lighter file count); agrees on band."
+  ],
+  "split_recommendation": {
+    "strategy": "by-feature",
+    "secondary_strategy": "by-dependency",
+    "ordering_note": "All slices live in codemie-code. Attribution first because obfuscation must preserve the new ticket forms; the obfuscation engine and setting precede wiring the proxy/report/sync routes.",
+    "slices": [
+      {
+        "title": "Multi-tracker ticket attribution",
+        "slice_slug": "tracker-attribution",
+        "component": "codemie-code",
+        "feature": "prompt-obfuscation",
+        "scope": "Recognise Azure DevOps AB#123 and GitHub/GitLab #123 / org/repo#123 references with the existing story priority, gate bare #123 on the configured tracker, and verify per collector that ticket fields are derived from the raw prompt before masking and truncation (AC4 attribution part, AC5, AC6).",
+        "depends_on": null
+      },
+      {
+        "title": "Obfuscation engine, setting and hook collectors",
+        "slice_slug": "obfuscation-core",
+        "component": "codemie-code",
+        "feature": "prompt-obfuscation",
+        "scope": "Shared secret+PII rule set with typed and failure placeholders, ticket-reference preservation, idempotence and the canonical sample set; opt-in global/per-project setting in analytics setup; applied in the hook-collector base and collector free-text paths with off-mode unchanged (AC1-AC3 for hooks, AC7-AC10).",
+        "depends_on": "Multi-tracker ticket attribution"
+      },
+      {
+        "title": "Obfuscation on proxy, --claude-otlp, report and sync routes",
+        "slice_slug": "obfuscation-routes",
+        "component": "codemie-code",
+        "feature": "prompt-obfuscation",
+        "scope": "Apply the obfuscation engine to the proxy OTLP JSON path, add decode/mask/re-encode for the --claude-otlp protobuf path, and obfuscate the local codemie analytics report and analytics sync payloads (AC3 for remaining routes, AC8 on these routes).",
+        "depends_on": "Obfuscation engine, setting and hook collectors"
+      }
+    ]
+  }
+}

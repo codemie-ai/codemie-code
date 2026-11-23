@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "generated": "2026-11-23T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 25,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 38,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Obfuscation applied across several analytics routes: OTLP adapter core, claude/copilot plugins, proxy OTLP JSON/protobuf/spool, cowork producer, analytics report/sync CLI, and ticket parsing." },
+    { "dimension": "technical_risk", "reason": "Security/PII-sensitive masking over multiple payload formats including protobuf string leaves; no single existing pattern covers all routes." },
+    { "dimension": "file_change_estimate", "reason": "38 files changed (2056 insertions), including about 16 test/fixture files." },
+    { "dimension": "affected_layers", "reason": "CLI, service, proxy infrastructure, config/env settings, and external analytics payloads; no DB schema." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped: security/PII obfuscation requirement",
+    "Component Scope bumped: affects multiple workflows/agents"
+  ],
+  "split_recommendation": null
+}

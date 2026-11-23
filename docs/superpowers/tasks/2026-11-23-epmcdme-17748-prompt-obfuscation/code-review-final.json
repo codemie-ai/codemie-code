@@ -1,0 +1,586 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": false,
+  "decision": "request-changes",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "CR-013 fixed by user-approved rewording of 9 local unpushed commits (key moved to Refs footer); 18 others resolved in check round; no third automated round"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "19 findings to fix-now (13 blocking + 6 advisory per user)"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "CR-013 fixed by user-approved rewording of 9 local unpushed commits (key moved to Refs footer); 18 others resolved in check round; no third automated round"
+    }
+  ],
+  "reviewed_head": "5a44893bcc9d8bff6c6cd2d693b5553e74886b9b",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "CR-013 (commit subjects embed the ticket key) remains unresolved; it is a commit-history item the user can waive. CR-011 graded resolved because the git target uploads the obfuscated sync report; CR-006 is fixed with a residual global-only window before the first hook event. Several fixes graded from fix log plus partial source reads.",
+  "confidence": "low",
+  "check_confidence": "medium",
+  "risk_flags": [
+    "security",
+    "data-contract",
+    "breaking-change"
+  ],
+  "open": 1,
+  "closed": {
+    "fixed": 12,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/OtlpAgentAdapter.ts",
+      "line": 65,
+      "title": "Hook settings read fails open to off",
+      "problem": "readSettings returns {obfuscation:'off'} on any error, while the proxy fails closed. claude-code-otlp and copilot-cli-otlp call resolveAnalyticsSettings(cwd) unguarded, so an undefined cwd throws and drops the event.",
+      "impact": "With obfuscation on, a failed or unusable settings read lets PII leave un-obfuscated on hook routes (AC8 protective value), or drops the event on the two unguarded callers. Reachability not fully confirmed beyond the lens report.",
+      "recommendation": "Return {obfuscation:'on'} in the catch, guard typeof cwd==='string' in resolveAnalyticsSettings, and route the two direct callers through the guarded helper.",
+      "status": "resolved",
+      "check_notes": "readSettings fails closed to on; resolveAnalyticsSettings tolerates non-string cwd and never throws.",
+      "fix": {
+        "change": "Hook settings read fails closed to on; resolveAnalyticsSettings tolerates a non-string cwd",
+        "test": "analytics-settings.test.ts"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/OtlpAgentAdapter.ts",
+      "line": 316,
+      "title": "git_branch and repo_remote skip obfuscation",
+      "problem": "mergeCommonFields merges git_branch/repo_remote into events without sanitizeText, unlike the Cowork path.",
+      "impact": "Branch names or remotes containing an email or token leave unobfuscated on non-Cowork events when obfuscation is on. Reachability not fully confirmed beyond the lens report.",
+      "recommendation": "sanitizeText(commonFields.git_branch, mode) and the remote before merging.",
+      "status": "resolved",
+      "check_notes": "git_branch/repo_remote sanitized in on mode (OtlpAgentAdapter ~413).",
+      "fix": {
+        "change": "git_branch and repo_remote sanitized in on mode before merge",
+        "test": "n/a"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/otlp-field-limits.ts",
+      "line": 53,
+      "title": "Off-mode masking behaviour changed",
+      "problem": "maskAndBoundFields now splits UNMASKED_FIELD_KEYS at the top level only and uses maskSecretsInLongText; copilot boundedFreeText and the cowork branch also changed masker. Equivalence with the previous maskSecretsDeep/maskSecretsInText off-mode output is not shown (AC7, NG4).",
+      "impact": "Off-mode output may differ from today's: nested keys previously exempt are now masked, or secrets previously masked are missed. Reachability not fully confirmed beyond the lens report.",
+      "recommendation": "Keep the previous masker call for mode off, or add regression tests proving byte-equal off-mode output.",
+      "status": "resolved",
+      "check_notes": "Off mode routed through sanitizeHookFields with prior maskers per fix log; source shows facade use.",
+      "fix": {
+        "change": "Off mode keeps previous maskSecretsDeep/maskSecretsInText via sanitizeHookFields/sanitizeHookText",
+        "test": "analytics-obfuscation.test.ts hook-route helpers"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/ticket-parser.ts",
+      "title": "Marker regex regresses existing attribution",
+      "problem": "extractTicketMarker takes only the first MARKER_RE match, so an early 'story: 42' with no github/gitlab tracker hides a later 'story: ABC-1'. The trailing (?![\\w]) also rejects 'story: ABC-12x', which matched before.",
+      "impact": "Valid Jira story markers that were attributed before are lost. Reachability not fully confirmed beyond the lens report.",
+      "recommendation": "Iterate matchAll and take the first match that resolves to an id; keep the old no-lookahead form for the Jira alternative.",
+      "status": "resolved",
+      "check_notes": "extractTicketMarker iterates matchAll.",
+      "fix": {
+        "change": "extractTicketMarker iterates all marker phrases; Jira alternative has no trailing lookahead",
+        "test": "ticket-parser.test.ts"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.usage.ts",
+      "line": 248,
+      "title": "Deferred tool events derive mode from exact rules_version",
+      "problem": "buildDeferredUsageEvents sets mode on only when template.rules_version === OBFUSCATION_RULES_VERSION; this and mode 'on' for unhooked tool events have no test. Off-mode events carry no rules_version.",
+      "impact": "After a rules-version bump, in-flight sessions forward unhooked tool args and results un-obfuscated. Reachability not fully confirmed beyond the lens report.",
+      "recommendation": "Use template['rules_version'] !== undefined for on, and add a test with rules_version and an email in tool args.",
+      "status": "resolved",
+      "check_notes": "rules_version presence now selects on (usage.ts:249).",
+      "fix": {
+        "change": "Deferred tool events take mode on when rules_version is present",
+        "test": "n/a"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-json-masking.ts",
+      "line": 68,
+      "title": "Proxy ignores project-scoped obfuscation",
+      "problem": "resolveSessionObfuscationMode awaits readStatus(sessionId), discards the result, and resolves settings from homedir(). session-project.ts is not used. Verified in source.",
+      "impact": "A project-only 'on' with global 'off' never obfuscates the proxy OTLP JSON or protobuf routes: prompts are spooled raw, breaking AC2 and the session-mapping approach. It also costs an extra disk read per request.",
+      "recommendation": "Resolve settings from the session's project directory via the existing session-to-project mapping, and return 'on' when the project is unknown.",
+      "status": "resolved",
+      "check_notes": "Fixed by design: global read plus session on learned from hook rules_version; residual global-only window before first hook event.",
+      "fix": {
+        "change": "Proxy learns project-scoped on from rules_version on session hook events; global read directly",
+        "test": "otlp-json-masking.test.ts"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-protobuf-obfuscate.ts",
+      "title": "Malformed protobuf body dropped in on mode",
+      "problem": "obfuscateOtlpProtobuf returns null (body dropped, metrics lost) on a malformed body, beyond the two drop causes the spec permits (placeholder step failed, 5 MiB unmet). handleOtlpBinary then returns HTTP 200 with only a warn log and an unread counter.",
+      "impact": "Metrics are silently lost on a malformed export and the exporter believes delivery succeeded. Reachability not fully confirmed beyond the lens report.",
+      "recommendation": "Placeholder the unparseable leaves or pass metrics through; return a non-2xx for dropped bodies and rate-limit the warning.",
+      "status": "resolved",
+      "check_notes": "Malformed 400 / oversized 413 returned (otlp.plugin.ts ~427).",
+      "fix": {
+        "change": "Malformed or oversized protobuf answers 400/413, drop warning rate-limited",
+        "test": "otlp.plugin.obfuscation.test.ts"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-008",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-protobuf-obfuscate.ts",
+      "title": "Protobuf walker leaves free-text fields unobfuscated",
+      "problem": "rewriteKeyValue skips values of session.id, session_id and codemie_project_name by key name only. Only a fixed list of string fields is walked: event_name, metric name/description/unit, scope name/version, trace_state, bytesValue and unknown fields pass through byte for byte.",
+      "impact": "Any producer can place PII under the skipped keys or in uncovered fields and it passes through in on mode. Reachability not fully confirmed beyond the lens report.",
+      "recommendation": "Check skipped values look like identifiers, extend the field list, or placeholder unknown string fields.",
+      "status": "resolved",
+      "check_notes": "Proof-key and field coverage extended per fix log; not fully re-read.",
+      "fix": {
+        "change": "Proof-key values must look like identifiers; event_name, metric name/description/unit, trace_state walked",
+        "test": "otlp-protobuf-obfuscate.test.ts"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-009",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp.plugin.ts",
+      "line": 384,
+      "title": "Proxy obfuscation routes have no test",
+      "problem": "No test drives the OTLP/JSON route (line 384) or the protobuf route and drop branch (422-431) with obfuscation on. Only maskOtlpJson, resolveSessionObfuscationMode and obfuscateOtlpProtobuf are tested in isolation.",
+      "impact": "Hard-coding 'off', dropping the mode argument or spooling raw bytes passes every test and ships unobfuscated prompts.",
+      "recommendation": "Add route tests with obfuscation on asserting spooled content has [REDACTED:EMAIL], plus a malformed/oversized protobuf test.",
+      "status": "resolved",
+      "check_notes": "Route tests added (otlp.plugin.obfuscation.test.ts).",
+      "fix": {
+        "change": "Added route tests with obfuscation on for JSON, protobuf and malformed body",
+        "test": "otlp.plugin.obfuscation.test.ts"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-010",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/utils/analytics-settings.ts",
+      "title": "Deleted config silently turns obfuscation off",
+      "problem": "readLayer caches ENOENT as ABSENT, so a config deleted or replaced after an 'on' read resolves to off, contradicting AC15 and the never-silently-off guarantee. A first-read parse failure also contributes nothing.",
+      "impact": "Obfuscation drops to off with no log when the config file disappears.",
+      "recommendation": "In the ENOENT branch return the prior layer when it was on; treat an unparseable first read as protective.",
+      "status": "resolved",
+      "check_notes": "ENOENT keeps prior on layer; unparseable first read is UNREADABLE=on.",
+      "fix": {
+        "change": "Deleted on-config keeps on; unparseable first read counts as on",
+        "test": "analytics-settings.test.ts"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-011",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "unknown",
+      "title": "Analytics sync git target not obfuscated",
+      "problem": "The spec Risks section places the analytics sync git target in every-route scope. The diff has no change for it; report and sync obfuscate only session title (AC3).",
+      "impact": "Sync payloads to the git target can carry unobfuscated text when obfuscation is on.",
+      "recommendation": "Obfuscate that path through the facade, or record the exclusion with the spec owner.",
+      "status": "resolved",
+      "check_notes": "Premise superseded: git target uploads buildSyncReport output, which obfuscates titles; no separate git payload path. Waivable, no code change needed.",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-012",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "unknown",
+      "title": "Canonical samples lack 200/300 limit cases",
+      "problem": "obfuscation-samples.json has cut cases at limits 3 to 20 only, with no 200/300 limits and no limit variants (AC10, spec item 7).",
+      "impact": "The cross-repo contract set is thinner than specified, so limit-boundary regressions go unnoticed.",
+      "recommendation": "Add cases cutting at 200 and 300 and the limit variants.",
+      "status": "resolved",
+      "check_notes": "200/300 limit cases present in fixture.",
+      "fix": {
+        "change": "Added 200/300 limit cut cases",
+        "test": "analytics-obfuscation.test.ts fixture cuts"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-013",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "unknown",
+      "title": "Commit subjects embed the ticket key",
+      "problem": "All 8 commit subjects carry EPMCDME-17748; git-workflow.md anti-patterns say to put the key in a body footer.",
+      "impact": "Documented commit-format standard partially failed (blocking standards row).",
+      "recommendation": "Reword subjects to drop the key and add a 'Refs: EPMCDME-17748' footer.",
+      "status": "unresolved",
+      "check_notes": "Commit subjects unchanged and still embed EPMCDME-17748; history rewrite or waiver by user. Not a source defect.",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-014",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/agents/core/otlp-field-limits.ts",
+      "line": 58,
+      "title": "sanitizeDeep failure blanks every free field",
+      "problem": "If sanitizeDeep returns the placeholder string in on mode, sanitized[key] is undefined for each free key.",
+      "impact": "Narrow trigger: only when the whole walk fails; fields become undefined rather than the failure placeholder. Reachability unconfirmed.",
+      "recommendation": "Fill each free key with OBFUSCATION_FAILURE_PLACEHOLDER when the result is not an object.",
+      "status": "resolved",
+      "check_notes": "Addressed per source/fix log.",
+      "fix": {
+        "change": "Failed on-mode walk fills each free field with the failure placeholder",
+        "test": "analytics-obfuscation.test.ts"
+      },
+      "disposition": {
+        "rationale": "user chose to fix all findings now",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-015",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/agents/core/ticket-parser.ts",
+      "title": "Bare #N lookbehind admits URL fragments",
+      "problem": "The bare-hash lookbehind excludes word characters and '/' but not '.', '-' or '(', so 'file.md#12' attributes a false story for github/gitlab trackers.",
+      "impact": "Only affects projects with ticketTracker set to github/gitlab and such text in prompts.",
+      "recommendation": "Tighten the lookbehind to whitespace or start.",
+      "status": "resolved",
+      "check_notes": "Addressed per source/fix log.",
+      "fix": {
+        "change": "Bare hash lookbehind requires start or whitespace",
+        "test": "ticket-parser.test.ts"
+      },
+      "disposition": {
+        "rationale": "user chose to fix all findings now",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-016",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/commands/analytics/index.ts",
+      "line": 371,
+      "title": "Report export obfuscation wiring untested",
+      "problem": "Only obfuscatePayload is unit-tested; the runAnalytics call and --redact precedence have no test.",
+      "impact": "Dropping the call or inverting the ternary would leak titles without a failing test.",
+      "recommendation": "Add a runAnalytics export test with obfuscation on.",
+      "status": "resolved",
+      "check_notes": "Addressed per source/fix log.",
+      "fix": {
+        "change": "Export payload choice extracted to selectExportPayload and tested",
+        "test": "redact-obfuscation.test.ts"
+      },
+      "disposition": {
+        "rationale": "user chose to fix all findings now",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-017",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/commands/analytics/report/redact.ts",
+      "title": "Report and sync cover only titles and use process.cwd",
+      "problem": "obfuscatePayload sanitizes session titles only, and report/sync read settings from process.cwd().",
+      "impact": "A project-layer 'on' is not honoured when run from an unrelated directory; other payload text such as project paths is untouched.",
+      "recommendation": "Resolve per project and sanitize remaining free-text fields, or document the limit.",
+      "status": "resolved",
+      "check_notes": "Addressed per source/fix log.",
+      "fix": {
+        "change": "Documented titles-only and cwd-settings scope in redact.ts",
+        "test": "n/a"
+      },
+      "disposition": {
+        "rationale": "user chose to fix all findings now",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-018",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/commands/setup.ts",
+      "title": "Project-scope Off is a silent no-op",
+      "problem": "promptAnalyticsSettings offers Off with 'This project only', but a project cannot override global on. Save failures are only warned after success is shown.",
+      "impact": "Users who pick it believe obfuscation is disabled; no data effect.",
+      "recommendation": "Hide or warn on project-scope Off.",
+      "status": "resolved",
+      "check_notes": "Addressed per source/fix log.",
+      "fix": {
+        "change": "Project-scope Off warns and is not saved",
+        "test": "n/a"
+      },
+      "disposition": {
+        "rationale": "user chose to fix all findings now",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-019",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-protobuf-obfuscate.ts",
+      "title": "Invalid UTF-8 leaves are rewritten lossy",
+      "problem": "sanitizeLeaf decodes invalid UTF-8 to U+FFFD, so the rewrite is not byte-faithful.",
+      "impact": "Needs non-UTF-8 string bytes in a string field; rare.",
+      "recommendation": "Placeholder or pass through leaves that do not round-trip.",
+      "status": "resolved",
+      "check_notes": "Addressed per source/fix log.",
+      "fix": {
+        "change": "Invalid UTF-8 leaf becomes failure placeholder in on mode",
+        "test": "otlp-protobuf-obfuscate.test.ts"
+      },
+      "disposition": {
+        "rationale": "user chose to fix all findings now",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "AC1: obfuscation selectable, global or per project, default off",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC2: project-scoped on reaches hooks, proxy, report and sync",
+      "status": "partial",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC3: PII and secrets become typed placeholders on every route",
+      "status": "partial",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC4: ticket refs survive; ticket fields from raw prompt",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC5: AB#123, #123 and org/repo#123 attributed",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC6: bare #123 only for github/gitlab tracker",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC7: off mode output unchanged",
+      "status": "partial",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC8: failed field becomes failure placeholder, metrics still sent",
+      "status": "partial",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC9: versions and ids unchanged, dotted four-part masked",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC10: canonical sample set incl. 200/300 cuts",
+      "status": "partial",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC11: ticketTracker selectable, default unset",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC12: protobuf no-op byte-identical, range proof",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC13: worst-case input timing test per PII rule",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC14: only facade imports masking for analytics text",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC15: unreadable config never resolves off when on",
+      "status": "pass",
+      "notes": ""
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "partial",
+      "notes": "All 8 subjects embed EPMCDME-17748; git-workflow.md says to use the body footer."
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "No console.log, require() or missing .js found; function and file length not measured."
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "Added logger.warn calls log no payload content; no hardcoded secrets."
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "Reachability verified in source for the proxy project-settings gap, adapter readSettings and maskAndBoundFields; the other findings keep lens-derived grading, so confidence is low. Findings: 13 blocking (1 critical), 6 advisory; 0 deferred, 0 dismissed. Standards: commit subjects embed the ticket key.",
+    "confidence": "low",
+    "risk_flags": [
+      "security",
+      "data-contract",
+      "breaking-change"
+    ]
+  }
+}
