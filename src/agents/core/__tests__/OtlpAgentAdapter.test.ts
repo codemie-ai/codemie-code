@@ -33,6 +33,9 @@ afterAll(() => {
   rmSync(isolatedHome.dir, { recursive: true, force: true });
 });
 
+const resolveSettingsMock = vi.hoisted(() => vi.fn((): { obfuscation: 'on' | 'off' } => ({ obfuscation: 'off' })));
+vi.mock('@/utils/analytics-settings.js', () => ({ resolveAnalyticsSettings: resolveSettingsMock }));
+
 const detectGitBranchMock = vi.fn();
 const detectGitRemoteRepoMock = vi.fn();
 const getRawGitOriginMock = vi.fn();
@@ -1271,6 +1274,57 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
       expect(forwardToSpool).toHaveBeenCalledWith(expect.any(Array), 'fake');
       expect(readRecords()).toEqual([]);
+    });
+  });
+
+  describe('git_branch and repo_remote obfuscation (CR-002)', () => {
+    const EMAIL_BRANCH = 'feature/dev@example.com-fix';
+    const SECRET_REMOTE = `https://x:${GH}@github.com/org/repo.git`;
+
+    beforeEach(() => {
+      resolveSettingsMock.mockReset().mockReturnValue({ obfuscation: 'off' });
+    });
+
+    it('on: an email in the branch and a secret in the remote become typed placeholders', async () => {
+      resolveSettingsMock.mockReturnValue({ obfuscation: 'on' });
+      detectGitBranchMock.mockResolvedValue(EMAIL_BRANCH);
+      detectGitRemoteRepoMock.mockResolvedValue(SECRET_REMOTE);
+      await run();
+      const [event] = forwarded();
+      expect(event['git_branch']).not.toContain('dev@example.com');
+      expect(event['git_branch']).toContain('[REDACTED:EMAIL]');
+      expect(event['repo_remote']).not.toContain(GH);
+      expect(event['rules_version']).toBeDefined();
+    });
+
+    it('on: an event-supplied branch and remote are obfuscated too', async () => {
+      resolveSettingsMock.mockReturnValue({ obfuscation: 'on' });
+      await run({ payload: [{ git_branch: EMAIL_BRANCH, repo_remote: SECRET_REMOTE }] });
+      const [event] = forwarded();
+      expect(String(event['git_branch'])).not.toContain('dev@example.com');
+      expect(String(event['repo_remote'])).not.toContain(GH);
+    });
+
+    it('off: both are forwarded as detected', async () => {
+      detectGitBranchMock.mockResolvedValue(EMAIL_BRANCH);
+      detectGitRemoteRepoMock.mockResolvedValue('org/repo');
+      await run();
+      const [event] = forwarded();
+      expect(event['git_branch']).toBe(EMAIL_BRANCH);
+      expect(event['repo_remote']).toBe('org/repo');
+      expect(event['rules_version']).toBeUndefined();
+    });
+  });
+
+  describe('session directory mapping for the proxy daemon', () => {
+    it('records the hook cwd under the session id before the events are forwarded', async () => {
+      const { readSessionCwds } = await import('../session-cwd-pin.js');
+      forwardToSpool.mockImplementation(async () => {
+        expect(await readSessionCwds('s-cwd')).toEqual(['/repo']);
+        return true;
+      });
+      await run({ sessionId: 's-cwd' });
+      expect(forwardToSpool).toHaveBeenCalledTimes(1);
     });
   });
 });

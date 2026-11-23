@@ -1,78 +1,10 @@
-{
-  "schema": 1,
-  "branch": "feat/EPMCDME-17748",
-  "head": "5a44893bcc9d8bff6c6cd2d693b5553e74886b9b",
-  "runner": "npm",
-  "started_at": "2026-11-23T12:25:19Z",
-  "completed_at": "2026-11-23T12:29:43Z",
-  "status": "PASSED",
-  "drift_detected": false,
-  "gates": [
-    {
-      "id": "license-check",
-      "source": "guide",
-      "status": "PASS",
-      "duration_ms": 1000,
-      "command": "npm run license-check",
-      "exit_code": 0
-    },
-    {
-      "id": "lint",
-      "source": "guide",
-      "status": "PASS",
-      "duration_ms": 2000,
-      "command": "npm run lint",
-      "exit_code": 0
-    },
-    {
-      "id": "typecheck",
-      "source": "guide",
-      "status": "PASS",
-      "duration_ms": 3000,
-      "command": "npm run typecheck",
-      "exit_code": 0
-    },
-    {
-      "id": "build",
-      "source": "guide",
-      "status": "PASS",
-      "duration_ms": 6000,
-      "command": "npm run build",
-      "exit_code": 0
-    },
-    {
-      "id": "unit",
-      "source": "guide",
-      "status": "PASS",
-      "duration_ms": 166000,
-      "command": "npx vitest run --project unit",
-      "exit_code": 0
-    },
-    {
-      "id": "integration",
-      "source": "guide",
-      "status": "PASS",
-      "duration_ms": 64000,
-      "command": "npx vitest run --project cli",
-      "exit_code": 0
-    },
-    {
-      "id": "commitlint",
-      "source": "guide",
-      "status": "PASS",
-      "duration_ms": 0,
-      "command": "npm run commitlint:last",
-      "exit_code": 0
-    },
-    {
-      "id": "secrets",
-      "source": "guide",
-      "status": "SKIPPED",
-      "duration_ms": 1000,
-      "command": "npm run validate:secrets",
-      "exit_code": 0,
-      "notes": "Output: 'No staged changes to scan'; scan did not run. Stage changes or run gitleaks directly; CI scans unconditionally."
-    }
-  ],
-  "failures": {}
-}
+{"schema":1,"branch":"feat/EPMCDME-17748","head":"ea3cb4d383f227a80f1b1f0fe4078ac34afa04c5","runner":"npm","started_at":"2026-11-23T14:45:00Z","completed_at":"2026-11-23T14:53:30Z","status":"PASSED","drift_detected":false,"gates":[
+{"id":"license-check","source":"guide","status":"PASS","duration_ms":1000,"command":"npm run license-check","exit_code":0},
+{"id":"lint","source":"guide","status":"PASS","duration_ms":2000,"command":"npm run lint","exit_code":0},
+{"id":"typecheck","source":"guide","status":"PASS","duration_ms":3000,"command":"npm run typecheck","exit_code":0},
+{"id":"build","source":"guide","status":"PASS","duration_ms":6000,"command":"npm run build","exit_code":0},
+{"id":"unit","source":"guide","status":"PASS","duration_ms":163000,"command":"npx vitest run --project unit","exit_code":0,"notes":"655 files, 12387 tests passed"},
+{"id":"integration","source":"guide","status":"PASS","duration_ms":33000,"command":"npx vitest run --project cli","exit_code":0,"notes":"47 files passed, 2 skipped (12 tests skipped by suite)"},
+{"id":"secrets","source":"hook","status":"SKIPPED","duration_ms":0,"command":"npm run validate:secrets","exit_code":0,"notes":"Output: 'No staged changes to scan'. Stage changes (or run gitleaks over the tree) to enable locally; CI scans unconditionally."},
+{"id":"commitlint","source":"guide","status":"SKIPPED","duration_ms":0,"command":"npm run commitlint:last","notes":"Skipped per caller instruction until follow-up commit exists."}
+],"failures":{}}

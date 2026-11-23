@@ -174,3 +174,28 @@ describe('Copilot summary turns', () => {
     expect(first.counters.turns + second.counters.turns).toBe(2);
   });
 });
+
+describe('buildDeferredUsageEvents obfuscation mode (CR-005)', () => {
+  const EMAIL = 'dev@example.com';
+  const events = [
+    hookedPre('hooked-1', 1),
+    start('hooked-1', 'view', {}, 2),
+    start('runtime-1', 'read_agent', { agent_id: `agent-${EMAIL}` }, 4),
+    complete('runtime-1', 5, { success: true, result: { content: `mail ${EMAIL}` } }),
+  ];
+  const unhooked = (template: Record<string, unknown>): string =>
+    JSON.stringify(
+      buildDeferredUsageEvents({ session_id: SID, ...template }, events)
+        .filter((e) => e['tool_use_id'] === 'runtime-1')
+    );
+
+  it('template without rules_version: tool text is left as is', () => {
+    expect(unhooked({})).toContain(EMAIL);
+  });
+
+  it.each(['1', '2', '0', 'future-rules', ''])('template stamped with rules_version %j (not the current version): obfuscated', (version) => {
+    const out = unhooked({ rules_version: version });
+    expect(out).not.toContain(EMAIL);
+    expect(out).toContain('[REDACTED:EMAIL]');
+  });
+});

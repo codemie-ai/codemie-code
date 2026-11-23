@@ -1,8 +1,7 @@
-import { homedir } from 'node:os';
 import { sanitizeDeep, type ObfuscationMode, type SanitizeOptions } from '@/utils/analytics-obfuscation.js';
 import { resolveAnalyticsSettings, type AnalyticsSettings } from '@/utils/analytics-settings.js';
 import { isSensitiveKey, REDACTED } from '@/utils/security.js';
-import { hookObfuscationEvidence } from './otlp-spool/spool-files.js';
+import { readSessionCwds } from '@/agents/core/session-cwd-pin.js';
 
 /** Deeper than any real OTLP export; anything beyond is left to `maskSecretsDeep`, which redacts it whole. */
 const MAX_WALK_DEPTH = 64;
@@ -55,30 +54,32 @@ export function maskOtlpJson(parsed: unknown, mode: ObfuscationMode, opts?: Sani
 }
 
 export interface SessionModeDeps {
-  hookEvidence: typeof hookObfuscationEvidence;
-  resolveSettings: (cwd: string) => AnalyticsSettings;
+  sessionCwds: (sessionId: string) => Promise<string[]>;
+  resolveSettings: (cwd: string | undefined) => AnalyticsSettings;
 }
 
-/** Sessions whose hooks were seen obfuscated: `on` is sticky for the life of the daemon. */
+/** Sessions resolved `on`: sticky for the life of the daemon, so a later config edit cannot drop a session to off. */
 const sessionsKnownOn = new Set<string>();
 
 /**
- * Obfuscation mode for one session's OTLP export. The daemon has no project directory for a session, so a
- * project-scoped setting is learned from the session's own hook events (a hook stamps `rules_version` while
- * obfuscation is on for its folder); the global layer is read directly. A session with no hook event yet follows the
- * global layer only (the completeness gate never sends a session without hook data). Any read failure gives the
- * protective value `on`. Nothing in the request is consulted.
+ * Obfuscation mode for one session's OTLP export. The daemon has no working directory of its own, so the project
+ * directories come from the session mapping its hooks wrote (`session-cwd-pin.ts`); each is resolved with the global
+ * layer, and any layer on gives `on` (protective, sticky for the life of the daemon). A session with no mapping yet
+ * follows the global layer. Any read failure gives `on`. Nothing in the request is consulted.
  */
 export async function resolveSessionObfuscationMode(
   sessionId: string,
-  deps: SessionModeDeps = { hookEvidence: hookObfuscationEvidence, resolveSettings: resolveAnalyticsSettings }
+  deps: SessionModeDeps = { sessionCwds: readSessionCwds, resolveSettings: resolveAnalyticsSettings }
 ): Promise<ObfuscationMode> {
   try {
-    if (deps.resolveSettings(homedir()).obfuscation === 'on' || sessionsKnownOn.has(sessionId)) return 'on';
-    const evidence = await deps.hookEvidence(sessionId);
-    if (evidence !== 'on') return 'off';
-    sessionsKnownOn.add(sessionId);
-    return 'on';
+    if (sessionsKnownOn.has(sessionId)) return 'on';
+    const cwds = await deps.sessionCwds(sessionId);
+    const scopes: (string | undefined)[] = cwds.length > 0 ? cwds : [undefined];
+    if (scopes.some((cwd) => deps.resolveSettings(cwd).obfuscation === 'on')) {
+      sessionsKnownOn.add(sessionId);
+      return 'on';
+    }
+    return 'off';
   } catch {
     return 'on';
   }

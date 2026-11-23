@@ -222,40 +222,69 @@ describe('maskOtlpJson — obfuscation on', () => {
 });
 
 describe('resolveSessionObfuscationMode', () => {
-  const on = () => ({ obfuscation: 'on' as const });
-  const off = () => ({ obfuscation: 'off' as const });
-  const evidence = (value: 'on' | 'off' | 'none') => async () => value;
+  const on = { obfuscation: 'on' as const };
+  const off = { obfuscation: 'off' as const };
+  /** Settings keyed by cwd; `undefined` is the global layer alone (no project directory). */
+  const settingsFor =
+    (table: Record<string, typeof on | typeof off>, global: typeof on | typeof off = off) =>
+    (cwd: string | undefined) =>
+      cwd === undefined ? global : table[cwd] ?? global;
+  const cwds = (value: string[]) => async () => value;
 
-  it('the global layer on gives on whatever the hooks say', async () => {
-    expect(await resolveSessionObfuscationMode('g1', { hookEvidence: evidence('off'), resolveSettings: on })).toBe('on');
+  it('a project-only on, resolved from the session directory, gives on before any hook event', async () => {
+    const mode = await resolveSessionObfuscationMode('p1', {
+      sessionCwds: cwds(['/work/proj']),
+      resolveSettings: settingsFor({ '/work/proj': on }),
+    });
+    expect(mode).toBe('on');
   });
 
-  it('a project-scoped on, seen as rules_version on the session hooks, gives on', async () => {
-    expect(await resolveSessionObfuscationMode('p1', { hookEvidence: evidence('on'), resolveSettings: off })).toBe('on');
+  it('the global layer on gives on', async () => {
+    const mode = await resolveSessionObfuscationMode('g1', {
+      sessionCwds: cwds(['/work/proj']),
+      resolveSettings: settingsFor({}, on),
+    });
+    expect(mode).toBe('on');
+  });
+
+  it('any of the session directories on gives on', async () => {
+    const mode = await resolveSessionObfuscationMode('m1', {
+      sessionCwds: cwds(['/work/a', '/work/b']),
+      resolveSettings: settingsFor({ '/work/b': on }),
+    });
+    expect(mode).toBe('on');
+  });
+
+  it('a mapped directory with nothing on gives off', async () => {
+    expect(
+      await resolveSessionObfuscationMode('o1', { sessionCwds: cwds(['/work/proj']), resolveSettings: settingsFor({}) })
+    ).toBe('off');
+  });
+
+  it('no mapping falls back to the global layer: off when it is off, on when it is on', async () => {
+    expect(await resolveSessionObfuscationMode('n1', { sessionCwds: cwds([]), resolveSettings: settingsFor({}) })).toBe('off');
+    expect(await resolveSessionObfuscationMode('n2', { sessionCwds: cwds([]), resolveSettings: settingsFor({}, on) })).toBe('on');
   });
 
   it('on stays on for the session once seen', async () => {
-    await resolveSessionObfuscationMode('p2', { hookEvidence: evidence('on'), resolveSettings: off });
-    expect(await resolveSessionObfuscationMode('p2', { hookEvidence: evidence('off'), resolveSettings: off })).toBe('on');
+    await resolveSessionObfuscationMode('s1', { sessionCwds: cwds(['/work/proj']), resolveSettings: settingsFor({ '/work/proj': on }) });
+    expect(
+      await resolveSessionObfuscationMode('s1', { sessionCwds: cwds([]), resolveSettings: settingsFor({}) })
+    ).toBe('on');
   });
 
-  it('hooks without rules_version, or no hooks yet, follow the global layer (off)', async () => {
-    expect(await resolveSessionObfuscationMode('o1', { hookEvidence: evidence('off'), resolveSettings: off })).toBe('off');
-    expect(await resolveSessionObfuscationMode('o2', { hookEvidence: evidence('none'), resolveSettings: off })).toBe('off');
-  });
-
-  it('a failing evidence or settings read gives on', async () => {
+  it('a failing mapping or settings read gives on', async () => {
     expect(
       await resolveSessionObfuscationMode('f1', {
-        hookEvidence: async () => {
+        sessionCwds: async () => {
           throw new Error('boom');
         },
-        resolveSettings: off,
+        resolveSettings: settingsFor({}),
       })
     ).toBe('on');
     expect(
       await resolveSessionObfuscationMode('f2', {
-        hookEvidence: evidence('off'),
+        sessionCwds: cwds(['/work/proj']),
         resolveSettings: () => {
           throw new Error('boom');
         },

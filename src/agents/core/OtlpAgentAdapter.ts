@@ -11,6 +11,7 @@ import { resolveBranchStory } from './story-resolver.js';
 import { stampEvidence, type EvidenceInputs } from './evidence/stamp.js';
 import { frozenProfileOf, type EvidenceRecord } from './evidence/record-store.js';
 import { enqueuePendingOwner } from './evidence/owner-pending.js';
+import { recordSessionCwd } from './session-cwd-pin.js';
 
 export type ForwardDecision<TBlockOutput = Record<string, unknown>> =
   | {
@@ -206,10 +207,11 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       this.resolveAgentFields(hookInput),
     ]);
     const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(), commonFields, agentFields, settings };
-    return {
-      events: decision.payload.map((hookEvent) => this.buildEvent(hookEvent, invocation)),
-      options: record ? { evidenceV: 1 } : undefined,
-    };
+    const events = decision.payload.map((hookEvent) => this.buildEvent(hookEvent, invocation));
+    // The daemon has no cwd: tell it where this session runs, before the events (and the OTLP export that follows) arrive.
+    const sessionId = context.sessionId ?? String(events[0]?.['session_id'] ?? '');
+    await recordSessionCwd(sessionId, context.cwd);
+    return { events, options: record ? { evidenceV: 1 } : undefined };
   }
 
   /**
