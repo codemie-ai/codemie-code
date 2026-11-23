@@ -11,6 +11,8 @@
  */
 
 import path from 'path';
+import { realpath } from 'fs';
+import { promisify } from 'util';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -238,6 +240,25 @@ export function isPathWithinDirectory(workingDir: string, resolvedPath: string):
  */
 export function isSamePath(a: string, b: string, platform: NodeJS.Platform = process.platform): boolean {
   return getPathModule(platform).relative(a, b) === '';
+}
+
+const realpathNative = promisify(realpath.native);
+
+/**
+ * Like {@link isSamePath}, but first resolves both sides through the filesystem
+ * (`realpath.native`), so symlinks, junctions and Windows 8.3 short names compare equal.
+ * Falls back to the raw path for a side that cannot be resolved.
+ */
+export async function isSamePathResolved(a: string, b: string): Promise<boolean> {
+  const resolve = async (p: string): Promise<string> => {
+    try {
+      return await realpathNative(p);
+    } catch {
+      return p;
+    }
+  };
+  const [ra, rb] = await Promise.all([resolve(a), resolve(b)]);
+  return isSamePath(ra, rb);
 }
 
 // ============================================================================
