@@ -13,6 +13,11 @@ The wizard will:
 - Test your credentials via health endpoints
 - Fetch available models in real-time
 - Save configuration to `~/.codemie/codemie-cli.config.json`
+- Ask two optional analytics questions (both default to "Leave unchanged"):
+  - whether to obfuscate emails, phone numbers, IP addresses, card numbers and secrets in analytics text (off by default)
+  - which ticket tracker (Jira, Azure DevOps, GitHub, GitLab) bare `#123` references belong to (unset by default)
+
+  Each answer is saved globally or for the current project. A project can only turn obfuscation on: choosing Off for one project saves nothing.
 
 **Multi-Provider Support**: If you already have profiles configured, the wizard will offer to:
 - Add a new profile (prompts for unique name)
@@ -307,6 +312,16 @@ Location: `~/.codemie/codemie-cli.config.json`
   "timeout": 300
 }
 ```
+
+#### Analytics block
+
+An optional `analytics` block, normally written by `codemie setup`, can sit in the global file or in the project's `.codemie/codemie-cli.config.json`. It has two keys:
+
+- `obfuscation` (`on` or `off`, default off): replaces emails, phone numbers, IPv4/IPv6 addresses, payment card numbers and IBANs in analytics text with placeholders such as `[REDACTED:EMAIL]`. Secrets are always masked, with or without this setting.
+- `ticketTracker` (`jira`, `azure-devops`, `github` or `gitlab`, unset by default): decides whether a bare `#123` is counted as a ticket. The project value wins over the global one.
+- Protective wins: obfuscation is on when the global or the project setting is on. A project can only turn it on, never off.
+
+See [Proxy and Analytics](PROXY-AND-ANALYTICS.md#analytics-obfuscation) for what is covered.
 
 ## Model Compatibility
 

@@ -99,6 +99,14 @@ codemie analytics sync run                 # send now
 
 See [Analytics Sync](ANALYTICS-SYNC.md) for the team-lead and developer steps.
 
+## Analytics obfuscation
+
+An opt-in setting, off by default, set in `codemie setup` (see [Configuration](CONFIGURATION.md)). When it is on, emails, phone numbers, IP addresses, payment cards and IBANs are replaced by typed placeholders after the always-on secret masking. It covers the hook collectors, native OTLP exports through the proxy (both JSON and the protobuf sent by `--claude-otlp`), and the titles in `codemie analytics` reports and `analytics sync`. Ticket references such as `PROJ-123` stay readable. The session owner attribute `user.email` is intentionally not obfuscated.
+
+- Protobuf exports are rewritten byte-faithfully: only text values change, and a body with nothing to obfuscate is forwarded unchanged. A malformed body is rejected with 400 and an oversized one with 413.
+- The proxy has no working directory, so it finds the project of a session from a mapping of working directories that the hooks write. A project-only "on" therefore also covers native OTLP. With no mapping the global setting applies; a session that used more than 8 directories resolves to on.
+- Known limits: a native OTLP record that arrives before any hook ran follows the global setting only. Producers without hooks (Claude Desktop Cowork) follow the global setting. Reports and sync obfuscate session titles only. Obfuscation on the backend is out of scope.
+
 ## Deprecated and removed forms
 
 Deprecated forms still work until the removal date and print one notice line on stderr naming the replacement. Removed forms fail with a message naming the replacement and exit non-zero.

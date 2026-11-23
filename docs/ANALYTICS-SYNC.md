@@ -313,6 +313,8 @@ The body is a Teams webhook message with the report as its only attachment:
 `attachments[0].contentBytes`. It is the same shape the standalone collector sent, so
 existing flows keep working.
 
+With the analytics obfuscation setting on, the session titles in the synced report are obfuscated the same way as in a local report export (emails, phone numbers, IP addresses, card numbers and IBANs become placeholders). Project and branch are not changed. See [Configuration](CONFIGURATION.md).
+
 ### The file name
 
 ```text

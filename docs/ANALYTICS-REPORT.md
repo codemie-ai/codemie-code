@@ -280,6 +280,8 @@ The JSON output deliberately ends in `.report.json` rather than `.json` so a dir
 - removes `agentSessionFile` (the absolute native log path) — `hadLog` still says whether a log was found;
 - replaces a `--project` filter value in `meta.projectFilter` with `<redacted>`.
 
+With the analytics obfuscation setting on (see [Configuration](CONFIGURATION.md)), session titles in the exported report are obfuscated: emails, phone numbers, IP addresses, card numbers and IBANs become placeholders such as `[REDACTED:EMAIL]`. Only titles are changed, not `project` or `branch`. `--redact` is stronger and removes the titles altogether, so it wins when both apply.
+
 All metrics (tokens, cost, turns, tools, models, durations) are unchanged. `meta.userEmail` and `branch` are kept; branch names can still hint at a ticket or topic. It affects only the exported file — terminal output and local session data are untouched.
 
 **Report metadata and your email.** Reports embed the reporting user's email plus the period covered. The address is read from your CodeMie config; if it is missing and you're on an interactive terminal, report generation warns and prompts for it once, then saves it for future runs. Declining the prompt cancels report generation. The `<email-slug>` segment is dropped from the filenames when no email is available.
@@ -364,6 +366,8 @@ Export flags:
   --open                     Open the generated HTML report in the default browser
                               (implies --export html when --export is not given)
   --redact                   Omit prompt text and absolute paths from the exported report
+                              (stronger than the analytics obfuscation setting, which only
+                              obfuscates session titles)
 
 Filter flags:
   --last <duration>         Last N days/hours/minutes: 7d, 24h, 30m
