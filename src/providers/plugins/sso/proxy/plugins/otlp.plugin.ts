@@ -8,6 +8,7 @@ import { isSafeSessionId } from '../../../../../agents/core/session-id.js';
 import { logger } from '../../../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../../../utils/security.js';
 import { maskOtlpJson, resolveSessionObfuscationMode } from './otlp-json-masking.js';
+import { obfuscateOtlpProtobuf } from './otlp-protobuf-obfuscate.js';
 import { listSessionIds, OTEL_JSON_STREAM_BY_SIGNAL } from './otlp-spool/spool-paths.js';
 import { sweepSpool } from './otlp-spool/sweep.js';
 import { processSessionTick } from './otlp-spool/tick-processor.js';
@@ -399,7 +400,7 @@ class OtlpInterceptor implements ProxyInterceptor {
     return true;
   }
 
-  /** Anything else (protobuf, or no Content-Type): byte-blind, unmasked, unchanged. */
+  /** Anything else (protobuf, or no Content-Type): unchanged with obfuscation off; string leaves obfuscated when on. */
   private async handleOtlpBinary(
     bytes: Buffer,
     res: ServerResponse,
@@ -418,7 +419,16 @@ class OtlpInterceptor implements ProxyInterceptor {
     }
 
     try {
-      await appendSpool(sessionId, signal, bytes);
+      // Obfuscation is opt-in: with it off the bytes are forwarded exactly as before.
+      const mode = await resolveSessionObfuscationMode(sessionId);
+      const toSpool = mode === 'on' ? obfuscateOtlpProtobuf(bytes, mode, signal) : bytes;
+      if (toSpool === null) {
+        // Re-encoded body over the forwarder limit, or malformed: dropped, never spooled raw.
+        res.statusCode = 200;
+        res.end();
+        return true;
+      }
+      await appendSpool(sessionId, signal, toSpool);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(`[otlp-ingest] ${signal} disk write error`, ...sanitizeLogArgs({ sessionId, err: msg }));
