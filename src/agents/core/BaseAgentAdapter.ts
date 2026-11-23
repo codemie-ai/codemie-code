@@ -338,20 +338,16 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       if (!prefix) return unknown;
       const managedDir = getNpmBinDir(prefix, 'win32');
 
+      // Probe the managed shim first: without one the agent can only be 'missing', so skip the PATH lookup.
+      const managedShimPath = winPath.join(managedDir, `${cliCommand}.cmd`);
+      try {
+        await access(managedShimPath);
+      } catch {
+        return { status: 'missing' };
+      }
+
       const matches = await this.getPathMatches();
       if (matches === null) return unknown;
-
-      let managedShimPath: string | null = null;
-      for (const name of [`${cliCommand}.cmd`, cliCommand]) {
-        const candidate = winPath.join(managedDir, name);
-        try {
-          await access(candidate);
-          managedShimPath = candidate;
-          break;
-        } catch {
-          // not present, try the next shim name
-        }
-      }
 
       // The classifier compares synchronously; resolve directory equality up front.
       const sameDir = new Map<string, boolean>();

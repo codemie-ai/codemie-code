@@ -70,6 +70,13 @@ describe('list command PATH shadow surfaces', () => {
     expect(out).toContain(SHADOWED.managedDir);
   });
 
+  it('keeps shadow info when isInstalled disagrees with the verdict', async () => {
+    getManageableAgentsMock.mockReturnValue([makeAgent('pi', SHADOWED, false)]);
+    const out = await runList();
+    expect(out).toContain('shadowed');
+    expect(out).toContain(SHADOWED.active);
+  });
+
   it('shows "not found on PATH" instead of bare "not installed" for missing-on-path', async () => {
     getManageableAgentsMock.mockReturnValue([makeAgent('pi', MISSING_ON_PATH, false)]);
     const out = await runList();

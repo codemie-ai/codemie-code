@@ -100,13 +100,17 @@ describe('BaseAgentAdapter.checkPathShadow', () => {
     expect(verdict).toEqual({ status: 'missing-on-path', managedDir: MANAGED, shimPath: `${MANAGED}\\pi.cmd` });
   });
 
-  it('falls back to the extensionless shim', async () => {
-    vi.mocked(getCommandMatches).mockResolvedValue({ status: 'answered', matches: [] });
+  it('ignores an extensionless leftover without a .cmd shim', async () => {
     vi.mocked(access).mockImplementation(async (p) => {
       if (String(p).endsWith('.cmd')) throw new Error('ENOENT');
     });
-    const verdict = await new TestAdapter().checkPathShadow();
-    expect(verdict).toEqual({ status: 'missing-on-path', managedDir: MANAGED, shimPath: `${MANAGED}\\pi` });
+    expect(await new TestAdapter().checkPathShadow()).toEqual({ status: 'missing' });
+  });
+
+  it('skips the PATH lookup when no managed shim exists', async () => {
+    vi.mocked(access).mockRejectedValue(new Error('ENOENT'));
+    expect(await new TestAdapter().checkPathShadow()).toEqual({ status: 'missing' });
+    expect(getCommandMatches).not.toHaveBeenCalled();
   });
 
   it('reports missing when nothing is on PATH and no shim exists', async () => {

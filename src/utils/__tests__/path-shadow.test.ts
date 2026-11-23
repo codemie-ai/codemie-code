@@ -78,7 +78,7 @@ describe('shadow formatters', () => {
   });
 
   it('shadow warning omits the copy-paste command for unsafe directories', () => {
-    for (const bad of [`C:${B}a;b`, `C:${B}100%${B}x`, `C:${B}it's`, `C:${B}q"x`, `C:${B}t\tab`]) {
+    for (const bad of [`C:${B}a;b`, `C:${B}100%${B}x`, `C:${B}it's`, `C:${B}q"x`, `C:${B}t\tab`, `C:${B}O’Brien`, `C:${B}q“x`]) {
       const text = formatShadowWarning({ ...shadowed, managedDir: bad }, 'win32').join('\n');
       expect(text).not.toContain('SetEnvironmentVariable');
       expect(text).toContain('open a new terminal');

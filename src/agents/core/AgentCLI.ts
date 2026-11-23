@@ -198,8 +198,7 @@ export class AgentCLI {
     let settingsSwitch: ProviderSettingsSwitch | null = null;
     try {
       // Check if agent is installed
-      const installed = await this.adapter.isInstalled();
-      const shadow = await this.resolvePathShadow();
+      const [installed, shadow] = await Promise.all([this.adapter.isInstalled(), this.resolvePathShadow()]);
       if (!installed) {
         // stderr, not stdout: callers that capture our stdout (t3code, SDKs)
         // must not receive install instructions in the stream they parse.

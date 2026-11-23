@@ -60,7 +60,7 @@ export function createListCommand(): Command {
             const verdict = verdicts.get(agent.name) ?? UNKNOWN_VERDICT;
             const extraLines: string[] = [];
             let status: string;
-            if (installed && verdict.status === 'shadowed') {
+            if (verdict.status === 'shadowed') {
               status = chalk.yellow('shadowed');
               extraLines.push(
                 chalk.yellow(`      Active:   ${verdict.active}`),

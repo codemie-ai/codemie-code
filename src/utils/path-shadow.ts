@@ -54,7 +54,7 @@ type MissingOnPathVerdict = Extract<ShadowVerdict, { status: 'missing-on-path' }
 /** A directory is safe to embed in a single-quoted PowerShell literal and a PATH entry. */
 function isSafeForPowerShell(dir: string): boolean {
   // eslint-disable-next-line no-control-regex
-  return !/['";%\u0000-\u001f\u007f]/.test(dir);
+  return !/['"‘-‟;%\u0000-\u001f\u007f]/.test(dir);
 }
 
 /** Copy-paste PowerShell command that edits the user PATH, or null when `dir` is not safe to quote. */
