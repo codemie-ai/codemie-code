@@ -7,7 +7,7 @@ import { withVerifiedOwner } from '../../../../core/credential-owner.js';
 import { isSafeSessionId } from '../../../../../agents/core/session-id.js';
 import { logger } from '../../../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../../../utils/security.js';
-import { maskOtlpJson } from './otlp-json-masking.js';
+import { maskOtlpJson, resolveSessionObfuscationMode } from './otlp-json-masking.js';
 import { listSessionIds, OTEL_JSON_STREAM_BY_SIGNAL } from './otlp-spool/spool-paths.js';
 import { sweepSpool } from './otlp-spool/sweep.js';
 import { processSessionTick } from './otlp-spool/tick-processor.js';
@@ -380,7 +380,7 @@ class OtlpInterceptor implements ProxyInterceptor {
 
     try {
       const parsed = JSON.parse(text);
-      const masked = maskOtlpJson(parsed);
+      const masked = maskOtlpJson(parsed, await resolveSessionObfuscationMode(sessionId));
       const line = JSON.stringify(masked);
       await appendSpool(sessionId, OTEL_JSON_STREAM_BY_SIGNAL[signal], line + '\n');
     } catch (err) {

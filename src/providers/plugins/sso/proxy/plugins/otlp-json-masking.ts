@@ -1,5 +1,8 @@
-import { maskSecretsInLongText } from '@/utils/long-text-masking.js';
-import { isSensitiveKey, maskSecretsDeep, REDACTED } from '@/utils/security.js';
+import { homedir } from 'node:os';
+import { sanitizeDeep, type ObfuscationMode, type SanitizeOptions } from '@/utils/analytics-obfuscation.js';
+import { resolveAnalyticsSettings, type AnalyticsSettings } from '@/utils/analytics-settings.js';
+import { isSensitiveKey, REDACTED } from '@/utils/security.js';
+import { readStatus } from './otlp-spool/session-status.js';
 
 /** Deeper than any real OTLP export; anything beyond is left to `maskSecretsDeep`, which redacts it whole. */
 const MAX_WALK_DEPTH = 64;
@@ -37,9 +40,39 @@ function redactSensitiveAttributes(node: unknown, depth: number): unknown {
 
 /**
  * Mask a parsed OTLP/JSON export: secret-named attributes are redacted by name, then every
- * remaining string is scanned for embedded secrets (JSON-encoded `tool_parameters`, `tool_input`, ...).
- * Strings are scanned in full, not cut at 64 KB: telemetry is forwarded as sent, with no later length limit.
+ * remaining string is scanned for embedded secrets (JSON-encoded `tool_parameters`, `tool_input`, ...)
+ * and, in `on` mode, for PII. Strings are scanned in full, not cut at 64 KB: telemetry is forwarded
+ * as sent. A string that fails in `on` mode becomes the failure placeholder; the rest is kept.
+ * `mode` comes from `resolveSessionObfuscationMode`, never from the request body.
  */
-export function maskOtlpJson(parsed: unknown): unknown {
-  return maskSecretsDeep(redactSensitiveAttributes(parsed, 0), undefined, maskSecretsInLongText);
+export function maskOtlpJson(parsed: unknown, mode: ObfuscationMode, opts?: SanitizeOptions): unknown {
+  const masked = sanitizeDeep(redactSensitiveAttributes(parsed, 0), mode, opts);
+  if (mode === 'on' && typeof masked === 'string' && typeof parsed === 'object' && parsed !== null) {
+    // The whole walk failed: the placeholder step itself did not work, so the record is dropped by the caller.
+    throw new Error('OTLP JSON obfuscation failed for the whole record');
+  }
+  return masked;
+}
+
+export interface SessionModeDeps {
+  readStatus: typeof readStatus;
+  resolveSettings: (cwd: string) => AnalyticsSettings;
+}
+
+/**
+ * Obfuscation mode for one session's OTLP export. The session status carries the bound project name
+ * but no directory, so the settings are read from the layers the daemon can see (global; the project
+ * layer when its directory is the lookup root). A session with no mapping resolves from those same
+ * layers; any read failure gives the protective value `on`. Nothing in the request is consulted.
+ */
+export async function resolveSessionObfuscationMode(
+  sessionId: string,
+  deps: SessionModeDeps = { readStatus, resolveSettings: resolveAnalyticsSettings }
+): Promise<ObfuscationMode> {
+  try {
+    await deps.readStatus(sessionId);
+    return deps.resolveSettings(homedir()).obfuscation;
+  } catch {
+    return 'on';
+  }
 }

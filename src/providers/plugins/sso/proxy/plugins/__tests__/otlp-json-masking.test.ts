@@ -4,7 +4,14 @@
  * @group unit
  */
 import { describe, it, expect } from 'vitest';
-import { maskOtlpJson } from '../otlp-json-masking.js';
+import {
+  maskOtlpJson as maskOtlpJsonWithMode,
+  resolveSessionObfuscationMode,
+} from '../otlp-json-masking.js';
+import { OBFUSCATION_FAILURE_PLACEHOLDER } from '@/utils/analytics-obfuscation.js';
+
+/** The pre-existing secret-masking behaviour: off mode. */
+const maskOtlpJson = (parsed: unknown): unknown => maskOtlpJsonWithMode(parsed, 'off');
 
 // A value no embedded-secret pattern recognises: only its attribute name gives it away.
 const PLAIN_SECRET = 'correct-horse-battery-staple';
@@ -185,5 +192,64 @@ describe('maskOtlpJson — robustness', () => {
     const masked = maskOtlpJson(deep);
 
     expect(JSON.stringify(masked)).not.toContain(PLAIN_SECRET);
+  });
+});
+
+
+describe('maskOtlpJson — obfuscation on', () => {
+  const emailAttr = str('user.prompt', 'mail me at dev@example.com please');
+
+  it('replaces an email in a log attribute when on, and leaves it when off', () => {
+    const on = JSON.stringify(maskOtlpJsonWithMode(logsExport([emailAttr]), 'on'));
+    expect(on).not.toContain('dev@example.com');
+    expect(on).toContain('[REDACTED:EMAIL]');
+    expect(JSON.stringify(maskOtlpJsonWithMode(logsExport([emailAttr]), 'off'))).toContain('dev@example.com');
+  });
+
+  it('a field that fails becomes the placeholder while other attributes are still forwarded', () => {
+    const huge = str('user.prompt', `dev@example.com ${'x'.repeat(100)}`);
+    const masked = maskOtlpJsonWithMode(
+      logsExport([huge, str('tool_name', 'Bash'), attr('tokens', { intValue: '42' })]),
+      'on',
+      { maxInput: 50 }
+    );
+    expect(logAttributes(masked)).toEqual([
+      str('user.prompt', OBFUSCATION_FAILURE_PLACEHOLDER),
+      str('tool_name', 'Bash'),
+      attr('tokens', { intValue: '42' }),
+    ]);
+  });
+});
+
+describe('resolveSessionObfuscationMode', () => {
+  const on = () => ({ obfuscation: 'on' as const });
+  const off = () => ({ obfuscation: 'off' as const });
+
+  it('uses the mapped session and the settings layer', async () => {
+    const mode = await resolveSessionObfuscationMode('s1', {
+      readStatus: async () => ({ project: 'p' }) as never,
+      resolveSettings: on,
+    });
+    expect(mode).toBe('on');
+  });
+
+  it('an unmapped session still obfuscates when a known layer is on', async () => {
+    expect(
+      await resolveSessionObfuscationMode('s1', { readStatus: async () => null, resolveSettings: on })
+    ).toBe('on');
+    expect(
+      await resolveSessionObfuscationMode('s1', { readStatus: async () => null, resolveSettings: off })
+    ).toBe('off');
+  });
+
+  it('a failing status read or settings read gives on', async () => {
+    expect(
+      await resolveSessionObfuscationMode('s1', {
+        readStatus: async () => {
+          throw new Error('boom');
+        },
+        resolveSettings: off,
+      })
+    ).toBe('on');
   });
 });
