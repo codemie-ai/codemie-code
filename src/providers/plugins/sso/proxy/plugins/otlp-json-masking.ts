@@ -1,4 +1,5 @@
-import { sanitizeDeep, type ObfuscationMode, type SanitizeOptions } from '@/utils/analytics-obfuscation.js';
+import { randomUUID } from 'node:crypto';
+import { sanitizeDeep, sanitizeText, type ObfuscationMode, type SanitizeOptions } from '@/utils/analytics-obfuscation.js';
 import { resolveAnalyticsSettings, type AnalyticsSettings } from '@/utils/analytics-settings.js';
 import { isSensitiveKey, REDACTED } from '@/utils/security.js';
 import { readSessionCwds } from '@/agents/core/session-cwd-pin.js';
@@ -13,26 +14,56 @@ function isKeyValue(node: Record<string, unknown>): node is { key: string; value
 }
 
 /**
+ * Identity attributes whose plain string value is not obfuscated as PII (Claude Code's `user.email` names the
+ * session owner). Matched on the exact attribute name; extend here if another identity attribute needs it.
+ */
+const PII_EXEMPT_KEYS: ReadonlySet<string> = new Set(['user.email']);
+
+interface KeptValues {
+  nonce: string;
+  values: Map<string, string>;
+}
+
+/** Put the exempt values back where `redactSensitiveAttributes` swapped in a sentinel. */
+function restoreKeptValues(node: unknown, kept: KeptValues): unknown {
+  if (typeof node !== 'object' || node === null) return node;
+  if (Array.isArray(node)) return node.map((item) => restoreKeptValues(item, kept));
+  const out: Record<string, unknown> = {};
+  for (const [name, child] of Object.entries(node as Record<string, unknown>)) {
+    out[name] = name === 'stringValue' && typeof child === 'string' && kept.values.has(child)
+      ? kept.values.get(child)
+      : restoreKeptValues(child, kept);
+  }
+  return out;
+}
+
+/**
  * Replace the `AnyValue` of every OTLP `KeyValue` whose attribute name is a secret name
  * (`api_key`, `auth_token`, `password`, ...) with a redacted string value. `maskSecretsDeep`
  * only sees property names, so it cannot do this: in OTLP the name is data, not a property.
  * Recognised by shape, so resource, log, span, event and metric data-point attributes and
  * nested `kvlistValue`/`arrayValue` entries are all covered. The input is never mutated.
  */
-function redactSensitiveAttributes(node: unknown, depth: number): unknown {
+function redactSensitiveAttributes(node: unknown, depth: number, kept?: KeptValues): unknown {
   if (typeof node !== 'object' || node === null || depth >= MAX_WALK_DEPTH) {
     return node;
   }
   if (Array.isArray(node)) {
-    return node.map((item) => redactSensitiveAttributes(item, depth + 1));
+    return node.map((item) => redactSensitiveAttributes(item, depth + 1, kept));
   }
   const record = node as Record<string, unknown>;
   if (isKeyValue(record) && isSensitiveKey(record.key)) {
     return { ...record, value: { stringValue: REDACTED } };
   }
+  if (kept && isKeyValue(record) && PII_EXEMPT_KEYS.has(record.key) && typeof record.value.stringValue === 'string') {
+    // Secret patterns still apply; only the PII rules are skipped by hiding the value from the obfuscation walk.
+    const sentinel = `${kept.nonce}:${kept.values.size}`;
+    kept.values.set(sentinel, sanitizeText(record.value.stringValue, 'off'));
+    return { ...record, value: { ...record.value, stringValue: sentinel } };
+  }
   const walked: Record<string, unknown> = {};
   for (const [name, child] of Object.entries(record)) {
-    walked[name] = redactSensitiveAttributes(child, depth + 1);
+    walked[name] = redactSensitiveAttributes(child, depth + 1, kept);
   }
   return walked;
 }
@@ -45,7 +76,14 @@ function redactSensitiveAttributes(node: unknown, depth: number): unknown {
  * `mode` comes from `resolveSessionObfuscationMode`, never from the request body.
  */
 export function maskOtlpJson(parsed: unknown, mode: ObfuscationMode, opts?: SanitizeOptions): unknown {
-  const masked = sanitizeDeep(redactSensitiveAttributes(parsed, 0), mode, opts);
+  if (mode === 'off') {
+    return sanitizeDeep(redactSensitiveAttributes(parsed, 0), mode, opts);
+  }
+  const kept: KeptValues = { nonce: `keep-${randomUUID()}`, values: new Map() };
+  let masked = sanitizeDeep(redactSensitiveAttributes(parsed, 0, kept), mode, opts);
+  if (kept.values.size > 0 && typeof masked === 'object' && masked !== null) {
+    masked = restoreKeptValues(masked, kept);
+  }
   if (mode === 'on' && typeof masked === 'string' && typeof parsed === 'object' && parsed !== null) {
     // The whole walk failed: the placeholder step itself did not work, so the record is dropped by the caller.
     throw new Error('OTLP JSON obfuscation failed for the whole record');

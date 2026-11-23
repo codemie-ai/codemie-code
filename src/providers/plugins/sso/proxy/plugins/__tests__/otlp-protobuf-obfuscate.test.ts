@@ -60,6 +60,13 @@ describe('obfuscateOtlpProtobuf', () => {
     expect(proof.verified).toBe(out.length);
   });
 
+  it('keeps the user.email attribute while a prompt attribute holding an email is still masked', () => {
+    const body = logs('hi', [attr6('user.email', anyStr('dev@example.com')), attr6('prompt', anyStr('write to dev@example.com'))]);
+    const out = obfuscateOtlpProtobuf(body, 'on', 'logs')!.toString('utf8');
+    expect(out.match(/dev@example\.com/g)).toHaveLength(1);
+    expect(out).toContain('write to [REDACTED:EMAIL]');
+  });
+
   it('rewrites string attribute values and nested kvlist values', () => {
     const nested = Buffer.concat([ld(6, ld(1, Buffer.concat([ld(1, 'inner'), ld(2, anyStr('a@b.io'))])))]);
     const out = obfuscateOtlpProtobuf(

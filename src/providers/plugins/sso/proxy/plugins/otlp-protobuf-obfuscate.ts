@@ -24,6 +24,12 @@ const MAX_DEPTH = 32;
 /** Attributes the forwarder's range proof reads; their values are identifiers, never rewritten. */
 const PROOF_KEYS = new Set(['session.id', 'session_id', 'codemie_project_name']);
 
+/**
+ * Identity attributes whose plain string value is not obfuscated as PII (Claude Code's `user.email` names the
+ * session owner). Secret patterns are still masked in them; any other attribute and all free text are unaffected.
+ */
+const PII_EXEMPT_KEYS = new Set(['user.email']);
+
 /** A proof attribute's value is kept only while it looks like an identifier; anything else is free text and is obfuscated. */
 const IDENTIFIER_VALUE = /^[A-Za-z0-9._:@-]{1,128}$/;
 
@@ -115,12 +121,37 @@ function rewriteKeyValue(buf: Buffer, start: number, end: number, mode: Obfuscat
     if (tag === 10) {
       const len = readVarint(buf, c, end);
       if (c.p + len > end) throw new MalformedProtobuf('length');
-      if (PROOF_KEYS.has(buf.toString('utf8', c.p, c.p + len)) && proofValueIsIdentifier(buf, c.p + len, end)) return null;
+      const name = buf.toString('utf8', c.p, c.p + len);
+      if (PROOF_KEYS.has(name) && proofValueIsIdentifier(buf, c.p + len, end)) return null;
+      if (PII_EXEMPT_KEYS.has(name) && valueIsPlainString(buf, c.p + len, end)) {
+        // 'off' mode applies the secret patterns only, so the email stays but a smuggled secret is masked.
+        return rewriteMessage(buf, start, end, 'kv', 'off', depth, true);
+      }
       break;
     }
     skipPayload(buf, tag % 8, c, end);
   }
   return rewriteMessage(buf, start, end, 'kv', mode, depth, true);
+}
+
+/** True when the KeyValue's `AnyValue` (field 2) holds nothing but a `string_value`. */
+function valueIsPlainString(buf: Buffer, from: number, end: number): boolean {
+  const c: Cursor = { p: from };
+  while (c.p < end) {
+    const tag = readVarint(buf, c, end);
+    if (tag !== 18) {
+      skipPayload(buf, tag % 8, c, end);
+      continue;
+    }
+    const len = readVarint(buf, c, end);
+    if (c.p + len > end) throw new MalformedProtobuf('length');
+    const inner: Cursor = { p: c.p };
+    const innerEnd = c.p + len;
+    if (inner.p >= innerEnd || readVarint(buf, inner, innerEnd) !== 10) return false;
+    const innerLen = readVarint(buf, inner, innerEnd);
+    return inner.p + innerLen === innerEnd;
+  }
+  return false;
 }
 
 /** True when the `AnyValue` string that follows the attribute name (KeyValue field 2) looks like an identifier. */

@@ -206,6 +206,25 @@ describe('maskOtlpJson — obfuscation on', () => {
     expect(JSON.stringify(maskOtlpJsonWithMode(logsExport([emailAttr]), 'off'))).toContain('dev@example.com');
   });
 
+  it('keeps the user.email attribute while a prompt attribute holding an email is still masked', () => {
+    const document = {
+      resourceLogs: [
+        {
+          resource: { attributes: [str('user.email', 'dev@example.com')] },
+          scopeLogs: [{ logRecords: [{ attributes: [str('user.email', 'dev@example.com'), str('prompt', 'write to dev@example.com or user.email')] }] }],
+        },
+      ],
+    };
+    const out = JSON.stringify(maskOtlpJsonWithMode(document, 'on'));
+    expect(out.match(/dev@example\.com/g)).toHaveLength(2);
+    expect(out).toContain('write to [REDACTED:EMAIL] or user.email');
+  });
+
+  it('still masks a secret placed in the user.email attribute', () => {
+    const out = JSON.stringify(maskOtlpJsonWithMode(logsExport([str('user.email', 'x Bearer abcdefghijklmnopqrstuvwxyz0123456789')]), 'on'));
+    expect(out).not.toContain('abcdefghijklmnopqrstuvwxyz0123456789');
+  });
+
   it('a field that fails becomes the placeholder while other attributes are still forwarded', () => {
     const huge = str('user.prompt', `dev@example.com ${'x'.repeat(100)}`);
     const masked = maskOtlpJsonWithMode(
