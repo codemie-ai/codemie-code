@@ -229,6 +229,45 @@ describe('ticket-parser', () => {
       expect(ticket_mentions[19]).toBe('ABC-20');
     });
 
+    describe('multi-tracker forms', () => {
+      it('attributes AB# regardless of tracker', () => {
+        expect(parsePromptFields('fix AB#123').ticket_mentions).toEqual(['AB#123']);
+      });
+
+      it('attributes org/repo#N regardless of tracker', () => {
+        expect(parsePromptFields('see acme/web-app#7 now').ticket_mentions).toEqual(['acme/web-app#7']);
+      });
+
+      it('ignores bare #N without a github/gitlab tracker', () => {
+        expect(parsePromptFields('see #42').ticket_mentions).toEqual([]);
+        expect(parsePromptFields('see #42', 'jira').ticket_mentions).toEqual([]);
+        expect(parsePromptFields('see #42', 'azure-devops').ticket_mentions).toEqual([]);
+      });
+
+      it('attributes bare #N for github and gitlab', () => {
+        expect(parsePromptFields('see #42', 'github').ticket_mentions).toEqual(['#42']);
+        expect(parsePromptFields('see #42', 'gitlab').ticket_mentions).toEqual(['#42']);
+      });
+
+      it('does not attribute colors, headings or entities', () => {
+        expect(parsePromptFields('color #fff # Heading &#123; x', 'github').ticket_mentions).toEqual([]);
+      });
+
+      it('keeps first-seen order across forms', () => {
+        expect(parsePromptFields('ABC-1 then AB#2 and #3', 'github').ticket_mentions).toEqual([
+          'ABC-1',
+          'AB#2',
+          '#3',
+        ]);
+      });
+
+      it('reads markers in the new forms', () => {
+        expect(parsePromptFields('story: AB#9').story_marker).toBe('AB#9');
+        expect(parsePromptFields('ticket #5', 'github').story_marker).toBe('#5');
+        expect(parsePromptFields('ticket #5').story_marker).toBe('');
+      });
+    });
+
     it('returns empty values for an empty prompt', () => {
       expect(parsePromptFields('')).toEqual({ story_marker: '', ticket_mentions: [], prompt_length: 0 });
     });

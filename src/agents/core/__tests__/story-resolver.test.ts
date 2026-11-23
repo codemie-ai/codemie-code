@@ -338,6 +338,24 @@ describe('story-resolver', () => {
       expect(result).toEqual({ storyId: 'MK-3', storySource: 'marker' });
     });
 
+    it('attributes AB# and bare #N (github) mentions, passing the tracker through', async () => {
+      const { resolveStoryFor } = await import('../story-resolver.js');
+
+      expect(await resolveStoryFor({ cwd: '/nonexistent', prompt: 'fix AB#123' })).toEqual({
+        storyId: 'AB#123',
+        storySource: 'mention',
+      });
+      expect(await resolveStoryFor({ cwd: '/nonexistent', prompt: 'see #42' })).toBeNull();
+      expect(await resolveStoryFor({ cwd: '/nonexistent', prompt: 'see #42', tracker: 'github' })).toEqual({
+        storyId: '#42',
+        storySource: 'mention',
+      });
+      expect(await resolveStoryFor({ cwd: '/nonexistent', prompt: 'story #7', tracker: 'gitlab' })).toEqual({
+        storyId: '#7',
+        storySource: 'marker',
+      });
+    });
+
     it('prefers branch over mention', async () => {
       const { resolveStoryFor } = await import('../story-resolver.js');
 

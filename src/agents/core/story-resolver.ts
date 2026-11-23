@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { extractTicketMarker, extractTicketMentions } from './ticket-parser.js';
+import { extractTicketMarker, extractTicketMentions, type TicketTracker } from './ticket-parser.js';
 
 export interface ExplicitStoryResult {
   storyId: string;
@@ -88,12 +88,12 @@ export function resolveBranchStory(branch: string): BranchStoryResult | null {
  * on return. Returns `null` when no marker phrase is present (including an
  * empty/falsy `promptText`).
  */
-export function resolveMarkerStory(promptText: string): MarkerStoryResult | null {
+export function resolveMarkerStory(promptText: string, tracker?: TicketTracker): MarkerStoryResult | null {
   if (!promptText) {
     return null;
   }
 
-  const storyId = extractTicketMarker(promptText);
+  const storyId = extractTicketMarker(promptText, tracker);
   return storyId ? { storyId, storySource: 'marker' } : null;
 }
 
@@ -105,12 +105,12 @@ export function resolveMarkerStory(promptText: string): MarkerStoryResult | null
  * already resolved a story. Returns `null` when no candidate survives
  * (including an empty/falsy `promptText`).
  */
-export function resolveMentionStory(promptText: string): MentionStoryResult | null {
+export function resolveMentionStory(promptText: string, tracker?: TicketTracker): MentionStoryResult | null {
   if (!promptText) {
     return null;
   }
 
-  const [storyId] = extractTicketMentions(promptText, 1, { preferUpperCase: true });
+  const [storyId] = extractTicketMentions(promptText, 1, { preferUpperCase: true, tracker });
   return storyId ? { storyId, storySource: 'mention' } : null;
 }
 
@@ -123,6 +123,8 @@ export interface ResolveStoryInput {
   /** Prompt text; marker and mention tiers apply only when provided. */
   prompt?: string;
   explicitConfigPath?: readonly string[];
+  /** Project tracker; a bare `#N` in the prompt counts only for `github` / `gitlab`. */
+  tracker?: TicketTracker;
 }
 
 /**
@@ -135,11 +137,12 @@ export async function resolveStoryFor({
   branch,
   prompt,
   explicitConfigPath,
+  tracker,
 }: ResolveStoryInput): Promise<StoryResult | null> {
   return (
     (await resolveExplicitStory(cwd, explicitConfigPath)) ??
-    (prompt ? resolveMarkerStory(prompt) : null) ??
+    (prompt ? resolveMarkerStory(prompt, tracker) : null) ??
     resolveBranchStory(branch ?? '') ??
-    (prompt ? resolveMentionStory(prompt) : null)
+    (prompt ? resolveMentionStory(prompt, tracker) : null)
   );
 }

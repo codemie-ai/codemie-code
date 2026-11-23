@@ -13,6 +13,26 @@
  */
 export const TICKET_RE = /(?<![A-Za-z0-9])[A-Z][A-Z0-9]+-\d+(?!\d)/gi;
 
+/** Issue tracker a project uses; decides whether a bare `#N` is a ticket reference. */
+export type TicketTracker = 'jira' | 'azure-devops' | 'github' | 'gitlab';
+
+/** Trackers whose issues are written as a bare `#N`. */
+const BARE_HASH_TRACKERS: ReadonlySet<TicketTracker> = new Set<TicketTracker>(['github', 'gitlab']);
+
+/**
+ * Every ticket-reference candidate: `PROJ-123` (`TICKET_RE`), `AB#123` (Azure Boards),
+ * `org/repo#123` (cross-repo GitHub/GitLab) and bare `#123`. Global flag: build a fresh
+ * `RegExp` from `.source`/`.flags` per use, as for `TICKET_RE`. A bare `#N` match is a ticket
+ * only when the tracker is github or gitlab; `extractTicketMentions` applies that gate.
+ */
+export const TICKET_REF_RE = new RegExp(
+  `${TICKET_RE.source}|(?<![A-Za-z0-9])AB#\\d+(?!\\d)|(?<![\\w.\\/-])[A-Za-z0-9][\\w.-]*\\/[A-Za-z0-9][\\w.-]*#\\d+(?!\\d)|(?<![\\w&#/])#\\d+(?![\\w])`,
+  TICKET_RE.flags
+);
+
+const BARE_HASH_RE = /^#\d+$/;
+const AZURE_REF_RE = /^AB#\d+$/i;
+
 /**
  * Closed, extendable data list of upper-case key parts that are known NOT to be tickets
  * (standards, protocols, model and vendor families). Extending it takes one entry here plus
@@ -202,7 +222,8 @@ function isUuidShaped(run: Run, keyIndex: number): boolean {
  * `[A-Za-z]`/`[A-Za-z0-9]` ranges — the result is still upper-cased before
  * returning, consistent with every other regex-derived tier in this module.
  */
-const MARKER_RE = /\b(?:story|ticket)\b\s*[:#]\s*([A-Za-z][A-Za-z0-9]+-\d+)/i;
+const MARKER_RE =
+  /\b(?:story|ticket)\b\s*[:#]\s*([A-Za-z][A-Za-z0-9]+-\d+|AB#\d+|[A-Za-z0-9][\w.-]*\/[A-Za-z0-9][\w.-]*#\d+|\d+)(?![\w])/i;
 
 /** Upper bound on `ticket_mentions`, so a pasted log cannot bloat the event. */
 const MAX_TICKET_MENTIONS = 20;
@@ -212,6 +233,8 @@ export interface ExtractTicketMentionsOptions {
   source?: 'prompt' | 'branch';
   /** Rule 3: list upper-case-key ids before lower-case ones. Default `false` (first-seen order). */
   preferUpperCase?: boolean;
+  /** Project tracker; a bare `#N` counts only for `github` / `gitlab`. */
+  tracker?: TicketTracker;
 }
 
 /**
@@ -245,7 +268,7 @@ export function extractTicketMentions(
   if (!text || limit <= 0) {
     return [];
   }
-  const { source = 'prompt', preferUpperCase = false } = options;
+  const { source = 'prompt', preferUpperCase = false, tracker } = options;
 
   // id -> written upper-case at least once; Map keeps first-seen order
   const found = new Map<string, boolean>();
@@ -254,7 +277,23 @@ export function extractTicketMentions(
   let runIndex = 0;
   let segmentIndex = 0;
 
-  for (const match of text.matchAll(new RegExp(TICKET_RE.source, TICKET_RE.flags))) {
+  for (const match of text.matchAll(new RegExp(TICKET_REF_RE.source, TICKET_REF_RE.flags))) {
+    if (match[0].includes('#')) {
+      const bare = BARE_HASH_RE.test(match[0]);
+      if (bare && !(tracker && BARE_HASH_TRACKERS.has(tracker))) {
+        continue;
+      }
+      // Azure ids are upper-cased like Jira keys; `org/repo#N` and `#N` keep their spelling.
+      const ref = AZURE_REF_RE.test(match[0]) ? match[0].toUpperCase() : match[0];
+      if (!found.has(ref)) {
+        found.set(ref, true);
+        upperCount++;
+      }
+      if (preferUpperCase ? upperCount >= limit : found.size >= limit) {
+        break;
+      }
+      continue;
+    }
     runs ??= tokenizeRuns(text, { joinDigitDot: true });
 
     // Matches arrive in increasing order, so the run/segment pointers only move forward.
@@ -307,11 +346,18 @@ export function extractTicketMentions(
 }
 
 /** The id of the first `story: X` / `ticket #X` phrase, upper-cased; '' when absent. */
-export function extractTicketMarker(text: string): string {
+export function extractTicketMarker(text: string, tracker?: TicketTracker): string {
   if (!text) {
     return '';
   }
-  return text.match(MARKER_RE)?.[1]?.toUpperCase() ?? '';
+  const id = text.match(MARKER_RE)?.[1];
+  if (!id) {
+    return '';
+  }
+  if (/^\d+$/.test(id)) {
+    return tracker && BARE_HASH_TRACKERS.has(tracker) ? `#${id}` : '';
+  }
+  return id.includes('/') ? id : id.toUpperCase();
 }
 
 /** Opt-in for prompt-submit events: values derived from the full, untruncated prompt. */
@@ -325,10 +371,10 @@ export interface PromptFields {
 }
 
 /** Only derived values leave this function, never the prompt text itself. */
-export function parsePromptFields(prompt: string): PromptFields {
+export function parsePromptFields(prompt: string, tracker?: TicketTracker): PromptFields {
   return {
-    story_marker: extractTicketMarker(prompt),
-    ticket_mentions: extractTicketMentions(prompt, MAX_TICKET_MENTIONS),
+    story_marker: extractTicketMarker(prompt, tracker),
+    ticket_mentions: extractTicketMentions(prompt, MAX_TICKET_MENTIONS, { tracker }),
     prompt_length: prompt.length,
   };
 }
