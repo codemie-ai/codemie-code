@@ -30,6 +30,13 @@ import { isSymbolicLink } from './vscode.js';
 import managedMcpServers from './desktop-managed-mcp-servers.json' with { type: 'json' };
 import { isValidOAuthConfig, type CanonicalMcpEntry, type McpOAuthConfig } from './managed-mcp-remote.js';
 
+/**
+ * Claude Desktop's Bedrock parameters (`inferenceBedrockRegion`, `inferenceBedrockProfile`, ...). They never
+ * coexist with the gateway provider a connect write ends on. Kept in step with `BEDROCK.desktopKeyPrefix` in
+ * src/agents/plugins/claude/cloud-provider-conflict/provider.ts (not imported: the CLI does not reach into plugins).
+ */
+const DESKTOP_BEDROCK_KEY_PREFIX = 'inferenceBedrock';
+
 const INFERENCE_KEYS = [
   'inferenceProvider',
   'inferenceGatewayBaseUrl',
@@ -851,6 +858,9 @@ export async function writeDesktopConfig(
 
   for (const key of [...INFERENCE_KEYS, ...GATEWAY_SIGN_IN_KEYS]) {
     delete existing[key];
+  }
+  for (const key of Object.keys(existing)) {
+    if (key.startsWith(DESKTOP_BEDROCK_KEY_PREFIX)) delete existing[key];
   }
   delete existing.inferenceModels;
   delete existing.modelDiscoveryEnabled;

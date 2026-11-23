@@ -83,6 +83,7 @@ vi.mock('../connectors/desktop.js', async (importOriginal) => ({
   writeDesktopConfig: vi.fn(),
   describeManagedSettingsOverride: vi.fn().mockReturnValue(null),
   getDesktopBaseDir: vi.fn().mockReturnValue('/mock/desktop/base'),
+  getDesktopConfigPath: vi.fn(async () => '/mock/desktop/base/configLibrary/applied.json'),
   mapCanonicalToDesktop: vi.fn().mockReturnValue([]),
   summarizeManagedOauthShapes: vi.fn().mockReturnValue({ oauthConfigured: 0, oauthFlagged: 0, noAuth: 0 }),
   readDesktopGateway: vi.fn().mockResolvedValue(null),
@@ -129,6 +130,12 @@ vi.mock('../../../../cli/commands/skills/setup/sync-plugin.js', () => ({
 // guard for --claude-code-otlp; vitest has no TTY, so pretend there is one.
 vi.mock('@/utils/interactive.js', () => ({
   isNonInteractiveEnvironment: vi.fn().mockReturnValue(false),
+  canPromptForProject: vi.fn().mockReturnValue(true),
+}));
+// The Claude adapter's provider settings check has its own tests; here its gate finds no conflict and never reads real settings.
+vi.mock('@/agents/plugins/claude/cloud-provider-conflict/gate.js', () => ({
+  detectAndAsk: vi.fn(async () => ({ kind: 'proceed', token: { plan: null, deps: {} } })),
+  applyConsented: vi.fn(async () => ({ backupDir: null, files: [], changed: [] })),
 }));
 
 /**
