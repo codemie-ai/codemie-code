@@ -409,11 +409,24 @@ describe('defaultAgentHooks', () => {
       expect(result).toEqual(['--plugin-dir', '/plugins/here', 'chat']);
     });
 
-    it('does not duplicate --plugin-dir when already present', () => {
+    it('keeps a user --plugin-dir and still passes the extension once', () => {
       process.env.CODEMIE_CLAUDE_EXTENSION_DIR = '/plugins/here';
-      const args = ['--plugin-dir', '/other', 'chat'];
-      const result = claudeHooks.enrichArgs!(args, {} as AgentConfig);
-      expect(result).toBe(args);
+      const result = claudeHooks.enrichArgs!(['--plugin-dir', '/other', 'chat'], {} as AgentConfig);
+      expect(result).toEqual(['--plugin-dir', '/plugins/here', '--plugin-dir', '/other', 'chat']);
+    });
+
+    it('does not duplicate the extension when the user already passed it (either flag form)', () => {
+      process.env.CODEMIE_CLAUDE_EXTENSION_DIR = '/plugins/here';
+      const spaced = ['--plugin-dir', '/other', '--plugin-dir', '/plugins/here', 'chat'];
+      const equals = ['--plugin-dir=/plugins/here', 'chat'];
+      expect(claudeHooks.enrichArgs!(spaced, {} as AgentConfig)).toBe(spaced);
+      expect(claudeHooks.enrichArgs!(equals, {} as AgentConfig)).toBe(equals);
+    });
+
+    it('ignores --plugin-dir text after the -- boundary', () => {
+      process.env.CODEMIE_CLAUDE_EXTENSION_DIR = '/plugins/here';
+      const result = claudeHooks.enrichArgs!(['--', '--plugin-dir', '/plugins/here'], {} as AgentConfig);
+      expect(result).toEqual(['--plugin-dir', '/plugins/here', '--', '--plugin-dir', '/plugins/here']);
     });
 
     // Claude Code ignores ANTHROPIC_MODEL; --model is the only way the profile's

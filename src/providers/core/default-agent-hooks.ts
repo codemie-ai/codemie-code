@@ -6,6 +6,7 @@
  * than duplicating the logic.
  */
 
+import { resolve } from 'node:path';
 import type { AgentConfig } from '@/agents/core/types.js';
 import type { ProviderTemplate } from '@/providers/core/types.js';
 
@@ -13,6 +14,27 @@ interface WithExtensionInstaller {
   getExtensionInstaller?(): {
     install(): Promise<{ success: boolean; action?: string; targetPath: string; error?: string }>;
   };
+}
+
+/**
+ * Prepend the CodeMie extension as a `--plugin-dir` unless the user already passed that
+ * exact directory. Claude's `--plugin-dir` is repeatable, so user plugins must not suppress it.
+ * Scanning stops at `--` (everything after is positional prompt text).
+ */
+export function withExtensionPluginDir(args: string[], pluginDir: string | undefined): string[] {
+  if (!pluginDir) return args;
+
+  const target = resolve(pluginDir);
+  const end = args.indexOf('--');
+  const scoped = end === -1 ? args : args.slice(0, end);
+  const alreadyPassed = scoped.some((arg, i) => {
+    const value = arg === '--plugin-dir' ? scoped[i + 1]
+      : arg.startsWith('--plugin-dir=') ? arg.slice('--plugin-dir='.length)
+      : undefined;
+    return value !== undefined && resolve(value) === target;
+  });
+
+  return alreadyPassed ? args : ['--plugin-dir', pluginDir, ...args];
 }
 
 export const defaultAgentHooks: ProviderTemplate['agentHooks'] = {
@@ -52,12 +74,7 @@ export const defaultAgentHooks: ProviderTemplate['agentHooks'] = {
 
   'claude': {
     enrichArgs(args: string[], _config: AgentConfig): string[] {
-      let enriched = args;
-
-      const pluginDir = process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
-      if (pluginDir && !enriched.some(arg => arg === '--plugin-dir')) {
-        enriched = ['--plugin-dir', pluginDir, ...enriched];
-      }
+      let enriched = withExtensionPluginDir(args, process.env.CODEMIE_CLAUDE_EXTENSION_DIR);
 
       // Claude Code ignores ANTHROPIC_MODEL. Its precedence is
       // `--model` > settings.json `model` > its own default tier, so mapping the
