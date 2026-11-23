@@ -92,9 +92,11 @@ const AUTO_MODE_SERVER_UNSUPPORTED_PROVIDERS = new Set(['ai-run-sso']);
  * `beforeRun` runs synchronously before Claude Code's process starts. A slow check must degrade
  * to relying on the existing SessionStart hook-time rewrite rather than stall every launch.
  *
- * Must cover a cold respawn — the exact scenario this fix targets. daemon-manager.ts's
+ * Covers a plain cold start — the exact scenario this fix targets. daemon-manager.ts's
  * `spawnDaemon` (DAEMON_READY_TIMEOUT_MS there) polls for readiness for up to 5s; this adds
- * ~2s of overhead for the SSO credential check and health check that run around it. Kept as
+ * ~2s of overhead for the SSO credential check and health check that run around it. A
+ * replacement of an older CLI's daemon, or a wait for the daemon lock another start holds, can
+ * outlast it; the launch then goes on and the start completes on its own. Kept as
  * a literal rather than importing that constant: this module is pulled in by a wide and
  * growing set of unrelated unit tests (via claude-code-otlp's event-field builders) that mock
  * daemon-manager.js wholesale, and a cross-module import here breaks every one of them whenever
@@ -615,8 +617,8 @@ export const ClaudePluginMetadata: AgentMetadata = {
       // launch never starts the proxy daemon as a side effect. Mirrors
       // OtlpAgentAdapter.ts's own non-blocking contract: a failure here must
       // never fail the launch. this.metadata.name (not the OTLP adapter's own
-      // 'claude-code-otlp' name) is the real launching client — 'claude' or
-      // 'claude-acp' — so the daemon/connection record attributes correctly.
+      // 'claude-code-otlp' name) names the launching client — 'claude' or
+      // 'claude-acp' — and reaches neither the daemon nor the connection record.
       // Bounded by PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS: ensureOtlpProxy's SSO/daemon
       // checks have no timeout of their own and must not stall this synchronous path.
       if (await isClaudeCodeOtlpConnected()) {

@@ -5,37 +5,26 @@
  * Starts CodeMieProxy on the requested port, writes state file, handles SIGTERM.
  */
 import { parseArgs } from 'node:util';
-import { readFileSync } from 'node:fs';
-import { writeFile, unlink, rename } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile, writeFile, unlink, rename } from 'node:fs/promises';
 import { CodeMieProxy } from '../providers/plugins/sso/index.js';
 import type { ProxyConfig } from '../providers/plugins/sso/index.js';
 import '../providers/plugins/sso/proxy/plugins/index.js'; // Auto-register core plugins
 import { ClaudeDesktopTelemetryAdapter } from '../telemetry/clients/claude-desktop/ClaudeDesktopTelemetryAdapter.js';
 import { DesktopTelemetryRuntime } from '../telemetry/runtime/DesktopTelemetryRuntime.js';
 import { DesktopRepositoryResolver } from '../telemetry/runtime/DesktopRepositoryResolver.js';
-import { getDirname } from '../utils/paths.js';
+import { getCurrentCliVersion } from '../utils/cli-updater.js';
 import { logger } from '../utils/logger.js';
 import { parseProjectBinding } from '../utils/project-binding.js';
 import { installSystemProxyDispatcher } from '../utils/system-proxy-dispatcher.js';
 import { ProxyWatcher } from '../cli/commands/proxy/watcher.js';
-import { daemonStartedAt } from '../cli/commands/proxy/daemon-manager.js';
+import { daemonStartedAt, readConnectionRecord } from '../cli/commands/proxy/daemon-manager.js';
 import { startAwaitingLoginListener, type AwaitingLoginListener } from '../cli/commands/proxy/awaiting-login-listener.js';
 import { AuthenticationError } from '../providers/plugins/sso/proxy/proxy-errors.js';
 import { getStoredPlatformCredentials } from '../providers/core/codemie-auth-helpers.js';
 import { startDetachedSsoLogin, type DetachedLoginOutcome } from '../providers/plugins/sso/sso.detached-login.js';
 import { sessionExpiredMessage } from '../providers/plugins/sso/proxy/plugins/sso-session-expiry.plugin.js';
 import { markAnalyticsAuthInvalid } from '../utils/analytics-auth-status.js';
-
-function readCliVersion(): string {
-  try {
-    const pkgPath = join(getDirname(import.meta.url), '../../package.json');
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version?: string };
-    return pkg.version ?? '0.0.0';
-  } catch {
-    return '0.0.0';
-  }
-}
+import { CLAUDE_DESKTOP, defaultClientOf } from '../providers/plugins/sso/proxy/proxy-clients.js';
 
 const { values } = parseArgs({
   options: {
@@ -45,12 +34,10 @@ const { values } = parseArgs({
     'model':        { type: 'string' },
     'project':      { type: 'string' },
     'project-binding': { type: 'string' },
-    'client-type':  { type: 'string' },
     'port':         { type: 'string' },
     'gateway-key':  { type: 'string' },
     'state-file':   { type: 'string' },
     'auth-method':  { type: 'string' },
-    'telemetry-mode': { type: 'string' },
     'sync-api-url': { type: 'string' },
     'sync-codemie-url': { type: 'string' },
   },
@@ -78,9 +65,7 @@ const provider   = (values['provider'] as string | undefined) ?? 'ai-run-sso';
 const model = values['model'] as string | undefined;
 const project = values['project'] as string | undefined;
 const projectBinding = parseProjectBinding(values['project-binding'] as string | undefined);
-const clientType = values['client-type'] as string | undefined;
 const authMethod = ((values['auth-method'] as string | undefined) ?? 'sso') as 'sso' | 'jwt';
-const telemetryMode = ((values['telemetry-mode'] as string | undefined) ?? 'none') as 'none' | 'claude-desktop';
 const syncApiUrl = values['sync-api-url'] as string | undefined;
 const syncCodeMieUrl = values['sync-codemie-url'] as string | undefined;
 
@@ -97,9 +82,9 @@ const config: ProxyConfig = {
   project,
   gatewayKey,
   authMethod,
-  clientType: clientType ?? (telemetryMode === 'claude-desktop' ? 'claude-desktop' : 'codemie-daemon'),
-  version: readCliVersion(),
-  telemetryMode,
+  // The client a request with the shared key is served as; a named key names its own.
+  clientType: defaultClientOf(await readConnectionRecord()),
+  version: (await getCurrentCliVersion()) ?? '0.0.0',
   syncApiUrl,
   syncCodeMieUrl,
 };
@@ -114,13 +99,34 @@ let watcher: ProxyWatcher | undefined;
 // Set while the real proxy could not start for want of SSO credentials: this listener holds the port.
 let awaitingLogin: AwaitingLoginListener | undefined;
 let currentState: Record<string, unknown> = {};
+/** The state writes in order: two at once would share the one tmp file. */
+let stateWrites: Promise<void> = Promise.resolve();
+/** Set once cleanup began: the state is never written again. */
+let closing = false;
 
-async function persistState(patch: Record<string, unknown>): Promise<void> {
-  currentState = { ...currentState, ...patch };
-  // Per process: two daemons writing at once never rename each other's half-written file.
-  const tmp = `${stateFile}.${process.pid}.tmp`;
-  await writeFile(tmp, JSON.stringify(currentState, null, 2), 'utf-8');
-  await rename(tmp, stateFile!);
+/** Merges `patch` (an undefined value removes its field) into the state file, after every earlier write. */
+function persistState(patch: Record<string, unknown>): Promise<void> {
+  const write = stateWrites.then(async () => {
+    if (closing) return;
+    currentState = { ...currentState, ...patch };
+    // Per process: two daemons writing at once never rename each other's half-written file.
+    const tmp = `${stateFile}.${process.pid}.tmp`;
+    await writeFile(tmp, JSON.stringify(currentState, null, 2), 'utf-8');
+    await rename(tmp, stateFile!);
+  });
+  stateWrites = write.catch(() => undefined);
+  return write;
+}
+
+/** Removes the state file only while it names this process: a successor's state, or one unreadable, is left. */
+async function unlinkOwnState(): Promise<void> {
+  let state: unknown;
+  try {
+    state = JSON.parse(await readFile(stateFile!, 'utf-8'));
+  } catch {
+    return;
+  }
+  if ((state as { pid?: unknown } | null)?.pid === process.pid) await unlink(stateFile!);
 }
 
 /**
@@ -181,11 +187,13 @@ async function credentialsAvailable(): Promise<boolean> {
 }
 
 async function cleanup(): Promise<void> {
+  closing = true;
   watcher?.stop();
   try { await awaitingLogin?.stop(); } catch { /* ignore */ }
   try { await telemetryRuntime?.stop(); } catch { /* ignore */ }
   try { await proxy.stop(); } catch { /* ignore */ }
-  try { await unlink(stateFile!); } catch { /* ignore */ }
+  await stateWrites;
+  try { await unlinkOwnState(); } catch { /* ignore */ }
 }
 
 async function restartProxy(): Promise<void> {
@@ -226,6 +234,11 @@ async function restartProxy(): Promise<void> {
 process.on('SIGTERM', async () => { await cleanup(); process.exit(0); });
 process.on('SIGINT',  async () => { await cleanup(); process.exit(0); });
 
+// One resolver shared by the proxy's client attribution and the telemetry poll, so both
+// read and write the same attribution cache; on the config before the first proxy creates its plugins.
+const repositoryResolver = new DesktopRepositoryResolver();
+config.desktopRepositoryResolver = repositoryResolver;
+
 try {
   const { port: actualPort, url } = await bringUp();
 
@@ -235,30 +248,28 @@ try {
   config.port = actualPort;
   config.pinnedPort = true;
 
-  if (config.telemetryMode === 'claude-desktop') {
-    // One resolver shared by the proxy's header injection and the telemetry poll, so both
-    // read and write the same attribution cache.
-    const repositoryResolver = new DesktopRepositoryResolver();
-    config.desktopRepositoryResolver = repositoryResolver;
-
-    telemetryRuntime = new DesktopTelemetryRuntime(
-      new ClaudeDesktopTelemetryAdapter(),
-      {
-        clientType: 'claude-desktop',
-        targetApiUrl: config.targetApiUrl,
-        provider: config.provider ?? 'ai-run-sso',
-        version: config.version ?? '0.0.0',
-        profile: config.profile,
-        syncApiUrl: config.syncApiUrl,
-        syncCodeMieUrl: config.syncCodeMieUrl,
-        pollIntervalMs: config.telemetryPollIntervalMs ?? 10000,
-        inactivityTimeoutMs: config.telemetryInactivityTimeoutMs ?? 300000,
-        repositoryResolver,
-      }
-    );
-
-    config.triggerPoll = () => telemetryRuntime!.triggerPoll();
-  }
+  // Takes Desktop's sessions only while Desktop's applied config points at this daemon's port and key; one being
+  // collected is finished either way.
+  const runtime = new DesktopTelemetryRuntime(
+    new ClaudeDesktopTelemetryAdapter(),
+    {
+      clientType: CLAUDE_DESKTOP,
+      targetApiUrl: config.targetApiUrl,
+      provider: config.provider ?? 'ai-run-sso',
+      version: config.version ?? '0.0.0',
+      profile: config.profile,
+      syncApiUrl: config.syncApiUrl,
+      syncCodeMieUrl: config.syncCodeMieUrl,
+      pollIntervalMs: config.telemetryPollIntervalMs ?? 10000,
+      inactivityTimeoutMs: config.telemetryInactivityTimeoutMs ?? 300000,
+      repositoryResolver,
+      port: actualPort,
+      gatewayKey,
+      onDesktopConnectedChange: (desktopConnectedSince) => persistState({ desktopConnectedSince }),
+    }
+  );
+  telemetryRuntime = runtime;
+  config.triggerPoll = () => runtime.triggerPoll();
 
   await persistState({
     pid: process.pid,
@@ -270,8 +281,10 @@ try {
     provider: config.provider,
     project: config.project,
     ...(projectBinding ? { projectBinding } : {}),
+    model,
+    version: config.version,
+    // The default client, for an older CLI that reads the state; nothing in this one reads it.
     clientType: config.clientType,
-    telemetryMode,
     syncApiUrl: config.syncApiUrl,
     syncCodeMieUrl: config.syncCodeMieUrl,
     startedAt: daemonStartedAt(),
@@ -279,7 +292,7 @@ try {
   });
 
   // After the state write: `spawnDaemon` reads the daemon as up while the runtime's first poll still runs.
-  await telemetryRuntime?.start();
+  await runtime.start();
 
   // Background self-healing watcher: deep-checks every 30s, restarts in-process
   // on the same pinned port, gives up (records unhealthy) after 3 failures or

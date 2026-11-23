@@ -91,7 +91,7 @@ vi.mock('@/utils/config.js', () => ({
 
 import { rename, unlink } from 'fs/promises';
 import { SessionStore } from '@/agents/core/session/SessionStore.js';
-import { reconcileLockPath } from '@/agents/core/session/stale-session-reconciliation.js';
+import { RECONCILE_PER_START, reconcileLockPath } from '@/agents/core/session/stale-session-reconciliation.js';
 import { acquirePidLock, PID_LOCK_WAIT_BUDGET_MS } from '@/utils/pid-lock.js';
 import { processStartedAt } from '@/utils/processes.js';
 import { clearAnalyticsAuthStatus, getAnalyticsAuthStatus, markAnalyticsAuthInvalid } from '@/utils/analytics-auth-status.js';
@@ -101,6 +101,7 @@ import { MetricsRetryExhaustedError } from '@/providers/plugins/sso/session/proc
 import { PROXY_STORE_READ_DEADLINE_MS, STORE_READ_DEADLINE_MS } from '@/providers/plugins/sso/session/cookie-auth.js';
 import { DesktopSessionDelivery } from '../DesktopSessionDelivery.js';
 import { DESKTOP_REDELIVERY_INTERVAL_MS, DESKTOP_REOPEN_LOCK_BUDGET_MS } from '../desktop-session.js';
+import { getClaudeDesktopBaseDir } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
 import type {
   LocalTelemetryAdapter,
   DesktopTelemetryRuntimeConfig,
@@ -117,7 +118,11 @@ const config: DesktopTelemetryRuntimeConfig = {
   provider: 'ai-run-sso',
   version: '1.0.0',
   pollIntervalMs: POLL_INTERVAL_MS,
-  inactivityTimeoutMs: INACTIVITY_TIMEOUT_MS
+  inactivityTimeoutMs: INACTIVITY_TIMEOUT_MS,
+  // Desktop connected to this daemon on every poll
+  port: 4001,
+  gatewayKey: 'codemie-proxy',
+  readDesktopGateway: async () => ({ gateway: { port: 4001, apiKey: 'codemie-proxy' }, namesGateway: true })
 };
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -932,10 +937,10 @@ describe('DesktopTelemetryRuntime', () => {
     it('builds the index at the first poll only after the start-up pass has resolved', async () => {
       let passResolved = false;
       let resolvePass: (() => void) | undefined;
-      vi.spyOn(DesktopSessionDelivery.prototype, 'reconcileRecords').mockImplementationOnce(() => new Promise<void>(resolve => {
+      vi.spyOn(DesktopSessionDelivery.prototype, 'reconcileRecords').mockImplementationOnce(() => new Promise<string[]>(resolve => {
         resolvePass = () => {
           passResolved = true;
-          resolve();
+          resolve([]);
         };
       }));
       const passResolvedAtIndex: boolean[] = [];
@@ -2070,11 +2075,8 @@ describe('DesktopTelemetryRuntime', () => {
       vi.setSystemTime(T1);
       appendMessages('ext-1', 1);
 
-      // The index succeeded, so this poll does not wait for the pass and meets its lock
+      // The first poll finalizes the record in its start-up pass, then reopens it once the pass released its lock
       await runtime.start();
-      await runtime.triggerPoll();
-      // Reopened by the triggered poll itself, before the chain's first poll
-      expect(readRecord(sessionId)).toMatchObject({ status: 'active', stretchStartTime: T1 });
       await (runtime as any).startupChain;
 
       expect(readRecord(sessionId)!.stretchStartTime).toBe(T1);
@@ -2247,6 +2249,783 @@ describe('DesktopTelemetryRuntime', () => {
         repository: 'codemie-ai/codemie-docs',
         project: 'project-codemie-docs',
         startTime
+      });
+    });
+  });
+
+  describe('collection while Desktop is connected to this daemon', () => {
+    const PORT = 4001;
+    /** The value Desktop writes over the key at its start; only Desktop opens it. */
+    const SEALED_KEY = '__sealed__:v1:QUJD';
+    /** The Desktop connection changes the runtime told the daemon of. */
+    let notices: Array<string | undefined>;
+    let desktopHome: string;
+    /** The real config reader over a temp Desktop base directory. */
+    const collecting: DesktopTelemetryRuntimeConfig = {
+      ...config,
+      readDesktopGateway: undefined,
+      onDesktopConnectedChange: async (since) => { notices.push(since); }
+    };
+
+    /** Desktop's applied config: a gateway at `url` with `key`, or none at all. */
+    function desktopPointsAt(url: string | null, key = 'codemie-proxy'): void {
+      const library = join(getClaudeDesktopBaseDir(), 'configLibrary');
+      rmSync(library, { recursive: true, force: true });
+      if (url === null) return;
+      mkdirSync(library, { recursive: true });
+      writeFileSync(join(library, '_meta.json'), JSON.stringify({ appliedId: 'a' }));
+      writeFileSync(join(library, 'a.json'), JSON.stringify({
+        inferenceProvider: 'gateway', inferenceGatewayBaseUrl: url, inferenceGatewayApiKey: key
+      }));
+    }
+
+    const startedSessions = () => mockSendSessionStart.mock.calls.map(([session]) => session.sessionId);
+
+    beforeEach(() => {
+      notices = [];
+      desktopHome = mkdtempSync(join(tmpdir(), 'desktop-runtime-home-'));
+      vi.stubEnv('HOME', desktopHome);
+      vi.stubEnv('USERPROFILE', desktopHome);
+      vi.stubEnv('XDG_CONFIG_HOME', join(desktopHome, '.config'));
+      vi.stubEnv('LOCALAPPDATA', join(desktopHome, 'AppData', 'Local'));
+      desktopPointsAt(`http://127.0.0.1:${PORT}`);
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      rmSync(desktopHome, { recursive: true, force: true });
+    });
+
+    it('connected: sessions are discovered and collected', async () => {
+      openDesktopChat('ext-1', 1, T0);
+
+      await startDaemon(createAdapter(), collecting);
+
+      expect(startedSessions()).toEqual(['agent-ext-1']);
+      expect(notices).toEqual([new Date(T0).toISOString()]);
+    });
+
+    it.each([
+      ['the config removed', () => desktopPointsAt(null), true],
+      ['another port', () => desktopPointsAt('http://127.0.0.1:4005'), false],
+      ['another key', () => desktopPointsAt(`http://127.0.0.1:${PORT}`, 'sk-user-own'), false],
+      ['a non-loopback URL', () => desktopPointsAt(`https://gateway.example.com:${PORT}`), false],
+      ['a sealed key on another port', () => desktopPointsAt('http://127.0.0.1:4005', SEALED_KEY), false],
+    ])('not connected (%s) at two polls in a row: the second takes no new session and reconciles nothing, discovers only to follow a tracked session while the config names no gateway, and starts a not-connected Cowork run, and a tracked session is still finalized', async (_case, disconnect, follows) => {
+      openDesktopChat('ext-1', 1, T0);
+      const adapter = createAdapter();
+      const run = vi.fn(async (_now: number, _connected?: boolean) => undefined);
+      // Idle long enough for a re-delivery to fall due before the session's inactivity does
+      const inactivityTimeoutMs = 2 * DESKTOP_REDELIVERY_INTERVAL_MS;
+      const runtime = new DesktopTelemetryRuntime(adapter, { ...collecting, inactivityTimeoutMs }, { run });
+      startedRuntimes.push(runtime);
+      await runtime.start();
+      await (runtime as any).startupChain;
+      const sessionId = sessionIdFor('ext-1')!;
+      await (runtime as any).cowork.inFlight;
+      disconnect();
+      // The first not-connected read works as a connected poll
+      vi.setSystemTime(T0 + POLL_INTERVAL_MS);
+      await runtime.triggerPoll();
+      await (runtime as any).cowork.inFlight;
+      expect(notices).toEqual([new Date(T0).toISOString()]);
+      expect(run).toHaveBeenLastCalledWith(T0 + POLL_INTERVAL_MS, true);
+      const starts = startedSessions().length;
+      vi.mocked(adapter.discoverSessions).mockClear();
+      run.mockClear();
+      const reconcile = vi.spyOn(DesktopSessionDelivery.prototype, 'reconcileRecords');
+      const index = vi.spyOn(SessionStore.prototype, 'indexSessionsByExternalId');
+
+      vi.setSystemTime(T0 + DESKTOP_REDELIVERY_INTERVAL_MS + POLL_INTERVAL_MS);
+      openDesktopChat('ext-2', 1, Date.now());
+      await runtime.triggerPoll();
+      await (runtime as any).cowork.inFlight;
+
+      expect(vi.mocked(adapter.discoverSessions).mock.calls.length > 0).toBe(follows);
+      expect(sessionIdFor('ext-2')).toBeUndefined();
+      expect(startedSessions()).toHaveLength(starts);
+      expect(run.mock.calls).toEqual([[T0 + DESKTOP_REDELIVERY_INTERVAL_MS + POLL_INTERVAL_MS, false]]);
+      expect(reconcile).not.toHaveBeenCalled();
+      expect(index).not.toHaveBeenCalled();
+      expect(notices).toEqual([new Date(T0).toISOString(), undefined]);
+
+      // The tracked session is still finalized on inactivity (its final flush rediscovers its own transcript)
+      run.mockClear();
+      vi.setSystemTime(T0 + inactivityTimeoutMs + POLL_INTERVAL_MS);
+      await runtime.triggerPoll();
+      await (runtime as any).cowork.inFlight;
+      expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+      expect(run.mock.calls).toEqual([[T0 + inactivityTimeoutMs + POLL_INTERVAL_MS, false]]);
+      expect(reconcile).not.toHaveBeenCalled();
+
+      // Connected again: the next poll starts a connected run
+      desktopPointsAt(`http://127.0.0.1:${PORT}`);
+      vi.setSystemTime(T0 + inactivityTimeoutMs + 2 * POLL_INTERVAL_MS);
+      await runtime.triggerPoll();
+      await (runtime as any).cowork.inFlight;
+      expect(run).toHaveBeenLastCalledWith(T0 + inactivityTimeoutMs + 2 * POLL_INTERVAL_MS, true);
+    });
+
+    it('connected with a sealed key on the daemon\'s port: collecting, the connection told, a session collected', async () => {
+      desktopPointsAt(`http://127.0.0.1:${PORT}`, SEALED_KEY);
+      const info = vi.spyOn(logger, 'info');
+      openDesktopChat('ext-1', 1, T0);
+
+      await startDaemon(createAdapter(), collecting);
+
+      expect(info).toHaveBeenCalledWith('[desktop-telemetry] Claude Desktop connected; collecting', { since: new Date(T0).toISOString() });
+      expect(notices).toEqual([new Date(T0).toISOString()]);
+      expect(startedSessions()).toEqual(['agent-ext-1']);
+    });
+
+    it('the named key turning sealed between two polls reads no "not connected" and keeps the activity gate', async () => {
+      desktopPointsAt(`http://127.0.0.1:${PORT}`, 'codemie-proxy.claude-desktop');
+      const adapter = createAdapter();
+      const runtime = await startDaemon(adapter, collecting);
+      const info = vi.spyOn(logger, 'info');
+
+      desktopPointsAt(`http://127.0.0.1:${PORT}`, SEALED_KEY);
+      await pollTicks(runtime, 2);
+      vi.setSystemTime(T0 + 30_000);
+      openDesktopChat('ext-1', 1, Date.now());
+      await pollTicks(runtime, 1);
+
+      expect(info.mock.calls.filter(([message]) => String(message).includes('not connected'))).toEqual([]);
+      expect(notices).toEqual([new Date(T0).toISOString()]);
+      expect(startedSessions()).toEqual(['agent-ext-1']);
+    });
+
+    it('a daemon started not connected reads no record until the first connected poll, which runs the start-up pass once', async () => {
+      desktopPointsAt(null);
+      const first = writeRecord('ext-1', { ownerPid: DEAD_PID, ownerStartedAt: T0 - 2 * HOUR_MS });
+      const index = vi.spyOn(SessionStore.prototype, 'indexSessionsByExternalId');
+      const run = vi.fn(async (_now: number, _connected?: boolean) => undefined);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), collecting, { run });
+      startedRuntimes.push(runtime);
+      await runtime.start();
+      await (runtime as any).startupChain;
+      await (runtime as any).cowork.inFlight;
+      // The first read, with no connected state before, already counts: its poll starts a not-connected run
+      expect(run.mock.calls).toEqual([[T0, false]]);
+      await pollTicks(runtime, 2);
+
+      expect(index).not.toHaveBeenCalled();
+      expect(readRecord(first)).toMatchObject({ status: 'active', ownerPid: DEAD_PID });
+      expect(notices).toEqual([]);
+
+      desktopPointsAt(`http://127.0.0.1:${PORT}`);
+      await pollTicks(runtime, 1);
+      expect(index).toHaveBeenCalled();
+      expect(readRecord(first)).toMatchObject({ status: 'completed', reason: 'desktop-daemon-restart' });
+
+      // A dead daemon's record that appears later is no start-up pass's: the pass ran once
+      const later = writeRecord('ext-2', { ownerPid: DEAD_PID, ownerStartedAt: T0 - 2 * HOUR_MS });
+      await pollTicks(runtime, 2);
+      expect(readRecord(later)).toMatchObject({ status: 'active', ownerPid: DEAD_PID });
+    });
+
+    it('connected again: a session idle since before skipped, a new one collected, one continued from before sent from the gate on', async () => {
+      const runtime = await startDaemon(createAdapter(), collecting);
+      desktopPointsAt(null);
+      await pollTicks(runtime, 2);
+      vi.setSystemTime(T0 + 25_000);
+      openDesktopChat('ext-old', 1, Date.now());
+      openDesktopChat('ext-cont', 2, Date.now());
+
+      desktopPointsAt(`http://127.0.0.1:${PORT}`);
+      vi.setSystemTime(T0 + 30_000);
+      await runtime.triggerPoll();
+      const gate = T0 + 30_000;
+      vi.setSystemTime(T0 + 35_000);
+      appendMessages('ext-cont', 1);
+      openDesktopChat('ext-new', 1, Date.now());
+      vi.setSystemTime(T0 + 40_000);
+      await runtime.triggerPoll();
+
+      expect(startedSessions().sort()).toEqual(['agent-ext-cont', 'agent-ext-new']);
+      expect(readRecord(sessionIdFor('ext-cont')!)).toMatchObject({ startTime: gate });
+      expect(sentDeltas.filter(delta => delta.externalSessionId === 'ext-cont')).toEqual([{ externalSessionId: 'ext-cont', historyIndices: [2] }]);
+      expect(notices).toEqual([new Date(T0).toISOString(), undefined, new Date(gate).toISOString()]);
+    });
+
+    it('connected from the first poll: a session updated between the daemon\'s start and that poll is collected', async () => {
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), collecting);
+      vi.setSystemTime(T0 + 5_000);
+      openDesktopChat('ext-1', 1, T0 - HOUR_MS);
+      touchDesktopChat('ext-1');
+      vi.setSystemTime(T0 + 8_000);
+
+      await runtime.triggerPoll();
+
+      expect(startedSessions()).toEqual(['agent-ext-1']);
+    });
+
+    it('edge: a reader that throws counts as not connected and the poll goes on', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const adapter = createAdapter();
+      const runtime = new DesktopTelemetryRuntime(adapter, {
+        ...collecting,
+        readDesktopGateway: async () => { throw new Error('EACCES'); }
+      });
+
+      await expect(runtime.triggerPoll()).resolves.toBeUndefined();
+
+      expect(adapter.discoverSessions).not.toHaveBeenCalled();
+    });
+
+    it('edge: stop() before the first connected poll builds no index, discovers nothing and does not throw', async () => {
+      desktopPointsAt(null);
+      const adapter = createAdapter();
+      const index = vi.spyOn(SessionStore.prototype, 'indexSessionsByExternalId');
+      const runtime = new DesktopTelemetryRuntime(adapter, collecting);
+
+      await expect(runtime.stop()).resolves.toBeUndefined();
+
+      expect(index).not.toHaveBeenCalled();
+      expect(adapter.discoverSessions).not.toHaveBeenCalled();
+    });
+
+    it('edge: stop() while not connected starts no Cowork run', async () => {
+      desktopPointsAt(null);
+      const run = vi.fn(async (_now: number, _connected?: boolean) => undefined);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), collecting, { run });
+      startedRuntimes.push(runtime);
+      await runtime.start();
+      await (runtime as any).startupChain;
+      await (runtime as any).cowork.inFlight;
+      expect(run.mock.calls).toEqual([[T0, false]]);
+      run.mockClear();
+
+      await runtime.stop();
+
+      expect(run).not.toHaveBeenCalled();
+    });
+
+    it('edge: the config flips while a session is being finalized: the finalization completes, the next poll discovers nothing', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const adapter = createAdapter();
+      const runtime = await startDaemon(adapter, collecting);
+      const sessionId = sessionIdFor('ext-1')!;
+      let releaseEnd!: () => void;
+      mockSendSessionEnd.mockImplementationOnce(() => new Promise<void>(resolve => { releaseEnd = resolve; }));
+
+      vi.setSystemTime(T0 + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+      const finalizing = runtime.triggerPoll();
+      await waitFor(() => mockSendSessionEnd.mock.calls.length === 1);
+      desktopPointsAt(null);
+      releaseEnd();
+      await finalizing;
+      expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+
+      // the first poll after the flip still collects; the second in a row is not connected
+      await pollTicks(runtime, 1);
+      vi.mocked(adapter.discoverSessions).mockClear();
+      await pollTicks(runtime, 1);
+      expect(adapter.discoverSessions).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['reads no gateway', 'none'],
+      ['throws', 'throw'],
+    ] as const)('one poll whose reader %s between two connected ones changes nothing', async (_case, miss) => {
+      let read: 'connected' | 'none' | 'throw' = 'connected';
+      const adapter = createAdapter();
+      const runtime = await startDaemon(adapter, {
+        ...collecting,
+        readDesktopGateway: async () => {
+          if (read === 'throw') throw new Error('EACCES');
+          return read === 'none' ? { gateway: null, namesGateway: false } : { gateway: { port: PORT, apiKey: 'codemie-proxy' }, namesGateway: true };
+        }
+      });
+      vi.setSystemTime(T0 + 5_000);
+      openDesktopChat('ext-1', 1, Date.now());
+
+      read = miss;
+      await pollTicks(runtime, 1);
+      read = 'connected';
+      await pollTicks(runtime, 1);
+
+      expect(adapter.discoverSessions).toHaveBeenCalledTimes(3);
+      expect(notices).toEqual([new Date(T0).toISOString()]);
+      expect(startedSessions()).toEqual(['agent-ext-1']);
+    });
+
+    it('edge: a connected read between two not-connected ones resets the count', async () => {
+      let read: 'connected' | 'none' = 'connected';
+      const adapter = createAdapter();
+      const runtime = await startDaemon(adapter, {
+        ...collecting,
+        readDesktopGateway: async () => (read === 'none' ? { gateway: null, namesGateway: false } : { gateway: { port: PORT, apiKey: 'codemie-proxy' }, namesGateway: true })
+      });
+
+      for (const next of ['none', 'connected', 'none'] as const) {
+        read = next;
+        await pollTicks(runtime, 1);
+      }
+
+      expect(adapter.discoverSessions).toHaveBeenCalledTimes(4);
+      expect(notices).toEqual([new Date(T0).toISOString()]);
+    });
+
+    /** A daemon tracking `ext-1` (opened at T0), then Desktop disconnected (its config removed) for two polls (T0 + 10 s, T0 + 20 s). */
+    async function trackedThenDisconnected(
+      chats = ['ext-1'],
+      disconnect = () => desktopPointsAt(null)
+    ): Promise<{ runtime: DesktopTelemetryRuntime; adapter: LocalTelemetryAdapter }> {
+      for (const chat of chats) openDesktopChat(chat, 1, T0);
+      const adapter = createAdapter();
+      const runtime = await startDaemon(adapter, collecting);
+      disconnect();
+      await pollTicks(runtime, 2);
+      return { runtime, adapter };
+    }
+
+    async function pollAt(runtime: DesktopTelemetryRuntime, time: number): Promise<void> {
+      vi.setSystemTime(time);
+      await runtime.triggerPoll();
+      await (runtime as any).redeliveryPass;
+    }
+
+    describe('a send that failed while not connected', () => {
+      /** The first poll at which a chat last active at T0 is past the inactivity timeout: there its END fails. */
+      const FAILED_AT = T0 + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS;
+
+      it('is re-delivered by id one re-delivery interval after its END failed, with no listing, and once only', async () => {
+        const { runtime } = await trackedThenDisconnected();
+        const sessionId = sessionIdFor('ext-1')!;
+        const reconcile = vi.spyOn(DesktopSessionDelivery.prototype, 'reconcileRecords');
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+
+        await pollAt(runtime, FAILED_AT);
+        expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+        const failedSends = mockSendSessionEnd.mock.calls.length;
+
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS - POLL_INTERVAL_MS);
+        expect(mockSendSessionEnd).toHaveBeenCalledTimes(failedSends);
+
+        mockSendSessionEnd.mockResolvedValue(undefined);
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+        expect(readRecord(sessionId)!.endMetricSentAt).toEqual(expect.any(Number));
+        const deliveredSends = mockSendSessionEnd.mock.calls.length;
+
+        // Delivered, the id left the memory: the next interval re-delivers nothing
+        byId.mockClear();
+        await pollAt(runtime, FAILED_AT + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(byId).not.toHaveBeenCalled();
+        expect(mockSendSessionEnd).toHaveBeenCalledTimes(deliveredSends);
+        expect(reconcile).not.toHaveBeenCalled();
+      });
+
+      it('a session finalized on inactivity long after the daemon\'s start, its END failing, waits one interval for its re-delivery by id', async () => {
+        const { runtime } = await trackedThenDisconnected();
+        const sessionId = sessionIdFor('ext-1')!;
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        // The first poll after the disconnect ones: more than one interval since the start, no pass started since
+        const failedAt = T0 + DESKTOP_REDELIVERY_INTERVAL_MS + POLL_INTERVAL_MS;
+
+        await pollAt(runtime, failedAt);
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+        expect(byId).not.toHaveBeenCalled();
+        await pollAt(runtime, failedAt + DESKTOP_REDELIVERY_INTERVAL_MS - POLL_INTERVAL_MS);
+        expect(byId).not.toHaveBeenCalled();
+
+        mockSendSessionEnd.mockResolvedValue(undefined);
+        await pollAt(runtime, failedAt + DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(byId.mock.calls).toEqual([[[sessionId]]]);
+        expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+      });
+
+      it('edge: an id remembered while an earlier one is still remembered: the pass one interval after the earlier is given both', async () => {
+        const { runtime } = await trackedThenDisconnected(['ext-1', 'ext-2']);
+        const first = sessionIdFor('ext-1')!;
+        const second = sessionIdFor('ext-2')!;
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        // ext-2 kept active past the poll that finalizes ext-1
+        vi.setSystemTime(T0 + 300_000);
+        appendMessages('ext-2', 1);
+
+        await pollAt(runtime, FAILED_AT);
+        expect(recordFiles()).toEqual([`${first}.json`, `${second}.json`].sort());
+        expect(readRecord(second)).toMatchObject({ status: 'active' });
+        await pollAt(runtime, T0 + 700_000);
+        expect(readRecord(second)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+        expect(byId).not.toHaveBeenCalled();
+
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(byId.mock.calls).toEqual([[[second, first]]]);
+      });
+
+      it('edge: an id remembered more than one interval after a by-id pass that delivered everything waits one interval from its remembering', async () => {
+        const { runtime } = await trackedThenDisconnected(['ext-1', 'ext-2']);
+        const first = sessionIdFor('ext-1')!;
+        const second = sessionIdFor('ext-2')!;
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        // ext-2 kept active past the poll that finalizes ext-1 and past the pass that delivers it
+        vi.setSystemTime(T0 + 300_000);
+        appendMessages('ext-2', 1);
+        await pollAt(runtime, FAILED_AT);
+        mockSendSessionEnd.mockResolvedValue(undefined);
+        vi.setSystemTime(FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS - POLL_INTERVAL_MS);
+        appendMessages('ext-2', 1);
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(byId.mock.calls).toEqual([[[first]]]);
+        expect(recordFiles()).toEqual([`completed_${first}.json`, `${second}.json`].sort());
+        expect(readRecord(second)).toMatchObject({ status: 'active' });
+
+        byId.mockClear();
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        const rememberedAt = FAILED_AT + 2 * DESKTOP_REDELIVERY_INTERVAL_MS + POLL_INTERVAL_MS;
+        await pollAt(runtime, rememberedAt);
+        expect(readRecord(second)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+        expect(byId).not.toHaveBeenCalled();
+        await pollAt(runtime, rememberedAt + DESKTOP_REDELIVERY_INTERVAL_MS - POLL_INTERVAL_MS);
+        expect(byId).not.toHaveBeenCalled();
+
+        await pollAt(runtime, rememberedAt + DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(byId.mock.calls).toEqual([[[second]]]);
+      });
+
+      it('edge: an id remembered again during the by-id pass that took it stays remembered though the pass delivered it', async () => {
+        const { runtime } = await trackedThenDisconnected();
+        const sessionId = sessionIdFor('ext-1')!;
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        await pollAt(runtime, FAILED_AT);
+        let releasePass!: () => void;
+        const passHeld = new Promise<void>(resolve => { releasePass = resolve; });
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById').mockImplementationOnce(async () => {
+          await passHeld;
+          return [];
+        });
+
+        vi.setSystemTime(FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+        await runtime.triggerPoll();
+        expect(byId.mock.calls).toEqual([[[sessionId]]]);
+        (runtime as any).redelivery.remember([sessionId]);
+        releasePass();
+        await (runtime as any).redeliveryPass;
+
+        await pollAt(runtime, FAILED_AT + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(byId.mock.calls).toEqual([[[sessionId]], [[sessionId]]]);
+      });
+
+      it('edge: the less recently remembered of two ids, remembered again during the by-id pass that left both undelivered, leads the next batch', async () => {
+        const { runtime } = await trackedThenDisconnected(['ext-1', 'ext-2']);
+        // ext-1 is the first tracked, so the first finalized and remembered
+        const older = sessionIdFor('ext-1')!;
+        const newer = sessionIdFor('ext-2')!;
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        await pollAt(runtime, FAILED_AT);
+        let releasePass!: () => void;
+        const passHeld = new Promise<void>(resolve => { releasePass = resolve; });
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById').mockImplementationOnce(async () => {
+          await passHeld;
+          return [older, newer];
+        });
+
+        vi.setSystemTime(FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+        await runtime.triggerPoll();
+        expect(byId.mock.calls).toEqual([[[newer, older]]]);
+        (runtime as any).redelivery.remember([older]);
+        releasePass();
+        await (runtime as any).redeliveryPass;
+
+        await pollAt(runtime, FAILED_AT + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(byId.mock.calls[1][0][0]).toBe(older);
+      });
+
+      it('edge: an END that failed while connected, Desktop disconnected before the next listing pass, is delivered by a not-connected poll', async () => {
+        openDesktopChat('ext-1', 1, T0);
+        const runtime = await startDaemon(createAdapter(), collecting);
+        const sessionId = sessionIdFor('ext-1')!;
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        await pollAt(runtime, FAILED_AT);
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+
+        desktopPointsAt(null);
+        const reconcile = vi.spyOn(DesktopSessionDelivery.prototype, 'reconcileRecords');
+        await pollTicks(runtime, 2);
+        mockSendSessionEnd.mockResolvedValue(undefined);
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+        expect(reconcile).not.toHaveBeenCalled();
+      });
+
+      it('edge: a predecessor\'s active record the start-up pass finalized while the END was failing is delivered by a not-connected poll', async () => {
+        const sessionId = writeRecord('ext-1', { ownerPid: DEAD_PID, ownerStartedAt: T0 - 2 * HOUR_MS });
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        const runtime = await startRuntime(createAdapter(), collecting);
+        expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-daemon-restart' });
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+
+        desktopPointsAt(null);
+        await pollTicks(runtime, 2);
+        mockSendSessionEnd.mockResolvedValue(undefined);
+        await pollAt(runtime, T0 + DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+      });
+
+      it('edge: a send failed while connected, delivered by a listing pass of a connected poll, Desktop disconnected afterwards: no re-delivery by id', async () => {
+        openDesktopChat('ext-1', 1, T0);
+        const runtime = await startDaemon(createAdapter(), collecting);
+        const sessionId = sessionIdFor('ext-1')!;
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        await pollAt(runtime, T0 + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+        mockSendSessionEnd.mockResolvedValue(undefined);
+        await pollAt(runtime, T0 + DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+
+        desktopPointsAt(null);
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+        await pollTicks(runtime, 2);
+        await pollAt(runtime, T0 + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+        await pollAt(runtime, T0 + 2 * DESKTOP_REDELIVERY_INTERVAL_MS + POLL_INTERVAL_MS);
+
+        expect(byId).not.toHaveBeenCalled();
+      });
+
+      it('edge: more than RECONCILE_PER_START failed sends: the first pass delivers the RECONCILE_PER_START most recently remembered, the next interval the oldest', async () => {
+        const chats = Array.from({ length: RECONCILE_PER_START + 1 }, (_, index) => `ext-${index + 1}`);
+        const { runtime } = await trackedThenDisconnected(chats);
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        await pollAt(runtime, FAILED_AT);
+        expect(recordFiles().filter(name => name.startsWith('completed_'))).toEqual([]);
+
+        mockSendSessionEnd.mockReset();
+        mockSendSessionEnd.mockResolvedValue(undefined);
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(mockSendSessionEnd).toHaveBeenCalledTimes(RECONCILE_PER_START);
+        // ext-1 is the first tracked, so the first finalized and remembered
+        expect(recordFiles()).toEqual(chats.map(chat => (
+          chat === 'ext-1' ? `${sessionIdFor(chat)}.json` : `completed_${sessionIdFor(chat)}.json`
+        )).sort());
+
+        await pollAt(runtime, FAILED_AT + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(mockSendSessionEnd).toHaveBeenCalledTimes(RECONCILE_PER_START + 1);
+        expect(recordFiles()).toEqual(chats.map(chat => `completed_${sessionIdFor(chat)}.json`).sort());
+      });
+
+      it('edge: more than RECONCILE_PER_START remembered records whose END keeps failing: the second by-id pass is given the id the first did not take', async () => {
+        const chats = Array.from({ length: RECONCILE_PER_START + 1 }, (_, index) => `ext-${index + 1}`);
+        const { runtime } = await trackedThenDisconnected(chats);
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        await pollAt(runtime, FAILED_AT);
+        // ext-1 is the first tracked, so the first finalized and remembered
+        const oldest = sessionIdFor('ext-1')!;
+
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(byId.mock.calls[0][0]).not.toContain(oldest);
+        await pollAt(runtime, FAILED_AT + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(byId.mock.calls[1][0]).toContain(oldest);
+      });
+
+      it('edge: a remembered record whose reconcile lock another process holds during a by-id pass stays remembered and is delivered by the next interval', async () => {
+        const { runtime } = await trackedThenDisconnected();
+        const sessionId = sessionIdFor('ext-1')!;
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        await pollAt(runtime, FAILED_AT);
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+        mockSendSessionEnd.mockResolvedValue(undefined);
+
+        const held = (await acquirePidLock(reconcileLockPath(sessionId), { mode: 'try' }))!;
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+        await held.release();
+        expect(byId.mock.calls).toEqual([[[sessionId]]]);
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+
+        await pollAt(runtime, FAILED_AT + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(byId.mock.calls).toEqual([[[sessionId]], [[sessionId]]]);
+        expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+      });
+
+      it('edge: a record only a listing pass of a connected poll handled, its END failing at that pass, is re-delivered by id once Desktop is disconnected', async () => {
+        const runtime = await startDaemon(createAdapter(), collecting);
+        const sessionId = writeRecord('ext-1', {
+          status: 'completed',
+          reason: 'desktop-inactive-timeout',
+          endTime: T0 - 40 * 60_000,
+          ownerPid: DEAD_PID
+        });
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        await pollAt(runtime, T0 + DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(mockSendSessionEnd).toHaveBeenCalled();
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+
+        desktopPointsAt(null);
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+        await pollTicks(runtime, 2);
+        mockSendSessionEnd.mockResolvedValue(undefined);
+        await pollAt(runtime, T0 + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(byId).toHaveBeenCalledWith([sessionId]);
+        expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+      });
+
+      it('edge: nothing remembered: an interval of not-connected polls runs no re-delivery by id', async () => {
+        const { runtime } = await trackedThenDisconnected();
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+
+        await pollAt(runtime, T0 + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+        expect(recordFiles()).toEqual([`completed_${sessionIdFor('ext-1')}.json`]);
+        await pollAt(runtime, T0 + DESKTOP_REDELIVERY_INTERVAL_MS);
+        await pollAt(runtime, T0 + DESKTOP_REDELIVERY_INTERVAL_MS + POLL_INTERVAL_MS);
+
+        expect(byId).not.toHaveBeenCalled();
+      });
+
+      it('edge: the by-id pass without usable credentials sends nothing and spends no attempt', async () => {
+        const { runtime } = await trackedThenDisconnected();
+        const sessionId = sessionIdFor('ext-1')!;
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        await pollAt(runtime, FAILED_AT);
+        await markAnalyticsAuthInvalid('HTTP 401: Unauthorized', config.targetApiUrl);
+        mockSendSessionEnd.mockResolvedValue(undefined);
+        const sends = mockSendSessionEnd.mock.calls.length;
+
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(mockSendSessionEnd).toHaveBeenCalledTimes(sends);
+        expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(0);
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+      });
+    });
+
+    describe('a tracked session followed while not connected', () => {
+      it('stays active while the chat is appended to and is finalized after a quiet timeout at its last append', async () => {
+        const { runtime } = await trackedThenDisconnected();
+        const sessionId = sessionIdFor('ext-1')!;
+        // Appends 4 min apart, under the 5 min timeout, for 12 min in total
+        let lastAppendAt = 0;
+        for (let step = 1; step <= 3; step++) {
+          lastAppendAt = T0 + 20_000 + step * 240_000;
+          vi.setSystemTime(lastAppendAt);
+          appendMessages('ext-1', 1);
+          await pollAt(runtime, lastAppendAt + POLL_INTERVAL_MS);
+        }
+        expect(readRecord(sessionId)).toMatchObject({ status: 'active' });
+
+        await pollAt(runtime, lastAppendAt + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+
+        expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout', endTime: lastAppendAt });
+      });
+
+      it.each([
+        ['the entry file removed and _meta.json rewritten without appliedId', () => {
+          const library = join(getClaudeDesktopBaseDir(), 'configLibrary');
+          rmSync(join(library, 'a.json'));
+          writeFileSync(join(library, '_meta.json'), JSON.stringify({ entries: [] }));
+        }],
+        ['the applied entry rewritten without its inference keys, _meta.json unchanged', () => {
+          writeFileSync(join(getClaudeDesktopBaseDir(), 'configLibrary', 'a.json'), JSON.stringify({ managedMcpServers: '[]' }));
+        }],
+      ])('edge: what a disconnect leaves (%s): followed, and active while appended to past the timeout', async (_case, disconnect) => {
+        const { runtime, adapter } = await trackedThenDisconnected(['ext-1'], disconnect);
+        const sessionId = sessionIdFor('ext-1')!;
+        vi.mocked(adapter.discoverSessions).mockClear();
+        for (let step = 1; step <= 3; step++) {
+          const appendAt = T0 + 20_000 + step * 240_000;
+          vi.setSystemTime(appendAt);
+          appendMessages('ext-1', 1);
+          await pollAt(runtime, appendAt + POLL_INTERVAL_MS);
+        }
+
+        expect(adapter.discoverSessions).toHaveBeenCalled();
+        expect(readRecord(sessionId)).toMatchObject({ status: 'active' });
+      });
+
+      it('edge: activity without a transcript write keeps it from finalizing', async () => {
+        const { runtime } = await trackedThenDisconnected();
+        const sessionId = sessionIdFor('ext-1')!;
+        let lastTouchAt = 0;
+        for (let step = 1; step <= 3; step++) {
+          lastTouchAt = T0 + 20_000 + step * 240_000;
+          vi.setSystemTime(lastTouchAt);
+          touchDesktopChat('ext-1');
+          await pollAt(runtime, lastTouchAt + POLL_INTERVAL_MS);
+        }
+        expect(readRecord(sessionId)).toMatchObject({ status: 'active' });
+
+        await pollAt(runtime, lastTouchAt + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+
+        expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout', endTime: lastTouchAt });
+      });
+
+      it('edge: its record removed while not connected: no new record, no START, and it is no longer followed', async () => {
+        const { runtime, adapter } = await trackedThenDisconnected();
+        const sessionId = sessionIdFor('ext-1')!;
+        const starts = startedSessions().length;
+        rmSync(join(sessionsDir(), `${sessionId}.json`));
+        vi.setSystemTime(T0 + 30_000);
+        appendMessages('ext-1', 1);
+
+        await pollAt(runtime, T0 + 40_000);
+
+        expect(sessionIdFor('ext-1')).toBeUndefined();
+        expect(startedSessions()).toHaveLength(starts);
+        vi.mocked(adapter.discoverSessions).mockClear();
+        await pollTicks(runtime, 2);
+        expect(adapter.discoverSessions).not.toHaveBeenCalled();
+      });
+
+      it('edge: Desktop pointed at another port: not followed, finalized one timeout after the last connected poll at that poll\'s activity', async () => {
+        openDesktopChat('ext-1', 1, T0);
+        const adapter = createAdapter();
+        const runtime = await startDaemon(adapter, collecting);
+        const sessionId = sessionIdFor('ext-1')!;
+        vi.setSystemTime(T0 + 5_000);
+        appendMessages('ext-1', 1);
+        desktopPointsAt('http://127.0.0.1:4005');
+        // The first not-connected read works as a connected poll: the last one that collects
+        await pollAt(runtime, T0 + POLL_INTERVAL_MS);
+        vi.mocked(adapter.discoverSessions).mockClear();
+        await pollAt(runtime, T0 + 2 * POLL_INTERVAL_MS);
+        vi.setSystemTime(T0 + 200_000);
+        appendMessages('ext-1', 1);
+        await pollAt(runtime, T0 + 210_000);
+        expect(adapter.discoverSessions).not.toHaveBeenCalled();
+        expect(readRecord(sessionId)).toMatchObject({ status: 'active' });
+
+        await pollAt(runtime, T0 + 5_000 + INACTIVITY_TIMEOUT_MS);
+
+        expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout', endTime: T0 + 5_000 });
+      });
+
+      it('edge: a discovery that rejects is logged, the poll goes on and a session past its timeout is still finalized', async () => {
+        const { runtime, adapter } = await trackedThenDisconnected();
+        const sessionId = sessionIdFor('ext-1')!;
+        vi.mocked(adapter.discoverSessions).mockRejectedValue(new Error('EIO'));
+
+        vi.setSystemTime(T0 + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+        await expect(runtime.triggerPoll()).resolves.toBeUndefined();
+
+        expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+      });
+
+      it('edge: a stop while not connected finalizes it at the append made since the last poll', async () => {
+        const { runtime } = await trackedThenDisconnected();
+        const sessionId = sessionIdFor('ext-1')!;
+        vi.setSystemTime(T0 + 60_000);
+        appendMessages('ext-1', 1);
+        vi.setSystemTime(T0 + 70_000);
+
+        await runtime.stop();
+
+        expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-daemon-stop', endTime: T0 + 60_000 });
       });
     });
   });

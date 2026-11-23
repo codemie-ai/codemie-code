@@ -1,53 +1,13 @@
 import chalk from 'chalk';
+import { realpath } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import type { DaemonState } from './daemon-manager.js';
-import { hasActiveAnalyticsConnector } from './analytics-connectors.js';
-import { getEffectiveClientType } from './client-type.js';
 import { readDesktopGateway } from './connectors/desktop.js';
-import {
-  collectDeliveryHealth,
-  DELIVERY_REASONS,
-  formatDropLines,
-  unknownHint,
-  type DeliveryHealth,
-} from './delivery-health.js';
-import type { AnalyticsHealthReply } from '@/providers/plugins/sso/proxy/plugins/types.js';
-
-/**
- * Analytics delivery health for `proxy status`, or null when no connector is connected (a connected
- * Claude Desktop counts as one).
- * Leftover unsent spool bytes never make it visible: with nothing connected there is nothing to report.
- */
-export async function collectVisibleDeliveryHealth(
-  state: DaemonState,
-  reply: AnalyticsHealthReply | undefined
-): Promise<DeliveryHealth | null> {
-  if (!(await hasActiveAnalyticsConnector())) {
-    return null;
-  }
-  return collectDeliveryHealth(state, reply);
-}
-
-/**
- * The `Analytics:` headline for `proxy status`, with an indented `Run:` tip only when the user can act,
- * then the `Last dropped:` detail when the spool records a drop.
- */
-export function formatAnalyticsLines(delivery: DeliveryHealth): string[] {
-  return [...analyticsHeadline(delivery), ...formatDropLines(delivery.latestDrop)];
-}
-
-function analyticsHeadline(delivery: DeliveryHealth): string[] {
-  if (delivery.status === 'healthy') {
-    return [`Analytics: ${chalk.green('healthy')}`];
-  }
-  if (delivery.status === 'unhealthy') {
-    const entry = delivery.reason ? DELIVERY_REASONS[delivery.reason] : undefined;
-    return [
-      `Analytics: ${chalk.yellow(`unhealthy${entry ? ` (${entry.label})` : ''}`)}`,
-      ...(entry?.run ? [`  Run: ${entry.run}`] : []),
-    ];
-  }
-  return [`Analytics: ${chalk.dim(`unknown (${unknownHint(delivery)})`)}`];
-}
+import { CLIENT_TARGETS, type ClientGatewaySpec } from './client-targets.js';
+import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
+import { findActiveCli, findFirstManifest, resolvePackage } from '@/utils/active-cli.js';
+import { getDirname, isSamePath } from '@/utils/paths.js';
+import { isWindows } from '@/utils/platform.js';
 
 export interface DesktopCollection {
   connected: true;
@@ -57,22 +17,19 @@ export interface DesktopCollection {
 }
 
 /**
- * Whether the daemon collects what the connected Claude Desktop sends: Desktop mode, on the gateway's port; null when
- * Claude Desktop has no CodeMie gateway.
+ * Whether the daemon collects what Claude Desktop sends, when Desktop is pointed at a local proxy: collecting once
+ * the daemon has noticed Desktop connected to it (`desktopConnectedSince`); null when Desktop has no CodeMie
+ * gateway, or the daemon is one of an older CLI (its state has no `version`).
  */
 export async function collectDesktopCollection(state: DaemonState): Promise<DesktopCollection | null> {
+  if (!state.version) return null;
   const gateway = await readDesktopGateway();
   return gateway ? describeDesktopCollection(state, gateway.port) : null;
 }
 
 function describeDesktopCollection(state: DaemonState, gatewayPort: number): DesktopCollection {
-  if (state.telemetryMode !== 'claude-desktop') {
-    return {
-      connected: true,
-      collecting: false,
-      reason: `the proxy runs as ${getEffectiveClientType(state)}`,
-      remedy: 'codemie proxy connect --claude-desktop replaces it',
-    };
+  if (state.desktopConnectedSince) {
+    return { connected: true, collecting: true };
   }
   if (gatewayPort !== state.port) {
     return {
@@ -82,12 +39,142 @@ function describeDesktopCollection(state: DaemonState, gatewayPort: number): Des
       remedy: 'run: codemie proxy connect --claude-desktop',
     };
   }
-  return { connected: true, collecting: true };
+  return { connected: true, collecting: false, reason: 'Desktop is not connected to this proxy yet' };
 }
 
-/** The `Desktop:` line for `proxy status`. */
-export function formatDesktopLine(desktop: DesktopCollection): string {
-  return desktop.collecting
-    ? '  Desktop: collecting'
-    : chalk.yellow(`  Desktop: NOT collecting — ${desktop.reason}; ${desktop.remedy}`);
+export interface ClientPortMismatch {
+  client: string;
+  configuredPort: number;
+  flag: string;
+}
+
+/** A client whose config holds the shared key, or (`refused`) a key the daemon refuses. */
+export interface ClientSharedKey {
+  client: string;
+  flag: string;
+  refused?: true;
+}
+
+export interface HooksOfAnotherInstall {
+  connector: string;
+  path: string;
+  flag: string;
+}
+
+/** What `proxy status` names about the clients' own configs; each list empty when there is nothing to name. */
+export interface ClientNotices {
+  clientPortMismatch: ClientPortMismatch[];
+  clientSharedKey: ClientSharedKey[];
+  hooksOfAnotherInstall: HooksOfAnotherInstall[];
+  /** Lines in the order they are printed. */
+  lines: string[];
+}
+
+export interface ClientConfig extends ClientGatewaySpec {
+  label: string;
+  /** The `proxy connect` flags that write this config. */
+  flag: string;
+}
+
+/**
+ * The clients' configs `proxy status` reads and `proxy connect`, `proxy start` and `proxy restart` move to their named
+ * keys: the gateway clients of {@link CLIENT_TARGETS}, in table order.
+ */
+export const CLIENT_CONFIGS: readonly ClientConfig[] = CLIENT_TARGETS.flatMap((target) =>
+  target.gateway ? [{ ...target.gateway, label: target.label, flag: target.flag }] : []
+);
+
+/** The hook-based connectors of {@link CLIENT_TARGETS}: whose installed hooks may run another `codemie` install. */
+const HOOK_CONNECTORS = CLIENT_TARGETS.flatMap((target) =>
+  target.readHookInstall
+    ? [{ connector: target.id, label: `${target.label} hooks`, flag: target.flag, read: target.readHookInstall }]
+    : []
+);
+
+/**
+ * The package directory, resolved, of the install a `codemie` path belongs to — a shim (symlinked into its
+ * package), a Windows `codemie.cmd`, or a `bin/codemie.js` script — or null when it cannot be resolved.
+ */
+async function installDirOf(path: string): Promise<string | null> {
+  try {
+    const platform = process.platform;
+    const found = isWindows(platform) && /\.[cm]?js$/i.test(path)
+      ? await findFirstManifest(dirname(await realpath(path)), platform)
+      : await resolvePackage(path, platform);
+    return found && typeof found !== 'string' ? await realpath(found.dir) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function ownInstallDir(): Promise<string | null> {
+  try {
+    const found = await findFirstManifest(getDirname(import.meta.url), process.platform);
+    return found ? await realpath(found.dir) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function collectHooksOfAnotherInstall(): Promise<{ entries: HooksOfAnotherInstall[]; lines: string[] }> {
+  const entries: HooksOfAnotherInstall[] = [];
+  const lines: string[] = [];
+  const own = await ownInstallDir();
+  if (!own) return { entries, lines };
+  for (const { connector, label, flag, read } of HOOK_CONNECTORS) {
+    const path = await read();
+    const dir = path ? await installDirOf(path) : null;
+    if (!path || !dir || isSamePath(dir, own)) continue;
+    entries.push({ connector, path, flag });
+    let remedy = `run: codemie proxy connect ${flag}`;
+    if (connector === CLAUDE_CODE_OTLP_AGENT_NAME) {
+      // A connect pins Claude Code's hooks to the first `codemie` on PATH.
+      const active = await findActiveCli();
+      const activeDir = active.status === 'found' ? await installDirOf(active.active.path) : null;
+      if (activeDir && isSamePath(activeDir, dir)) {
+        remedy = `put this install first on PATH, then run: codemie proxy connect ${flag}`;
+      }
+    }
+    lines.push(chalk.yellow(`  ${label}: run another install (${path}) — ${remedy}`));
+  }
+  return { entries, lines };
+}
+
+/**
+ * The clients `proxy status` names for the daemon of `state`: each set up for another port than the daemon's
+ * (Desktop aside: its `Desktop:` line names that), each whose config holds the shared key or a key the daemon
+ * does not accept, and the hooks that run another install. A config that cannot be read names nothing. A state
+ * without `version` names no key: that daemon accepts the shared key alone, and its remedy is a restart. Only reads.
+ */
+export async function collectClientNotices(state: DaemonState): Promise<ClientNotices> {
+  const clientPortMismatch: ClientPortMismatch[] = [];
+  const clientSharedKey: ClientSharedKey[] = [];
+  const portLines: string[] = [];
+  const keyLines: string[] = [];
+  for (const config of CLIENT_CONFIGS) {
+    const gateway = await config.read(state);
+    if (!gateway) continue;
+    const run = `run: codemie proxy connect ${config.flag}`;
+    if (!config.portNamedElsewhere && gateway.port !== state.port) {
+      clientPortMismatch.push({ client: config.client, configuredPort: gateway.port, flag: config.flag });
+      portLines.push(chalk.yellow(
+        `  ${config.label}: points at port ${gateway.port}, the proxy listens on ${state.port} — ${run}`
+      ));
+    }
+    if (state.version && (gateway.key === 'shared' || gateway.key === 'refused')) {
+      const refused = gateway.key === 'refused';
+      clientSharedKey.push({ client: config.client, flag: config.flag, ...(refused && { refused: true as const }) });
+      keyLines.push(chalk.yellow(refused
+        ? `  ${config.label}: points at a local gateway with a key this proxy does not accept — if it should use CodeMie, run: codemie proxy connect ${config.flag}`
+        : `  ${config.label}: uses the shared key — ${run}`
+      ));
+    }
+  }
+  const hooks = await collectHooksOfAnotherInstall();
+  return {
+    clientPortMismatch,
+    clientSharedKey,
+    hooksOfAnotherInstall: hooks.entries,
+    lines: [...portLines, ...keyLines, ...hooks.lines],
+  };
 }

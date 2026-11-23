@@ -1,8 +1,7 @@
-import { randomUUID } from 'crypto';
 import { SessionStore } from '@/agents/core/session/SessionStore.js';
 import { hostOf } from '@/agents/core/session/send-path.js';
 import type { Session } from '@/agents/core/session/types.js';
-import { reconcileLockPath } from '@/agents/core/session/stale-session-reconciliation.js';
+import { readLiveRecord, reconcileLockPath } from '@/agents/core/session/stale-session-reconciliation.js';
 import { SessionSyncer } from '@/providers/plugins/sso/session/SessionSyncer.js';
 import type {
   DesktopTelemetryRuntimeConfig,
@@ -10,24 +9,26 @@ import type {
   LocalTelemetryDiscoveredSession
 } from '@/telemetry/runtime/types.js';
 import { setRuntimeCheckpoint } from '@/telemetry/runtime/checkpoints.js';
-import { restoreCompletedFiles } from '@/telemetry/runtime/completed-files.js';
 import { DesktopSessionDelivery } from '@/telemetry/runtime/DesktopSessionDelivery.js';
 import { DesktopSessionMetrics } from '@/telemetry/runtime/DesktopSessionMetrics.js';
+import { DesktopRedelivery } from '@/telemetry/runtime/DesktopRedelivery.js';
+import { DesktopConnection } from '@/telemetry/runtime/DesktopConnection.js';
 import {
-  DESKTOP_REDELIVERY_INTERVAL_MS,
   DESKTOP_REOPEN_LOCK_BUDGET_MS,
   daemonOwner, hasActivityAfter,
   isForeignRecord,
   isSameFingerprint,
   readTranscriptFingerprint,
   detectAttribution,
-  type Attribution,
+  buildNewSession, followFolder, reopenCompleted,
   type TrackedSession
 } from '@/telemetry/runtime/desktop-session.js';
 import { ReconcileLockHeldError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { acquirePidLock } from '@/utils/pid-lock.js';
 import { CoworkRunner, type CoworkProducer } from '@/telemetry/runtime/cowork/CoworkRunner.js';
+import { getClaudeDesktopLocalSessionsRoot } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
+import { isPathWithinDirectory } from '@/utils/paths.js';
 
 export class DesktopTelemetryRuntime {
   private readonly sessionStore = new SessionStore();
@@ -40,18 +41,23 @@ export class DesktopTelemetryRuntime {
   private readonly startedAt = Date.now();
   private timer?: NodeJS.Timeout;
   private lastPollAt = this.startedAt;
-  private lastRedeliveryAt = this.startedAt;
   private isPolling = false;
+  /** Settles when the poll in flight ends, whatever its outcome; stop() waits for it. */
+  private pollInFlight: Promise<void> = Promise.resolve();
   /**
    * A re-track lock wait of this poll failed: `lastPollAt` is held back so the next poll re-reads this window, for as
    * long as the wait keeps failing. Discovery is bounded by the sessions active since `startedAt`, so the cost is
    * their metadata reads per poll and one lock wait per poll until the holder releases.
    */
   private reopenLockFailed = false;
+  /** Set by start(): the first poll that finds Desktop connected then runs the start-up reconcile. */
+  private startupDue = false;
+  /** The start-up reconcile, once begun. */
   private startupPass?: Promise<void>;
   private startupChain?: Promise<void>;
+  private readonly connection: DesktopConnection;
   private stopped = false;
-  private redeliveryPass?: Promise<void>;
+  private readonly redelivery: DesktopRedelivery;
   /** Turns Cowork sessions into plugin events in the proxy's spool; only for Claude Desktop's own adapter. */
   private readonly cowork?: CoworkRunner;
 
@@ -62,27 +68,19 @@ export class DesktopTelemetryRuntime {
   ) {
     this.metrics = new DesktopSessionMetrics(config, this.sessionStore);
     this.delivery = new DesktopSessionDelivery(config, this.sessionStore, new SessionSyncer(), adapter, this.metrics);
+    this.redelivery = new DesktopRedelivery(this.delivery, this.startedAt);
+    this.connection = new DesktopConnection(config, this.startedAt);
     this.cowork = CoworkRunner.forAdapter(adapter, config, cowork);
   }
 
   /**
    * One start and one stop per instance: a start() after stop() polls nothing (the daemon constructs one runtime
-   * per process).
+   * per process). The first poll and the timer start detached: the daemon starts its proxy watcher after start(),
+   * which must not wait for the start-up pass's sends.
    */
   async start(): Promise<void> {
-    // The start-up pass renames records; the scan runs before it so no record is missed between listing and reading
-    try {
-      this.knownSessionIds ??= await this.indexSessions();
-    } catch (error) {
-      logger.error('[desktop-telemetry] Session index failed; built at the next poll', error);
-    }
-    // Records a previous daemon left are finalized and delivered before the first poll: a poll that re-tracked a
-    // predecessor's `active` record first would keep the downtime inside one stretch under this daemon.
-    // Detached: the daemon starts its proxy watcher after start(), which must not wait for the pass's sends.
-    this.startupPass = this.delivery.reconcileRecords(true).catch((error) => {
-      logger.error('[desktop-telemetry] Start-up scan failed:', error);
-    });
-    this.startupChain = this.startupPass.then(async () => {
+    this.startupDue = !this.stopped;
+    this.startupChain = Promise.resolve().then(async () => {
       if (this.stopped) return;
       await this.poll().catch((error) => {
         logger.error('[desktop-telemetry] Poll failed:', error);
@@ -96,12 +94,15 @@ export class DesktopTelemetryRuntime {
     });
   }
 
+  /** Waits for the poll in flight, then runs a final poll and finalizes every tracked session. */
   async stop(): Promise<void> {
     this.stopped = true;
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = undefined;
     }
+    // A poll in flight could still discover and track sessions after the finalization below.
+    await this.pollInFlight;
 
     // Final poll to catch sessions whose transcript was written after the last regular poll
     // but before proxy stop (e.g. Code tab sessions where transcript write is async).
@@ -128,19 +129,48 @@ export class DesktopTelemetryRuntime {
   }
 
 
+  /**
+   * One poll. Only while Desktop's applied config points at this daemon (its port and key) does it discover and
+   * collect new sessions and run the listing re-delivery. Otherwise it runs the Cowork producer for the sessions it is
+   * already collecting, so they get their end and final summary; follows the sessions already tracked while Desktop's
+   * config names no gateway; finalizes the tracked sessions on inactivity; and re-delivers by id the records this
+   * process could not send. No new session is taken, no session index is built and the session store is not listed.
+   */
   private async poll(): Promise<void> {
     if (this.isPolling) {
       return;
     }
 
     this.isPolling = true;
+    let pollEnded!: () => void;
+    this.pollInFlight = new Promise<void>(resolve => { pollEnded = resolve; });
     const now = Date.now();
 
     try {
-      // Every start orders its first poll after the start-up pass; a poll asked for during the pass (triggerPoll, stop())
-      // waits for it only when the start-up index failed, so the index never lists while the pass renames records
-      // ponytail: that poll waits for the whole start-up pass (network sends per record); polling resumes after it
-      if (!this.knownSessionIds) await this.startupPass;
+      const connected = await this.connection.check(now);
+      if (!connected) {
+        if (!this.stopped) this.cowork?.startIfIdle(now, false);
+        await this.followTracked();
+        await this.finalizeInactive(now);
+        if (!this.stopped) this.redelivery.startByIdIfDue(now);
+        return;
+      }
+      // The first connected poll after the start builds the index, then finalizes and delivers what a previous daemon
+      // left before its discovery: a poll that re-tracked a predecessor's `active` record first would keep the downtime
+      // inside one stretch under this daemon. The index is built first so no record is missed while the pass renames
+      // records. ponytail: that poll waits for the whole start-up pass (network sends per record); polling resumes after it
+      if (this.startupDue) {
+        this.startupDue = false;
+        try {
+          this.knownSessionIds = await this.indexSessions();
+        } catch (error) {
+          logger.error('[desktop-telemetry] Session index failed; built after the start-up pass', error);
+        }
+        this.startupPass = this.delivery.reconcileRecords(true).then((ids) => this.redelivery.remember(ids)).catch((error) => {
+          logger.error('[desktop-telemetry] Start-up scan failed:', error);
+        });
+      }
+      await this.startupPass;
       this.knownSessionIds ??= await this.indexSessions();
       const discoveredSessions = await this.adapter.discoverSessions(this.lastPollAt - this.config.pollIntervalMs);
       logger.debug('[desktop-telemetry] Poll tick', {
@@ -152,8 +182,8 @@ export class DesktopTelemetryRuntime {
         // Gate on activity, not creation time. A conversation opened before the daemon
         // started is still live work the moment the user types into it, and keying on
         // createdAt made every proxy restart orphan all existing chats permanently.
-        // Sessions genuinely idle since startup are still skipped, so no backlog is replayed.
-        if (discovered.updatedAt < this.startedAt) {
+        // Sessions genuinely idle since collection began are still skipped, so no backlog is replayed.
+        if (discovered.updatedAt < this.connection.collectingSince) {
           continue;
         }
         try {
@@ -176,6 +206,38 @@ export class DesktopTelemetryRuntime {
       }
       this.reopenLockFailed = false;
       this.isPolling = false;
+      pollEnded();
+    }
+  }
+
+  /**
+   * A not-connected poll's follow of the sessions already tracked, over the window of a connected poll: only a
+   * discovered session whose external id is tracked is polled, and nothing new is taken.
+   */
+  private async followTracked(): Promise<void> {
+    // After a disconnect Desktop may still send this session's requests through this daemon, so a session being
+    // collected is followed until it is quiet. When Desktop's config names another gateway, that gateway serves the
+    // session — another CodeMie proxy collects it itself — so it is not followed. Nothing new is taken.
+    if (this.trackedSessions.size === 0 || this.connection.namesGateway) return;
+    let discoveredSessions: LocalTelemetryDiscoveredSession[];
+    try {
+      discoveredSessions = await this.adapter.discoverSessions(this.lastPollAt - this.config.pollIntervalMs);
+    } catch (error) {
+      logger.error('[desktop-telemetry] Discovery of the tracked sessions failed; finalized on inactivity', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return;
+    }
+    for (const discovered of discoveredSessions) {
+      if (!this.trackedSessions.has(discovered.externalSessionId)) continue;
+      try {
+        await this.pollSession(discovered, false);
+      } catch (error) {
+        logger.error('[desktop-telemetry] Session poll failed; retried at the next poll', {
+          externalSessionId: discovered.externalSessionId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
     }
   }
 
@@ -187,7 +249,10 @@ export class DesktopTelemetryRuntime {
     );
   }
 
-  /** Finalizes every tracked session idle past the inactivity timeout; a failure is retried at the next poll. */
+  /**
+   * Finalizes every tracked session idle past the inactivity timeout; a failure is retried at the next poll. A record
+   * still live after its finalization (its send failed) is remembered for the re-delivery by id.
+   */
   private async finalizeInactive(now: number): Promise<void> {
     for (const [externalSessionId, tracked] of this.trackedSessions) {
       const inactiveForMs = now - tracked.lastSeenActivityAt;
@@ -203,6 +268,7 @@ export class DesktopTelemetryRuntime {
       try {
         await this.finalizeSession(tracked.codemieSessionId, 'desktop-inactive-timeout', tracked.lastSeenActivityAt);
         this.trackedSessions.delete(externalSessionId);
+        if (await readLiveRecord(tracked.codemieSessionId)) this.redelivery.remember([tracked.codemieSessionId]);
       } catch (error) {
         logger.error('[desktop-telemetry] Inactive session finalization failed; retried at the next poll', {
           externalSessionId,
@@ -213,22 +279,18 @@ export class DesktopTelemetryRuntime {
     }
   }
 
-  /** Starts a re-delivery pass every {@link DESKTOP_REDELIVERY_INTERVAL_MS} unless one is running; each pass sends at most `RECONCILE_PER_START` records. */
-  private startRedeliveryIfDue(now: number): void {
-    // Not awaited: a pass whose sends hang must not stall the polls
-    if (!this.redeliveryPass && now - this.lastRedeliveryAt >= DESKTOP_REDELIVERY_INTERVAL_MS) {
-      this.lastRedeliveryAt = now;
-      this.redeliveryPass = this.delivery.reconcileRecords(false)
-        .catch((error) => {
-          logger.error('[desktop-telemetry] Re-delivery pass failed:', error);
-        })
-        .finally(() => {
-          this.redeliveryPass = undefined;
-        });
-    }
+  /** The re-delivery pass running, if any. */
+  private get redeliveryPass(): Promise<void> | undefined {
+    return this.redelivery.pass;
   }
 
-  private async pollSession(discovered: LocalTelemetryDiscoveredSession): Promise<void> {
+  /** Starts a listing re-delivery pass when one is due. */
+  private startRedeliveryIfDue(now: number): void {
+    this.redelivery.startListingIfDue(now);
+  }
+
+  /** `takeNew: false` takes no new record: a tracked session whose record is gone or foreign leaves the tracking. */
+  private async pollSession(discovered: LocalTelemetryDiscoveredSession, takeNew = true): Promise<void> {
     const knownSessionIds = this.knownSessionIds!;
     const tracked = this.trackedSessions.get(discovered.externalSessionId);
     // Taken before parsing, so a write that lands mid-processing is picked up next tick.
@@ -252,8 +314,13 @@ export class DesktopTelemetryRuntime {
 
     const session = await this.ensureSession(
       discovered,
-      tracked?.codemieSessionId ?? knownSessionIds.get(discovered.externalSessionId)
+      tracked?.codemieSessionId ?? knownSessionIds.get(discovered.externalSessionId),
+      takeNew
     );
+    if (session === null) {
+      this.trackedSessions.delete(discovered.externalSessionId);
+      return;
+    }
     if (!session || session === 'idle') {
       this.reopenLockFailed ||= !session;
       return;
@@ -273,18 +340,23 @@ export class DesktopTelemetryRuntime {
   }
 
   /**
-   * The record of a discovered session: the known one re-tracked under its reconcile lock, else a new one.
-   * Undefined when its lock stays held past {@link DESKTOP_REOPEN_LOCK_BUDGET_MS}; `idle` when it is `completed` with no newer activity.
+   * The record of a discovered session: the known one re-tracked under its reconcile lock, else a new one — or, with
+   * `takeNew` false, null and nothing created. Undefined when its lock stays held past
+   * {@link DESKTOP_REOPEN_LOCK_BUDGET_MS}; `idle` when it is `completed` with no newer activity.
    */
   private async ensureSession(
     discovered: LocalTelemetryDiscoveredSession,
-    knownSessionId?: string
-  ): Promise<Session | 'idle' | undefined> {
+    knownSessionId?: string,
+    takeNew = true
+  ): Promise<Session | 'idle' | undefined | null> {
     if (knownSessionId) {
       const retracked = await this.retrackUnderLock(knownSessionId, discovered);
       if (retracked !== null) {
         return retracked;
       }
+    }
+    if (!takeNew) {
+      return null;
     }
 
     const attribution = await detectAttribution(discovered.workingDirectory, this.config.profile);
@@ -300,14 +372,19 @@ export class DesktopTelemetryRuntime {
     // Publish through the shared resolver: it keeps a confirmed per-request lookup ahead of
     // this poll-derived directory (process CWD is more precise), while still replacing a
     // tentative TTL-window guess.
-    this.config.repositoryResolver?.recordDiscoveredSession(discovered.agentSessionId, repository);
+    // A session under Desktop's local-agent-mode root is Cowork, so its first request is answered as one.
+    this.config.repositoryResolver?.recordDiscoveredSession(
+      discovered.agentSessionId,
+      repository,
+      isPathWithinDirectory(getClaudeDesktopLocalSessionsRoot(), discovered.metadataPath)
+    );
 
-    // A chat CodeMie has never synced that already existed when the daemon started: sync only
-    // what is written from now on. Backfilling its whole history for every such chat at once
+    // A chat CodeMie has never synced that already existed when collection began: sync only
+    // what is written from then on. Backfilling its whole history for every such chat at once
     // after an upgrade is what spiked backend load; the tracked session starts at the cutoff.
-    const baselineCutoffMs = discovered.createdAt < this.startedAt ? this.startedAt : undefined;
+    const baselineCutoffMs = discovered.createdAt < this.connection.collectingSince ? this.connection.collectingSince : undefined;
 
-    const session = this.buildNewSession(discovered, attribution, baselineCutoffMs);
+    const session = buildNewSession(this.config, this.metrics.credentialsUrl, discovered, attribution, baselineCutoffMs);
     await this.sessionStore.saveSession(session);
     try {
       await this.metrics.sendSessionStartMetric(session, discovered);
@@ -360,41 +437,6 @@ export class DesktopTelemetryRuntime {
     }
   }
 
-  /** A new record of a discovered session, owned by this daemon. */
-  private buildNewSession(
-    discovered: LocalTelemetryDiscoveredSession,
-    [gitBranch, repository, project]: Attribution,
-    baselineCutoffMs: number | undefined
-  ): Session {
-    return {
-      sessionId: randomUUID(),
-      agentName: this.config.clientType,
-      provider: this.config.provider,
-      codemieUrl: this.metrics.credentialsUrl,
-      startTime: baselineCutoffMs ?? discovered.createdAt,
-      workingDirectory: discovered.workingDirectory,
-      gitBranch: gitBranch || undefined,
-      repository: repository || undefined,
-      project: project || undefined,
-      status: 'active',
-      activeDurationMs: 0,
-      ...daemonOwner(),
-      correlation: {
-        status: 'matched',
-        agentSessionId: discovered.agentSessionId,
-        agentSessionFile: discovered.transcriptPath,
-        retryCount: 0
-      },
-      runtimeCheckpoint: {
-        externalSessionId: discovered.externalSessionId,
-        transcriptPath: discovered.transcriptPath,
-        lastDiscoveredAt: Date.now(),
-        lastSeenActivityAt: discovered.updatedAt,
-        ...(baselineCutoffMs !== undefined && { baselineCutoffMs })
-      }
-    };
-  }
-
   /**
    * Re-tracks a known record; the caller holds its reconcile lock. A `completed` one with newer activity is reopened: its
    * `completed_*` set moved back to the live names, its end and delivery state cleared so the resumed
@@ -405,7 +447,7 @@ export class DesktopTelemetryRuntime {
     if (existing.status === 'completed') {
       // Finalized idle, it stays indexed and in a held-back discovery window: reopened with no newer activity it ends again this poll
       if (!hasActivityAfter(existing, discovered.updatedAt)) return 'idle';
-      await this.reopenCompleted(existing, discovered);
+      await reopenCompleted(existing, discovered);
     }
     Object.assign(existing, daemonOwner());
     // A record written before the field existed is this host's from the moment this daemon owns it
@@ -414,7 +456,7 @@ export class DesktopTelemetryRuntime {
     if (discovered.transcriptPath !== existing.correlation.agentSessionFile) {
       existing.correlation.agentSessionFile = discovered.transcriptPath;
     }
-    await this.followFolder(existing, discovered.workingDirectory);
+    await followFolder(this.config, existing, discovered.workingDirectory);
 
     setRuntimeCheckpoint(existing, {
       // Keep fields owned by other steps, e.g. a baseline marker not yet applied after a crash.
@@ -426,51 +468,6 @@ export class DesktopTelemetryRuntime {
     });
     await this.sessionStore.saveSession(existing);
     return existing;
-  }
-
-  private async followFolder(existing: Session, workingDirectory: string): Promise<void> {
-    if (workingDirectory === existing.workingDirectory) return;
-    // ponytail: the start metric and the deltas sent before the switch keep the previous folder's attribution
-    const [gitBranch, repository, project] = await detectAttribution(workingDirectory, this.config.profile);
-    logger.info('[desktop-telemetry] Session switched folder', {
-      sessionId: existing.sessionId, from: existing.workingDirectory, to: workingDirectory, gitBranch, repository, project
-    });
-    existing.workingDirectory = workingDirectory;
-    existing.gitBranch = gitBranch || undefined;
-    existing.repository = repository || undefined;
-    existing.project = project || undefined;
-  }
-
-  /** Moves a `completed` record's set back to its live names and clears its end and delivery state. */
-  private async reopenCompleted(existing: Session, discovered: LocalTelemetryDiscoveredSession): Promise<void> {
-    logger.info('[desktop-telemetry] Reopening completed session — activity resumed', {
-      sessionId: existing.sessionId,
-      externalSessionId: discovered.externalSessionId,
-    });
-    await restoreCompletedFiles(existing.sessionId);
-    // An ownerless completed record is either a pre-upgrade one, whose daemon sent its end metric without recording it,
-    // or a legacy one closed locally with nothing sent — either way its earlier stretch is not reported again
-    const endMetricLeft = existing.ownerPid === undefined
-      || existing.endMetricSentAt !== undefined
-      || existing.endMetricSkipped !== undefined;
-    existing.status = 'active';
-    delete existing.endTime;
-    delete existing.reason;
-    delete existing.endMetricSentAt;
-    delete existing.endMetricSkipped;
-    delete existing.deliveryAttempts;
-    delete existing.localFinalizeFailures;
-    delete existing.deliveryAttemptedAt;
-    delete existing.droppedAt;
-    delete existing.droppedReason;
-    delete existing.deliveryFailingSince;
-    delete existing.deliveryRealAttempts;
-    // ponytail: the stretch start lags its first activity by up to one poll interval (and the reopen lock wait), and when
-    // the previous stretch's end metric never left, the next end metric covers that stretch, the gap and the new one;
-    // delivering the pending end metric at the reopen would make it exact
-    if (endMetricLeft) {
-      existing.stretchStartTime = discovered.updatedAt;
-    }
   }
 
   /**

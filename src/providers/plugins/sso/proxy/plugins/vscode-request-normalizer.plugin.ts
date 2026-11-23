@@ -16,8 +16,8 @@ import { createHash } from 'node:crypto';
 import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
+import { VSCODE_BYOK } from '../proxy-clients.js';
 
-const VS_CODE_CLIENT_TYPE = 'vscode-byok';
 const MAX_CLIENT_USER_LENGTH = 32;
 const FALLBACK_USER = 'vscode-byok';
 
@@ -26,12 +26,9 @@ export class VsCodeRequestNormalizerPlugin implements ProxyPlugin {
   name = 'VS Code Request Normalizer';
   version = '1.0.0';
   priority = 17;
+  clients: readonly string[] = [VSCODE_BYOK];
 
-  async createInterceptor(context: PluginContext): Promise<ProxyInterceptor> {
-    if (context.config.clientType !== VS_CODE_CLIENT_TYPE) {
-      throw new Error(`Plugin disabled for agent: ${context.config.clientType}`);
-    }
-
+  async createInterceptor(_context: PluginContext): Promise<ProxyInterceptor> {
     return new VsCodeRequestNormalizerInterceptor();
   }
 }

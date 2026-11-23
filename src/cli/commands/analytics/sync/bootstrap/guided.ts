@@ -1,8 +1,14 @@
 /**
- * `codemie analytics sync bootstrap`'s guided mode (a TTY, no `--webhook` given): the start
- * logic and steps 1-4 (Teams channel, SharePoint folder, time zone, import the flow). Steps
- * 5-8 (trigger URL and test send, external sessions, lookback, developers) live in
+ * `codemie analytics sync bootstrap`'s guided mode (a TTY, no delivery target flag given): the
+ * webhook setup steps (Teams channel, SharePoint folder, time zone, import the flow) and the
+ * step runner. The start logic and the delivery target choice live in `./guided-start.ts`;
+ * the late steps (trigger URL and test send, git
+ * repository and test push, external sessions, lookback, developers) live in
  * `./guided-late-steps.ts`, run from {@link runStepsFiveThroughEight}.
+ *
+ * Which steps run, in what order and how they are numbered ("Step N of M") comes from the
+ * filtered step list `stepsFor(state.targets)` (`./step-model.ts`): every step is addressed
+ * by its id, never by a fixed number.
  *
  * Ported from the standalone collector's `src/wizard.js` (sequence + start logic) and
  * `src/wizard-support.js` (`importInstructions`, `POWER_AUTOMATE_URL`), adapted to this
@@ -15,19 +21,20 @@
  * `run-bootstrap.ts` either.
  *
  * Every step prints only to `deps.err` (spec.md "Only the install command goes to stdout");
- * step 8 is the one exception, printing the install command itself to `deps.out`.
+ * the Developers step is the one exception, printing the install command itself to `deps.out`.
  */
 
 import { errorMessage } from '../redact.js';
 import { FLOW_PACKAGE_FILENAME, resolveFlowTemplateDir, writeFlowPackage } from './flow-package.js';
 import { runStepsFiveThroughEight } from './guided-late-steps.js';
+import { resolveStartStep } from './guided-start.js';
 import { askValidated } from './guided-support.js';
 import type { SaveBootstrapState } from './guided-support.js';
 import { BootstrapInputError, cleanPaste, parseChannelLink, parseFolderUrl, validateFolderPath, validateSiteUrl } from './links.js';
 import type { ChannelLink, FolderLink } from './links.js';
-import { checkReuse, loadBootstrapState, saveBootstrapState, summarizeState } from './state-store.js';
+import { loadBootstrapState, saveBootstrapState } from './state-store.js';
 import type { BootstrapState } from './state-store.js';
-import { stepHeading } from './steps.js';
+import { stepHeading, stepsFor } from './step-model.js';
 import { DEFAULT_TIME_ZONE, resolveTimeZone } from './timezones.js';
 import type { BootstrapDeps, BootstrapPrompter } from './types.js';
 
@@ -39,7 +46,7 @@ const POWER_AUTOMATE_URL = 'https://make.powerautomate.com/';
 const MANUAL = 'manual';
 
 /**
- * Step 1, "Teams channel": parses a "Get link to channel" link, retrying on a {@link
+ * The "Teams channel" step: parses a "Get link to channel" link, retrying on a {@link
  * BootstrapInputError} (including a `/l/message/` link, spec.md AC4), then confirms the
  * parsed channel name before saving. The saved `channelLink` is offered as the next
  * prompt's default, so re-running after a decline-to-reuse restart is a quick re-confirm
@@ -47,7 +54,7 @@ const MANUAL = 'manual';
  */
 async function step1Channel(deps: BootstrapDeps, state: BootstrapState, save: SaveBootstrapState): Promise<void> {
   deps.err('');
-  deps.err(stepHeading(0));
+  deps.err(stepHeading(stepsFor(state.targets), 'channel'));
 
   for (;;) {
     const raw = await deps.prompt.input(
@@ -76,8 +83,8 @@ async function step1Channel(deps: BootstrapDeps, state: BootstrapState, save: Sa
   }
 }
 
-/** Step 2's paste prompt: the parsed folder, or {@link MANUAL} when the lead typed "manual".
- * Retries on a {@link BootstrapInputError}. */
+/** The SharePoint folder step's paste prompt: the parsed folder, or {@link MANUAL} when the
+ * lead typed "manual". Retries on a {@link BootstrapInputError}. */
 async function askPastedFolder(deps: BootstrapDeps): Promise<FolderLink | typeof MANUAL> {
   for (;;) {
     const raw = await deps.prompt.input(
@@ -97,7 +104,7 @@ async function askPastedFolder(deps: BootstrapDeps): Promise<FolderLink | typeof
   }
 }
 
-/** Step 2's manual entry: the site and the folder path asked separately, each defaulting to
+/** The SharePoint folder step's manual entry: the site and the folder path asked separately, each defaulting to
  * the `saved` answer when there is one. */
 async function askManualFolder(deps: BootstrapDeps, saved: FolderLink | undefined): Promise<FolderLink> {
   const siteUrl = await askValidated(
@@ -115,7 +122,7 @@ async function askManualFolder(deps: BootstrapDeps, saved: FolderLink | undefine
   return { siteUrl, folderPath };
 }
 
-/** The saved step 2 answer, when both halves of it are present. */
+/** The saved SharePoint folder answer, when both halves of it are present. */
 function savedFolder(state: BootstrapState): FolderLink | undefined {
   if (state.siteUrl === undefined || state.folderPath === undefined) {
     return undefined;
@@ -124,14 +131,14 @@ function savedFolder(state: BootstrapState): FolderLink | undefined {
 }
 
 /**
- * Step 2, "SharePoint folder": with a saved folder, first offers to keep it (spec.md AC12,
+ * The "SharePoint folder" step: with a saved folder, first offers to keep it (spec.md AC12,
  * "resumes with the earlier answers as defaults"). Otherwise parses the folder's browser
  * address, or — on typing "manual" or declining the confirm — asks for the site and the
  * folder path separately (spec.md AC5), with the saved ones as defaults.
  */
 async function step2Folder(deps: BootstrapDeps, state: BootstrapState, save: SaveBootstrapState): Promise<void> {
   deps.err('');
-  deps.err(stepHeading(1));
+  deps.err(stepHeading(stepsFor(state.targets), 'folder'));
 
   const saved = savedFolder(state);
   if (saved && (await deps.prompt.confirm(`Keep site ${saved.siteUrl}, folder "${saved.folderPath}"?`, true))) {
@@ -152,11 +159,11 @@ async function step2Folder(deps: BootstrapDeps, state: BootstrapState, save: Sav
   }
 }
 
-/** Step 3, "Time zone": a Windows time zone name, default {@link DEFAULT_TIME_ZONE},
+/** The "Time zone" step: a Windows time zone name, default {@link DEFAULT_TIME_ZONE},
  * retried on an unknown name (spec.md AC6). */
 async function step3TimeZone(deps: BootstrapDeps, state: BootstrapState, save: SaveBootstrapState): Promise<void> {
   deps.err('');
-  deps.err(stepHeading(2));
+  deps.err(stepHeading(stepsFor(state.targets), 'timezone'));
 
   const timeZone = await askValidated(
     deps,
@@ -189,7 +196,7 @@ function importInstructions(flowZipPath: string): string[] {
 }
 
 /**
- * Step 4, "Import the flow": writes {@link FLOW_PACKAGE_FILENAME} into `deps.cwd` (never
+ * The "Import the flow" step: writes {@link FLOW_PACKAGE_FILENAME} into `deps.cwd` (never
  * holding a webhook URL), prints a notice if that overwrote an existing file, prints the 6
  * import instructions, offers to open Power Automate in the browser — printing the bare
  * {@link POWER_AUTOMATE_URL} when `deps.openUrl` throws, so the lead always has it to copy
@@ -197,7 +204,7 @@ function importInstructions(flowZipPath: string): string[] {
  */
 async function step4ImportFlow(deps: BootstrapDeps, state: BootstrapState, save: SaveBootstrapState): Promise<void> {
   deps.err('');
-  deps.err(stepHeading(3));
+  deps.err(stepHeading(stepsFor(state.targets), 'flow'));
 
   const { path, overwritten } = await writeFlowPackage(deps.cwd, {
     siteUrl: state.siteUrl ?? '',
@@ -232,74 +239,16 @@ async function step4ImportFlow(deps: BootstrapDeps, state: BootstrapState, save:
   await save({ flowImported: true });
 }
 
-/** Where `runGuided` starts: the first step to run, and the state to run it on. */
-interface StartPoint {
-  startStep: number;
-  state: BootstrapState;
-}
 
 /**
- * Drops the answers that re-running the wizard from `startStep` makes stale, and saves the
- * result. Re-running step 5 or earlier drops the saved webhook and its test result: a flow
- * re-imported at step 4 has a new trigger URL, and quitting before step 5 must not leave the
- * old one looking reusable. Re-running step 4 or earlier also drops `skippedSetup`.
- */
-async function discardStaleAnswers(state: BootstrapState, startStep: number, statePath: string): Promise<BootstrapState> {
-  if (startStep > 5) {
-    return state;
-  }
-  const { webhookUrl: _webhookUrl, webhookTest: _webhookTest, skippedSetup, ...rest } = state;
-  const kept: BootstrapState = startStep <= 4 || skippedSetup === undefined ? rest : { ...rest, skippedSetup };
-  await saveBootstrapState(kept, statePath);
-  return kept;
-}
-
-/**
- * The start logic (spec.md "Start logic"):
- * - A saved state with a webhook shows a masked summary and offers reuse. Accepting
- *   re-checks it with `checkReuse`: ok jumps straight to step 8; not ok resumes at
- *   `resumeAt`. Declining restarts at step 1, with the saved answers offered back.
- *   Either way, {@link discardStaleAnswers} drops what the re-run makes stale.
- * - Without a saved webhook, "already imported the flow and copied its trigger URL?"
- *   (default no) starts at step 1 on no. Yes jumps to step 5 and saves `skippedSetup`, so
- *   a later run can reuse the state without steps 1-4's answers.
- */
-async function resolveStartStep(deps: BootstrapDeps, state: BootstrapState): Promise<StartPoint> {
-  if (state.webhookUrl === undefined) {
-    const alreadyImported = await deps.prompt.confirm(
-      'Have you already imported the flow and copied its trigger URL?',
-      false
-    );
-    if (!alreadyImported) {
-      return { startStep: 1, state };
-    }
-    const skipped: BootstrapState = { ...state, skippedSetup: true };
-    await saveBootstrapState(skipped, deps.statePath);
-    return { startStep: 5, state: skipped };
-  }
-
-  deps.err('Saved settings from an earlier run:');
-  for (const line of summarizeState(state)) {
-    deps.err(`  ${line}`);
-  }
-
-  let startStep = 1;
-  if (await deps.prompt.confirm('Reuse them?', true)) {
-    const check = checkReuse(state);
-    if (check.ok) {
-      return { startStep: 8, state };
-    }
-    startStep = check.resumeAt;
-  }
-  return { startStep, state: await discardStaleAnswers(state, startStep, deps.statePath) };
-}
-
-/**
- * The guided wizard: {@link resolveStartStep}, then steps 1-4 from the start step, then
- * steps 5-8 via {@link runStepsFiveThroughEight}.
+ * The guided wizard: {@link resolveStartStep}, then the webhook setup steps (Teams channel,
+ * SharePoint folder, Time zone, Import the flow) that are in the filtered list at or after
+ * the start step (only the added target's own steps, then Developers, when the start point
+ * carries `onlyTarget`), then the rest via {@link runStepsFiveThroughEight}.
  *
- * `resolveFlowTemplateDir()` is checked before any of steps 1-4 runs (step 4 depends on it),
- * so a missing template directory fails fast rather than after three steps of questions.
+ * `resolveFlowTemplateDir()` is checked before any step runs whenever the Import the flow
+ * step will run (it depends on the template), so a missing template directory fails fast
+ * rather than after three steps of questions.
  *
  * State is saved after every step, via the `save` closure threaded through each step
  * function, so an interrupted run resumes with the earlier answers as defaults.
@@ -310,15 +259,27 @@ export async function runGuided(deps: BootstrapDeps): Promise<number> {
     deps.err(notice);
   }
 
-  const start = await resolveStartStep(deps, loaded ?? { version: 1 });
-  const { startStep } = start;
+  const start = await resolveStartStep(deps, loaded);
   let state = start.state;
   const save: SaveBootstrapState = async (patch) => {
     state = { ...state, ...patch };
     await saveBootstrapState(state, deps.statePath);
   };
 
-  if (startStep <= 4) {
+  const shown = stepsFor(state.targets);
+  const from = shown.findIndex((step) => step.id === start.startId);
+  const { onlyTarget } = start;
+  const remaining = shown
+    .slice(from)
+    .filter(
+      (step) =>
+        onlyTarget === undefined ||
+        step.id === 'developers' ||
+        (step.targets !== 'always' && step.targets.includes(onlyTarget))
+    );
+  const runs = (id: string): boolean => remaining.some((step) => step.id === id);
+
+  if (runs('flow')) {
     try {
       resolveFlowTemplateDir();
     } catch (err) {
@@ -327,18 +288,18 @@ export async function runGuided(deps: BootstrapDeps): Promise<number> {
     }
   }
 
-  if (startStep <= 1) {
+  if (runs('channel')) {
     await step1Channel(deps, state, save);
   }
-  if (startStep <= 2) {
+  if (runs('folder')) {
     await step2Folder(deps, state, save);
   }
-  if (startStep <= 3) {
+  if (runs('timezone')) {
     await step3TimeZone(deps, state, save);
   }
-  if (startStep <= 4) {
+  if (runs('flow')) {
     await step4ImportFlow(deps, state, save);
   }
 
-  return runStepsFiveThroughEight(deps, state, save, Math.max(startStep, 5));
+  return runStepsFiveThroughEight(deps, state, save, remaining);
 }

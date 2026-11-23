@@ -215,6 +215,22 @@ describe('CopilotCliSessionAdapter.parseSessionFile', () => {
     expect(parsed.metrics!.userPrompts![1].text).toBe('/tmp is full');
   });
 
+  it('does not count a sub-agent injected prompt as a user prompt or command', async () => {
+    const f = join(dir, 'subagent.jsonl');
+    const review = 'The user has requested a review via the /review command. Use the task tool.';
+    writeFileSync(
+      f,
+      [
+        { type: 'user.message', data: { content: 'check my branch' } },
+        { type: 'user.message', data: { content: review, transformedContent: review, source: 'agent-sess-sub' } },
+      ].map((l) => JSON.stringify(l)).join('\n') + '\n'
+    );
+
+    const parsed = await newAdapter().parseSessionFile(f, 'sess-sub');
+    expect(parsed.metrics!.userPrompts).toEqual([{ count: 1, text: 'check my branch' }]);
+    expect(parsed.metrics!.commandInvocations ?? {}).toEqual({});
+  });
+
   it('records every file of a successful apply_patch call', async () => {
     const f = join(dir, 'patch.jsonl');
     const patch = '*** Begin Patch\n*** Add File: /repo/app/new.ts\n+x\n*** Update File: /repo/app/a.ts\n-a\n+b\n*** End Patch';

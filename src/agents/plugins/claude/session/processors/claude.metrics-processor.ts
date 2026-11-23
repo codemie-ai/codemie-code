@@ -21,6 +21,7 @@ import { takeMessagesBefore } from './messages-before.js';
 import type { ClaudeMessage } from '../../claude-message-types.js';
 import { resolveRunWindow } from '../../../../core/session/run-window.js';
 import { collectRunPromptsAndInvocations, PROMPTS_RECORD_SUFFIX } from './run-prompts.js';
+import { collectToolOutcomes } from '../claude-named-invocations.js';
 
 interface RunOptions {
   /** Lines stamped before it give the run no prompt or named invocation. */
@@ -270,6 +271,7 @@ export class MetricsProcessor implements SessionProcessor {
       }
     }
     let lastEmittedIndex = -1;
+    const emittedGroupLines: any[] = [];
 
     // Helper function to process a message or group of messages into a delta
     const processDelta = (messages: any[], trackingId: string) => {
@@ -359,6 +361,7 @@ export class MetricsProcessor implements SessionProcessor {
       }
 
       deltas.push(delta);
+      emittedGroupLines.push(...messages);
       processedIds.add(trackingId);
       lastEmittedIndex = Math.max(lastEmittedIndex, groupLastIndex.get(trackingId)!);
     };
@@ -374,7 +377,8 @@ export class MetricsProcessor implements SessionProcessor {
 
     const { prompts, named, promptsDelta } = collectRunPromptsAndInvocations(messages, messagesByUuid, {
       sessionId, processedIds, attachedUserPrompts, lastProcessedMsgIndex, lastEmittedIndex,
-      emittedDeltas: deltas.length > 0, cutoffMs, finalPass, namedOnly
+      emittedDeltas: deltas.length > 0, cutoffMs, finalPass, namedOnly,
+      toolOutcomes: collectToolOutcomes(messages), emittedGroupLines
     });
     if (promptsDelta) deltas.push(promptsDelta);
 

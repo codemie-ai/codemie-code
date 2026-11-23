@@ -408,6 +408,11 @@ function commandText(name: string): string {
   return `<command-name>/${name}</command-name>\n<command-message>${name}</command-message>\n<command-args></command-args>`;
 }
 
+/** The `<local-command-caveat>` marker line Claude Code writes immediately before a local command's wrapper line. */
+function caveatLine(gitBranch = 'feature'): string {
+  return userLine('<local-command-caveat>Caveat: local commands</local-command-caveat>', { isMeta: true }, gitBranch);
+}
+
 /** An assistant usage line, optionally invoking the `Skill` tool alongside its own usage. */
 function skillAwareLine(opts: {
   uuid: string;
@@ -830,6 +835,21 @@ describe('openMainTranscriptPass — summary transcript signals', () => {
     expect(summary.turns).toBe(2);
   });
 
+  it('excludes commands Claude Code marks local via a preceding caveat line, but still counts model-calling commands', async () => {
+    const summary = await runFinalSummary('session-local-only-commands', [
+      userLine('hello'),
+      caveatLine(),
+      userLine(commandText('context')),
+      userLine('<local-command-stdout>ok</local-command-stdout>'),
+      caveatLine(),
+      userLine(commandText('usage')),
+      userLine('<local-command-stdout>ok</local-command-stdout>'),
+      userLine(commandText('compact')),
+    ]);
+
+    expect(summary.turns).toBe(2); // 'hello' + '/compact'; /context and /usage are marked local
+  });
+
   it('leaves lines_* null when the transcript has no applied edit result', async () => {
     const summary = await runFinalSummary('session-no-edits', [
       userLine('hello'),
@@ -1169,6 +1189,68 @@ describe('openMainTranscriptPass — tool-call accumulation', () => {
     expect(summary?.tool_calls).toBe(2);
     expect(summary?.tool_errors).toBe(1);
     expect(summary?.tool_results).toBe(2);
+  });
+
+  describe('Agent calls in summary.agents (EPMCDME-15557)', () => {
+    const agentCallLine = (id: string, subagentType: string): string =>
+      JSON.stringify({
+        gitBranch: 'main',
+        timestamp: '2026-10-01T00:00:00.000Z',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id, name: 'Agent', input: { subagent_type: subagentType } }],
+        },
+      });
+    const resultLine = (id: string, isError: boolean, content: string): string =>
+      JSON.stringify({
+        gitBranch: 'main',
+        timestamp: '2026-10-01T00:00:01.000Z',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: id, is_error: isError, content }],
+        },
+      });
+    const stopSummary = async (name: string, lines: string[]): Promise<Record<string, unknown> | undefined> => {
+      const events = parseAll(await mainEvents(`session-${name}`, writeTranscript(`transcript-${name}.jsonl`, lines), 'Stop'));
+      return events.find((e) => e.type === 'agent.session.summary');
+    };
+
+    it('excludes a denied Agent call from summary.agents', async () => {
+      const summary = await stopSummary('agent-denied', [
+        agentCallLine('tool-1', 'Explore'),
+        resultLine('tool-1', true, 'QA-15557 deny'),
+      ]);
+
+      expect(summary?.agents).toEqual({});
+      expect(summary?.tool_calls).toBe(1);
+      expect(summary?.tool_errors).toBe(1);
+    });
+
+    it('counts only the allowed call when a denied and an allowed Agent run in one session', async () => {
+      const summary = await stopSummary('agent-denied-and-allowed', [
+        agentCallLine('tool-1', 'Explore'),
+        resultLine('tool-1', true, 'QA-15557 deny'),
+        agentCallLine('tool-2', 'Plan'),
+        resultLine('tool-2', false, 'done'),
+      ]);
+
+      expect(summary?.agents).toEqual({ Plan: 1 });
+    });
+
+    it('does not count an Agent call whose result has not arrived yet', async () => {
+      const summary = await stopSummary('agent-pending', [agentCallLine('tool-1', 'Explore')]);
+
+      expect(summary?.agents).toEqual({});
+    });
+
+    it('counts the Agent call once its successful result is in the transcript', async () => {
+      const summary = await stopSummary('agent-resolved', [
+        agentCallLine('tool-1', 'Explore'),
+        resultLine('tool-1', false, 'done'),
+      ]);
+
+      expect(summary?.agents).toEqual({ Explore: 1 });
+    });
   });
 
   it('counts MultiEdit (file_path) and NotebookEdit (notebook_path) toward files_edited/files_changed, not files_written', async () => {

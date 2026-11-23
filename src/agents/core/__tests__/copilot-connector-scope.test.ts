@@ -1,10 +1,13 @@
-import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { readFile, writeFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   getCopilotConnectorsConfigPath,
   readCopilotConnectorScope,
+  readKeptCopilotConnectorScope,
   writeCopilotConnectorScope,
+  addCopilotConnectorProject,
   isCopilotProjectTracked,
   type CopilotConnectorScope,
 } from '../copilot-connector-scope.js';
@@ -94,6 +97,28 @@ describe('copilot-connector-scope', () => {
     });
   });
 
+  describe('readKeptCopilotConnectorScope', () => {
+    it('returns a stored project record as it is', async () => {
+      const project: CopilotConnectorScope = { enabled: true, scope: 'project', paths: ['/work/a'] };
+      await writeCopilotConnectorScope(CONNECTOR_ID, project);
+      expect(await readKeptCopilotConnectorScope(CONNECTOR_ID)).toEqual({ enabled: true, scope: 'project', paths: ['/work/a'] });
+    });
+
+    it('returns scope user when nothing is stored', async () => {
+      expect(await readKeptCopilotConnectorScope(CONNECTOR_ID)).toEqual({ enabled: true, scope: 'user' });
+    });
+
+    it('returns a stored user record as it is', async () => {
+      await writeCopilotConnectorScope(CONNECTOR_ID, { enabled: true, scope: 'user' });
+      expect(await readKeptCopilotConnectorScope(CONNECTOR_ID)).toEqual({ enabled: true, scope: 'user' });
+    });
+
+    it('returns scope user over a corrupt config file', async () => {
+      await writeRaw('{ not json');
+      expect(await readKeptCopilotConnectorScope(CONNECTOR_ID)).toEqual({ enabled: true, scope: 'user' });
+    });
+  });
+
   describe('isCopilotProjectTracked (fail-closed)', () => {
     it('is not tracked when the scope read is corrupt', async () => {
       expect(await isCopilotProjectTracked('/repo', { kind: 'corrupt' })).toBe(false);
@@ -161,6 +186,25 @@ describe('copilot-connector-scope', () => {
       await writeCopilotConnectorScope(CONNECTOR_ID, { enabled: false });
 
       expect(await readCopilotConnectorScope(CONNECTOR_ID)).toEqual({ kind: 'ok', value: { enabled: false } });
+    });
+  });
+  describe('addCopilotConnectorProject', () => {
+    it('concurrent adds keep every project', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'codemie-copilot-add-'));
+      try {
+        const [a, b, c] = await Promise.all(['a', 'b', 'c'].map(async (name) => {
+          await mkdir(join(root, name), { recursive: true });
+          return join(root, name);
+        }));
+        await writeCopilotConnectorScope(CONNECTOR_ID, { enabled: true, scope: 'project', paths: [a] });
+
+        await Promise.all([addCopilotConnectorProject(CONNECTOR_ID, b), addCopilotConnectorProject(CONNECTOR_ID, c)]);
+
+        const read = await readCopilotConnectorScope(CONNECTOR_ID);
+        expect(read.kind === 'ok' && read.value.enabled && read.value.scope === 'project' ? read.value.paths : []).toHaveLength(3);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
     });
   });
 });

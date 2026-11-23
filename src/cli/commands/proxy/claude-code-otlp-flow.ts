@@ -1,5 +1,5 @@
 /**
- * Claude Code analytics (`--claude-code-otlp`) steps of `codemie proxy connect`:
+ * Claude Code analytics (connected with `--claude-otlp`) steps of `codemie proxy connect`:
  * the consent gate that runs before anything is started or written, and the
  * settings writer that runs once the shared daemon is up. Kept apart from
  * `connect-orchestrator.ts`, which owns the multi-target daemon lifecycle.
@@ -20,12 +20,18 @@ import type { TargetResult } from './connect-orchestrator.js';
 export interface ClaudeCodeOtlpDisplay {
   profile: string;
   codeMieUrl?: string;
+  /** Labels of the Claude clients this run routes through the proxy. */
+  routedClients?: string[];
 }
+
+/** The label of the Claude Code analytics target in the connect summary. */
+export const CLAUDE_CODE_OTLP_LABEL = 'Claude Code Analytics';
 
 /** Inputs for {@link runClaudeCodeOtlp}. */
 export interface ClaudeCodeOtlpRunOptions {
-  force?: boolean;
+  overwrite?: boolean;
   scope?: AllowlistScope;
+  keepProjectList?: boolean;
 }
 
 /**
@@ -34,9 +40,13 @@ export interface ClaudeCodeOtlpRunOptions {
  * target does not stop the others.
  */
 export async function runClaudeCodeOtlp(options: ClaudeCodeOtlpRunOptions): Promise<TargetResult> {
-  const label = 'Claude Code Analytics';
+  const label = CLAUDE_CODE_OTLP_LABEL;
   try {
-    await writeClaudeCodeOtlpConfig({ force: options.force, scope: options.scope });
+    await writeClaudeCodeOtlpConfig({
+      overwrite: options.overwrite,
+      scope: options.scope,
+      keepProjectList: options.keepProjectList,
+    });
     console.log(chalk.green(`✓ Claude Code Analytics configured successfully`));
     return { label, ok: true };
   } catch (error) {
@@ -49,28 +59,28 @@ export async function runClaudeCodeOtlp(options: ClaudeCodeOtlpRunOptions): Prom
 
 /**
  * Guards the Claude Code analytics write. The invalid-allowlist check runs on
- * every path; the prompt is skipped only for `--silent`, which counts as consent.
+ * every path; the prompt is skipped only for `--yes`, which counts as consent.
  * Returns whether the user agreed; a decline must leave the allowlist, settings
  * and any running daemon untouched. `display` feeds the prompt header, or the same
- * URL and project lines printed in place of the prompt for `--silent`.
+ * URL and project lines printed in place of the prompt for `--yes`.
  */
 export async function confirmClaudeCodeOtlp(
   scope: AllowlistScope,
-  force: boolean,
-  silent: boolean,
+  overwrite: boolean,
+  yes: boolean,
   display: ClaudeCodeOtlpDisplay,
 ): Promise<boolean> {
   const allowlist = await readAllowlistState();
-  if (allowlist.kind === 'invalid' && !force) {
+  if (allowlist.kind === 'invalid' && !overwrite) {
     throw new ConfigurationError(
       'Claude Code settings contain an invalid CODEMIE_ANALYTICS_PROJECT_FILTER value. ' +
-      'Fix it manually or re-run with --force to discard it.'
+      'Fix it manually or re-run with --overwrite to discard it.'
     );
   }
 
   const repositoryName = scope === 'project' ? await resolveRepositoryName(resolveProjectRoot()) : undefined;
 
-  if (silent) {
+  if (yes) {
     // The caller already printed `Using profile:`; the prompt that carries these lines is skipped.
     for (const line of buildAnalyticsDetailLines({ codeMieUrl: display.codeMieUrl, repositoryName })) {
       console.log(line);
@@ -83,6 +93,7 @@ export async function confirmClaudeCodeOtlp(
     codeMieUrl: display.codeMieUrl,
     allowlist,
     repositoryName,
+    routedClients: display.routedClients,
   });
 
   return confirmation === 'enable';

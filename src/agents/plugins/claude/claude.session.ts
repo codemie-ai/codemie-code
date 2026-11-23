@@ -21,7 +21,7 @@ import { ConversationsProcessor } from './session/processors/claude.conversation
 import { SessionStore } from '../../core/session/SessionStore.js';
 import { applyClaudeBaseline } from './session/claude-baseline.js';
 import { extractClaudeFileOperation, type ClaudeFileOperation } from './session/claude-file-operation.js';
-import { extractNamedInvocations } from './session/claude-named-invocations.js';
+import { collectToolOutcomes, extractNamedInvocations } from './session/claude-named-invocations.js';
 import { isCountedTranscriptLine, keepFirstAcrossCompaction } from './session/transcript-lines.js';
 
 /**
@@ -387,7 +387,7 @@ export class ClaudeSessionAdapter implements SessionAdapter {
 
     // Named invocations (skill/agent/command names) via the shared extractor, so re-parsed
     // native sessions surface the same data the live MetricsProcessor records.
-    const named = extractNamedInvocations(messages);
+    const named = extractNamedInvocations(messages, collectToolOutcomes(messages));
 
     return {
       tools: toolCounts,

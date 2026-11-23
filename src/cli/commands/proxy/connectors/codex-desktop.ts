@@ -14,8 +14,10 @@ import TOML from '@iarna/toml';
 
 import { rankCodexModelIdsByRecency } from '@/agents/plugins/codex/codex-models.js';
 import type { LlmModel } from '@/providers/plugins/sso/sso.http-client.js';
+import { CODEX_DESKTOP } from '@/providers/plugins/sso/proxy/proxy-clients.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { exec } from '@/utils/exec.js';
+import { renderHint } from '@/utils/hint.js';
 import { logger } from '@/utils/logger.js';
 import { buildProxyLlmModelsUrl } from './tenant-catalog.js';
 import { getCodemiePath } from '@/utils/paths.js';
@@ -261,7 +263,8 @@ export interface WriteCodexDesktopConfigOptions {
   baseUrl: string;
   gatewayKey: string;
   model: string;
-  force?: boolean;
+  /** Replace another selected model provider (`--overwrite`). */
+  overwrite?: boolean;
 }
 
 /** Read the config, or empty text when the file does not exist yet. */
@@ -283,7 +286,8 @@ function parseOrThrow(text: string, configPath: string): Record<string, unknown>
 }
 
 /**
- * Splice the managed block into the user's Codex config and record ownership.
+ * Splice the managed block into the user's Codex config and record ownership. The
+ * provider's `Authorization` carries Codex's named key, `<gatewayKey>.codex-desktop`.
  *
  * The marker state is written BEFORE the config on purpose. If the config write
  * then fails, the marker over-claims — and removal is idempotent, so that is
@@ -299,10 +303,12 @@ export async function writeCodexDesktopConfig(
   if (currentText.trim() !== '') {
     const parsed = parseOrThrow(currentText, options.configPath);
     const active = parsed.model_provider;
-    if (!options.force && typeof active === 'string' && active !== CODEMIE_PROVIDER_ID) {
+    if (!options.overwrite && typeof active === 'string' && active !== CODEMIE_PROVIDER_ID) {
       throw new ConfigurationError(
-        `Codex config already selects model_provider "${active}". ` +
-        'Re-run with --force to replace it with the CodeMie provider.'
+        renderHint({
+          reason: `Codex config already selects model_provider "${active}"`,
+          action: 're-run with --overwrite to replace it with the CodeMie provider',
+        })
       );
     }
   }
@@ -319,7 +325,7 @@ export async function writeCodexDesktopConfig(
 
   const blocks = buildManagedBlocks({
     baseUrl: options.baseUrl,
-    gatewayKey: options.gatewayKey,
+    gatewayKey: `${options.gatewayKey}.${CODEX_DESKTOP}`,
     model: options.model,
   });
   const next = spliceManagedBlocks(currentText, blocks);

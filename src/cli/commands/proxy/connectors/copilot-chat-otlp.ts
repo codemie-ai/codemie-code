@@ -10,7 +10,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { readFile, unlink } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import {
@@ -25,17 +25,19 @@ import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { getCodemiePath, getDirname } from '@/utils/paths.js';
+import { parseHookCommandHead } from '@/utils/hook-command.js';
 import { resolveProjectRoot } from '@/utils/project-root.js';
 import {
   isCopilotProjectTracked,
   readCopilotConnectorScope,
+  readKeptCopilotConnectorScope,
   writeCopilotConnectorScope,
   type CopilotConnectorScope,
 } from '@/agents/core/copilot-connector-scope.js';
 import { addProjectPath, removeProjectPath } from '@/agents/core/project-allowlist.js';
 import { CHAT_HOOK_EVENT_NAMES } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.types.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
-import { getVsCodeProductDir, writeAtomically } from './vscode.js';
+import { getVsCodeProductDir, removeFileThroughLink, writeAtomically } from './vscode.js';
 
 const HOOK_FILE_LOCATIONS_KEY = 'chat.hookFilesLocations';
 const USE_HOOKS_KEY = 'chat.useHooks';
@@ -43,6 +45,8 @@ export const CHAT_HOOK_TIMEOUT_SECONDS = 30;
 
 export interface WriteCopilotChatOtlpOptions {
   scope?: 'user' | 'project';
+  /** With no `scope`: an enabled project-scope record is written back as it is, anything else is scope `user`. */
+  keepProjectList?: boolean;
 }
 
 export interface WriteCopilotChatOtlpResult {
@@ -179,6 +183,44 @@ function buildHookFileContent(hookCommand: string): Record<string, unknown> {
   return { hooks };
 }
 
+/**
+ * The `bin/codemie.js` the Copilot Chat hook file's codemie commands run (the script of the first
+ * `"<node>" "<script>" hook …` command, unquoted the way the writer quoted it), or null: no file, an unreadable
+ * one, no such command. Never throws, writes nothing.
+ */
+export async function readCopilotChatHookInstall(): Promise<string | null> {
+  try {
+    const parsed = JSON.parse(await readFile(getCopilotChatHookFilePath(), 'utf-8')) as { hooks?: unknown };
+    const hooks = parsed.hooks;
+    if (!hooks || typeof hooks !== 'object') return null;
+    for (const entries of Object.values(hooks)) {
+      for (const entry of Array.isArray(entries) ? entries : []) {
+        const command: unknown = (entry as { command?: unknown } | null)?.command;
+        const head = typeof command === 'string' ? parseHookCommandHead(command) : null;
+        if (head && head.paths.length === 2 && /^\s+hook\b/.test(head.rest)) {
+          return unescapeHookPath(head.paths[1]);
+        }
+      }
+    }
+    return null;
+  } catch (error) {
+    logger.debug('[proxy] Copilot Chat hook file not readable', ...sanitizeLogArgs({ error: String(error) }));
+    return null;
+  }
+}
+
+/**
+ * A path of a hook command as the writer was given it: the writer quotes with `JSON.stringify`, so its escapes are
+ * undone; a path that is not the content of a JSON string is taken as written.
+ */
+function unescapeHookPath(path: string): string {
+  try {
+    return JSON.parse(`"${path}"`) as string;
+  } catch {
+    return path;
+  }
+}
+
 /** `codemie hook --agent copilot-chat-otlp`, as an absolute command — VS Code's hook
  * execution environment may not inherit the shell PATH. */
 function resolveAbsoluteHookCommand(): string {
@@ -187,7 +229,10 @@ function resolveAbsoluteHookCommand(): string {
   return `${JSON.stringify(process.execPath)} ${JSON.stringify(cliEntry)} hook --agent ${COPILOT_CHAT_OTLP_AGENT_NAME}`;
 }
 
-async function resolveScope(opts: { scope?: 'user' | 'project' }): Promise<CopilotConnectorScope> {
+async function resolveScope(opts: WriteCopilotChatOtlpOptions): Promise<CopilotConnectorScope> {
+  if (opts.scope === undefined && opts.keepProjectList) {
+    return readKeptCopilotConnectorScope(COPILOT_CHAT_OTLP_AGENT_NAME);
+  }
   if (opts.scope !== 'project') {
     return { enabled: true, scope: 'user' };
   }
@@ -322,7 +367,7 @@ export async function removeCopilotChatOtlpConfig(
   await writeAtomically(settingsPath, nextText);
 
   if (existsSync(hookFilePath)) {
-    await unlink(hookFilePath);
+    await removeFileThroughLink(hookFilePath);
   }
   await writeCopilotConnectorScope(COPILOT_CHAT_OTLP_AGENT_NAME, { enabled: false });
 

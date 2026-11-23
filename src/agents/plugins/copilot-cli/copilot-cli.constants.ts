@@ -91,6 +91,12 @@ export function normalizeUserPrompt(text: string, transformed?: string): string 
   return slash ? slash[1] : stripped;
 }
 
+/** A `user.message` Copilot injected for a sub-agent: its `data.source` is `agent-<session id>`; the user's own prompts carry none. */
+export function isSubagentPrompt(data: unknown): boolean {
+  const source = typeof data === 'object' && data !== null ? (data as { source?: unknown }).source : undefined;
+  return typeof source === 'string' && source.startsWith('agent-');
+}
+
 /** Slash command (without the leading `/`) behind a user message, from Copilot's instruction or the typed text. */
 export function extractSlashCommand(content?: string, transformedContent?: string): string | undefined {
   const strippedContent = typeof content === 'string' ? stripDesktopWrappers(content) : undefined;

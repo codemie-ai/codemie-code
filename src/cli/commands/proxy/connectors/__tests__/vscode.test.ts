@@ -4,13 +4,37 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { VS_CODE_CAPABILITY_TABLE, type VsCodeApiType } from '../vscode-models.js';
-import { writeVsCodeLanguageModelsConfigAtPath } from '../vscode.js';
-import { ConfigurationError } from '@/utils/errors.js';
+import {
+  getVsCodeLanguageModelsPath,
+  getVsCodeProductDir,
+  readVsCodeByokGateway,
+  removeFileThroughLink,
+  writeAtomically,
+  writeVsCodeLanguageModelsConfigAtPath,
+} from '../vscode.js';
+import { ClientNotInstalledError, ConfigurationError } from '@/utils/errors.js';
+import { writeFileAtomic } from '@/utils/atomic-write.js';
+import { logger } from '@/utils/logger.js';
+
+vi.mock('@/utils/atomic-write.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/utils/atomic-write.js')>();
+  return { ...actual, writeFileAtomic: vi.fn(actual.writeFileAtomic) };
+});
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, rename: vi.fn(actual.rename) };
+});
+
+function errnoError(code: string): NodeJS.ErrnoException {
+  return Object.assign(new Error(code), { code });
+}
 
 const EXPECTED_MODEL_IDS = [
   'claude-sonnet-4-5-20250929',
@@ -492,5 +516,275 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
       const models = providers[0].models as Array<Record<string, unknown>>;
       expect(models[0]).toMatchObject({ id: 'embed-only', toolCalling: false, apiType: 'chat-completions' });
     });
+  });
+});
+
+describe('readVsCodeByokGateway', () => {
+  let home: string;
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'codemie-vscode-byok-reader-'));
+    for (const name of ['HOME', 'USERPROFILE', 'APPDATA', 'XDG_CONFIG_HOME']) vi.stubEnv(name, home);
+    originalFetch = globalThis.fetch;
+    mockCatalog(['gpt-4.1', 'claude-sonnet-5']);
+  });
+
+  afterEach(async () => {
+    globalThis.fetch = originalFetch;
+    vi.unstubAllEnvs();
+    await rm(home, { recursive: true, force: true });
+  });
+
+  async function writeModels(text: string, insiders = false): Promise<void> {
+    await mkdir(join(getVsCodeProductDir(insiders), 'User'), { recursive: true });
+    await writeFile(join(getVsCodeProductDir(insiders), 'User', 'chatLanguageModels.json'), text);
+  }
+
+  const provider = (...urls: string[]) => JSON.stringify([{
+    name: 'CodeMie',
+    vendor: 'customendpoint',
+    models: urls.map((url, index) => ({ id: `m${index}`, url })),
+  }]);
+
+  it('a missing product directory throws ClientNotInstalledError, still a ConfigurationError', () => {
+    expect(() => getVsCodeLanguageModelsPath(true)).toThrow(ClientNotInstalledError);
+    expect(() => getVsCodeLanguageModelsPath(true)).toThrow(ConfigurationError);
+  });
+
+  it('reads back the port its writer wrote, with no key', async () => {
+    await mkdir(getVsCodeProductDir(false), { recursive: true });
+    await writeVsCodeLanguageModelsConfigAtPath(getVsCodeLanguageModelsPath(false), 'http://127.0.0.1:52311', 'codemie-proxy');
+
+    await expect(readVsCodeByokGateway(60122)).resolves.toEqual({ port: 52311 });
+  });
+
+  it('returns the first managed model port that differs from the daemon\'s', async () => {
+    await writeModels(provider('http://127.0.0.1:60122/v1/chat/completions', 'http://127.0.0.1:4001/v1/responses'));
+
+    await expect(readVsCodeByokGateway(60122)).resolves.toEqual({ port: 4001 });
+  });
+
+  it('reads the stable and the Insiders file each on its own', async () => {
+    await writeModels(provider('http://127.0.0.1:4002/v1/messages'), true);
+
+    await expect(readVsCodeByokGateway(60122, true)).resolves.toEqual({ port: 4002 });
+    await expect(readVsCodeByokGateway(60122, false)).resolves.toBeNull();
+  });
+
+  it.each([
+    ['a missing product directory', async () => undefined],
+    ['an unparsable file', async () => writeModels('[{')],
+    ['no managed provider', async () => writeModels(JSON.stringify([{ name: 'Other', vendor: 'customendpoint', models: [] }]))],
+    ['a non-loopback URL', async () => writeModels(provider('https://models.example.com:4001/v1/chat/completions'))],
+    // The remover keeps a provider with any non-loopback model, so it is not CodeMie's and not connected.
+    ['mixed loopback and non-loopback URLs', async () => writeModels(provider('http://127.0.0.1:4001/v1/chat/completions', 'https://models.example.com/v1/chat/completions'))],
+  ])('returns null for %s', async (_case, arrange) => {
+    await arrange();
+
+    await expect(readVsCodeByokGateway(60122)).resolves.toBeNull();
+  });
+});
+
+
+describe('writeAtomically', () => {
+  const originalPlatform = process.platform;
+  let dir: string;
+  let targetDir: string;
+  let target: string;
+  let link: string;
+  const tempFiles = async (directory: string) => (await readdir(directory)).filter((name) => name.endsWith('.tmp'));
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'codemie-write-atomically-'));
+    targetDir = join(dir, 'read-only');
+    target = join(targetDir, 'settings.json');
+    link = join(dir, 'settings.json');
+    await mkdir(targetDir);
+    await writeFile(target, 'old');
+    vi.mocked(writeFileAtomic).mockClear();
+    vi.mocked(rename).mockClear();
+    vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+  });
+
+  afterEach(async () => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform });
+    vi.restoreAllMocks();
+    await chmod(targetDir, 0o755).catch(() => undefined);
+    await chmod(target, 0o644).catch(() => undefined);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const readOnlyTarget = async () => {
+    await chmod(target, 0o444);
+    await chmod(targetDir, 0o555);
+  };
+
+  it.skipIf(process.platform === 'win32')('writes through a link and keeps it', async () => {
+    await symlink(target, link);
+
+    await writeAtomically(link, 'new');
+
+    expect((await lstat(link)).isSymbolicLink()).toBe(true);
+    expect(await readFile(target, 'utf-8')).toBe('new');
+    expect(await tempFiles(dir)).toEqual([]);
+    expect(await tempFiles(targetDir)).toEqual([]);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform === 'win32')('replaces a link whose target cannot be written with a file, the target unchanged', async () => {
+    if (process.getuid?.() === 0) return; // root bypasses file-mode permission checks; nothing to assert here.
+    await symlink(target, link);
+    await readOnlyTarget();
+
+    await writeAtomically(link, 'new');
+
+    expect((await lstat(link)).isSymbolicLink()).toBe(false);
+    expect(await readFile(link, 'utf-8')).toBe('new');
+    expect(await readFile(target, 'utf-8')).toBe('old');
+    expect(await tempFiles(dir)).toEqual([]);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+  });
+
+  it.skipIf(process.platform === 'win32').each(['EPERM', 'EROFS'])('replaces a link with a file when writing its target fails with %s', async (code) => {
+    await symlink(target, link);
+    vi.mocked(writeFileAtomic).mockRejectedValueOnce(errnoError(code));
+
+    await writeAtomically(link, 'new');
+
+    expect((await lstat(link)).isSymbolicLink()).toBe(false);
+    expect(await readFile(link, 'utf-8')).toBe('new');
+    expect(await readFile(target, 'utf-8')).toBe('old');
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+  });
+
+  it.skipIf(process.platform === 'win32')('rethrows for a regular read-only file in a read-only directory', async () => {
+    if (process.getuid?.() === 0) return; // root bypasses file-mode permission checks; nothing to assert here.
+    await readOnlyTarget();
+
+    await expect(writeAtomically(target, 'new')).rejects.toMatchObject({ code: 'EACCES' });
+
+    expect(await readFile(target, 'utf-8')).toBe('old');
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform === 'win32')('rethrows any other failure on a link, the link kept', async () => {
+    await symlink(target, link);
+    vi.mocked(writeFileAtomic).mockRejectedValueOnce(errnoError('ENOSPC'));
+
+    await expect(writeAtomically(link, 'new')).rejects.toMatchObject({ code: 'ENOSPC' });
+
+    expect((await lstat(link)).isSymbolicLink()).toBe(true);
+    expect(await readFile(target, 'utf-8')).toBe('old');
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform === 'win32')('win32: rethrows EPERM on a link, no fallback', async () => {
+    await symlink(target, link);
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    vi.mocked(writeFileAtomic).mockRejectedValueOnce(errnoError('EPERM'));
+
+    await expect(writeAtomically(link, 'new')).rejects.toMatchObject({ code: 'EPERM' });
+
+    expect((await lstat(link)).isSymbolicLink()).toBe(true);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform === 'win32')('a failed rename of the fallback removes its temp file and rethrows that error', async () => {
+    await symlink(target, link);
+    vi.mocked(writeFileAtomic).mockRejectedValueOnce(errnoError('EROFS'));
+    vi.mocked(rename).mockRejectedValueOnce(errnoError('EXDEV'));
+
+    await expect(writeAtomically(link, 'new')).rejects.toMatchObject({ code: 'EXDEV' });
+
+    expect((await lstat(link)).isSymbolicLink()).toBe(true);
+    expect(await tempFiles(dir)).toEqual([]);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('removeFileThroughLink', () => {
+  let dir: string;
+  let targetDir: string;
+  let target: string;
+  let link: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'codemie-remove-through-link-'));
+    targetDir = join(dir, 'dotfiles');
+    target = join(targetDir, 'hooks.json');
+    link = join(dir, 'hooks.json');
+    await mkdir(targetDir);
+    await writeFile(target, 'hooks');
+    vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('deletes a regular file', async () => {
+    await removeFileThroughLink(target);
+
+    expect(existsSync(target)).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')('deletes the target of a link and the link', async () => {
+    await symlink(target, link);
+
+    await removeFileThroughLink(link);
+
+    expect(existsSync(target)).toBe(false);
+    await expect(lstat(link)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform === 'win32')('deletes the final file of a chain of links and the path', async () => {
+    const middle = join(dir, 'middle.json');
+    await symlink(target, middle);
+    await symlink(middle, link);
+
+    await removeFileThroughLink(link);
+
+    expect(existsSync(target)).toBe(false);
+    await expect(lstat(link)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it.skipIf(process.platform === 'win32')('removes the link with one warning when its target cannot be deleted', async () => {
+    if (process.getuid?.() === 0) return; // root bypasses file-mode permission checks; nothing to assert here.
+    await symlink(target, link);
+    await chmod(targetDir, 0o555);
+    try {
+      await removeFileThroughLink(link);
+
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      await expect(lstat(link)).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await readFile(target, 'utf-8')).toBe('hooks');
+    } finally {
+      await chmod(targetDir, 0o755);
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('removes the link with one warning and keeps a target that is a FIFO', async () => {
+    const fifo = join(targetDir, 'hooks.fifo');
+    execFileSync('mkfifo', [fifo]);
+    await symlink(fifo, link);
+
+    await removeFileThroughLink(link);
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    await expect(lstat(link)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect((await lstat(fifo)).isFIFO()).toBe(true);
+  });
+
+  it.skipIf(process.platform === 'win32')('removes the link with one warning and keeps a target that is a directory', async () => {
+    await symlink(targetDir, link);
+
+    await removeFileThroughLink(link);
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    await expect(lstat(link)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readFile(target, 'utf-8')).toBe('hooks');
   });
 });

@@ -6,17 +6,19 @@
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync,
-  writeFileSync,
+  appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync,
+  utimesSync, writeFileSync,
 } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 const spoolFault = vi.hoisted(() => ({ failures: 0 }));
+const unlinkFault = vi.hoisted(() => ({ before: undefined as ((path: string) => void) | undefined }));
 const readStateMock = vi.hoisted(() => vi.fn());
 
-// Real fs; `appendFile` on a spool hooks file can be told to reject (the bytes-landing step of appendSpool).
+// Real fs; `appendFile` on a spool hooks file can be told to reject (the bytes-landing step of appendSpool), and an
+// `unlink` can be told to let another process remove the file first.
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return {
@@ -28,6 +30,10 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       }
       return actual.appendFile(...args);
     },
+    unlink: (...args: Parameters<typeof actual.unlink>): Promise<void> => {
+      unlinkFault.before?.(String(args[0]));
+      return actual.unlink(...args);
+    },
   };
 });
 
@@ -36,12 +42,14 @@ vi.mock('@/cli/commands/proxy/daemon-manager.js', async (importOriginal) => ({
   readState: readStateMock,
 }));
 
-import { boundedText, TEXT_FIELD_LIMITS } from '@/agents/core/OtlpAgentAdapter.js';
+import { boundedText, TEXT_FIELD_LIMITS } from '@/agents/core/otlp-field-limits.js';
 import { logger } from '@/utils/logger.js';
 import { forwardSession } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/forwarder.js';
+import { appendSpool } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-io.js';
 import { discoverClaudeDesktopSessions } from '@/telemetry/clients/claude-desktop/claude-desktop.discovery.js';
-import { getClaudeDesktopBaseDir, getClaudeDesktopLocalSessionsRoot } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
+import { getClaudeDesktopBaseDir, getClaudeDesktopFirstPartyDir, getClaudeDesktopLocalSessionsRoot } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
 import { CoworkEventProducer, desktopAnalyticsBackfillDays } from '../CoworkEventProducer.js';
+import { markCoworkSessionServed } from '../cowork-served-mark.js';
 import { COWORK_ACCOUNT_SEGMENTS, coworkFixtureFile, installCoworkFixture } from './cowork-fixture.js';
 
 type WireEvent = Record<string, unknown>;
@@ -140,6 +148,16 @@ function addSecondSession(lastActivityAt: number): string {
   return inner;
 }
 
+/** The served mark the proxy daemon leaves beside a session's cursor. */
+function servedMarkPath(cliSessionId: string): string {
+  return join(codemieHome, 'analytics', 'state', `${cliSessionId}.cowork-served`);
+}
+
+function markServed(cliSessionId: string): void {
+  mkdirSync(dirname(servedMarkPath(cliSessionId)), { recursive: true });
+  writeFileSync(servedMarkPath(cliSessionId), '');
+}
+
 function writeProfile(project: string): void {
   const profile = { provider: 'ai-run-sso', baseUrl: 'https://api.example.com', model: 'model', codeMieUrl: 'https://api.example.com', codeMieProject: project };
   writeFileSync(join(codemieHome, 'codemie-cli.config.json'), JSON.stringify({ version: 2, activeProfile: 'cowork', profiles: { cowork: profile } }));
@@ -150,9 +168,9 @@ function newProducer(discover?: (sinceMs: number) => ReturnType<typeof discoverC
 }
 
 /** Two runs one poll apart: the first sees the current files, the second processes them. */
-async function settle(producer: CoworkEventProducer, now: number): Promise<void> {
-  await producer.run(now);
-  await producer.run(now + 10_000);
+async function settle(producer: CoworkEventProducer, now: number, connected = true): Promise<void> {
+  await producer.run(now, connected);
+  await producer.run(now + 10_000, connected);
 }
 
 function warnings(): unknown[][] {
@@ -199,11 +217,15 @@ beforeEach(() => {
   }
   installCoworkFixture(getClaudeDesktopBaseDir());
   writeProfile('synthetic-project');
+  // Both sessions were served by this daemon unless a test says otherwise
+  markServed(CLI);
+  markServed(CLI_2);
   vi.spyOn(logger, 'warn');
 });
 
 afterEach(async () => {
   spoolFault.failures = 0;
+  unlinkFault.before = undefined;
   vi.useRealTimers();
   vi.restoreAllMocks();
   await logger.close();
@@ -255,8 +277,14 @@ describe('CoworkEventProducer.run', () => {
     expect(usage.filter((event) => event['model'] === ROUTE).map((event) => [event['message_id'], event['model_raw']]))
       .toEqual([['msg_synthetic_A', 'claude-opus-5']]);
     expect(usage.filter((event) => event['agent_id'] === AGENT)).toHaveLength(2);
-    expect(lines.find((spoolLine) => spoolLine.event['type'] === 'agent.session.start')?.event)
-      .toMatchObject({ session_title: 'Synthetic notes task', timestamp: '2026-11-10T10:00:00.000Z', cwd: 'Cowork' });
+    const sessionStart = lines.find((spoolLine) => spoolLine.event['type'] === 'agent.session.start')?.event;
+    expect(sessionStart).toMatchObject({ timestamp: '2026-11-10T10:00:00.000Z', cwd: 'Cowork' });
+    // EPMCDME-17317: Desktop's own auto-title ("Synthetic notes task" in the fixture's metadata.json)
+    // must never reach the wire as session_title, even though Desktop set one.
+    expect(sessionStart).not.toHaveProperty('session_title');
+    for (const { event } of lines) {
+      expect(event).not.toHaveProperty('session_title');
+    }
     expect(lines.filter((spoolLine) => spoolLine.event['git_branch'] !== '' || spoolLine.event['cwd'] !== 'Cowork')).toEqual([]);
     expect((JSON.parse(readFileSync(spoolPath(CLI, '.status'), 'utf-8')) as { project?: string }).project).toBe('synthetic-project');
   });
@@ -377,16 +405,15 @@ describe('CoworkEventProducer.run', () => {
     expect(promptIds()).toContain(`agent.prompt.submit:${CLI}:00000000-0000-4000-8000-0000000000e1`);
   });
 
-  it('appends without a project name or a project binding when no project is resolved, and logs nothing about it', async () => {
+  it('appends nothing and saves no cursor or pin while the project is unresolved', async () => {
     rmSync(join(codemieHome, 'codemie-cli.config.json'));
 
     await settle(newProducer(), LAST_LINE_MS + 20_000);
 
-    const written = events();
-    expect(written).toHaveLength(FIRST_PROCESSING_TYPES.length);
-    expect(written.filter((event) => 'codemie_project_name' in event)).toEqual([]);
-    expect((JSON.parse(readFileSync(spoolPath(CLI, '.status'), 'utf-8')) as { project?: string }).project).toBeUndefined();
-    expect(warnings()).toEqual([]);
+    expect(events()).toEqual([]);
+    expect(existsSync(join(codemieHome, 'analytics', 'state', `${CLI}.cowork.json`))).toBe(false);
+    expect(existsSync(join(codemieHome, 'analytics', 'state', `${CLI}.cowork-attribution.json`))).toBe(false);
+    expect(warnings()).toHaveLength(1);
   });
 
   it('appends nothing and saves no cursor while the local config cannot be loaded, and appends the full set once after it is fixed', async () => {
@@ -862,6 +889,416 @@ describe('CoworkEventProducer.run', () => {
   });
 });
 
+describe('CoworkEventProducer and the served mark', () => {
+  const cursorPath = (cliSessionId = CLI) => join(codemieHome, 'analytics', 'state', `${cliSessionId}.cowork.json`);
+
+  beforeEach(() => {
+    rmSync(servedMarkPath(CLI));
+  });
+
+  it('appends nothing for a session in the window with no mark and no cursor', async () => {
+    await settle(newProducer(), LAST_LINE_MS + 20_000);
+
+    expect(existsSync(spoolPath())).toBe(false);
+    expect(existsSync(cursorPath())).toBe(false);
+  });
+
+  it('collects the same session from its first line once it has a mark', async () => {
+    await settle(newProducer(), LAST_LINE_MS + 20_000);
+    markServed(CLI);
+
+    await settle(newProducer(), LAST_LINE_MS + 40_000);
+
+    expect(events().map((event) => event['type'])).toEqual(FIRST_PROCESSING_TYPES);
+  });
+
+  it('collects a session with a cursor and no mark as today', async () => {
+    markServed(CLI);
+    const producer = newProducer();
+    await settle(producer, LAST_LINE_MS + 20_000);
+    const before = spooled().length;
+    rmSync(servedMarkPath(CLI));
+    appendFileSync(mainPath(), userLine('00000000-0000-4000-8000-0000000000e1', '2026-11-10T10:01:00.000Z', 'A synthetic follow-up'));
+
+    await settle(newProducer(), LAST_LINE_MS + 90_000);
+
+    expect(events().slice(before).map((event) => event['type'])).toEqual(['agent.session.summary', 'agent.prompt.submit']);
+  });
+
+  it('keeps a session marked for a new producer over the same home (a daemon restart)', async () => {
+    markServed(CLI);
+    await newProducer().run(LAST_LINE_MS + 20_000);
+
+    await settle(newProducer(), LAST_LINE_MS + 40_000);
+
+    expect(events().map((event) => event['type'])).toEqual(FIRST_PROCESSING_TYPES);
+  });
+
+  it.each([
+    ['a mark file', () => writeFileSync(servedMarkPath(CLI), '\u0000not a mark')],
+    ['a cursor file', () => writeFileSync(cursorPath(), '{not json')],
+  ])('takes a session whose %s exists and cannot be parsed', async (_case, write) => {
+    mkdirSync(dirname(cursorPath()), { recursive: true });
+    write();
+
+    await settle(newProducer(), LAST_LINE_MS + 20_000);
+
+    expect(events().map((event) => event['type'])).toEqual(FIRST_PROCESSING_TYPES);
+  });
+
+  it('edge: a mark written after the producer listed its sessions is taken at the next list refresh, not sooner', async () => {
+    const producer = newProducer();
+    const start = LAST_LINE_MS + 20_000;
+    await settle(producer, start);
+    markServed(CLI);
+
+    for (let at = start + 20_000; at < start + INACTIVITY_TIMEOUT_MS; at += 10_000) await producer.run(at);
+    const beforeRefresh = existsSync(spoolPath());
+    await settle(producer, start + INACTIVITY_TIMEOUT_MS);
+
+    expect(beforeRefresh).toBe(false);
+    expect(events().filter((event) => event['type'] === 'agent.session.start')).toHaveLength(1);
+  });
+});
+
+describe('CoworkEventProducer while Desktop is not connected', () => {
+  const cursorPath = (cliSessionId = CLI) => join(codemieHome, 'analytics', 'state', `${cliSessionId}.cowork.json`);
+  const ENDED_AT = '2026-11-10T10:00:30.000Z';
+  const RESUMED_AT = Date.parse('2026-11-10T10:20:05.000Z');
+  const UNPARSABLE_CURSOR = '[cowork-producer] Unparsable cursor; the session is read again from its start';
+
+  it('does not read personal-account transcripts from the first-party directory, even with the same session id', async () => {
+    vi.stubEnv('APPDATA', join(home, 'AppData', 'Roaming'));
+    const producer = newProducer();
+    await settle(producer, LAST_LINE_MS + 20_000);
+    const before = events().length;
+    const personalBase = getClaudeDesktopFirstPartyDir();
+    installCoworkFixture(personalBase);
+    const personalMain = join(personalBase, 'local-agent-mode-sessions', ACCOUNT_DIR, '1a2b3c4d', '.claude', 'projects', 'session', `${CLI}.jsonl`);
+    appendFileSync(personalMain, userLine('personal-prompt', '2026-11-10T10:20:00.000Z', 'Personal-account work'));
+    appendFileSync(personalMain, assistantLine('personal-answer', '2026-11-10T10:20:05.000Z', 'msg_personal', [{ type: 'text', text: 'Personal response' }]));
+    await settle(producer, RESUMED_AT + INACTIVITY_TIMEOUT_MS + 20_000, false);
+    expect(events().slice(before).map((event) => event['type'])).toEqual(['agent.session.summary', 'agent.session.end']);
+    expect(events().some((event) => event['message_id'] === 'msg_personal')).toBe(false);
+    expect(events().some((event) => event['prompt_body'] === 'Personal-account work')).toBe(false);
+  });
+
+  function appendTurn(): void {
+    appendFileSync(mainPath(), userLine('00000000-0000-4000-8000-0000000000d1', '2026-11-10T10:20:00.000Z', 'One more synthetic question'));
+    appendFileSync(mainPath(), assistantLine('00000000-0000-4000-8000-0000000000d2', '2026-11-10T10:20:05.000Z', 'msg_synthetic_D', [{ type: 'text', text: 'Answered.' }]));
+  }
+
+  it('ends a session whose cursor holds no end, once and with the final summary', async () => {
+    const producer = newProducer();
+    await settle(producer, LAST_LINE_MS + 20_000);
+    const before = spooled().length;
+
+    await producer.run(LAST_LINE_MS + INACTIVITY_TIMEOUT_MS + 40_000, false);
+    await producer.run(LAST_LINE_MS + INACTIVITY_TIMEOUT_MS + 50_000, false);
+    await producer.run(LAST_LINE_MS + 2 * INACTIVITY_TIMEOUT_MS + 60_000, false);
+
+    const appended = events().slice(before);
+    expect(appended.map((event) => event['type'])).toEqual(['agent.session.summary', 'agent.session.end']);
+    expect(appended[0]).toMatchObject({ is_final: true });
+    expect(appended[1]).toMatchObject({ event_id: `agent.session.end:${CLI}:${ENDED_AT}` });
+    const cursor = JSON.parse(readFileSync(cursorPath(), 'utf-8')) as { lastEndedAt: string; events: { lastLineAt: string } };
+    expect(cursor).toMatchObject({ lastEndedAt: ENDED_AT, events: { lastLineAt: ENDED_AT } });
+  });
+
+  it('reads the lines a session with no end wrote after its cursor, then ends it', async () => {
+    const producer = newProducer();
+    await settle(producer, LAST_LINE_MS + 20_000);
+    const before = spooled().length;
+
+    appendTurn();
+    await settle(producer, RESUMED_AT + 60_000, false);
+    const grown = events().slice(before);
+    await producer.run(RESUMED_AT + INACTIVITY_TIMEOUT_MS + 10_000, false);
+    const ended = events().slice(before + grown.length);
+
+    expect(grown.map((event) => event['type'])).toEqual(['agent.usage.request', 'agent.session.summary', 'agent.prompt.submit']);
+    expect(grown[0]).toMatchObject({ message_id: 'msg_synthetic_D' });
+    expect(ended.map((event) => event['event_id'])).toEqual([
+      `agent.session.summary:${CLI}:summary:final:2026-11-10T10:20:05.000Z`,
+      `agent.session.end:${CLI}:2026-11-10T10:20:05.000Z`,
+    ]);
+  });
+
+  it('reads neither a session with a served mark alone nor one whose cursor holds its end and that grew; a connected run after it reads both', async () => {
+    const producer = newProducer();
+    await settle(producer, LAST_LINE_MS + 20_000);
+    await producer.run(LAST_LINE_MS + INACTIVITY_TIMEOUT_MS + 40_000);
+    const before = spooled().length;
+    const endedCursor = readFileSync(cursorPath(), 'utf-8');
+    appendTurn();
+    addSecondSession(RESUMED_AT);
+
+    const notConnected = newProducer();
+    await settle(notConnected, RESUMED_AT + 60_000, false);
+
+    expect(spooled().length).toBe(before);
+    expect(readFileSync(cursorPath(), 'utf-8')).toBe(endedCursor);
+    expect(existsSync(spoolPath(CLI_2))).toBe(false);
+    expect(existsSync(cursorPath(CLI_2))).toBe(false);
+
+    await settle(notConnected, RESUMED_AT + 80_000);
+
+    expect(events().slice(before).map((event) => event['type'])).toEqual(['agent.usage.request', 'agent.session.summary', 'agent.prompt.submit']);
+    expect(events(CLI_2).filter((event) => event['type'] === 'agent.session.start')).toHaveLength(1);
+    expect(existsSync(cursorPath(CLI_2))).toBe(true);
+  });
+
+  it('edge: a new producer ends a session whose cursor holds no end', async () => {
+    await settle(newProducer(), LAST_LINE_MS + 20_000);
+    const before = spooled().length;
+
+    await settle(newProducer(), LAST_LINE_MS + INACTIVITY_TIMEOUT_MS + 40_000, false);
+
+    const appended = events().slice(before);
+    expect(appended.map((event) => event['type'])).toEqual(['agent.session.summary', 'agent.session.end']);
+    expect(appended[0]).toMatchObject({ is_final: true });
+    expect(appended[1]).toMatchObject({ event_id: `agent.session.end:${CLI}:${ENDED_AT}` });
+  });
+
+  const unparsableWarnings = () => warnings().filter(([message]) => message === UNPARSABLE_CURSOR);
+
+  it.each([
+    ['an unparsable cursor', '{not json', 1],
+    ['a cursor with no line', JSON.stringify({ offsets: {}, fingerprints: {}, lastEndedAt: '' }), 0],
+  ])('edge: appends nothing for a session with %s, leaves the file as it is and reads it once while it is unchanged', async (_case, content, warned) => {
+    mkdirSync(dirname(cursorPath()), { recursive: true });
+    writeFileSync(cursorPath(), content);
+    appendTurn();
+    const producer = newProducer();
+
+    await settle(producer, RESUMED_AT + INACTIVITY_TIMEOUT_MS + 20_000, false);
+    for (const at of [40_000, 50_000, 60_000]) await producer.run(RESUMED_AT + INACTIVITY_TIMEOUT_MS + at, false);
+
+    expect(existsSync(spoolPath())).toBe(false);
+    expect(readFileSync(cursorPath(), 'utf-8')).toBe(content);
+    expect(unparsableWarnings()).toHaveLength(warned);
+  });
+
+  it('edge: reads no cursor of a session it left again until the session\'s files change', async () => {
+    const producer = newProducer();
+    await settle(producer, LAST_LINE_MS + 20_000);
+    await producer.run(LAST_LINE_MS + INACTIVITY_TIMEOUT_MS + 40_000);
+    const before = spooled().length;
+    appendTurn();
+    await settle(producer, RESUMED_AT + 60_000, false);
+    writeFileSync(cursorPath(), '{not json');
+
+    for (const at of [80_000, 90_000, 100_000]) await producer.run(RESUMED_AT + at, false);
+    const whileUnchanged = unparsableWarnings().length;
+    appendFileSync(mainPath(), userLine('00000000-0000-4000-8000-0000000000d3', '2026-11-10T10:22:00.000Z', 'A synthetic follow-up'));
+    for (const at of [130_000, 140_000, 150_000]) await producer.run(RESUMED_AT + at, false);
+
+    expect(whileUnchanged).toBe(0);
+    expect(unparsableWarnings()).toHaveLength(1);
+    expect(spooled().length).toBe(before);
+  });
+
+  it('edge: ends a session it left with a served mark alone once a connected run collected it', async () => {
+    const producer = newProducer();
+    await settle(producer, LAST_LINE_MS + 20_000, false);
+    await producer.run(LAST_LINE_MS + 40_000, false);
+    expect(existsSync(spoolPath())).toBe(false);
+
+    await producer.run(LAST_LINE_MS + 50_000);
+    const before = spooled().length;
+    await producer.run(LAST_LINE_MS + INACTIVITY_TIMEOUT_MS + 40_000, false);
+    await producer.run(LAST_LINE_MS + INACTIVITY_TIMEOUT_MS + 50_000, false);
+
+    expect(before).toBeGreaterThan(0);
+    const appended = events().slice(before);
+    expect(appended.map((event) => event['type'])).toEqual(['agent.session.summary', 'agent.session.end']);
+    expect(appended[0]).toMatchObject({ is_final: true });
+    expect(appended[1]).toMatchObject({ event_id: `agent.session.end:${CLI}:${ENDED_AT}` });
+  });
+
+  it('edge: appends nothing with analytics disabled, a cursor with no end included', async () => {
+    await settle(newProducer(), LAST_LINE_MS + 20_000);
+    const before = spooled().length;
+    writeFileSync(join(codemieHome, 'claude-analytics.json'), JSON.stringify({ enabled: false }));
+
+    await settle(newProducer(), LAST_LINE_MS + INACTIVITY_TIMEOUT_MS + 40_000, false);
+
+    expect(spooled().length).toBe(before);
+  });
+});
+
+describe('CoworkEventProducer and the pruning of served marks', () => {
+  /** A session discovery does not list: no Desktop session of the fixture has this id. */
+  const GONE = '9e3f4051-6c7d-4e8f-a01b-2c3d4e5f6071';
+  const GONE_2 = 'af405162-7d8e-4f90-b12c-3d4e5f607182';
+  const NOW = LAST_LINE_MS + 20_000;
+  const stateDir = () => join(codemieHome, 'analytics', 'state');
+  const markWarnings = () => warnings().filter(([message]) => message === '[cowork-served-mark] Served mark not removed');
+
+  function age(path: string, days: number, now = NOW): void {
+    const at = new Date(now - days * DAY_MS);
+    utimesSync(path, at, at);
+  }
+
+  function oldMark(cliSessionId: string, days = 15, now = NOW): void {
+    markServed(cliSessionId);
+    age(servedMarkPath(cliSessionId), days, now);
+  }
+
+  it('deletes a mark 15 days old of a session discovery does not list', async () => {
+    oldMark(GONE);
+
+    await newProducer().run(NOW);
+
+    expect(existsSync(servedMarkPath(GONE))).toBe(false);
+  });
+
+  it('deletes a mark this process wrote, and the next request of the session writes it again', async () => {
+    await markCoworkSessionServed(GONE);
+    age(servedMarkPath(GONE), 15);
+
+    await newProducer().run(NOW);
+    const afterRun = existsSync(servedMarkPath(GONE));
+    await markCoworkSessionServed(GONE);
+
+    expect(afterRun).toBe(false);
+    expect(existsSync(servedMarkPath(GONE))).toBe(true);
+  });
+
+  it('keeps a mark 15 days old of a listed session active yesterday, and collects the session', async () => {
+    const now = LAST_LINE_MS + DAY_MS;
+    oldMark(CLI, 15, now);
+
+    await settle(newProducer(), now);
+
+    expect(existsSync(servedMarkPath(CLI))).toBe(true);
+    expect(events().filter((event) => event['type'] === 'agent.session.start')).toHaveLength(1);
+  });
+
+  it('keeps a mark 15 days old of a listed session the producer does not take (no inner transcript)', async () => {
+    rmSync(mainPath());
+    oldMark(CLI);
+
+    await newProducer().run(NOW);
+
+    expect(existsSync(servedMarkPath(CLI))).toBe(true);
+  });
+
+  it('keeps a mark 1 day old of a session discovery does not list', async () => {
+    oldMark(GONE, 1);
+
+    await newProducer().run(NOW);
+
+    expect(existsSync(servedMarkPath(GONE))).toBe(true);
+  });
+
+  it('with CODEMIE_DESKTOP_ANALYTICS_BACKFILL_DAYS=14 keeps an unlisted mark 10 days old and deletes one 15 days old', async () => {
+    vi.stubEnv('CODEMIE_DESKTOP_ANALYTICS_BACKFILL_DAYS', '14');
+    oldMark(GONE, 10);
+    oldMark(GONE_2, 15);
+
+    await newProducer().run(NOW);
+
+    expect(existsSync(servedMarkPath(GONE))).toBe(true);
+    expect(existsSync(servedMarkPath(GONE_2))).toBe(false);
+  });
+
+  it('keeps the cursor and the record of an unlisted session, byte for byte', async () => {
+    const cursor = join(stateDir(), `${GONE}.cowork.json`);
+    const record = join(stateDir(), `${GONE}.json`);
+    writeFileSync(cursor, '{"synthetic":"cursor"}');
+    writeFileSync(record, '{"synthetic":"record"}');
+    age(cursor, 15);
+    age(record, 15);
+
+    await newProducer().run(NOW);
+
+    expect(readFileSync(cursor, 'utf-8')).toBe('{"synthetic":"cursor"}');
+    expect(readFileSync(record, 'utf-8')).toBe('{"synthetic":"record"}');
+  });
+
+  it.each([
+    ['a corrupt preferences file', () => writeFileSync(join(codemieHome, 'claude-analytics.json'), '{not json')],
+    ['enabled: false', () => writeFileSync(join(codemieHome, 'claude-analytics.json'), JSON.stringify({ enabled: false }))],
+    ['OTLP_ALLOW_HOOKS_ONLY_FORWARD=false', () => vi.stubEnv('OTLP_ALLOW_HOOKS_ONLY_FORWARD', 'false')],
+  ])('deletes an unlisted mark 15 days old and appends nothing with %s', async (_case, closeGate) => {
+    closeGate();
+    oldMark(GONE);
+
+    await settle(newProducer(), NOW);
+
+    expect(existsSync(servedMarkPath(GONE))).toBe(false);
+    expect(existsSync(join(codemieHome, 'proxy', 'otlp-spool'))).toBe(false);
+  });
+
+  it('edge: with no state directory lists no mark, deletes nothing and warns nothing', async () => {
+    rmSync(stateDir(), { recursive: true });
+
+    await settle(newProducer(), NOW);
+
+    expect(existsSync(stateDir())).toBe(false);
+    expect(warnings()).toEqual([]);
+  });
+
+  it('edge: a mark another process removes before the removal costs no warning, and the run goes on', async () => {
+    oldMark(GONE);
+    unlinkFault.before = (path) => {
+      if (path === servedMarkPath(GONE)) rmSync(path, { force: true });
+    };
+
+    await settle(newProducer(), NOW);
+
+    expect(existsSync(servedMarkPath(GONE))).toBe(false);
+    expect(warnings()).toEqual([]);
+    expect(events().filter((event) => event['type'] === 'agent.session.start')).toHaveLength(1);
+  });
+
+  it.skipIf(process.platform === 'win32')('edge: a removal that fails warns once and the listed session is collected', async () => {
+    if (process.getuid?.() === 0) return; // root bypasses file-mode permission checks; nothing to assert here.
+    oldMark(GONE);
+    const producer = newProducer();
+    // Read-only for the run that refreshes the list; the next run processes the session, which writes its cursor there.
+    chmodSync(stateDir(), 0o555);
+    try {
+      await producer.run(NOW);
+    } finally {
+      chmodSync(stateDir(), 0o755);
+    }
+    await producer.run(NOW + 10_000);
+
+    expect(existsSync(servedMarkPath(GONE))).toBe(true);
+    expect(markWarnings()).toHaveLength(1);
+    expect(events().filter((event) => event['type'] === 'agent.session.start')).toHaveLength(1);
+  });
+
+  it.skipIf(process.platform === 'win32')('edge: a removal that fails at two refreshes in a row warns once', async () => {
+    if (process.getuid?.() === 0) return; // root bypasses file-mode permission checks; nothing to assert here.
+    oldMark(GONE);
+    const producer = newProducer(async () => []);
+    chmodSync(stateDir(), 0o555);
+    try {
+      await producer.run(NOW);
+      await producer.run(NOW + INACTIVITY_TIMEOUT_MS);
+    } finally {
+      chmodSync(stateDir(), 0o755);
+    }
+
+    expect(existsSync(servedMarkPath(GONE))).toBe(true);
+    expect(markWarnings()).toHaveLength(1);
+  });
+
+  it('edge: a second refresh over the same old mark deletes nothing and logs nothing', async () => {
+    oldMark(GONE);
+    const producer = newProducer();
+
+    await producer.run(NOW);
+    await producer.run(NOW + INACTIVITY_TIMEOUT_MS);
+
+    expect(existsSync(servedMarkPath(GONE))).toBe(false);
+    expect(warnings()).toEqual([]);
+  });
+});
+
 describe('CoworkEventProducer and the forwarder\'s send', () => {
   const credentials = { cookies: { codemie_access_token: 'tok' }, apiUrl: 'https://api', timestamp: 0 };
   const fetchMock = vi.fn();
@@ -932,6 +1369,418 @@ describe('CoworkEventProducer and the forwarder\'s send', () => {
     const resent = sent(before).map(({ event }) => event['event_id']);
     expect(new Set(resent)).toEqual(firstIds);
     expect(resent).toHaveLength(firstIds.size);
+  });
+});
+
+describe('CoworkEventProducer and the session\'s fixed project (EPMCDME-17385)', () => {
+  const credentials = { cookies: { codemie_access_token: 'tok' }, apiUrl: 'https://api', timestamp: 0 };
+  const fetchMock = vi.fn();
+  const FIRST = LAST_LINE_MS + 20_000;
+  const END = LAST_LINE_MS + INACTIVITY_TIMEOUT_MS + 40_000;
+  const attributionPath = () => join(codemieHome, 'analytics', 'state', `${CLI}.cowork-attribution.json`);
+  const status = () => JSON.parse(readFileSync(spoolPath(CLI, '.status'), 'utf-8')) as { project?: string; projectConflict?: string[]; projectSeal?: unknown };
+
+  const PROFILE = { provider: 'ai-run-sso', baseUrl: 'https://api.example.com', model: 'model', codeMieUrl: 'https://api.example.com' };
+
+  /** A profile without a project of its own: the shared (global workspace) project applies, as for a session with no folder. */
+  function writeSharedProject(project: string): void {
+    writeFileSync(join(codemieHome, 'codemie-cli.config.json'), JSON.stringify({ version: 2, activeProfile: 'cowork', profiles: { cowork: PROFILE }, workspace: { codeMieProject: project } }));
+  }
+
+  beforeEach(() => {
+    writeSharedProject('synthetic-project');
+    vi.stubGlobal('fetch', fetchMock);
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async () => new Response('{}', { status: 200 }));
+    readStateMock.mockResolvedValue({ url: 'http://127.0.0.1:1', targetUrl: 'https://api.example.com' });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** A folder of another project joins the session: its own config now names `other-project`, as `.codemie/codemie-cli.config.json` of a linked repository does. */
+  async function linkFolderOfOtherProject(): Promise<void> {
+    const [session] = await discoverClaudeDesktopSessions(LAST_LINE_MS - DAY_MS);
+    const localConfig = join(session.workingDirectory, '.codemie', 'codemie-cli.config.json');
+    mkdirSync(dirname(localConfig), { recursive: true });
+    writeFileSync(localConfig, JSON.stringify({ version: 2, activeProfile: 'cowork', profiles: { cowork: PROFILE }, workspace: { codeMieProject: 'other-project' } }));
+  }
+
+  /** Every event of every request sent so far, with the request's X-CodeMie headers. */
+  function sentRequests(): Array<{ headers: Record<string, string>; events: WireEvent[] }> {
+    return fetchMock.mock.calls.map(([, init]) => {
+      const request = init as { headers: Record<string, string>; body: string };
+      return {
+        headers: request.headers,
+        events: request.body.split('\n').filter((body) => body.length > 0).map((body) => JSON.parse(body) as WireEvent),
+      };
+    });
+  }
+
+  it('keeps the first project for the end and the summaries after a folder of another project joined, and the spool sees no conflict', async () => {
+    const producer = newProducer();
+    await settle(producer, FIRST);
+    await linkFolderOfOtherProject();
+    const before = spooled().length;
+
+    await producer.run(END);
+    await producer.run(END + 10_000);
+
+    const appended = events().slice(before);
+    expect(appended.map((event) => event['type'])).toEqual(['agent.session.summary', 'agent.session.end']);
+    for (const event of events()) expect(event['codemie_project_name']).toBe('synthetic-project');
+    expect(status().projectConflict).toBeUndefined();
+    expect(status().project).toBe('synthetic-project');
+    expect(JSON.parse(readFileSync(attributionPath(), 'utf-8'))).toEqual({ project: 'synthetic-project', projectSource: 'profile' });
+  });
+
+  it('delivers the session end under the first project through the forwarder (synthetic HTTP): the final summary is sent, not discarded', async () => {
+    const producer = newProducer();
+    await settle(producer, FIRST);
+    await forwardSession(CLI, true, credentials as never);
+    await linkFolderOfOtherProject();
+    await producer.run(END);
+    await producer.run(END + 10_000);
+    await forwardSession(CLI, true, credentials as never);
+
+    const requests = sentRequests();
+    const types = requests.flatMap(({ events: sentEvents }) => sentEvents.map((event) => event['type']));
+    expect(types).toContain('agent.session.end');
+    expect(requests.flatMap(({ events: sentEvents }) => sentEvents).find((event) => event['type'] === 'agent.session.summary' && event['is_final'] === true)).toBeDefined();
+    for (const { headers, events: sentEvents } of requests) {
+      expect(headers['X-CodeMie-Project']).toBe('synthetic-project');
+      for (const event of sentEvents) expect(event['codemie_project_name']).toBe('synthetic-project');
+    }
+    expect(status().projectConflict).toBeUndefined();
+  });
+
+  /** A folder of its own under the temp home whose `.codemie` config links it to `project`. */
+  function linkedFolder(name: string, project: string): string {
+    const folder = join(home, name);
+    mkdirSync(join(folder, '.codemie'), { recursive: true });
+    writeFileSync(join(folder, '.codemie', 'codemie-cli.config.json'), JSON.stringify({ version: 2, activeProfile: 'cowork', profiles: { cowork: PROFILE }, workspace: { codeMieProject: project } }));
+    return folder;
+  }
+
+  // Desktop's own transition: userSelectedFolders changes (a DISTINCT directory resolving another project) while the
+  // task keeps working. Synthetic fixture: real producer, spool and forwarder, mocked HTTP; not a live backend.
+  it.each([
+    { change: 'a folder is added', initial: [], next: ['p2'], first: 'synthetic-project', restart: false },
+    { change: 'the folders are reordered, then the daemon restarts', initial: ['p2', 'p3'], next: ['p3', 'p2'], first: 'other-project', restart: true },
+    { change: 'the only folder is removed, then the daemon restarts', initial: ['p2'], next: [], first: 'other-project', restart: true },
+  ])('sends work done after the folders change under the first project, and delivers the final summary and end: $change', async ({ initial, next, first, restart }) => {
+    const dirs: Record<string, string> = { p2: linkedFolder('folder-p2', 'other-project'), p3: linkedFolder('folder-p3', 'third-project') };
+    const select = (keys: string[]): void => writeMetadata(LOCAL, { userSelectedFolders: keys.map((key) => dirs[key]) });
+    const cwdOf = async (): Promise<string> => (await discoverClaudeDesktopSessions(LAST_LINE_MS - DAY_MS))[0].workingDirectory;
+    select(initial);
+    const initialCwd = await cwdOf();
+    let producer = newProducer();
+    await settle(producer, FIRST);
+    await forwardSession(CLI, true, credentials as never);
+    const firstRequests = fetchMock.mock.calls.length;
+    expect(firstRequests).toBeGreaterThan(0);
+
+    // Desktop now lists other folders, and the task does new work: a prompt, a tool call and its result, an answer with usage.
+    select(next);
+    expect(await cwdOf()).not.toBe(initialCwd);
+    appendFileSync(mainPath(), userLine('00000000-0000-4000-8000-0000000000h1', '2026-11-10T10:01:00.000Z', 'Create notes2.md in the new folder'));
+    appendFileSync(mainPath(), assistantLine('00000000-0000-4000-8000-0000000000h2', '2026-11-10T10:01:05.000Z', 'msg_synthetic_H1',
+      [{ type: 'tool_use', id: 'toolu_synthetic_h', name: 'Write', input: { file_path: 'notes2.md', content: 'x' } }]));
+    appendFileSync(mainPath(), userLine('00000000-0000-4000-8000-0000000000h3', '2026-11-10T10:01:10.000Z',
+      [{ type: 'tool_result', tool_use_id: 'toolu_synthetic_h', content: 'ok' }]));
+    appendFileSync(mainPath(), assistantLine('00000000-0000-4000-8000-0000000000h4', '2026-11-10T10:01:15.000Z', 'msg_synthetic_H2', [{ type: 'text', text: 'Done.' }]));
+
+    // Inside the discovery window (the producer still holds its cached folder), then after the refresh, then the end.
+    await settle(producer, FIRST + 60_000);
+    await forwardSession(CLI, true, credentials as never);
+    if (restart) producer = newProducer();
+    await settle(producer, FIRST + INACTIVITY_TIMEOUT_MS + 60_000);
+    await settle(producer, FIRST + 2 * INACTIVITY_TIMEOUT_MS + 120_000);
+    await forwardSession(CLI, true, credentials as never);
+
+    const requests = sentRequests();
+    const afterChange = requests.slice(firstRequests).flatMap(({ events: sentEvents }) => sentEvents);
+    const idsAfter = afterChange.map((event) => event['event_id']);
+    expect(idsAfter).toContain(`agent.prompt.submit:${CLI}:00000000-0000-4000-8000-0000000000h1`);
+    expect(afterChange.filter((event) => event['type'] === 'agent.tool.start' || event['type'] === 'agent.tool.end').length).toBeGreaterThanOrEqual(2);
+    expect(afterChange.filter((event) => event['type'] === 'agent.usage.request').map((event) => event['message_id'])).toContain('msg_synthetic_H2');
+    expect(afterChange.some((event) => event['type'] === 'agent.session.summary' && event['is_final'] === true)).toBe(true);
+    expect(afterChange.some((event) => event['type'] === 'agent.session.end')).toBe(true);
+    for (const { headers, events: sentEvents } of requests) {
+      expect(headers['X-CodeMie-Project']).toBe(first);
+      for (const event of sentEvents) expect(event['codemie_project_name']).toBe(first);
+    }
+    for (const event of events()) expect(event['codemie_project_name']).toBe(first);
+    expect(status().projectConflict).toBeUndefined();
+    expect(status().project).toBe(first);
+  });
+
+  it('keeps the first project over a daemon restart (a new producer) when the folder\'s or the profile\'s project changed meanwhile', async () => {
+    await settle(newProducer(), FIRST);
+    writeSharedProject('profile-project-2');
+    await linkFolderOfOtherProject();
+
+    const restarted = newProducer();
+    await restarted.run(END);
+    await restarted.run(END + 10_000);
+
+    for (const event of events()) expect(event['codemie_project_name']).toBe('synthetic-project');
+    expect(status().projectConflict).toBeUndefined();
+  });
+
+  it('keeps the project of a session first resolved from a linked folder after the folder is removed', async () => {
+    await linkFolderOfOtherProject();
+    const producer = newProducer();
+    await settle(producer, FIRST);
+    const [session] = await discoverClaudeDesktopSessions(LAST_LINE_MS - DAY_MS);
+    rmSync(join(session.workingDirectory, '.codemie'), { recursive: true });
+
+    await producer.run(END);
+    await producer.run(END + 10_000);
+
+    expect(JSON.parse(readFileSync(attributionPath(), 'utf-8'))).toEqual({ project: 'other-project', projectSource: 'linked_folder' });
+    for (const event of events()) expect(event['codemie_project_name']).toBe('other-project');
+    expect(status().projectConflict).toBeUndefined();
+  });
+
+  it('retries an initially unresolved project without losing the transcript when configuration recovers', async () => {
+    rmSync(join(codemieHome, 'codemie-cli.config.json'));
+    const producer = newProducer();
+    await settle(producer, FIRST);
+    expect(events()).toEqual([]);
+    expect(existsSync(attributionPath())).toBe(false);
+    writeProfile('late-project');
+
+    await producer.run(END);
+    await producer.run(END + 10_000);
+
+    expect(events().length).toBeGreaterThan(0);
+    for (const event of events()) expect(event['codemie_project_name']).toBe('late-project');
+    expect(status().project).toBe('late-project');
+    expect(events().some((event) => event['type'] === 'agent.session.end')).toBe(true);
+  });
+
+  it('does not pin or append over an unreadable legacy status, and recovers the original binding on retry', async () => {
+    await settle(newProducer(), FIRST);
+    rmSync(attributionPath());
+    const statusPath = spoolPath(CLI, '.status');
+    const saved = readFileSync(statusPath, 'utf-8');
+    writeFileSync(statusPath, '{broken');
+    await linkFolderOfOtherProject();
+    const before = events().length;
+    await settle(newProducer(), END);
+    expect(existsSync(attributionPath())).toBe(false);
+    expect(events()).toHaveLength(before);
+    expect(readFileSync(statusPath, 'utf-8')).toBe('{broken');
+    writeFileSync(statusPath, saved);
+    await settle(newProducer(), END + 30_000);
+    expect(JSON.parse(readFileSync(attributionPath(), 'utf-8')).project).toBe('synthetic-project');
+    expect(status().projectConflict).toBeUndefined();
+    expect(events().some((event) => event['type'] === 'agent.session.end')).toBe(true);
+  });
+
+  it('boundary: a session already bound by the spool with no pin keeps the spool\'s project and is pinned to it', async () => {
+    await settle(newProducer(), FIRST);
+    // A session collected before pins existed: spool bound to synthetic-project, no attribution file.
+    rmSync(attributionPath());
+    writeSharedProject('profile-project-2');
+    await linkFolderOfOtherProject();
+
+    const producer = newProducer();
+    await producer.run(END);
+    await producer.run(END + 10_000);
+
+    for (const event of events()) expect(event['codemie_project_name']).toBe('synthetic-project');
+    expect(status().projectConflict).toBeUndefined();
+    // Its source cannot be told from the new folder's: no funding declaration is made for it (see the funding tests).
+    expect(JSON.parse(readFileSync(attributionPath(), 'utf-8'))).toEqual({ project: 'synthetic-project', projectSource: 'none' });
+  });
+
+  it('boundary: an unreadable pin cannot move a session whose project the spool already holds', async () => {
+    await settle(newProducer(), FIRST);
+    writeFileSync(attributionPath(), '{nope');
+    writeSharedProject('profile-project-2');
+    await linkFolderOfOtherProject();
+
+    await producer2RunAtEnd();
+
+    for (const event of events()) expect(event['codemie_project_name']).toBe('synthetic-project');
+    expect(status().projectConflict).toBeUndefined();
+    expect(JSON.parse(readFileSync(attributionPath(), 'utf-8')).project).toBe('synthetic-project');
+  });
+
+  async function producer2RunAtEnd(): Promise<void> {
+    const producer = newProducer();
+    await producer.run(END);
+    await producer.run(END + 10_000);
+  }
+
+  it('boundary: a session with a cursor and neither pin nor spool binding is pinned at its next processing', async () => {
+    await settle(newProducer(), FIRST);
+    rmSync(attributionPath());
+    rmSync(spoolPath(CLI, '.status'));
+    rmSync(spoolPath());
+
+    await settle(newProducer(), END);
+
+    expect(existsSync(attributionPath())).toBe(true);
+    expect(JSON.parse(readFileSync(attributionPath(), 'utf-8'))).toEqual({ project: 'synthetic-project', projectSource: 'profile' });
+  });
+
+  it('writes no pin while the local config cannot be loaded', async () => {
+    const [session] = await discoverClaudeDesktopSessions(LAST_LINE_MS - DAY_MS);
+    const localConfig = join(session.workingDirectory, '.codemie', 'codemie-cli.config.json');
+    mkdirSync(dirname(localConfig), { recursive: true });
+    writeFileSync(localConfig, JSON.stringify({ synthetic: true }));
+
+    await settle(newProducer(), FIRST);
+
+    expect(existsSync(attributionPath())).toBe(false);
+    expect(existsSync(spoolPath())).toBe(false);
+  });
+
+  describe('funding (EPMCDME-17410), through the real forwarder with a stubbed fetch', () => {
+    // The sender adds X-CodeMie-CLI and X-CodeMie-Client to every request; only the attribution headers are compared.
+    const fundingHeaders = (headers: Record<string, string>) => Object.fromEntries(
+      Object.entries(headers).filter(([name]) => name.startsWith('X-CodeMie') && !['X-CodeMie-CLI', 'X-CodeMie-Client'].includes(name)));
+
+    it('declares CodeMie funding with the pinned project and source on every request of a served Cowork session, and no consent or contract', async () => {
+      await settle(newProducer(), FIRST);
+      await forwardSession(CLI, true, credentials as never);
+
+      const requests = sentRequests();
+      expect(requests.length).toBeGreaterThan(0);
+      for (const { headers } of requests) {
+        expect(fundingHeaders(headers)).toEqual({
+          'X-CodeMie-Session-Id': CLI,
+          'X-CodeMie-Routed-Via-CodeMie': 'true',
+          'X-CodeMie-Subscription-Type': 'codemie',
+          'X-CodeMie-Project': 'synthetic-project',
+          'X-CodeMie-Project-Source': 'profile',
+        });
+      }
+    });
+
+    it('declares the linked-folder source when the project came from the folder', async () => {
+      await linkFolderOfOtherProject();
+      await settle(newProducer(), FIRST);
+      await forwardSession(CLI, true, credentials as never);
+
+      for (const { headers } of sentRequests()) {
+        expect(fundingHeaders(headers)).toMatchObject({ 'X-CodeMie-Project': 'other-project', 'X-CodeMie-Project-Source': 'linked_folder', 'X-CodeMie-Subscription-Type': 'codemie' });
+      }
+    });
+
+    it('upgrades pending ended sessions from the existing durable pin without replaying their events', async () => {
+      await settle(newProducer(), END);
+      const before = events().length;
+      const legacy = JSON.parse(readFileSync(spoolPath(CLI, '.status'), 'utf-8')) as Record<string, unknown>;
+      delete legacy['producerAttribution'];
+      writeFileSync(spoolPath(CLI, '.status'), JSON.stringify(legacy));
+      const restarted = newProducer();
+      await restarted.run(END + 30_000, false);
+      await restarted.run(END + 40_000, false);
+      expect(events()).toHaveLength(before);
+      await forwardSession(CLI, true, credentials as never);
+      const requests = sentRequests();
+      expect(requests.length).toBeGreaterThan(0);
+      for (const { headers } of requests) expect(headers).toMatchObject({
+        'X-CodeMie-Project': 'synthetic-project', 'X-CodeMie-Subscription-Type': 'codemie', 'X-CodeMie-Project-Source': 'profile',
+      });
+    });
+
+    it('sends the legacy Project header alone for a collected session with no served mark (legacy cursor-only boundary)', async () => {
+      await settle(newProducer(), FIRST);
+      rmSync(join(codemieHome, 'analytics', 'state', `${CLI}.cowork-served`));
+      // A pre-upgrade spool has no producer metadata, even though this fixture was initially generated by the new producer.
+      const legacy = JSON.parse(readFileSync(spoolPath(CLI, '.status'), 'utf-8')) as Record<string, unknown>;
+      delete legacy['producerAttribution'];
+      writeFileSync(spoolPath(CLI, '.status'), JSON.stringify(legacy));
+      await forwardSession(CLI, true, credentials as never);
+
+      const requests = sentRequests();
+      expect(requests.length).toBeGreaterThan(0);
+      for (const { headers } of requests) expect(fundingHeaders(headers)).toEqual({ 'X-CodeMie-Project': 'synthetic-project' });
+    });
+
+    it('sends the legacy Project header alone for a session pinned without a source (spool-bound boundary)', async () => {
+      await settle(newProducer(), FIRST);
+      rmSync(attributionPath());
+      const legacy = JSON.parse(readFileSync(spoolPath(CLI, '.status'), 'utf-8')) as Record<string, unknown>;
+      delete legacy['producerAttribution'];
+      writeFileSync(spoolPath(CLI, '.status'), JSON.stringify(legacy));
+      writeSharedProject('profile-project-2');
+      await producer2Run();
+      await forwardSession(CLI, true, credentials as never);
+
+      for (const { headers } of sentRequests()) expect(fundingHeaders(headers)).toEqual({ 'X-CodeMie-Project': 'synthetic-project' });
+    });
+
+    it('a transient project-origin lookup failure appends and pins nothing, and the retry declares funding with the real source', async () => {
+      const { ConfigLoader } = await import('@/utils/config.js');
+      const spy = vi.spyOn(ConfigLoader, 'resolveProfileIdentity').mockRejectedValue(new Error('identity unavailable'));
+      try {
+        await settle(newProducer(), FIRST);
+        expect(existsSync(attributionPath())).toBe(false);
+        expect(existsSync(spoolPath())).toBe(false);
+      } finally {
+        spy.mockRestore();
+      }
+
+      // Recovery: the same producer retries before any append.
+      const producer = newProducer();
+      await settle(producer, FIRST + 60_000);
+      expect(JSON.parse(readFileSync(attributionPath(), 'utf-8'))).toEqual({ project: 'synthetic-project', projectSource: 'profile' });
+      await forwardSession(CLI, true, credentials as never);
+
+      const requests = sentRequests();
+      expect(requests.length).toBeGreaterThan(0);
+      for (const { headers } of requests) {
+        expect(fundingHeaders(headers)).toMatchObject({ 'X-CodeMie-Routed-Via-CodeMie': 'true', 'X-CodeMie-Subscription-Type': 'codemie', 'X-CodeMie-Project': 'synthetic-project', 'X-CodeMie-Project-Source': 'profile' });
+      }
+    });
+
+    it('a failure for a session the spool already holds (no pin yet) appends nothing, and the retry pins the real source under the bound project', async () => {
+      await settle(newProducer(), FIRST);
+      rmSync(attributionPath()); // collected before pins existed: spool bound, no pin
+      const before = events().length;
+      const { ConfigLoader } = await import('@/utils/config.js');
+      const spy = vi.spyOn(ConfigLoader, 'resolveProfileIdentity').mockRejectedValue(new Error('identity unavailable'));
+      try {
+        await producer2Run();
+        expect(existsSync(attributionPath())).toBe(false);
+        expect(events()).toHaveLength(before);
+      } finally {
+        spy.mockRestore();
+      }
+
+      const producer = newProducer();
+      await producer.run(END + 60_000);
+      await producer.run(END + 70_000);
+      expect(JSON.parse(readFileSync(attributionPath(), 'utf-8'))).toEqual({ project: 'synthetic-project', projectSource: 'profile' });
+      for (const event of events()) expect(event['codemie_project_name']).toBe('synthetic-project');
+      expect(events().length).toBeGreaterThan(before);
+    });
+
+    /** One more processing so the pin is rewritten for the bound session. */
+    async function producer2Run(): Promise<void> {
+      const producer = newProducer();
+      await producer.run(END);
+      await producer.run(END + 10_000);
+    }
+
+    it('control: a native (not Cowork) session is sent exactly as before, with the Project header alone', async () => {
+      const NATIVE = '9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d';
+      const hook = { session_id: NATIVE, type: 'agent.session.start', codemie_project_name: 'native-project', event_id: 'native-1', timestamp: '2026-11-10T10:00:00.000Z' };
+      await appendSpool(NATIVE, 'hooks', JSON.stringify({ agentName: 'claude-code-otlp', hookEvent: JSON.stringify(hook) }) + '\n', ['native-project']);
+
+      await forwardSession(NATIVE, true, credentials as never);
+
+      const requests = sentRequests();
+      expect(requests).toHaveLength(1);
+      expect(fundingHeaders(requests[0].headers)).toEqual({ 'X-CodeMie-Project': 'native-project' });
+    });
   });
 });
 

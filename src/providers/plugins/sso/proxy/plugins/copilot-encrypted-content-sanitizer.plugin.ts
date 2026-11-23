@@ -16,7 +16,7 @@ import { ProxyPlugin, PluginContext, ProxyInterceptor, UpstreamResponseTools } f
 import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
 
-const ALLOWED_AGENTS = ['codemie-copilot'];
+const ALLOWED_AGENTS: readonly string[] = ['codemie-copilot'];
 const ENCRYPTED_CONTENT_INCLUDE = 'reasoning.encrypted_content';
 const RESPONSES_PATH_SUFFIX = '/responses';
 const UNUSABLE_REASONING_STATE_MARKERS = [
@@ -35,21 +35,15 @@ export class CopilotEncryptedContentSanitizerPlugin implements ProxyPlugin {
   name = 'Copilot Encrypted Content Sanitizer';
   version = '1.0.0';
   priority = 16;
+  clients = ALLOWED_AGENTS;
 
-  async createInterceptor(context: PluginContext): Promise<ProxyInterceptor> {
-    const clientType = context.config.clientType;
-    if (!clientType || !ALLOWED_AGENTS.includes(clientType)) {
-      throw new Error(`Plugin disabled for agent: ${clientType}`);
-    }
-
-    return new CopilotEncryptedContentSanitizerInterceptor(clientType);
+  async createInterceptor(_context: PluginContext): Promise<ProxyInterceptor> {
+    return new CopilotEncryptedContentSanitizerInterceptor();
   }
 }
 
 class CopilotEncryptedContentSanitizerInterceptor implements ProxyInterceptor {
   name = 'copilot-encrypted-content-sanitizer';
-
-  constructor(private readonly clientType: string) {}
 
   async onUpstreamResponse(
     context: ProxyContext,
@@ -72,7 +66,7 @@ class CopilotEncryptedContentSanitizerInterceptor implements ProxyInterceptor {
     }
 
     logger.warn(
-      `[${this.name}] Upstream rejected replayed reasoning state for ${this.clientType} ("${marker}"). ` +
+      `[${this.name}] Upstream rejected replayed reasoning state for ${context.agentName} ("${marker}"). ` +
       `Retrying once without reasoning state: ${sanitizedRequest.removedCount} item(s) removed.`
     );
 

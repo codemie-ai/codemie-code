@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-17386_record-project-conflict-discard",
+  "head": "8d7acf10276670016f17e882feffeb2a8a93cc86",
+  "runner": "npm",
+  "started_at": "2026-11-18T11:39:36Z",
+  "completed_at": "2026-11-18T12:17:05Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {"id": "license-check", "source": "guide", "status": "PASS", "duration_ms": 18163, "command": "npm run license-check", "exit_code": 0},
+    {"id": "lint", "source": "guide", "status": "PASS", "duration_ms": 81475, "command": "npm run lint", "exit_code": 0},
+    {"id": "typecheck", "source": "guide", "status": "PASS", "duration_ms": 29841, "command": "npm run typecheck", "exit_code": 0},
+    {"id": "build", "source": "guide", "status": "PASS", "duration_ms": 45750, "command": "npm run build", "exit_code": 0},
+    {"id": "unit", "source": "guide", "status": "FAIL", "duration_ms": 590468, "command": "npx vitest run --project unit", "exit_code": 1,
+     "notes": "9 files / 14 tests failed of 11624, none in the diff. 4 EPERM symlink (Windows, no symlink privilege): connect-orchestrator, codex-desktop-roundtrip, vscode-claude-code, scheduler generators. 9 passed on rerun of those files with CODEMIE_* cleared (env -u): config-per-profile-identity, launch-identity x2, sso.auth-gate.integration x2, hook.session-delivery x4 (these are CODEMIE_*-env or load/timing sensitive). 1 still fails with CODEMIE_* and NO_PROXY cleared: system-proxy-dispatcher 'routes global fetch through the explicit proxy' (proxyRoutes 0, binds 127.0.0.2; host network). No failing test touches the changed files."},
+    {"id": "integration", "source": "guide", "status": "FAIL", "duration_ms": 348666, "command": "npx vitest run --project cli", "exit_code": 1,
+     "notes": "Default shell: 5 files failed (skills-integration, help, version hooks timed out; hook-stdout x2 and skills.test x2 timed out at 30 s). Rerun of those 5 files with CODEMIE_* cleared: help, version, skills-integration pass; skills.test.ts passes alone; hook-stdout.test.ts still fails 3 tests (what's-new notice: 'codemie list did not exit within 20000ms'), subprocess CLI startup is very slow on this host. No failing test touches the changed files."},
+    {"id": "commitlint", "source": "guide", "status": "PASS", "duration_ms": 5660, "command": "npm run commitlint:last", "exit_code": 0},
+    {"id": "secrets", "source": "guide", "status": "SKIPPED", "duration_ms": 10632, "command": "npm run validate:secrets", "exit_code": 0,
+     "notes": "Self-skip: output 'No staged changes to scan' (the change is committed, nothing staged). Not a real scan; CI secrets-detection job runs it unconditionally. To run locally, run it against staged changes with Docker available."}
+  ],
+  "failures": {
+    "unit": "14 failures. EPERM symlink x4: 'EPERM: operation not permitted, symlink ...' in src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts (leaves a Codex config that is a symbolic link), src/cli/commands/proxy/connectors/__tests__/codex-desktop-roundtrip.test.ts:250, src/cli/commands/proxy/connectors/__tests__/vscode-claude-code.test.ts:468, src/cli/commands/analytics/sync/scheduler/__tests__/generators.test.ts:125. Passed on CODEMIE_*-cleared rerun: src/utils/__tests__/config-per-profile-identity.test.ts (expected 'workspace-proj' to be 'epm-cdme-cp'), src/agents/core/__tests__/launch-identity.test.ts x2 (expected 'http://localhost:57781' to be 'https://codemie.example.com'), src/providers/plugins/sso/__tests__/sso.auth-gate.integration.test.ts x2 (expected { ok: false, ... } to deeply equal { ok: true }), src/cli/commands/__tests__/hook.session-delivery.test.ts x4 (timing: expected 16375 < 15000, 4775 < 2000, 5305 < 4000; expected [] to have length 1). Still failing after rerun: src/utils/__tests__/system-proxy-dispatcher.test.ts:119 AssertionError: expected 0 to be greater than 0 (proxyRoutes).",
+    "integration": "Default shell: 'Hook timed out in 30000ms' (skills-integration), 'Hook timed out in 10000ms' (help, version), 'Test timed out in 30000ms' (hook-stdout x2, skills.test x2). Cleared-env rerun: tests/integration/hook-stdout.test.ts what's-new notice x3 'Error: codemie list did not exit within 20000ms' (one run also had ENOENT proxy-daemon.json in 'OTLP hook on a cold proxy daemon', which passed in the next run: flaky under load)."
+  }
+}

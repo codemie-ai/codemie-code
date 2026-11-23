@@ -218,6 +218,7 @@ describe('analytics cost over copilot runs and kept sessions', () => {
 
     // No filter: the native agent logs under a scratch home, not the real one
     vi.stubEnv('HOME', outDir);
+    vi.stubEnv('USERPROFILE', outDir);
     try {
       await runAnalytics({} as never, new SessionsSource());
     } finally {
@@ -251,6 +252,7 @@ describe('analytics cost over copilot runs and kept sessions', () => {
     const { SessionsSource } = await import('../sources/sessions-source.js');
 
     vi.stubEnv('HOME', outDir);
+    vi.stubEnv('USERPROFILE', outDir);
     try {
       await runAnalytics({} as never, new SessionsSource());
     } finally {

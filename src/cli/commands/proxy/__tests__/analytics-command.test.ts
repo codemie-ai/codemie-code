@@ -3,7 +3,7 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
@@ -33,8 +33,9 @@ describe('createProxyAnalyticsCommand', () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), 'codemie-analytics-cmd-'));
-    projectRoot = await mkdtemp(join(tmpdir(), 'codemie-analytics-proj-'));
+    // Canonical like the code's paths: on Windows tmpdir() may be the 8.3 short form (RUNNER~1).
+    tempDir = await realpath(await mkdtemp(join(tmpdir(), 'codemie-analytics-cmd-')));
+    projectRoot = await realpath(await mkdtemp(join(tmpdir(), 'codemie-analytics-proj-')));
     vi.stubEnv('CODEMIE_HOME', tempDir);
     vi.stubEnv('TZ', 'America/New_York'); // times print in the local zone; the fixtures are in November, after DST ended (EST, -05:00)
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -42,12 +43,14 @@ describe('createProxyAnalyticsCommand', () => {
   });
 
   afterEach(async () => {
+    // Release the logger's file in the temp home first (before resetModules swaps the instance): Windows cannot delete an open file.
+    await (await import('@/utils/logger.js')).logger.close();
     vi.restoreAllMocks();
     vi.useRealTimers();
     vi.unstubAllEnvs();
     vi.resetModules();
-    await rm(tempDir, { recursive: true, force: true });
-    await rm(projectRoot, { recursive: true, force: true });
+    await rm(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await rm(projectRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   async function runCommand(args: string[]): Promise<void> {
@@ -63,18 +66,18 @@ describe('createProxyAnalyticsCommand', () => {
   }
 
   it('disable sets enabled to false', async () => {
-    await runCommand(['disable']);
+    await runCommand(['disable', '--claude-code-otlp']);
     expect(await readPreferences()).toMatchObject({ enabled: false });
   });
 
   it('every real enable/disable change bumps collectionGeneration, a no-op does not', async () => {
-    await runCommand(['disable']);
+    await runCommand(['disable', '--claude-code-otlp']);
     expect(await readPreferences()).toMatchObject({ enabled: false, collectionGeneration: 1 });
-    await runCommand(['disable']);
+    await runCommand(['disable', '--claude-code-otlp']);
     expect(await readPreferences()).toMatchObject({ collectionGeneration: 1 });
-    await runCommand(['enable']);
+    await runCommand(['enable', '--claude-code-otlp']);
     expect(await readPreferences()).toMatchObject({ enabled: true, collectionGeneration: 2 });
-    await runCommand(['exclude', '/work/a']);
+    await runCommand(['exclude', '/work/a', '--claude-code-otlp']);
     expect(await readPreferences()).toMatchObject({ collectionGeneration: 2 });
   });
 
@@ -82,35 +85,35 @@ describe('createProxyAnalyticsCommand', () => {
     const { getClaudeAnalyticsPreferencesPath } = await import('@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js');
     const { mkdir } = await import('node:fs/promises');
     await mkdir(getClaudeAnalyticsPreferencesPath(), { recursive: true }); // a directory where the file belongs
-    await runCommand(['disable']);
+    await runCommand(['disable', '--claude-code-otlp']);
     expect(process.exitCode).toBe(1);
     process.exitCode = 0;
   });
 
   it('enable sets enabled back to true after disable', async () => {
-    await runCommand(['disable']);
-    await runCommand(['enable']);
+    await runCommand(['disable', '--claude-code-otlp']);
+    await runCommand(['enable', '--claude-code-otlp']);
     expect(await readPreferences()).toMatchObject({ enabled: true });
   });
 
   it('exclude with an explicit path adds its canonical form', async () => {
     const { canonicalizePath } = await import('@/agents/core/project-allowlist.js');
-    await runCommand(['exclude', '/work/a']);
+    await runCommand(['exclude', '/work/a', '--claude-code-otlp']);
     const canonical = await canonicalizePath('/work/a');
     expect(await readPreferences()).toMatchObject({ excludedProjects: [canonical] });
   });
 
   it('exclude with no path argument excludes the resolved project root', async () => {
     const { canonicalizePath } = await import('@/agents/core/project-allowlist.js');
-    await runCommand(['exclude']);
+    await runCommand(['exclude', '--claude-code-otlp']);
     const canonical = await canonicalizePath(projectRoot);
     expect(await readPreferences()).toMatchObject({ excludedProjects: [canonical] });
   });
 
   it('exclude twice keeps a single entry and prints Nothing to change', async () => {
-    await runCommand(['exclude', '/work/a']);
+    await runCommand(['exclude', '/work/a', '--claude-code-otlp']);
     logSpy.mockClear();
-    await runCommand(['exclude', '/work/a']);
+    await runCommand(['exclude', '/work/a', '--claude-code-otlp']);
     expect(await readPreferences()).toMatchObject({ excludedProjects: [expect.any(String)] });
     const prefs = (await readPreferences()) as { excludedProjects: string[] };
     expect(prefs.excludedProjects).toHaveLength(1);
@@ -118,16 +121,16 @@ describe('createProxyAnalyticsCommand', () => {
   });
 
   it('include removes a previously excluded path', async () => {
-    await runCommand(['exclude', '/work/a']);
-    await runCommand(['include', '/work/a']);
+    await runCommand(['exclude', '/work/a', '--claude-code-otlp']);
+    await runCommand(['include', '/work/a', '--claude-code-otlp']);
     expect(await readPreferences()).toMatchObject({ excludedProjects: [] });
   });
 
   it('include on a path that was never excluded prints Nothing to change and leaves the file unchanged', async () => {
-    await runCommand(['disable']);
+    await runCommand(['disable', '--claude-code-otlp']);
     const before = await readPreferences();
     logSpy.mockClear();
-    await runCommand(['include', '/work/z']);
+    await runCommand(['include', '/work/z', '--claude-code-otlp']);
     expect(await readPreferences()).toEqual(before);
     expect(logSpy.mock.calls.flat().join(' ')).toContain('Nothing to change.');
   });
@@ -135,24 +138,24 @@ describe('createProxyAnalyticsCommand', () => {
   const isCaseInsensitiveFs = process.platform === 'win32' || process.platform === 'darwin';
 
   it.runIf(isCaseInsensitiveFs)('exclude twice with different casing keeps a single entry (CR-003)', async () => {
-    await runCommand(['exclude', '/work/a']);
+    await runCommand(['exclude', '/work/a', '--claude-code-otlp']);
     logSpy.mockClear();
-    await runCommand(['exclude', '/WORK/A']);
+    await runCommand(['exclude', '/WORK/A', '--claude-code-otlp']);
     const prefs = (await readPreferences()) as { excludedProjects: string[] };
     expect(prefs.excludedProjects).toHaveLength(1);
   });
 
   it.runIf(isCaseInsensitiveFs)('include with different casing removes a previously excluded path (CR-003)', async () => {
-    await runCommand(['exclude', '/work/a']);
-    await runCommand(['include', '/WORK/A']);
+    await runCommand(['exclude', '/work/a', '--claude-code-otlp']);
+    await runCommand(['include', '/WORK/A', '--claude-code-otlp']);
     expect(await readPreferences()).toMatchObject({ excludedProjects: [] });
   });
 
   it('include of a subdirectory still excluded via its parent names the parent instead of claiming nothing is tracked (CR-003)', async () => {
     const { canonicalizePath } = await import('@/agents/core/project-allowlist.js');
-    await runCommand(['exclude', '/work/a']);
+    await runCommand(['exclude', '/work/a', '--claude-code-otlp']);
     logSpy.mockClear();
-    await runCommand(['include', '/work/a/nested']);
+    await runCommand(['include', '/work/a/nested', '--claude-code-otlp']);
 
     const prefs = (await readPreferences()) as { excludedProjects: string[] };
     const parent = await canonicalizePath('/work/a');
@@ -162,12 +165,12 @@ describe('createProxyAnalyticsCommand', () => {
 
   it('include of a redundant nested entry does not claim success while the parent still excludes it', async () => {
     const { canonicalizePath } = await import('@/agents/core/project-allowlist.js');
-    await runCommand(['exclude', '/work/a']);
+    await runCommand(['exclude', '/work/a', '--claude-code-otlp']);
     // Excluding a path already covered by a stored parent still creates a direct entry today
     // (addProjectPath only dedupes exact matches) — this reproduces a redundant child entry.
-    await runCommand(['exclude', '/work/a/nested']);
+    await runCommand(['exclude', '/work/a/nested', '--claude-code-otlp']);
     logSpy.mockClear();
-    await runCommand(['include', '/work/a/nested']);
+    await runCommand(['include', '/work/a/nested', '--claude-code-otlp']);
 
     const parent = await canonicalizePath('/work/a');
     const nested = await canonicalizePath('/work/a/nested');
@@ -177,9 +180,9 @@ describe('createProxyAnalyticsCommand', () => {
   });
 
   it('exclude of a path already covered by a stored parent reports Nothing to change instead of adding a redundant entry', async () => {
-    await runCommand(['exclude', '/work/a']);
+    await runCommand(['exclude', '/work/a', '--claude-code-otlp']);
     logSpy.mockClear();
-    await runCommand(['exclude', '/work/a/nested']);
+    await runCommand(['exclude', '/work/a/nested', '--claude-code-otlp']);
 
     const prefs = (await readPreferences()) as { excludedProjects: string[] };
     expect(prefs.excludedProjects).toHaveLength(1);
@@ -188,8 +191,8 @@ describe('createProxyAnalyticsCommand', () => {
 
   it('excluding a parent after a child was already excluded drops the now-redundant child entry', async () => {
     const { canonicalizePath } = await import('@/agents/core/project-allowlist.js');
-    await runCommand(['exclude', '/work/a/nested']);
-    await runCommand(['exclude', '/work/a']);
+    await runCommand(['exclude', '/work/a/nested', '--claude-code-otlp']);
+    await runCommand(['exclude', '/work/a', '--claude-code-otlp']);
 
     const parent = await canonicalizePath('/work/a');
     const prefs = (await readPreferences()) as { excludedProjects: string[] };
@@ -197,23 +200,24 @@ describe('createProxyAnalyticsCommand', () => {
   });
 
   it('status prints formatted output through the real command wiring (CR-004)', async () => {
-    await runCommand(['exclude', '/work/a']);
+    await runCommand(['exclude', '/work/a', '--claude-code-otlp']);
     logSpy.mockClear();
     await runCommand(['status']);
     const output = logSpy.mock.calls.flat().join('\n');
     expect(output).toContain('Hooks:');
     expect(output).toContain('Excluded:');
-    // No connector is connected in this isolated home, so the shared Delivery section stays hidden.
     expect(output).not.toContain('Delivery:');
+    expect(output).toContain('Consented folders: none');
+    expect(output).toContain('Delivery health — run: codemie proxy doctor');
   });
 
   it('status --json prints parseable JSON through the real command wiring (CR-004)', async () => {
-    await runCommand(['exclude', '/work/a']);
+    await runCommand(['exclude', '/work/a', '--claude-code-otlp']);
     logSpy.mockClear();
     await runCommand(['status', '--json']);
     expect(logSpy).toHaveBeenCalledTimes(1);
     const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
-    expect(parsed).toMatchObject({ delivery: null });
+    expect(parsed).toMatchObject({ delivery: null, consentedFolders: [] });
     expect(parsed.connectors).toHaveLength(1);
     expect(parsed.connectors[0]).toMatchObject({ connector: 'claude-code-otlp', excludedProjects: [expect.any(String)] });
   });
@@ -267,7 +271,7 @@ describe('createProxyAnalyticsCommand', () => {
       });
       const collectDeliveryHealth = vi.fn().mockResolvedValue(delivery);
       vi.doMock('../daemon-manager.js', () => ({
-        checkStatus: vi.fn().mockResolvedValue({ running: true, state: daemonState }),
+        readDaemonStatus: vi.fn().mockResolvedValue({ running: true, state: daemonState }),
       }));
       vi.doMock('../health-check.js', () => ({ checkProxyHealth }));
       vi.doMock('../delivery-health.js', async () => {
@@ -277,11 +281,44 @@ describe('createProxyAnalyticsCommand', () => {
       return { checkProxyHealth, collectDeliveryHealth };
     }
 
-    it.each(connectors)('%j prints the delivery rows first, with no heading, and "proxy not running" when the daemon is stopped', async (flags, title) => {
+    it.each(connectors)('%j text shows the connector section, consented folders and the doctor hint, with no delivery lines', async (flags, title) => {
       await runCommand(['status', ...flags]);
       const lines = plainOutput().split('\n');
-      expect(lines.slice(0, 3)).toEqual(['Delivery: proxy not running', '', title]);
-      expect(lines.filter((l) => l.includes('Delivery:'))).toHaveLength(1);
+      expect(lines[0]).toBe(title);
+      expect(lines.some((l) => l.includes('Collection:'))).toBe(true);
+      expect(lines.some((l) => l.includes('Excluded:'))).toBe(true);
+      expect(lines).toContain('Consented folders: none');
+      expect(lines[lines.length - 1]).toBe('Delivery health — run: codemie proxy doctor');
+      expect(plainOutput()).not.toContain('Delivery:');
+      expect(plainOutput()).not.toContain('Unsent data');
+    });
+
+    it('lists consented folders in text and in --json', async () => {
+      const { connectFolder } = await import('@/agents/core/evidence/consent-store.js');
+      const folder = await (await import('@/agents/core/project-allowlist.js')).canonicalizePath(projectRoot);
+      await connectFolder({ owner_hash: 'o', api_identity: 'a', project: 'proj-x' }, folder);
+      // Another account's consent on the same machine is not this account's.
+      await connectFolder({ owner_hash: 'someone-else', api_identity: 'a', project: 'proj-other' }, folder);
+      vi.doMock('@/agents/core/evidence/hook-identity.js', () => ({
+        currentEvidenceIdentity: async () => ({ owner_hash: 'o', api_identity: 'a' }),
+      }));
+      await runCommand(['status', '--claude-code-otlp']);
+      const out = plainOutput();
+      expect(out).toContain('Consented folders:');
+      expect(out).toContain(`${folder} (proj-x)`);
+      expect(out).not.toContain('proj-other');
+      logSpy.mockClear();
+      await runCommand(['status', '--claude-code-otlp', '--json']);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+      expect(parsed.consentedFolders).toEqual([{ folder, project: 'proj-x' }]);
+      vi.doUnmock('@/agents/core/evidence/hook-identity.js');
+    });
+
+    it('does not read the daemon in text mode', async () => {
+      const { checkProxyHealth, collectDeliveryHealth } = mockRunningDaemon({ status: 'healthy', pendingBytes: 0 });
+      await runCommand(['status', '--claude-code-otlp']);
+      expect(checkProxyHealth).not.toHaveBeenCalled();
+      expect(collectDeliveryHealth).not.toHaveBeenCalled();
     });
 
     it.each(connectors)('%j --json adds delivery: null when the daemon is stopped', async (flags) => {
@@ -326,7 +363,7 @@ describe('createProxyAnalyticsCommand', () => {
       const output = plainOutput();
       expect(output).toContain('Copilot CLI:');
       expect(output).not.toContain('Claude:');
-      expect(output).not.toContain('codemie proxy connect --claude-code-otlp');
+      expect(output).not.toContain('codemie proxy connect --claude-otlp');
     });
 
     it('shows only the tool a flag selects even when others are connected', async () => {
@@ -337,75 +374,14 @@ describe('createProxyAnalyticsCommand', () => {
       expect(output).not.toContain('Claude:');
     });
 
-    it('lists every connected tool in --json, after the delivery', async () => {
+    it('lists every connected tool in --json, after the delivery, with consentedFolders last', async () => {
       mockActiveConnectors(['claude-code-otlp', 'copilot-chat-otlp']);
       await runCommand(['status', '--json']);
       const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
-      expect(Object.keys(parsed)).toEqual(['delivery', 'connectors']);
+      expect(Object.keys(parsed)).toEqual(['delivery', 'connectors', 'consentedFolders']);
       expect(parsed.connectors.map((c: { connector: string }) => c.connector)).toEqual([
         'claude-code-otlp',
         'copilot-chat-otlp',
-      ]);
-    });
-
-    it.each(connectors)('%j shows the shared verdict from /health when the daemon is running', async (flags, title) => {
-      const { checkProxyHealth, collectDeliveryHealth } = mockRunningDaemon({
-        status: 'unhealthy',
-        reason: 'credentials_expired',
-        pendingBytes: 2048,
-      });
-      await runCommand(['status', ...flags]);
-
-      expect(checkProxyHealth).toHaveBeenCalledWith(expect.objectContaining({ port: 4001, expectedPid: 4242 }));
-      expect(collectDeliveryHealth).toHaveBeenCalledWith(daemonState, { credentials: 'ok' });
-      const lines = plainOutput().split('\n');
-      expect(lines.slice(0, 5)).toEqual([
-        'Delivery: unhealthy (CodeMie sign-in has expired)',
-        '    Run: codemie profile login',
-        'Unsent data: 2.00 KB (all sessions on this machine)',
-        '',
-        title,
-      ]);
-    });
-
-    it('shows the next retry and the error code of a failing send, with no Run line', async () => {
-      vi.useFakeTimers({ toFake: ['Date'] });
-      vi.setSystemTime(Date.parse('2026-11-13T14:02:10.000Z')); // the retry time below is still ahead
-      mockRunningDaemon({
-        status: 'unhealthy',
-        reason: 'send_failed',
-        pendingBytes: 3174,
-        sendFailure: { nextAt: Date.parse('2026-11-13T14:32:10.000Z'), detail: 'request_error' },
-      });
-      await runCommand(['status', '--claude-code-otlp']);
-
-      const lines = plainOutput().split('\n');
-      expect(lines.slice(0, 5)).toEqual([
-        'Delivery: unhealthy (last send to CodeMie failed, retrying)',
-        'Unsent data: 3.10 KB (all sessions on this machine)',
-        'Next retry: 2026-11-13 09:32:10 -05:00',
-        'Error: backend unreachable',
-        '',
-      ]);
-      expect(lines.slice(0, 4).join('\n')).not.toContain('Run:');
-    });
-
-    it('prints the Last dropped row and the project hint in the delivery rows', async () => {
-      mockRunningDaemon({
-        status: 'healthy',
-        pendingBytes: 0,
-        latestDrop: { reason: 'no_project', stream: 'hooks', at: Date.parse('2026-11-11T10:00:00.000Z'), local: true },
-      });
-      await runCommand(['status', '--claude-code-otlp']);
-
-      const lines = plainOutput().split('\n');
-      expect(lines.slice(0, 6)).toEqual([
-        'Delivery: healthy',
-        'Unsent data: none',
-        'Last dropped: no_project (hooks, 2026-11-11 05:00:00 -05:00)',
-        '    Run: set a CodeMie project for the folder (codemie setup) — sessions without a project are not sent',
-        '',
-        'Claude:',
       ]);
     });
 
@@ -426,22 +402,6 @@ describe('createProxyAnalyticsCommand', () => {
       expect({ ...withDelivery, delivery: undefined }).toEqual({ ...stopped, delivery: undefined });
     });
 
-    it.each(connectors)('%j hides the Analytics section when no connector is active, even with unsent data pending', async (flags, title) => {
-      mockConnectorActive(false);
-      const { checkProxyHealth, collectDeliveryHealth } = mockRunningDaemon({
-        status: 'healthy',
-        pendingBytes: 4096,
-      });
-      await runCommand(['status', ...flags]);
-
-      const output = plainOutput();
-      expect(output).not.toContain('Delivery:');
-      expect(output).not.toContain('Unsent data:');
-      expect(output.split('\n')[0]).toBe(title);
-      expect(checkProxyHealth).not.toHaveBeenCalled();
-      expect(collectDeliveryHealth).not.toHaveBeenCalled();
-    });
-
     it.each(connectors)('%j --json has delivery: null when no connector is active, even with unsent data pending', async (flags) => {
       mockConnectorActive(false);
       mockRunningDaemon({ status: 'healthy', pendingBytes: 4096 });
@@ -457,7 +417,15 @@ describe('createProxyAnalyticsCommand', () => {
     const names = createProxyAnalyticsCommand()
       .commands.map((c) => c.name())
       .sort();
-    expect(names).toEqual(['connect-folder', 'disable', 'disconnect-folder', 'enable', 'exclude', 'include', 'status']);
+    expect(names).toEqual(['connect-folder', 'consent', 'disable', 'disconnect-folder', 'enable', 'exclude', 'include', 'status']);
+  });
+
+  it('the group description names what the group does now: enable/disable, include/exclude, consent, status', async () => {
+    const { createProxyAnalyticsCommand } = await import('../analytics-command.js');
+    const description = createProxyAnalyticsCommand().description();
+    expect(description).toBe(
+      'Control analytics collection: enable/disable, include/exclude projects, work-folder consent, and status'
+    );
   });
 
   it('a corrupt preferences file exits with code 1 and is left unchanged', async () => {
@@ -472,7 +440,7 @@ describe('createProxyAnalyticsCommand', () => {
     const before = await readFile(path, 'utf-8');
 
     process.exitCode = undefined;
-    await runCommand(['disable']);
+    await runCommand(['disable', '--claude-code-otlp']);
 
     expect(process.exitCode).toBe(1);
     expect(await readFile(path, 'utf-8')).toBe(before);
@@ -496,11 +464,23 @@ describe('createProxyAnalyticsCommand', () => {
       );
     }
 
-    it('no connector flag still targets claude-code-otlp and never creates the copilot file', async () => {
+    it('no connector flag with nothing connected fails, names codemie proxy connect and its flags, and writes nothing', async () => {
       const { getCopilotAnalyticsPreferencesPath } = await import('@/agents/core/copilot-analytics-preferences.js');
+      const { getClaudeAnalyticsPreferencesPath } = await import(
+        '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js'
+      );
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      process.exitCode = undefined;
       await runCommand(['disable']);
-      expect(await readPreferences()).toMatchObject({ enabled: false });
+      expect(process.exitCode).toBe(1);
+      const err = stripVTControlCharacters(errSpy.mock.calls.flat().join('\n'));
+      expect(err).toContain('codemie proxy connect');
+      for (const flag of ['--claude-otlp', '--copilot-otlp']) {
+        expect(err).toContain(flag);
+      }
       expect(await fileExists(getCopilotAnalyticsPreferencesPath())).toBe(false);
+      expect(await fileExists(getClaudeAnalyticsPreferencesPath())).toBe(false);
+      process.exitCode = undefined;
     });
 
     it('--claude-code-otlp is equivalent to the default', async () => {
@@ -508,9 +488,11 @@ describe('createProxyAnalyticsCommand', () => {
       expect(await readPreferences()).toMatchObject({ enabled: false });
     });
 
-    it('registers the three connector options on every subcommand', async () => {
+    it('registers the three deprecated connector options on every subcommand', async () => {
       const { createProxyAnalyticsCommand } = await import('../analytics-command.js');
-      for (const sub of createProxyAnalyticsCommand().commands) {
+      // `consent list` takes no connector; `consent` is a group node whose leaves are checked instead.
+      const leaves = createProxyAnalyticsCommand().commands.flatMap((c) => (c.name() === 'consent' ? [...c.commands] : [c]));
+      for (const sub of leaves.filter((c) => c.name() !== 'list')) {
         const flags = sub.options.map((o) => o.long);
         expect(flags).toEqual(
           expect.arrayContaining(['--claude-code-otlp', '--copilot-cli-otlp', '--copilot-chat-otlp'])
@@ -536,6 +518,75 @@ describe('createProxyAnalyticsCommand', () => {
       await runCommand(['disable', '--claude-code-otlp', '--copilot-cli-otlp']);
       expect(process.exitCode).toBe(1);
       process.exitCode = undefined;
+    });
+
+    it('--claude-otlp selects the Claude Code connector only', async () => {
+      await runCommand(['disable', '--claude-otlp']);
+      expect(await readPreferences()).toMatchObject({ enabled: false });
+      const { getCopilotAnalyticsPreferencesPath } = await import('@/agents/core/copilot-analytics-preferences.js');
+      expect(await fileExists(getCopilotAnalyticsPreferencesPath())).toBe(false);
+    });
+
+    it('--copilot-otlp selects both Copilot connectors, each under its heading, and leaves Claude untouched', async () => {
+      logSpy.mockClear();
+      await runCommand(['disable', '--copilot-otlp']);
+      expect(await readCopilotRecord('copilot-cli-otlp')).toMatchObject({ enabled: false });
+      expect(await readCopilotRecord('copilot-chat-otlp')).toMatchObject({ enabled: false });
+      const out = stripVTControlCharacters(logSpy.mock.calls.flat().join('\n'));
+      expect(out).toContain('Copilot CLI:');
+      expect(out).toContain('Copilot Chat:');
+      const { getClaudeAnalyticsPreferencesPath } = await import(
+        '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js'
+      );
+      expect(await fileExists(getClaudeAnalyticsPreferencesPath())).toBe(false);
+    });
+
+    it('--claude-otlp and --copilot-otlp together select all three connectors', async () => {
+      process.exitCode = undefined;
+      await runCommand(['disable', '--claude-otlp', '--copilot-otlp']);
+      expect(process.exitCode ?? 0).toBe(0);
+      expect(await readPreferences()).toMatchObject({ enabled: false });
+      expect(await readCopilotRecord('copilot-cli-otlp')).toMatchObject({ enabled: false });
+      expect(await readCopilotRecord('copilot-chat-otlp')).toMatchObject({ enabled: false });
+    });
+
+    it.each([
+      ['--claude-code-otlp', 'codemie proxy analytics --claude-otlp'],
+      ['--copilot-cli-otlp', 'codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI)'],
+      ['--copilot-chat-otlp', 'codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI)'],
+    ])('the deprecated %s still selects its one connector and prints one notice', async (flag, replacement) => {
+      const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      try {
+        await runCommand(['disable', flag]);
+        const lines = stderr.mock.calls.map((c) => String(c[0])).join('').split('\n').filter(Boolean);
+        expect(lines).toEqual([
+          `Deprecated: codemie proxy analytics ${flag} — use ${replacement} instead (removal on 2026-12-31)`,
+        ]);
+      } finally {
+        stderr.mockRestore();
+      }
+      if (flag === '--claude-code-otlp') {
+        expect(await readPreferences()).toMatchObject({ enabled: false });
+      } else {
+        const other = flag === '--copilot-cli-otlp' ? 'copilot-chat-otlp' : 'copilot-cli-otlp';
+        expect(await readCopilotRecord(flag.slice(2))).toMatchObject({ enabled: false });
+        expect(await readCopilotRecord(other)).toBeUndefined();
+      }
+    });
+
+    it('every subcommand that takes a connector shows the vendor flags in help and hides the old filters', async () => {
+      const { createProxyAnalyticsCommand } = await import('../analytics-command.js');
+      const leaves = createProxyAnalyticsCommand().commands
+        .filter((c) => !['connect-folder', 'disconnect-folder'].includes(c.name()))
+        .flatMap((c) => (c.name() === 'consent' ? [...c.commands] : [c]))
+        .filter((c) => c.name() !== 'list');
+      expect(leaves.map((c) => c.name()).sort()).toEqual(['disable', 'enable', 'exclude', 'grant', 'include', 'revoke', 'status']);
+      for (const sub of leaves) {
+        const help = sub.helpInformation();
+        expect(help, sub.name()).toContain('--claude-otlp');
+        expect(help, sub.name()).toContain('--copilot-otlp');
+        expect(help, sub.name()).not.toMatch(/--claude-code-otlp|--copilot-cli-otlp|--copilot-chat-otlp/);
+      }
     });
 
     it('disabling one copilot connector leaves the other copilot connector and claude untouched', async () => {
@@ -720,6 +771,201 @@ describe('createProxyAnalyticsCommand', () => {
       expect(process.exitCode).toBe(1);
       expect(await readFile(path, 'utf-8')).toBe(before);
       process.exitCode = undefined;
+    });
+  });
+
+  describe('no connector flag fans out to every connected connector', () => {
+    const output = (): string => stripVTControlCharacters(logSpy.mock.calls.flat().join('\n'));
+    let errSpy: ReturnType<typeof vi.spyOn>;
+    const errors = (): string => stripVTControlCharacters(errSpy.mock.calls.flat().join('\n'));
+
+    beforeEach(() => {
+      errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      process.exitCode = undefined;
+    });
+
+    afterEach(() => {
+      process.exitCode = undefined;
+    });
+
+    async function connectClaude(allowlist?: string[]): Promise<void> {
+      const { mkdir } = await import('node:fs/promises');
+      const dir = join(tempDir, 'home', '.claude');
+      await mkdir(dir, { recursive: true });
+      const settings = {
+        hooks: { Stop: [{ hooks: [{ type: 'command', command: 'codemie hook --agent claude-code-otlp' }] }] },
+        ...(allowlist ? { env: { CODEMIE_ANALYTICS_PROJECT_FILTER: JSON.stringify(allowlist) } } : {}),
+      };
+      await writeFile(join(dir, 'settings.json'), JSON.stringify(settings), 'utf-8');
+    }
+
+    async function readClaudeAllowlist(): Promise<string[]> {
+      const raw = JSON.parse(await readFile(join(tempDir, 'home', '.claude', 'settings.json'), 'utf-8')) as {
+        env: Record<string, string>;
+      };
+      return JSON.parse(raw.env.CODEMIE_ANALYTICS_PROJECT_FILTER) as string[];
+    }
+
+    async function connectCopilot(scopes: Record<string, unknown>): Promise<void> {
+      const { getCopilotConnectorsConfigPath } = await import('@/agents/core/copilot-connector-scope.js');
+      await writeFile(getCopilotConnectorsConfigPath(), JSON.stringify({ version: 1, connectors: scopes }), 'utf-8');
+    }
+
+    async function readCopilotScope(id: string): Promise<{ paths?: string[] }> {
+      const { getCopilotConnectorsConfigPath } = await import('@/agents/core/copilot-connector-scope.js');
+      return (JSON.parse(await readFile(getCopilotConnectorsConfigPath(), 'utf-8')) as {
+        connectors: Record<string, { paths?: string[] }>;
+      }).connectors[id];
+    }
+
+    async function readCopilotPrefs(id: string): Promise<{ enabled: boolean; excludedProjects: string[] } | undefined> {
+      const { getCopilotAnalyticsPreferencesPath } = await import('@/agents/core/copilot-analytics-preferences.js');
+      return (JSON.parse(await readFile(getCopilotAnalyticsPreferencesPath(), 'utf-8')) as {
+        connectors: Record<string, { enabled: boolean; excludedProjects: string[] }>;
+      }).connectors[id];
+    }
+
+    it('disable with a corrupt Copilot scope still writes the Copilot preference and names it as unreadable', async () => {
+      const { getCopilotConnectorsConfigPath } = await import('@/agents/core/copilot-connector-scope.js');
+      await writeFile(getCopilotConnectorsConfigPath(), '{corrupt', 'utf-8');
+      await runCommand(['disable']);
+      expect(await readCopilotPrefs('copilot-cli-otlp')).toMatchObject({ enabled: false });
+      expect(await readCopilotPrefs('copilot-chat-otlp')).toMatchObject({ enabled: false });
+      const all = `${output()}\n${errors()}`;
+      expect(all).toMatch(/Copilot CLI[^\n]*could not be read/);
+      expect(all).toMatch(/Copilot Chat[^\n]*could not be read/);
+    });
+
+    it('disable targets a connector that is not active but has a stored preference, and no other', async () => {
+      const { getCopilotAnalyticsPreferencesPath } = await import('@/agents/core/copilot-analytics-preferences.js');
+      await writeFile(
+        getCopilotAnalyticsPreferencesPath(),
+        JSON.stringify({ version: 1, connectors: { 'copilot-cli-otlp': { enabled: true, excludedProjects: [] } } }),
+        'utf-8'
+      );
+      await runCommand(['disable']);
+      expect(await readCopilotPrefs('copilot-cli-otlp')).toMatchObject({ enabled: false });
+      expect(await readCopilotPrefs('copilot-chat-otlp')).toBeUndefined();
+      const { getClaudeAnalyticsPreferencesPath } = await import('@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js');
+      await expect(readFile(getClaudeAnalyticsPreferencesPath(), 'utf-8')).rejects.toThrow();
+      expect(output()).toContain('Copilot CLI');
+      expect(output()).not.toContain('Copilot Chat');
+      expect(process.exitCode).toBeUndefined();
+    });
+
+    it('disable with no preference record and nothing readable or active fails with the connect hint', async () => {
+      await runCommand(['disable']);
+      expect(process.exitCode).toBe(1);
+      expect(errors()).toContain('No analytics connector is connected');
+      expect(errors()).toContain('codemie proxy connect');
+    });
+
+    it('disable acts on every connected connector and says which it changed', async () => {
+      await connectClaude();
+      await connectCopilot({ 'copilot-cli-otlp': { enabled: true, scope: 'user' } });
+      await runCommand(['disable']);
+      expect(await readPreferences()).toMatchObject({ enabled: false });
+      expect(await readCopilotPrefs('copilot-cli-otlp')).toMatchObject({ enabled: false });
+      expect(await readCopilotPrefs('copilot-chat-otlp')).toBeUndefined();
+      expect(output()).toContain('Claude Code');
+      expect(output()).toContain('Copilot CLI');
+      expect(process.exitCode).toBeUndefined();
+    });
+
+    it('a connector that fails does not stop the next one; each is reported and the exit code is 1', async () => {
+      const { getCopilotAnalyticsPreferencesPath } = await import('@/agents/core/copilot-analytics-preferences.js');
+      await connectClaude();
+      await connectCopilot({
+        'copilot-cli-otlp': { enabled: true, scope: 'user' },
+        'copilot-chat-otlp': { enabled: true, scope: 'user' },
+      });
+      await writeFile(
+        getCopilotAnalyticsPreferencesPath(),
+        JSON.stringify({ version: 1, connectors: { 'copilot-cli-otlp': { enabled: 'broken' } } }),
+        'utf-8'
+      );
+      await runCommand(['disable']);
+      expect(await readPreferences()).toMatchObject({ enabled: false });
+      expect(await readCopilotPrefs('copilot-chat-otlp')).toMatchObject({ enabled: false });
+      expect(errors()).toContain('Copilot CLI');
+      expect(output()).toContain('Copilot Chat');
+      expect(process.exitCode).toBe(1);
+    });
+
+    it('include/exclude with nothing connected fails and names codemie proxy connect', async () => {
+      await runCommand(['exclude', '/work/a']);
+      expect(process.exitCode).toBe(1);
+      expect(errors()).toContain('codemie proxy connect');
+    });
+
+    it('exclude then include restores tracking for every connector', async () => {
+      const { evaluateClaudeAnalyticsGate } = await import('@/agents/plugins/claude-code-otlp/claude-code-otlp.gate.js');
+      const { evaluateCopilotAnalyticsGate } = await import('@/agents/core/copilot-analytics-gate.js');
+      const { canonicalizePath } = await import('@/agents/core/project-allowlist.js');
+      const target = await canonicalizePath(projectRoot);
+      await connectClaude([target]);
+      await connectCopilot({
+        'copilot-cli-otlp': { enabled: true, scope: 'project', paths: [target] },
+        'copilot-chat-otlp': { enabled: true, scope: 'user' },
+      });
+      await runCommand(['exclude', target]);
+      expect((await evaluateClaudeAnalyticsGate(target)).tracked).toBe(false);
+      expect((await evaluateCopilotAnalyticsGate('copilot-cli-otlp', target)).tracked).toBe(false);
+      expect((await evaluateCopilotAnalyticsGate('copilot-chat-otlp', target)).tracked).toBe(false);
+      await runCommand(['include', target]);
+      expect((await evaluateClaudeAnalyticsGate(target)).tracked).toBe(true);
+      expect((await evaluateCopilotAnalyticsGate('copilot-cli-otlp', target)).tracked).toBe(true);
+      expect((await evaluateCopilotAnalyticsGate('copilot-chat-otlp', target)).tracked).toBe(true);
+      expect(process.exitCode).toBeUndefined();
+    });
+
+    it('include in project scope adds the path to each connector\'s own project list and confirms it is tracked', async () => {
+      const { evaluateClaudeAnalyticsGate } = await import('@/agents/plugins/claude-code-otlp/claude-code-otlp.gate.js');
+      const { evaluateCopilotAnalyticsGate } = await import('@/agents/core/copilot-analytics-gate.js');
+      const { canonicalizePath } = await import('@/agents/core/project-allowlist.js');
+      const other = await realpath(await mkdtemp(join(tmpdir(), 'codemie-analytics-other-')));
+      const target = await canonicalizePath(projectRoot);
+      await connectClaude([other]);
+      await connectCopilot({ 'copilot-cli-otlp': { enabled: true, scope: 'project', paths: [other] } });
+      await runCommand(['include', target]);
+      expect(await readClaudeAllowlist()).toContain(target);
+      expect((await readCopilotScope('copilot-cli-otlp')).paths).toContain(target);
+      expect((await evaluateClaudeAnalyticsGate(target)).tracked).toBe(true);
+      expect((await evaluateCopilotAnalyticsGate('copilot-cli-otlp', target)).tracked).toBe(true);
+      expect(output()).toMatch(/is tracked by Claude Code/);
+      await rm(other, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    });
+
+    it('include writes the project list first and, when removing the exclusion fails, names the owed step and that a re-run is safe', async () => {
+      const { getClaudeAnalyticsPreferencesPath } = await import('@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js');
+      const { mkdir } = await import('node:fs/promises');
+      const { canonicalizePath } = await import('@/agents/core/project-allowlist.js');
+      const other = await realpath(await mkdtemp(join(tmpdir(), 'codemie-analytics-other-')));
+      const target = await canonicalizePath(projectRoot);
+      await connectClaude([other]);
+      await mkdir(getClaudeAnalyticsPreferencesPath(), { recursive: true }); // removing the exclusion will fail
+      await runCommand(['include', target]);
+      expect(await readClaudeAllowlist()).toContain(target);
+      expect(process.exitCode).toBe(1);
+      const err = errors();
+      expect(err).toMatch(/exclusion/i);
+      expect(err).toMatch(/re-run is safe/i);
+      expect(err).toContain(`codemie proxy analytics include "${target}" --claude-otlp`);
+      expect(output()).not.toMatch(/is tracked by/);
+      await rm(other, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    });
+
+    it('include of a child excluded through its parent explains it, names the command that removes it, and reports no success', async () => {
+      const { canonicalizePath } = await import('@/agents/core/project-allowlist.js');
+      await connectClaude();
+      await runCommand(['exclude', '/work/a']);
+      logSpy.mockClear();
+      await runCommand(['include', '/work/a/nested']);
+      const parent = await canonicalizePath('/work/a');
+      const all = `${output()}\n${errors()}`;
+      expect(all).toContain(`still excluded via ${parent}`);
+      expect(all).toContain(`run: codemie proxy analytics include "${parent}" --claude-otlp`);
+      expect(all).not.toMatch(/✓|is tracked by/);
     });
   });
 });

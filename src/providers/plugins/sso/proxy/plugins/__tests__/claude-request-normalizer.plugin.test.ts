@@ -117,24 +117,8 @@ describe('ClaudeRequestNormalizerPlugin', () => {
       expect(body.thinking).toBeUndefined();
     });
 
-    it('throws for codemie-code agent', async () => {
-      await expect(plugin.createInterceptor(createPluginContext('codemie-code')))
-        .rejects.toThrow('Plugin disabled for agent: codemie-code');
-    });
-
-    it('throws for codemie-opencode agent', async () => {
-      await expect(plugin.createInterceptor(createPluginContext('codemie-opencode')))
-        .rejects.toThrow('Plugin disabled for agent: codemie-opencode');
-    });
-
-    it('throws for undefined clientType', async () => {
-      await expect(plugin.createInterceptor(createPluginContext(undefined)))
-        .rejects.toThrow('Plugin disabled');
-    });
-
-    it('throws for empty string clientType', async () => {
-      await expect(plugin.createInterceptor(createPluginContext('')))
-        .rejects.toThrow('Plugin disabled');
+    it('declares exactly these clients, the VS Code Claude Code extension among them', () => {
+      expect(plugin.clients).toEqual(['codemie-claude', 'codemie-copilot', 'claude-desktop', 'vscode-claude-code']);
     });
   });
 

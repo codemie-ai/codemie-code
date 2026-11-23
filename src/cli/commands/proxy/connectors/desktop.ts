@@ -6,18 +6,27 @@ import {
   getClaudeDesktopBaseDir,
   getClaudeDesktopManagedSettingsPath,
 } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
+import {
+  appliedConfigId,
+  desktopGatewayOfEntry,
+  isCodeMieGatewayConfig,
+  isDesktopPointedAtLocalProxy,
+  readDesktopGatewayConfig,
+} from '@/telemetry/clients/claude-desktop/claude-desktop.gateway.js';
+import { writeFileAtomic } from '@/utils/atomic-write.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { getCodemiePath } from '@/utils/paths.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
-import { isSafeSessionId } from '@/agents/core/session-id.js';
 import {
   toDesktopModels,
   type DesktopCatalogEntry,
   type DesktopModel,
 } from '@/providers/plugins/sso/sso.desktop-models.js';
+import { CLAUDE_DESKTOP, clientOfGatewayKey } from '@/providers/plugins/sso/proxy/proxy-clients.js';
 import { DEFAULT_GATEWAY_KEY, readState } from '../daemon-manager.js';
 import { buildProxyLlmModelsUrl } from './tenant-catalog.js';
+import { isSymbolicLink } from './vscode.js';
 import managedMcpServers from './desktop-managed-mcp-servers.json' with { type: 'json' };
 import { isValidOAuthConfig, type CanonicalMcpEntry, type McpOAuthConfig } from './managed-mcp-remote.js';
 
@@ -134,7 +143,7 @@ export async function fetchClaudeModels(
             'The local gateway key was not accepted by the proxy or was forwarded upstream incorrectly.'
           : response.status === 404 && project
             ? `Local proxy model discovery failed at ${endpoint}: project "${project}" was not found. ` +
-              'Check the project in your CodeMie profile, then run `codemie proxy connect desktop` again.'
+              'Check the project in your CodeMie profile, then run `codemie proxy connect --claude-desktop` again.'
             : `Local proxy model discovery failed at ${endpoint}: ${response.status} ${response.statusText}`
       );
     }
@@ -143,7 +152,7 @@ export async function fetchClaudeModels(
       throw new ConfigurationError(
         `Local proxy model discovery received an unexpected response (${contentType || 'no content-type'}) from ${endpoint}. ` +
         `Your SSO session may have expired — run \`codemie proxy stop && codemie profile login\` ` +
-        `to re-authenticate, then run \`codemie proxy connect desktop\` again.`
+        `to re-authenticate, then run \`codemie proxy connect --claude-desktop\` again.`
       );
     }
     const json = await response.json() as ModelsListResponse | DesktopCatalogEntry[];
@@ -658,12 +667,6 @@ export function buildGatewayConfig(proxyUrl: string, gatewayKey: string): Deskto
   };
 }
 
-/** The `appliedId` of a parsed `_meta.json`, only when it is safe as a file name; else no applied config. */
-function appliedConfigId(meta: unknown): string | undefined {
-  const appliedId = isRecord(meta) ? meta.appliedId : undefined;
-  return typeof appliedId === 'string' && isSafeSessionId(appliedId) ? appliedId : undefined;
-}
-
 /**
  * Returns the base directory where Claude Desktop (3P) stores its config.
  * macOS:   ~/Library/Application Support/Claude-3p
@@ -715,6 +718,8 @@ export async function getDesktopConfigPath(baseDir: string = getDesktopBaseDir()
 /**
  * Write/merge the CodeMie gateway settings into Claude Desktop's
  * `configLibrary/<UUID>.json` and update `_meta.json` so the app picks them up.
+ * Desktop is given its named key, `<gatewayKey>.claude-desktop`; the catalog read
+ * through the daemon keeps the shared `gatewayKey`.
  *
  * Preserves unrelated keys in the existing config file.
  * Returns the absolute path of the config file written.
@@ -731,6 +736,7 @@ export async function writeDesktopConfig(
   if (!existsSync(libDir)) {
     await mkdir(libDir, { recursive: true });
   }
+  const desktopKey = `${gatewayKey}.${CLAUDE_DESKTOP}`;
 
   const metaPath = join(libDir, '_meta.json');
   let meta: ConfigMeta = {};
@@ -764,7 +770,7 @@ export async function writeDesktopConfig(
     throw new ConfigurationError(
       project
         ? `Project "${project}" does not allow any Claude models. Select at least one Claude model or router ` +
-          'on the project\'s Models tab, then run `codemie proxy connect desktop` again.'
+          'on the project\'s Models tab, then run `codemie proxy connect --claude-desktop` again.'
         : `Local proxy did not expose any Claude models from ${buildProxyLlmModelsUrl(proxyUrl, undefined)}.`
     );
   }
@@ -828,7 +834,7 @@ export async function writeDesktopConfig(
       baseDir,
       configPath,
       inferenceGatewayBaseUrl: proxyUrl,
-      inferenceGatewayApiKey: gatewayKey,
+      inferenceGatewayApiKey: desktopKey,
       discoveredModelCount: discoveredModels?.length ?? null,
       discoveredModels: discoveredModels?.map((model) => model.id) ?? null,
       managedMcpServerCount: managedMcpServers.length,
@@ -853,7 +859,7 @@ export async function writeDesktopConfig(
 
   const merged = {
     ...existing,
-    ...buildGatewayConfig(proxyUrl, gatewayKey),
+    ...buildGatewayConfig(proxyUrl, desktopKey),
     modelDiscoveryEnabled: true,
     coworkEgressAllowedHosts: JSON.stringify([...DEFAULT_COWORK_EGRESS_ALLOWED_HOSTS]),
     managedMcpServers: JSON.stringify(managedMcpServers),
@@ -864,7 +870,7 @@ export async function writeDesktopConfig(
     ...sanitizeLogArgs({
       configPath,
       inferenceGatewayBaseUrl: proxyUrl,
-      inferenceGatewayApiKey: gatewayKey,
+      inferenceGatewayApiKey: desktopKey,
       managedMcpServerCount: managedMcpServers.length,
       finalConfigKeys: Object.keys(merged),
     })
@@ -890,6 +896,49 @@ export async function writeDesktopConfig(
   return configPath;
 }
 
+/**
+ * Moves Claude Desktop's applied config from the shared key of the daemon of gateway key `gatewayKey` on `port` to
+ * Desktop's named key, `<gatewayKey>.claude-desktop`: only `inferenceGatewayApiKey` of the applied entry changes;
+ * `_meta.json`, the managed-MCP marker and every other field are left, and nothing is fetched. Writes only for a
+ * loopback gateway on `port` whose key is sealed (Desktop alone opens it) or reads as the shared key. `unchanged`
+ * otherwise: Desktop's own or another client's named key, a refused key, no key, another port, a config that is not a
+ * loopback gateway, no applied config, an unreadable config (a link to nothing included), a platform without a
+ * Desktop directory. The entry is replaced atomically, a symbolic link written through; a failed write throws.
+ */
+export async function moveDesktopToNamedKey(
+  gatewayKey: string,
+  port: number,
+  baseDir?: string
+): Promise<'moved' | 'unchanged'> {
+  let configPath: string;
+  let entry: Record<string, unknown>;
+  try {
+    const libDir = join(baseDir ?? getDesktopBaseDir(), 'configLibrary');
+    const configId = appliedConfigId(JSON.parse(await readFile(join(libDir, '_meta.json'), 'utf-8')));
+    if (!configId) return 'unchanged';
+    configPath = join(libDir, `${configId}.json`);
+    entry = JSON.parse(await readFile(configPath, 'utf-8')) as Record<string, unknown>;
+  } catch (error) {
+    logger.debug('[proxy] Claude Desktop config not readable for the named key', ...sanitizeLogArgs(error));
+    return 'unchanged';
+  }
+  const gateway = desktopGatewayOfEntry(entry);
+  if (gateway?.port !== port) return 'unchanged';
+  if (!gateway.sealed) {
+    const named = gateway.apiKey === undefined ? null : clientOfGatewayKey(`Bearer ${gateway.apiKey}`, gatewayKey);
+    if (named === null || named.client !== undefined) return 'unchanged';
+  }
+
+  const desktopKey = `${gatewayKey}.${CLAUDE_DESKTOP}`;
+  entry.inferenceGatewayApiKey = desktopKey;
+  await writeFileAtomic(configPath, JSON.stringify(entry, null, 2));
+  logger.info(
+    '[proxy] Moved Claude Desktop to its named key',
+    ...sanitizeLogArgs({ configPath, inferenceGatewayApiKey: desktopKey })
+  );
+  return 'moved';
+}
+
 export interface RemoveDesktopConfigResult {
   removed: boolean;
   /** Config file the gateway settings were removed from; absent when none was found. */
@@ -900,44 +949,19 @@ export interface RemoveDesktopConfigResult {
   reason?: string;
 }
 
-function isLoopbackGatewayUrl(value: unknown): boolean {
-  if (typeof value !== 'string') return false;
-  try {
-    const { hostname } = new URL(value);
-    return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '[::1]';
-  } catch {
-    return false;
-  }
-}
-
-/** A gateway config pointing at a loopback address: the shape `connect` writes, as opposed to a user's own gateway. */
-function isCodeMieGatewayConfig(config: Record<string, unknown>): boolean {
-  return config.inferenceProvider === 'gateway' && isLoopbackGatewayUrl(config.inferenceGatewayBaseUrl);
-}
-
 /**
  * The local gateway Claude Desktop's applied config points at, or null when Desktop is not
  * connected to CodeMie's (no applied config or an unsafe `appliedId`, not a loopback gateway
- * config, a gateway key other than the local one, a URL without a port, anything unreadable,
- * an unsupported platform). The local key is the one the daemon state file names, else the
- * default key. Read-only; never throws.
+ * config, a readable gateway key other than the local one alone or with `.claude-desktop`, no
+ * key, a URL without a port, anything unreadable, an unsupported platform). A key Desktop has
+ * sealed gives the port. The local key is the one the daemon state file names, else the default
+ * key. Read-only; never throws.
  */
 export async function readDesktopGateway(baseDir?: string, stateFile?: string): Promise<{ port: number } | null> {
-  try {
-    const libDir = join(baseDir ?? getDesktopBaseDir(), 'configLibrary');
-    const meta: unknown = JSON.parse(await readFile(join(libDir, '_meta.json'), 'utf-8'));
-    const appliedId = appliedConfigId(meta);
-    if (!appliedId) return null;
-    const config: unknown = JSON.parse(await readFile(join(libDir, `${appliedId}.json`), 'utf-8'));
-    if (!isRecord(config) || !isCodeMieGatewayConfig(config)) return null;
-    const port = Number.parseInt(new URL(config.inferenceGatewayBaseUrl as string).port, 10);
-    if (!Number.isInteger(port) || port <= 0) return null;
-    const localKey = (await readState(stateFile))?.gatewayKey ?? DEFAULT_GATEWAY_KEY;
-    return config.inferenceGatewayApiKey === localKey ? { port } : null;
-  } catch (error) {
-    logger.debug('[proxy] Claude Desktop gateway not readable', ...sanitizeLogArgs(error));
-    return null;
-  }
+  const gateway = await readDesktopGatewayConfig(baseDir);
+  if (!gateway) return null;
+  const localKey = (await readState(stateFile))?.gatewayKey ?? DEFAULT_GATEWAY_KEY;
+  return isDesktopPointedAtLocalProxy(gateway, localKey) ? { port: gateway.port } : null;
 }
 
 /**
@@ -945,10 +969,12 @@ export async function readDesktopGateway(baseDir?: string, stateFile?: string): 
  * servers from the applied `configLibrary/<UUID>.json`, so Claude Desktop returns to its
  * normal login.
  *
- * Only acts on a config whose gateway points at a loopback address — a gateway anywhere else
- * was configured by the user, not by `connect`. MCP servers the user added themselves and any
+ * Only acts on a config whose gateway points at a loopback address with a key the local daemon accepts (or one
+ * Desktop has sealed) — any other gateway, a local one with another key included, was configured by the user, not
+ * by `connect`. MCP servers the user added themselves and any
  * unrelated keys are preserved. When nothing else remains, the config file is deleted and its
- * `_meta.json` entry dropped, so Desktop no longer has a CodeMie profile applied.
+ * `_meta.json` entry dropped, so Desktop no longer has a CodeMie profile applied; a config that is
+ * a symbolic link has its target written `{}` first (a failed write is only logged), then the link is removed.
  */
 export async function removeDesktopConfig(
   baseDir: string = getDesktopBaseDir(),
@@ -991,6 +1017,10 @@ export async function removeDesktopConfig(
   if (!isCodeMieGatewayConfig(existing)) {
     return { removed: false, configPath, deletedConfigFile: false, reason: 'no CodeMie gateway configured' };
   }
+  const localKey = (await readState())?.gatewayKey ?? DEFAULT_GATEWAY_KEY;
+  if (!isDesktopPointedAtLocalProxy(desktopGatewayOfEntry(existing), localKey)) {
+    return { removed: false, configPath, deletedConfigFile: false, reason: 'its local gateway is not CodeMie\'s' };
+  }
 
   for (const key of [...INFERENCE_KEYS, ...GATEWAY_SIGN_IN_KEYS]) {
     delete existing[key];
@@ -1017,6 +1047,18 @@ export async function removeDesktopConfig(
 
   const deletedConfigFile = Object.keys(existing).length === 0;
   if (deletedConfigFile) {
+    // The next connect writes a new file under a new id, so a kept link would be read by nothing:
+    // the target is emptied (a synced dotfile loses CodeMie's gateway too) and the link removed.
+    if (await isSymbolicLink(configPath)) {
+      try {
+        await writeFileAtomic(configPath, '{}');
+      } catch (error) {
+        logger.warn(
+          '[proxy] Could not empty the target of the linked Claude Desktop config; removing the link',
+          ...sanitizeLogArgs({ configPath, error: error instanceof Error ? error.message : String(error) })
+        );
+      }
+    }
     await rm(configPath, { force: true });
     const updatedMeta: ConfigMeta = {
       ...meta,
