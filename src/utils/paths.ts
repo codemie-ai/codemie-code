@@ -242,8 +242,6 @@ export function isSamePath(a: string, b: string, platform: NodeJS.Platform = pro
   return getPathModule(platform).relative(a, b) === '';
 }
 
-const realpathNative = promisify(realpath.native);
-
 /**
  * Like {@link isSamePath}, but first resolves both sides through the filesystem
  * (`realpath.native`), so symlinks, junctions and Windows 8.3 short names compare equal.
@@ -252,7 +250,8 @@ const realpathNative = promisify(realpath.native);
 export async function isSamePathResolved(a: string, b: string): Promise<boolean> {
   const resolve = async (p: string): Promise<string> => {
     try {
-      return await realpathNative(p);
+      // Resolved lazily so modules that mock `fs` without `realpath` still import cleanly.
+      return await promisify(realpath.native)(p);
     } catch {
       return p;
     }
