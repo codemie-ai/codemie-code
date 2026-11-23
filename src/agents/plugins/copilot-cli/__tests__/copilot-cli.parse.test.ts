@@ -324,6 +324,13 @@ describe('CopilotCliSessionAdapter.parseSessionFile', () => {
           timestamp: '2026-08-11T11:29:22.000Z',
           data: { text: '<copilot_tauri_workspace>only preamble</copilot_tauri_workspace>' },
         },
+        {
+          type: 'user.message',
+          timestamp: '2026-08-11T11:29:23.000Z',
+          data: {
+            text: 'Read notes.txt <system_notification> Reminder: rename the session. </system_notification>\n<app_user_message_source_json>{"id":"m1"}</app_user_message_source_json>',
+          },
+        },
       ].map((l) => JSON.stringify(l)).join('\n') + '\n'
     );
 
@@ -335,9 +342,11 @@ describe('CopilotCliSessionAdapter.parseSessionFile', () => {
     expect(parsed.metrics!.userPrompts).toEqual([
       { count: 1, text: 'Fix the bug' },
       { count: 1, text: 'Add a test' },
+      { count: 1, text: 'Read notes.txt' },
     ]);
     expect(users[0].message?.content).toBe('Fix the bug');
     expect(users[1].message?.content).toBe('Add a test');
+    expect(users[3].message?.content).toBe('Read notes.txt');
   });
 
   it('merges session.shutdown line totals into the per-file operations without duplicating', async () => {
