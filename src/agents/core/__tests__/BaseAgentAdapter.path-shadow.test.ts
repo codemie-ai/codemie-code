@@ -34,6 +34,7 @@ vi.mock('../../../utils/processes.js', () => ({
 vi.mock('../../../utils/npm-prefix.js', () => ({
   getCodemieNpmPrefix: vi.fn(),
   getCodemieOrGlobalNpmPrefix: vi.fn(),
+  getGlobalNpmPrefix: vi.fn(),
   getNpmBinDir: vi.fn((prefix: string) => prefix),
 }));
 
@@ -42,9 +43,9 @@ vi.mock('fs/promises', async (importOriginal) => {
   return { ...actual, access: vi.fn() };
 });
 
-import { BaseAgentAdapter } from '../BaseAgentAdapter.js';
+import { BaseAgentAdapter, resetNpmConfigPrefixCache } from '../BaseAgentAdapter.js';
 import { getCommandMatches } from '../../../utils/processes.js';
-import { getCodemieNpmPrefix, getCodemieOrGlobalNpmPrefix } from '../../../utils/npm-prefix.js';
+import { getCodemieNpmPrefix, getCodemieOrGlobalNpmPrefix, getGlobalNpmPrefix } from '../../../utils/npm-prefix.js';
 import { access } from 'fs/promises';
 
 const metadata = (overrides: Partial<AgentMetadata> = {}): AgentMetadata => ({
@@ -73,9 +74,11 @@ function setPlatform(value: NodeJS.Platform): void {
 describe('BaseAgentAdapter.checkPathShadow', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetNpmConfigPrefixCache();
     setPlatform('win32');
     vi.mocked(getCodemieNpmPrefix).mockReturnValue(MANAGED);
     vi.mocked(getCodemieOrGlobalNpmPrefix).mockResolvedValue(MANAGED);
+    vi.mocked(getGlobalNpmPrefix).mockResolvedValue(null);
     vi.mocked(access).mockResolvedValue(undefined);
   });
 
@@ -107,9 +110,9 @@ describe('BaseAgentAdapter.checkPathShadow', () => {
     expect(await new TestAdapter().checkPathShadow()).toEqual({ status: 'missing' });
   });
 
-  it('skips the PATH lookup when no managed shim exists', async () => {
+  it('skips the PATH lookup when no managed shim exists and resolvePrefix is set', async () => {
     vi.mocked(access).mockRejectedValue(new Error('ENOENT'));
-    expect(await new TestAdapter().checkPathShadow()).toEqual({ status: 'missing' });
+    expect(await new TestAdapter().checkPathShadow({ resolvePrefix: true })).toEqual({ status: 'missing' });
     expect(getCommandMatches).not.toHaveBeenCalled();
   });
 
@@ -165,6 +168,65 @@ describe('BaseAgentAdapter.checkPathShadow', () => {
     vi.mocked(getCommandMatches).mockResolvedValue({ status: 'answered', matches: [`${MANAGED}\\pi.cmd`] });
     expect(await new TestAdapter().checkPathShadow({ resolvePrefix: true })).toEqual({ status: 'clear' });
     expect(getCodemieOrGlobalNpmPrefix).toHaveBeenCalledTimes(1);
+  });
+
+  describe('npm-config prefix fallback (running codemie outside the managed prefix)', () => {
+    const NPM_PREFIX = 'C:\\Users\\u\\npm-global';
+
+    beforeEach(() => {
+      resetNpmConfigPrefixCache();
+      vi.mocked(getCodemieNpmPrefix).mockReturnValue(MANAGED);
+      vi.mocked(getGlobalNpmPrefix).mockResolvedValue(NPM_PREFIX);
+      // Derived prefix has no shim; only the npm-config prefix does.
+      vi.mocked(access).mockImplementation(async (p) => {
+        if (!String(p).startsWith(NPM_PREFIX)) throw new Error('ENOENT');
+      });
+    });
+
+    it('reports missing-on-path when only the npm-config prefix has the shim and PATH has no match', async () => {
+      vi.mocked(getCommandMatches).mockResolvedValue({ status: 'answered', matches: [] });
+      expect(await new TestAdapter().checkPathShadow()).toEqual({
+        status: 'missing-on-path',
+        managedDir: NPM_PREFIX,
+        shimPath: `${NPM_PREFIX}\\pi.cmd`,
+      });
+    });
+
+    it('reports missing without spawning npm when PATH already has a match', async () => {
+      vi.mocked(getCommandMatches).mockResolvedValue({ status: 'answered', matches: [`${OTHER}\\pi.cmd`] });
+      expect(await new TestAdapter().checkPathShadow()).toEqual({ status: 'missing' });
+      expect(getGlobalNpmPrefix).not.toHaveBeenCalled();
+    });
+
+    it('reports unknown when the PATH lookup is unanswered', async () => {
+      vi.mocked(getCommandMatches).mockResolvedValue({ status: 'unanswered' });
+      expect(await new TestAdapter().checkPathShadow()).toEqual({ status: 'unknown' });
+    });
+
+    it('reports missing when the npm lookup returns null', async () => {
+      vi.mocked(getCommandMatches).mockResolvedValue({ status: 'answered', matches: [] });
+      vi.mocked(getGlobalNpmPrefix).mockResolvedValue(null);
+      expect(await new TestAdapter().checkPathShadow()).toEqual({ status: 'missing' });
+    });
+
+    it('reports missing when the npm lookup throws', async () => {
+      vi.mocked(getCommandMatches).mockResolvedValue({ status: 'answered', matches: [] });
+      vi.mocked(getGlobalNpmPrefix).mockRejectedValue(new Error('npm failed'));
+      expect(await new TestAdapter().checkPathShadow()).toEqual({ status: 'missing' });
+    });
+
+    it('reports missing when the npm-config prefix equals the derived one', async () => {
+      vi.mocked(getCommandMatches).mockResolvedValue({ status: 'answered', matches: [] });
+      vi.mocked(getGlobalNpmPrefix).mockResolvedValue(MANAGED);
+      expect(await new TestAdapter().checkPathShadow()).toEqual({ status: 'missing' });
+    });
+
+    it('memoizes the npm lookup across agents', async () => {
+      vi.mocked(getCommandMatches).mockResolvedValue({ status: 'answered', matches: [] });
+      await new TestAdapter().checkPathShadow();
+      await new TestAdapter({ name: 'other', cliCommand: 'other' }).checkPathShadow();
+      expect(getGlobalNpmPrefix).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('memoizes the PATH matches for reuse', async () => {

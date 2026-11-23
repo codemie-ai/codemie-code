@@ -29,7 +29,7 @@ import { access, mkdir, writeFile } from 'fs/promises';
 import { join, win32 as winPath } from 'path';
 import { resolveHomeDir, isSamePathResolved } from '../../utils/paths.js';
 import { classifyShadow, type ShadowVerdict } from '../../utils/path-shadow.js';
-import { getCodemieNpmPrefix, getCodemieOrGlobalNpmPrefix, getNpmBinDir } from '../../utils/npm-prefix.js';
+import { getCodemieNpmPrefix, getCodemieOrGlobalNpmPrefix, getGlobalNpmPrefix, getNpmBinDir } from '../../utils/npm-prefix.js';
 import { getMCPConfigSummary as getMCPConfigSummaryUtil } from '../../utils/mcp-config.js';
 import { getExtensionsScanSummary } from '../../utils/extensions-scan.js';
 import {
@@ -62,6 +62,19 @@ import { noticeDeliveryAtExit } from './session/exit-notice.js';
 import { EXIT_NETWORK_BUDGET_MS, START_PASS_EXIT_BUDGET_MS, settleStartPass } from './session/start-pass.js';
 
 const PATH_LOOKUP_TIMEOUT_MS = 5000;
+
+/** npm-config prefix lookup, shared per process so `codemie list` spawns npm at most once. */
+let npmConfigPrefixLookup: Promise<string | null> | undefined;
+
+function getNpmConfigPrefixOnce(): Promise<string | null> {
+  npmConfigPrefixLookup ??= getGlobalNpmPrefix().catch(() => null);
+  return npmConfigPrefixLookup;
+}
+
+/** Test hook: forget the memoized npm-config prefix. */
+export function resetNpmConfigPrefixCache(): void {
+  npmConfigPrefixLookup = undefined;
+}
 
 /** Directory part of a file path, accepting both `/` and `\` separators (mirrors the classifier). */
 function dirOfPath(file: string): string {
@@ -322,6 +335,29 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
+   * Fallback when the derived prefix has no shim: CodeMie may run from another global prefix than
+   * the one `install` used. Only when the agent is nowhere on PATH, look at the npm-config prefix.
+   * Never throws; any failure yields `missing`.
+   */
+  private async probeNpmConfigPrefix(cliCommand: string, derivedPrefix: string): Promise<ShadowVerdict> {
+    const missing: ShadowVerdict = { status: 'missing' };
+    try {
+      const matches = await this.getPathMatches();
+      if (matches === null) return { status: 'unknown' };
+      if (matches.length > 0) return missing;
+
+      const npmPrefix = await getNpmConfigPrefixOnce();
+      if (!npmPrefix || npmPrefix === derivedPrefix) return missing;
+      const managedDir = getNpmBinDir(npmPrefix, 'win32');
+      const shimPath = winPath.join(managedDir, `${cliCommand}.cmd`);
+      await access(shimPath);
+      return { status: 'missing-on-path', managedDir, shimPath };
+    } catch {
+      return missing;
+    }
+  }
+
+  /**
    * Whether another install of this agent shadows the CodeMie-managed one on PATH.
    * Windows only; never throws. `unknown` when the agent opts out, the prefix is unresolved
    * (npm is only spawned to find it when `resolvePrefix` is set) or the lookup failed.
@@ -338,12 +374,13 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       if (!prefix) return unknown;
       const managedDir = getNpmBinDir(prefix, 'win32');
 
-      // Probe the managed shim first: without one the agent can only be 'missing', so skip the PATH lookup.
+      // Probe the managed shim first: without one the agent is 'missing' (barring the npm-config fallback).
       const managedShimPath = winPath.join(managedDir, `${cliCommand}.cmd`);
       try {
         await access(managedShimPath);
       } catch {
-        return { status: 'missing' };
+        if (opts.resolvePrefix) return { status: 'missing' };
+        return this.probeNpmConfigPrefix(cliCommand, prefix);
       }
 
       const matches = await this.getPathMatches();
