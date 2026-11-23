@@ -60,7 +60,7 @@ async function setEnabledFor(connectorId: AnalyticsConnectorId, enabled: boolean
     printSaved(store);
   }
   if (!enabled) {
-    console.log(chalk.dim(coverageNote(connectorId)));
+    console.log(chalk.dim(coverageNote(connectorId, 'disable')));
     return true;
   }
   const resume = changed ? resumeNote(connectorId) : undefined;
@@ -118,7 +118,7 @@ async function excludeFor(connectorId: AnalyticsConnectorId, path: string | unde
     return true;
   }
   printSaved(store, ` (project: ${canonical})`);
-  console.log(chalk.dim(coverageNote(connectorId)));
+  console.log(chalk.dim(coverageNote(connectorId, 'exclude')));
   return true;
 }
 
@@ -286,7 +286,7 @@ export function createProxyAnalyticsCommand(): Command {
   );
 
   withConnectorOptions(
-    analytics.command('disable').description('Stop all analytics collection (every connected connector, or the flagged one; hooks stay installed)')
+    analytics.command('disable').description('Stop all analytics collection (every connected connector, or the flagged one; for Claude this covers hooks, Cowork and Claude Desktop chats; hooks stay installed)')
   ).action((opts: ConnectorOptions) => setEnabled(false, opts));
 
   withConnectorOptions(analytics.command('enable').description('Resume analytics collection (every connected connector, or the flagged one)')).action(

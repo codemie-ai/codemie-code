@@ -29,6 +29,7 @@ import { acquirePidLock } from '@/utils/pid-lock.js';
 import { CoworkRunner, type CoworkProducer } from '@/telemetry/runtime/cowork/CoworkRunner.js';
 import { getClaudeDesktopLocalSessionsRoot } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
 import { isPathWithinDirectory } from '@/utils/paths.js';
+import { AnalyticsSwitch } from '@/telemetry/runtime/analytics-switch.js';
 
 export class DesktopTelemetryRuntime {
   private readonly sessionStore = new SessionStore();
@@ -45,8 +46,8 @@ export class DesktopTelemetryRuntime {
   /** Settles when the poll in flight ends, whatever its outcome; stop() waits for it. */
   private pollInFlight: Promise<void> = Promise.resolve();
   /**
-   * A re-track lock wait of this poll failed: `lastPollAt` is held back so the next poll re-reads this window, for as
-   * long as the wait keeps failing. Discovery is bounded by the sessions active since `startedAt`, so the cost is
+   * A re-track lock wait of this poll failed, or analytics are off: `lastPollAt` is held back so the next poll re-reads
+   * this window, for as long as the wait keeps failing or analytics stay off. Discovery is bounded by the sessions active since `startedAt`, so the cost is
    * their metadata reads per poll and one lock wait per poll until the holder releases.
    */
   private reopenLockFailed = false;
@@ -56,6 +57,7 @@ export class DesktopTelemetryRuntime {
   private startupPass?: Promise<void>;
   private startupChain?: Promise<void>;
   private readonly connection: DesktopConnection;
+  private readonly analyticsSwitch = new AnalyticsSwitch();
   private stopped = false;
   private readonly redelivery: DesktopRedelivery;
   /** Turns Cowork sessions into plugin events in the proxy's spool; only for Claude Desktop's own adapter. */
@@ -128,7 +130,6 @@ export class DesktopTelemetryRuntime {
     await this.poll();
   }
 
-
   /**
    * One poll. Only while Desktop's applied config points at this daemon (its port and key) does it discover and
    * collect new sessions and run the listing re-delivery. Otherwise it runs the Cowork producer for the sessions it is
@@ -147,7 +148,14 @@ export class DesktopTelemetryRuntime {
     const now = Date.now();
 
     try {
+      const collecting = await this.analyticsSwitch.check();
       const connected = await this.connection.check(now);
+      if (!collecting) {
+        // Analytics off: only the Cowork producer runs, which applies the switch itself. What Desktop writes meanwhile is sent after enable
+        this.reopenLockFailed = true;
+        if (!this.stopped) this.cowork?.startIfIdle(now, connected);
+        return;
+      }
       if (!connected) {
         if (!this.stopped) this.cowork?.startIfIdle(now, false);
         await this.followTracked();
@@ -183,9 +191,7 @@ export class DesktopTelemetryRuntime {
         // started is still live work the moment the user types into it, and keying on
         // createdAt made every proxy restart orphan all existing chats permanently.
         // Sessions genuinely idle since collection began are still skipped, so no backlog is replayed.
-        if (discovered.updatedAt < this.connection.collectingSince) {
-          continue;
-        }
+        if (discovered.updatedAt < this.connection.collectingSince) continue;
         try {
           await this.pollSession(discovered);
         } catch (error) {
@@ -351,13 +357,9 @@ export class DesktopTelemetryRuntime {
   ): Promise<Session | 'idle' | undefined | null> {
     if (knownSessionId) {
       const retracked = await this.retrackUnderLock(knownSessionId, discovered);
-      if (retracked !== null) {
-        return retracked;
-      }
+      if (retracked !== null) return retracked;
     }
-    if (!takeNew) {
-      return null;
-    }
+    if (!takeNew) return null;
 
     const attribution = await detectAttribution(discovered.workingDirectory, this.config.profile);
     const [gitBranch, repository, project] = attribution;

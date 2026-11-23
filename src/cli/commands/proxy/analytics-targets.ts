@@ -26,6 +26,7 @@ import { sanitizeLogArgs } from '@/utils/security.js';
 import { renderHint } from '@/utils/hint.js';
 import { adviceForReason } from './analytics-hints.js';
 import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
+import { readDesktopGateway } from './connectors/desktop.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
@@ -220,6 +221,14 @@ async function connectorState(entry: AnalyticsConnector): Promise<ConnectorState
   } catch (error) {
     logger.debug(`[proxy analytics] ${entry.id} activity check failed:`, error);
     unreadable = true;
+  }
+  // Claude Desktop alone is a Claude analytics channel for enable/disable, though `isActive` (hooks) ignores it
+  if (!active && entry.id === CLAUDE_CODE_OTLP_AGENT_NAME) {
+    try {
+      active = Boolean(await readDesktopGateway());
+    } catch (error) {
+      logger.debug('[proxy analytics] Claude Desktop gateway read failed:', error);
+    }
   }
   if ('invalid' in (await entry.readScope())) {
     unreadable = true;
