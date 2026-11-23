@@ -17,7 +17,7 @@ Cause: only CoworkEventProducer (src/telemetry/runtime/cowork/CoworkEventProduce
 Acceptance criteria:
 1. Given analytics are disabled, when a Cowork or Desktop chat session runs, no Desktop session metrics are sent.
 2. Given analytics are disabled, conversation history upload is stopped too (decision made: disable stops EVERYTHING for Desktop: metrics AND conversation sync).
-3. After enable, Desktop sync resumes. DECISION: forward-only — nothing written while disabled is sent after enable (like Claude CLI hooks; do not backfill). Implement as: on disabled->enabled transition set collectingSince = now (same mechanism as the Desktop reconnect transition in DesktopTelemetryRuntime.checkDesktopConnected), and records tracked at the moment of disable must be closed without sending (delivery-budget leaveQueue mechanism in src/agents/core/session/delivery-budget.ts) so the redelivery pass after enable does not upload them.
+3. After enable, Desktop sync resumes. Whether sessions run while disabled are sent afterwards follows the same rule as Cowork CLI Analytics (backfill on enable).
 4. The `disable` output and `--help` describe the same scope (src/cli/commands/proxy/analytics-hints.ts unaffectedChannels/coverageNote, analytics-command.ts, analytics status).
 Tests wanted (small unit tests only, NO integration): Desktop runtime/metrics/delivery sends nothing while claude-analytics.json has enabled:false and resumes when true; coverageNote()/unaffectedChannels for the Claude connector matches the channels that stay active.
 

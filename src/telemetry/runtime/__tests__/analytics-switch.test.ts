@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import type { Session } from '@/agents/core/session/types.js';
 import { AnalyticsSwitch, claudeAnalyticsCollecting, readClaudeAnalyticsSwitch } from '../analytics-switch.js';
 
 describe('analytics switch', () => {
@@ -45,36 +44,25 @@ describe('analytics switch', () => {
     expect(await claudeAnalyticsCollecting()).toBe(false);
   });
 
-  describe('the forward-only checkpoint fields of a known record', () => {
-    const delivery = { closeLiveRecordsLocally: vi.fn(async () => true) };
-    const record = (checkpoint: Partial<NonNullable<Session['runtimeCheckpoint']>>): Session => ({
-      sessionId: 'record-1',
-      runtimeCheckpoint: { externalSessionId: 'ext-1', transcriptPath: '/t.jsonl', lastDiscoveredAt: 1, ...checkpoint }
-    }) as Session;
-
-    it('adopts the current generation without a rebase for a record that predates the stamp', async () => {
-      writePreferences(JSON.stringify({ enabled: true, collectionGeneration: 3 }));
+  describe('AnalyticsSwitch.check', () => {
+    it('collects while on and not while off', async () => {
       const gate = new AnalyticsSwitch();
-      await gate.check(1_000, new Map(), delivery);
+      expect(await gate.check()).toBe(true);
 
-      expect(gate.checkpointFields(record({}))).toEqual({ collectionGeneration: 3 });
+      writePreferences(JSON.stringify({ enabled: false }));
+      expect(await gate.check()).toBe(false);
+
+      writePreferences(JSON.stringify({ enabled: true }));
+      expect(await gate.check()).toBe(true);
     });
 
-    it('rebases a record stamped with another generation to the time this daemon first saw the current one', async () => {
-      writePreferences(JSON.stringify({ enabled: true, collectionGeneration: 3 }));
+    it('does not collect while the file is corrupt and resumes when it reads valid', async () => {
       const gate = new AnalyticsSwitch();
-      await gate.check(1_000, new Map(), delivery);
+      writePreferences('not json');
+      expect(await gate.check()).toBe(false);
 
-      expect(gate.checkpointFields(record({ collectionGeneration: 1 }))).toEqual({ baselineCutoffMs: 1_000, collectionGeneration: 3 });
-      expect(gate.checkpointFields(record({ collectionGeneration: 3 }))).toEqual({ collectionGeneration: 3 });
-    });
-
-    it('keeps a pending baseline that is later than the cutoff', async () => {
-      writePreferences(JSON.stringify({ enabled: true, collectionGeneration: 3 }));
-      const gate = new AnalyticsSwitch();
-      await gate.check(1_000, new Map(), delivery);
-
-      expect(gate.checkpointFields(record({ collectionGeneration: 1, baselineCutoffMs: 1_500 }))).toMatchObject({ baselineCutoffMs: 1_500 });
+      writePreferences(JSON.stringify({ enabled: true }));
+      expect(await gate.check()).toBe(true);
     });
   });
 });

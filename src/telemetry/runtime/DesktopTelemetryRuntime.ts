@@ -46,8 +46,8 @@ export class DesktopTelemetryRuntime {
   /** Settles when the poll in flight ends, whatever its outcome; stop() waits for it. */
   private pollInFlight: Promise<void> = Promise.resolve();
   /**
-   * A re-track lock wait of this poll failed: `lastPollAt` is held back so the next poll re-reads this window, for as
-   * long as the wait keeps failing. Discovery is bounded by the sessions active since `startedAt`, so the cost is
+   * A re-track lock wait of this poll failed, or analytics are off: `lastPollAt` is held back so the next poll re-reads
+   * this window, for as long as the wait keeps failing or analytics stay off. Discovery is bounded by the sessions active since `startedAt`, so the cost is
    * their metadata reads per poll and one lock wait per poll until the holder releases.
    */
   private reopenLockFailed = false;
@@ -69,7 +69,7 @@ export class DesktopTelemetryRuntime {
     cowork?: CoworkProducer
   ) {
     this.metrics = new DesktopSessionMetrics(config, this.sessionStore);
-    this.delivery = new DesktopSessionDelivery(config, this.sessionStore, new SessionSyncer(), adapter, this.metrics, this.analyticsSwitch);
+    this.delivery = new DesktopSessionDelivery(config, this.sessionStore, new SessionSyncer(), adapter, this.metrics);
     this.redelivery = new DesktopRedelivery(this.delivery, this.startedAt);
     this.connection = new DesktopConnection(config, this.startedAt);
     this.cowork = CoworkRunner.forAdapter(adapter, config, cowork);
@@ -148,12 +148,11 @@ export class DesktopTelemetryRuntime {
     const now = Date.now();
 
     try {
-      const { collecting, enabledAt } = await this.analyticsSwitch.check(now, this.trackedSessions, this.delivery);
-      if (enabledAt !== undefined) this.connection.collectingSince = enabledAt;
+      const collecting = await this.analyticsSwitch.check();
       const connected = await this.connection.check(now);
       if (!collecting) {
-        this.knownSessionIds = undefined;
-        // Analytics off: only the Cowork producer runs, which applies the switch itself
+        // Analytics off: only the Cowork producer runs, which applies the switch itself. What Desktop writes meanwhile is sent after enable
+        this.reopenLockFailed = true;
         if (!this.stopped) this.cowork?.startIfIdle(now, connected);
         return;
       }
@@ -387,7 +386,7 @@ export class DesktopTelemetryRuntime {
     // after an upgrade is what spiked backend load; the tracked session starts at the cutoff.
     const baselineCutoffMs = discovered.createdAt < this.connection.collectingSince ? this.connection.collectingSince : undefined;
 
-    const session = this.analyticsSwitch.stampNew(buildNewSession(this.config, this.metrics.credentialsUrl, discovered, attribution, baselineCutoffMs));
+    const session = buildNewSession(this.config, this.metrics.credentialsUrl, discovered, attribution, baselineCutoffMs);
     await this.sessionStore.saveSession(session);
     try {
       await this.metrics.sendSessionStartMetric(session, discovered);
@@ -464,14 +463,12 @@ export class DesktopTelemetryRuntime {
     setRuntimeCheckpoint(existing, {
       // Keep fields owned by other steps, e.g. a baseline marker not yet applied after a crash.
       ...existing.runtimeCheckpoint,
-      ...this.analyticsSwitch.checkpointFields(existing),
       externalSessionId: discovered.externalSessionId,
       transcriptPath: discovered.transcriptPath,
       lastDiscoveredAt: Date.now(),
       lastSeenActivityAt: discovered.updatedAt
     });
     await this.sessionStore.saveSession(existing);
-    this.analyticsSwitch.confirmRebased(existing.sessionId);
     return existing;
   }
 

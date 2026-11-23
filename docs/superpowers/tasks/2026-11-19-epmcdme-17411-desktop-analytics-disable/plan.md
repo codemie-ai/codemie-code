@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax.
 
-**Goal:** `codemie proxy analytics disable` stops Claude Desktop metrics and conversation upload; `enable` resumes forward-only.
+**Goal:** `codemie proxy analytics disable` stops Claude Desktop metrics and conversation upload; `enable` resumes and sends what was written while disabled (backfill, as for Cowork).
 
-**Architecture:** One shared helper reads `claude-analytics.json` (corrupt = off). `DesktopTelemetryRuntime.poll()` re-reads it every poll, tracks the last valid state for the off/on edge, closes live Desktop records locally on off, and rebases known records on on. `DesktopSessionMetrics.canDeliver()` is a second layer. CLI text and Desktop-only target selection follow.
+**Architecture:** One shared helper reads `claude-analytics.json` (corrupt = off). `DesktopTelemetryRuntime.poll()` re-reads it every poll and collects nothing while it is off, holding `lastPollAt` back so the first poll after enable discovers what changed meanwhile. `DesktopSessionMetrics.canDeliver()` is a second layer. CLI text and Desktop-only target selection follow.
 
 **Tech Stack:** TypeScript (ES modules, `.js` imports, `@/` alias, no `any`, `logger` not console), Vitest.
 
@@ -18,8 +18,8 @@
 ## Acceptance criteria
 
 - With the switch off or the file corrupt, Desktop sends no start/end metric and no conversation sync, from any send site.
-- After enable, nothing written while disabled is sent (new, known and tracked chats).
-- Records tracked at disable are closed locally (renamed, nothing sent) and are not uploaded by a later redelivery pass.
+- After enable, what was written while disabled is sent (new, known and tracked chats), the same rule as Cowork.
+- Records tracked at disable are left as they are and are sent after enable.
 - `disable` output, `--help` and `analytics status` agree on scope; the exclude note still says Desktop chats are not affected.
 - Flagless `enable`/`disable` works when only Claude Desktop is connected.
 
@@ -29,7 +29,7 @@
 
 **Files:** Create `src/telemetry/runtime/analytics-switch.ts`; Test `src/telemetry/runtime/__tests__/analytics-switch.test.ts`
 
-**Interfaces:** Produces `type ClaudeAnalyticsSwitch = 'on' | 'off' | 'corrupt'`, `readClaudeAnalyticsSwitch(): Promise<ClaudeAnalyticsSwitch>`, `claudeAnalyticsCollecting(): Promise<boolean>`.
+**Interfaces:** Produces `type ClaudeAnalyticsSwitch = 'on' | 'off' | 'corrupt'`, `readClaudeAnalyticsSwitch(): Promise<ClaudeAnalyticsSwitch>`, `claudeAnalyticsCollecting(): Promise<boolean>`, and `AnalyticsSwitch.check(): Promise<boolean>`, the daemon's per-poll read (warns once on a corrupt file).
 
 Test-first: yes — with a temp `CODEMIE_HOME`: missing file -> on, `{enabled:true}` -> on, `{enabled:false}` -> off, `not json` -> corrupt and `claudeAnalyticsCollecting()` false for off and corrupt.
 
@@ -49,65 +49,34 @@ export async function claudeAnalyticsCollecting(): Promise<boolean> {
 
 - [ ] Run the new test; it passes.
 
-### Task 2: Close records locally + `canDeliver` layer
+### Task 2: `canDeliver` layer
 
-**Files:** Modify `src/telemetry/runtime/DesktopSessionDelivery.ts` (add method after `reconcileRecords`, ~:259; adjust log text at :103), `src/telemetry/runtime/DesktopSessionMetrics.ts:33`; Test `src/telemetry/runtime/__tests__/DesktopSessionDelivery.test.ts` (new)
+**Files:** Modify `src/telemetry/runtime/DesktopSessionMetrics.ts:33`, `src/telemetry/runtime/DesktopSessionDelivery.ts` (log text at :103); Test `src/telemetry/runtime/__tests__/DesktopSessionDelivery.test.ts` (new)
 
-**Interfaces:** Consumes Task 1 `claudeAnalyticsCollecting`. Produces `DesktopSessionDelivery.closeLiveRecordsLocally(trackedActivity?: ReadonlyMap<string, number>): Promise<boolean>` — true when no own-host live record is left unclosed.
+**Interfaces:** Consumes Task 1 `claudeAnalyticsCollecting`.
 
-Test-first: yes — in a temp `CODEMIE_HOME`, save an `active` record (owner `process.pid`) and a live `completed` undelivered record via `SessionStore`, mock `SessionSyncer.sync` and the metrics senders: after the call both are renamed `completed_*`, the active one saved `reason: 'desktop-analytics-disabled'`, sync/end metric never called, returns true; a record whose reconcile lock is held (`acquirePidLock` mode `try` fails) returns false and stays live; a foreign-host record and an `active` record owned by another live pid are untouched. A second test: `new DesktopSessionMetrics(...).canDeliver()` is false while `enabled:false` and while corrupt.
+Test-first: yes — `new DesktopSessionMetrics(...).canDeliver()` is false while `enabled:false` and while corrupt, true otherwise.
 
-- [ ] Write both tests; run; see them fail.
-- [ ] `canDeliver()`: first line `if (!(await claudeAnalyticsCollecting())) return false;` (before the cookie read). Reword the `deliverLocked` log at :103 to "Analytics off or no usable credentials; nothing sent" (no test pins it; grep first).
-- [ ] `closeLiveRecordsLocally`: list `getCodemiePath('sessions')` with `isLiveRecordFileName` (as `listCandidates` :266-304). For each record with `agentName === config.clientType` and not `isForeignRecord`, take `acquirePidLock(reconcileLockPath(id), { mode: 'try' })` (no lock = unclosed), re-read via `readLiveRecord` under it, then:
-  - `active` and owner is not this process and alive (`isOwnerAlive`): skip, not counted.
-  - `active`: `saveSession({...record, status: 'completed', reason: 'desktop-analytics-disabled', endTime: desktopEndTime(record, trackedActivity.get(id))})`, then `leaveQueue(saved, undefined, Date.now())` (no drop mark, `delivery-budget.ts:114`).
-  - `completed` with `ownerPid` defined: `leaveQueue(record, undefined, Date.now())`.
-  - `leaveQueue` false -> `logger.warn` and count as unclosed. Never throws; failures are logged.
+- [ ] Write the test; run; see it fail.
+- [ ] `canDeliver()`: first line `if (!(await claudeAnalyticsCollecting())) return false;` (before the cookie read). A finalization while off then saves the record and flushes it locally, nothing sent; the record stays live and is delivered after enable. Reword the `deliverLocked` log at :103 to "Analytics off or no usable credentials; nothing sent" (no test pins it; grep first).
 - [ ] Run `DesktopSessionDelivery.test.ts`; passes.
 
-### Task 3: Runtime gate, edge detection, forward-only
+### Task 3: Runtime gate and backfill on enable
 
-**Files:** Modify `src/telemetry/runtime/DesktopTelemetryRuntime.ts` (new fields near :67; `poll()` :145-215; `retrackSession` :449-474); Test `src/telemetry/runtime/__tests__/DesktopTelemetryRuntime.test.ts` (new `describe` after 'collection while Desktop is connected', ~:2256; reuse `startDaemon`, `pollTicks`, fake clock, `mockSync`, `mockSendSessionStart/End`; write the switch with `writeFileSync(join(codemieHome, 'claude-analytics.json'), ...)`; add an `applyBaseline` spy to `createAdapter()` if missing)
+**Files:** Modify `src/telemetry/runtime/DesktopTelemetryRuntime.ts` (`poll()` :145-215); Test `src/telemetry/runtime/__tests__/DesktopTelemetryRuntime.test.ts` (new `describe` after 'collection while Desktop is connected', ~:2256; reuse `startDaemon`, `pollTicks`, fake clock, `mockSync`, `mockSendSessionStart/End`; write the switch with `writeFileSync(join(codemieHome, 'claude-analytics.json'), ...)`)
 
-**Interfaces:** Consumes Task 1 `readClaudeAnalyticsSwitch`, Task 2 `closeLiveRecordsLocally`. Adds private fields `analyticsState?: 'on' | 'off'`, `closePending`, `corruptWarned`, `forwardOnlyFrom?: number`, `rebased: Set<string>`.
+**Interfaces:** Consumes Task 1 `AnalyticsSwitch`. Adds the private field `analyticsSwitch`.
 
 Test-first: yes —
 1. `enabled:false`: several polls with a discoverable chat -> no start metric, no sync, no new record, no end metric on stop(); Cowork is still called as before.
-2. A chat tracked and synced while on, then disabled: next poll leaves its files `completed_*`, nothing sent; after enabling and advancing `DESKTOP_REDELIVERY_INTERVAL_MS` still nothing sent.
-3. Enable after a disabled period, chat written during it and again after: `applyBaseline` receives cutoff = enable time (Date mock), so only post-enable content is synced; the chat idle since enable is skipped (`collectingSince`).
-4. Daemon started disabled -> enabled is an edge (cutoff applied); corrupt -> valid-on flap while previously on is not (no cutoff, `collectingSince` unchanged); corrupt sends nothing.
-5. `closeLiveRecordsLocally` returning false keeps the gate closed after enable until it succeeds.
+2. A chat tracked and synced while on gains messages while off: nothing is synced while off; after enable they are synced.
+3. A chat opened while off: nothing is sent while off; after enable it is synced in full, with its start metric and no baseline.
+4. `stop()` while off sends no end metric and leaves the record live; a later start with the switch on delivers it.
+5. A corrupt file sends nothing and warns once; collection resumes when it reads valid.
+6. A chat finalized before the pause and active while off is reopened after enable and its new messages are synced.
 
 - [ ] Write the tests; run; see them fail.
-- [ ] Add `checkAnalyticsSwitch(now): Promise<boolean>`, called first in `poll()` (before `checkDesktopConnected`):
-
-```ts
-private async checkAnalyticsSwitch(now: number): Promise<boolean> {
-  const read = await readClaudeAnalyticsSwitch();
-  if (read === 'corrupt') { /* warn once with the prefs path; keep analyticsState: a flap is no edge */ return false; }
-  this.corruptWarned = false;
-  if (read === 'off') {
-    if (this.analyticsState !== 'off' || this.closePending) {
-      this.analyticsState = 'off';
-      this.closePending = !(await this.delivery.closeLiveRecordsLocally(this.trackedActivity()));
-      if (!this.closePending) { this.trackedSessions.clear(); this.knownSessionIds = undefined; }
-    }
-    return false;
-  }
-  if (this.analyticsState === 'off') {
-    if (this.closePending) this.closePending = !(await this.delivery.closeLiveRecordsLocally(this.trackedActivity()));
-    if (this.closePending) return false; // forward-only: not enabled until the close succeeded
-    this.collectingSince = this.forwardOnlyFrom = now;
-    this.rebased.clear();
-  }
-  this.analyticsState = 'on';
-  return true;
-}
-```
-  `trackedActivity()` maps `codemieSessionId -> lastSeenActivityAt` from `trackedSessions`. Log info on each real edge.
-- [ ] `poll()`: when `!collecting`, call `cowork?.startIfIdle(now, connected)` exactly as today (not-connected branch passes `false`), skip start-up pass, discovery, `pollSession`, `finalizeInactive`, redelivery, and return; `startupDue` stays set so the start-up reconcile runs on the first collecting poll. Connected-and-collecting flow unchanged. `lastPollAt` handling in `finally` unchanged.
-- [ ] `retrackSession` :464: when `forwardOnlyFrom !== undefined`, the session id is not in `rebased` and `existing.runtimeCheckpoint?.baselineCutoffMs === undefined`, add `baselineCutoffMs: this.forwardOnlyFrom` to the merged `setRuntimeCheckpoint` call and add the id to `rebased`. This reuses `adapter.applyBaseline` in `processSession` (:52) so known/reopened records skip earlier content.
+- [ ] `poll()`: call `analyticsSwitch.check()` first (before `connection.check`). When it is false: set `reopenLockFailed` so `lastPollAt` is held back and the first poll after enable re-reads the window of the pause, call `cowork?.startIfIdle(now, connected)` exactly as today (not-connected branch passes `false`), skip the start-up pass, discovery, `pollSession`, `finalizeInactive` and redelivery, and return; `startupDue` stays set so the start-up reconcile runs on the first collecting poll. Tracked sessions and live records are left as they are. Connected-and-collecting flow unchanged.
 - [ ] Run `DesktopTelemetryRuntime.test.ts` and `DesktopTelemetryRuntime.start.test.ts` (the latter also reads the switch under its own `CODEMIE_HOME`); all pass.
 
 ### Task 4: CLI wording and tests
@@ -145,4 +114,4 @@ Test-first: yes — flagless `disable` and `enable` with no hooks, no stored pre
 
 ## Follow-ups (no work here)
 
-`excludedProjects` for Desktop chats; Cowork backfill; `doctor` (`analytics-delivery-lines.ts`) and `inspect-desktop` still report `collecting: true` while off; a Desktop row in `analytics status`; user docs (`docs/COMMANDS.md`, `HOOKS.md`, `PROXY-AND-ANALYTICS.md`, README); the in-memory forward-only cutoff is lost if the daemon restarts between enable and a known chat's next activity.
+`excludedProjects` for Desktop chats; `doctor` (`analytics-delivery-lines.ts`) and `inspect-desktop` still report `collecting: true` while off; a Desktop row in `analytics status`; user docs (`docs/COMMANDS.md`, `HOOKS.md`, `PROXY-AND-ANALYTICS.md`, README); the held-back discovery window is lost if the daemon restarts while off (the start-up reconcile still delivers its live records).
