@@ -3,7 +3,7 @@ import inquirer from 'inquirer';
 import chalk from 'chalk';
 import ora from 'ora';
 import { ConfigLoader } from '../../utils/config.js';
-import type { CodeMieConfigOptions, ProviderProfile } from '../../env/types.js';
+import type { AnalyticsSettingsConfig, CodeMieConfigOptions, MultiProviderConfig, ProviderProfile } from '../../env/types.js';
 import { logger } from '../../utils/logger.js';
 import { ProviderRegistry } from '../../providers/index.js';
 import {
@@ -383,6 +383,9 @@ async function handlePluginSetup(
       // Display success
       displaySetupSuccess(finalProfileName!, providerName, selectedModel);
 
+      // Optional analytics settings (obfuscation, ticket tracker)
+      await promptAnalyticsSettings(workingDir);
+
       // Show next steps based on storage location
       if (storageLocation === 'local') {
         console.log(chalk.cyan('\n💡 Next steps:'));
@@ -407,6 +410,86 @@ async function handlePluginSetup(
     const providerTemplate = ProviderRegistry.getProvider(providerName);
     displaySetupError(new Error(errorMessage), providerTemplate?.setupInstructions);
     throw error;
+  }
+}
+
+type AnalyticsScope = 'global' | 'local';
+
+async function saveAnalyticsSettings(
+  scope: AnalyticsScope,
+  workingDir: string,
+  patch: AnalyticsSettingsConfig
+): Promise<void> {
+  const config: MultiProviderConfig = scope === 'global'
+    ? await ConfigLoader.loadMultiProviderConfig()
+    : await ConfigLoader.loadLocalMultiProviderConfig(workingDir);
+  const analytics: AnalyticsSettingsConfig = { ...config.analytics, ...patch };
+  for (const key of Object.keys(analytics) as Array<keyof AnalyticsSettingsConfig>) {
+    if (analytics[key] === undefined) delete analytics[key];
+  }
+  config.analytics = analytics;
+  if (scope === 'global') {
+    await ConfigLoader.saveMultiProviderConfig(config);
+  } else {
+    await ConfigLoader.saveLocalMultiProviderConfig(workingDir, config);
+  }
+}
+
+/**
+ * Analytics setup step: PII/secret obfuscation of analytics text and the ticket tracker used for
+ * bare `#123` attribution. Each is saved globally or for the current project. Both default to
+ * unchanged; a project cannot turn obfuscation off when the global setting is on.
+ */
+async function promptAnalyticsSettings(workingDir: string): Promise<void> {
+  try {
+    const scopeChoices = [
+      { name: 'Globally (all projects)', value: 'global' },
+      { name: 'This project only', value: 'local' }
+    ];
+
+    const { obfuscation } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'obfuscation',
+        message: 'Obfuscate emails, phone numbers, IPs, card numbers and secrets in analytics text?',
+        choices: [
+          { name: 'Leave unchanged (default: off)', value: 'unchanged' },
+          { name: 'On', value: 'on' },
+          { name: 'Off', value: 'off' }
+        ],
+        default: 'unchanged'
+      }
+    ]);
+    if (obfuscation !== 'unchanged') {
+      const { scope } = await inquirer.prompt([
+        { type: 'list', name: 'scope', message: 'Save obfuscation setting:', choices: scopeChoices, default: 'global' }
+      ]);
+      await saveAnalyticsSettings(scope as AnalyticsScope, workingDir, { obfuscation });
+    }
+
+    const { ticketTracker } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'ticketTracker',
+        message: 'Ticket tracker for bare "#123" references in analytics:',
+        choices: [
+          { name: 'Leave unchanged (default: unset)', value: 'unchanged' },
+          { name: 'Jira', value: 'jira' },
+          { name: 'Azure DevOps', value: 'azure-devops' },
+          { name: 'GitHub', value: 'github' },
+          { name: 'GitLab', value: 'gitlab' }
+        ],
+        default: 'unchanged'
+      }
+    ]);
+    if (ticketTracker !== 'unchanged') {
+      const { scope } = await inquirer.prompt([
+        { type: 'list', name: 'scope', message: 'Save ticket tracker:', choices: scopeChoices, default: 'global' }
+      ]);
+      await saveAnalyticsSettings(scope as AnalyticsScope, workingDir, { ticketTracker });
+    }
+  } catch (error: unknown) {
+    logger.warn(`Analytics settings were not saved: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

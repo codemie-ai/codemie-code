@@ -201,6 +201,15 @@ export interface LegacyConfig {
 }
 
 /**
+ * Analytics settings stored in the global or project config (EPMCDME-17748).
+ * Read by `resolveAnalyticsSettings` in `src/utils/analytics-settings.ts`.
+ */
+export interface AnalyticsSettingsConfig {
+  obfuscation?: 'on' | 'off';
+  ticketTracker?: 'jira' | 'azure-devops' | 'github' | 'gitlab';
+}
+
+/**
  * Multi-provider configuration (version 2)
  */
 export interface MultiProviderConfig {
@@ -210,6 +219,7 @@ export interface MultiProviderConfig {
   codemieAssistants?: CodemieAssistant[];
   userEmail?: string;
   workspace?: WorkspaceConfig;
+  analytics?: AnalyticsSettingsConfig;
   profiles: Record<string, ProviderProfile>;
 }
 
