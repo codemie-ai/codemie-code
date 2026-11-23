@@ -1,0 +1,32 @@
+{
+  "rulesVersion": "1",
+  "failurePlaceholder": "[REDACTED:FAILED]",
+  "samples": [
+    { "name": "email", "input": "contact john.doe@example.com now", "expected": "contact [REDACTED:EMAIL] now" },
+    { "name": "tickets adjacent to email", "input": "PROJ-123 mail a@b.io AB#5 org/repo#7 #42", "expected": "PROJ-123 mail [REDACTED:EMAIL] AB#5 org/repo#7 #42" },
+    { "name": "ticket inside email local part", "input": "write ABC-123@corp.com please", "expected": "write [REDACTED:EMAIL] please" },
+    { "name": "ipv4", "input": "host 10.2.3.4 up", "expected": "host [REDACTED:IP] up" },
+    { "name": "ipv4 at sentence end", "input": "ping 192.168.0.1.", "expected": "ping [REDACTED:IP]." },
+    { "name": "ipv6", "input": "addr 2001:db8::1 ok", "expected": "addr [REDACTED:IP] ok" },
+    { "name": "versions, times and ids stay", "input": "1.2.3 v1.2.3.4 ABC-1234 #42 at 10:30:45 on 2024-01-15", "expected": "1.2.3 v1.2.3.4 ABC-1234 #42 at 10:30:45 on 2024-01-15" },
+    { "name": "luhn card", "input": "card 4111 1111 1111 1111 end", "expected": "card [REDACTED:CARD] end" },
+    { "name": "non-luhn digits stay", "input": "num 4111 1111 1111 1112 end", "expected": "num 4111 1111 1111 1112 end" },
+    { "name": "timestamp stays", "input": "ts 1700000000000 ms", "expected": "ts 1700000000000 ms" },
+    { "name": "iban", "input": "pay GB82 WEST 1234 5698 7654 32 ok", "expected": "pay [REDACTED:IBAN] ok" },
+    { "name": "phone", "input": "call +1 (415) 555-2671 today", "expected": "call [REDACTED:PHONE] today" },
+    { "name": "secret", "input": "token=abc123secret here", "expected": "token=[REDACTED] here" },
+    { "name": "already obfuscated", "input": "mail [REDACTED:EMAIL] key [REDACTED] ip [REDACTED:IP]", "expected": "mail [REDACTED:EMAIL] key [REDACTED] ip [REDACTED:IP]" },
+    { "name": "plain prose", "input": "Fix the login bug in src/app.ts, see PROJ-9.", "expected": "Fix the login bug in src/app.ts, see PROJ-9." }
+  ],
+  "cuts": [
+    { "name": "cut inside email placeholder", "input": "ab [REDACTED:EMAIL] cd", "limit": 8, "expected": "ab " },
+    { "name": "cut just before placeholder", "input": "ab [REDACTED:EMAIL] cd", "limit": 3, "expected": "ab " },
+    { "name": "cut right after placeholder", "input": "ab [REDACTED:EMAIL] cd", "limit": 19, "expected": "ab [REDACTED:EMAIL]" },
+    { "name": "cut after placeholder and space", "input": "ab [REDACTED:EMAIL] cd", "limit": 20, "expected": "ab [REDACTED:EMAIL] " },
+    { "name": "cut inside bare placeholder", "input": "key [REDACTED] x", "limit": 8, "expected": "key " },
+    { "name": "cut inside ticket", "input": "see PROJ-123 now", "limit": 8, "expected": "see " },
+    { "name": "cut right after ticket", "input": "see PROJ-123 now", "limit": 12, "expected": "see PROJ-123" },
+    { "name": "open bracket that is not a placeholder", "input": "a [b c d", "limit": 4, "expected": "a [b" },
+    { "name": "limit beyond text", "input": "short", "limit": 200, "expected": "short" }
+  ]
+}
