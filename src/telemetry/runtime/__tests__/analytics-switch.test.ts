@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { logger } from '@/utils/logger.js';
 import { AnalyticsSwitch, claudeAnalyticsCollecting, readClaudeAnalyticsSwitch } from '../analytics-switch.js';
 
 describe('analytics switch', () => {
@@ -12,9 +13,10 @@ describe('analytics switch', () => {
     vi.stubEnv('CODEMIE_HOME', codemieHome);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.unstubAllEnvs();
-    rmSync(codemieHome, { recursive: true, force: true });
+    await logger.close();
+    rmSync(codemieHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   function writePreferences(content: string): void {
