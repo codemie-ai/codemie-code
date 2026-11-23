@@ -1,0 +1,28 @@
+{
+  "decision": "approve",
+  "rationale": "All three lenses ran (blind, edge-case, acceptance) and the acceptance lens passed every ticket and plan criterion. Triage dropped 14 unique concerns after merging duplicates: the substantive ones were verified against the code and found inapplicable (a subagent's Agent call and its result live in the same transcript, `ContentBlock` is still used, ids are unique per call, the live path only counts a call after its result exists except on the final pass, and the OTLP summary is a full snapshot so nothing needs retracting) or follow repo convention (`=== true` flag check). One defer: a denied/errored `Skill` call is still over-counted in `skills`, a pre-existing flaw left out of scope by decision and worth its own ticket. Two points to weigh, neither blocking: (1) any `is_error` result is excluded, so an agent that started and then errored or was interrupted is also not counted; this is what the ticket's stated fix asks for ('not denied/error') and no positive 'started' signal is available to separate the cases; (2) the repo has no real transcript of a hook-denied Agent call, so 'denial gives is_error:true' rests on QA comment 3 and is encoded only in the test fixture.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {"kind": "story-ac", "item": "A denied call creates no agent dispatch (or is marked not-started with no cost); Agents and Agent subtypes exclude it", "status": "pass", "notes": "Agent/Task tool_use whose id is in failedToolUseIds is skipped before bump(); orchestrator test asserts agents == {}."},
+    {"kind": "story-ac", "item": "Exclude non-started dispatches from agent_count and Agent subtypes", "status": "pass", "notes": "Same skip on every production caller; denied Explore plus allowed Plan yields {Plan: 1}."},
+    {"kind": "story-ac", "item": "QA comment 3: one denied Agent (Explore) tool_use with result 'QA-15557 deny' gives agent_count 0; count only Agent calls whose tool_result is not denied/error", "status": "pass", "notes": "buildFullAccumulator passes errorByToolUseId (built from all parsedLines) to extractOrderedNamedInvocations; new end-to-end test reproduces the case. Assumes the denial is written as is_error:true (accepted residual risk)."},
+    {"kind": "story-ac", "item": "Timeline row absent, cost not absorbed and Agent subtypes = [] already correct; must not regress", "status": "pass", "notes": "Only the named-invocation counting path changed; collectErrorToolUseIds keeps the same predicate, tool_calls/tool_errors unchanged (test asserts 1/1)."},
+    {"kind": "spec", "item": "Scope is Agent/Task only; Skill counting unchanged", "status": "pass", "notes": "Skip sits only in the Agent/Task branch; test 'does not change Skill counting'."},
+    {"kind": "spec", "item": "Structural failure signal: is_error === true or isError === true matched by tool_use_id; no text matching", "status": "pass", "notes": "collectFailedToolUseIds checks type, string tool_use_id and the two flags only; both spellings tested."},
+    {"kind": "spec", "item": "Pending call and id-less tool_use still counted", "status": "pass", "notes": "Skip requires a string id present in the set; covered by the extractor and orchestrator tests."},
+    {"kind": "spec", "item": "extractNamedInvocations and extractOrderedNamedInvocations stay in parity", "status": "pass", "notes": "Unordered delegates to ordered and forwards the set; parity test with a failed set."},
+    {"kind": "spec", "item": "Failed-id set built from the FULL transcript and passed by every production caller", "status": "pass", "notes": "Orchestrator, ClaudeSessionAdapter.extractMetrics and MetricsProcessor (required field on collectRunPromptsAndInvocations); remaining callers (empty input, subagent skills only) unaffected."},
+    {"kind": "spec", "item": "session-summary.ts not modified", "status": "pass", "notes": "Not in the diff."},
+    {"kind": "spec", "item": "Tests in scope across extractor, orchestrator, session adapter and live processor", "status": "pass", "notes": "Added in five suites, including the slice case in run-prompts.test.ts."},
+    {"kind": "spec", "item": "CHANGELOG [Unreleased] Fixed entry", "status": "pass", "notes": "User-facing entry added; states Skill counts unchanged."},
+    {"kind": "spec", "item": "ARCHITECTURE-OTLP-PLUGIN.md note", "status": "pass", "notes": "New table row for claude-named-invocations.ts."},
+    {"kind": "spec", "item": "Residual risk (hook denial implies is_error:true) accepted; flag only if the diff contradicts it", "status": "pass", "notes": "Not contradicted by the diff."}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "pass", "notes": "Four Conventional Commits with scope and EPMCDME-15557; commitlint and husky hooks ran on each commit."},
+    {"kind": "code-quality", "status": "pass", "notes": "tsc --noEmit clean; ES modules, .js suffixes, no new any, explicit return types on new exports; the zero-warning ESLint gate runs in Stage 6."},
+    {"kind": "security", "status": "pass", "notes": "No new I/O, process or credential handling; the diff holds only counting logic, tests and docs."}
+  ],
+  "findings": []
+}
