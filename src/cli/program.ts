@@ -62,6 +62,9 @@ export function createProgram(): Command {
     .name('codemie')
     .description('AI/Run CodeMie CLI - Professional CLI wrapper for managing multiple AI coding agents')
     .version(version)
+    // Without this, args a subcommand doesn't own are re-parsed by each ancestor, so
+    // `analytics`'s own `--include-external` swallows `analytics sync install --include-external`.
+    .enablePositionalOptions()
     .option('--task <task>', 'Execute a single task using the built-in agent and exit');
 
   program.addHelpText('after', `
