@@ -33,6 +33,8 @@ export interface AppendResult {
   afterEnd: number;
 }
 
+type DeltaBatch = Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>>;
+
 function parseDeltaTime(timestamp: number | string): number | undefined {
   const time = typeof timestamp === 'number' ? timestamp : Date.parse(timestamp);
   return Number.isFinite(time) ? time : undefined;
@@ -46,7 +48,8 @@ export class MetricsWriter {
   }
 
   /**
-   * Append a batch of deltas under the metrics lock: one read, one append.
+   * Append a batch of deltas under the metrics lock: one read, one append. The batch may be a builder
+   * that receives the deltas already on disk, read under the same lock.
    *
    * Dropped: a delta whose `recordId` is already in the file (or earlier in the batch), one older than
    * the record's `startTime`, one at or after `upperBound` (the next record's start over the same
@@ -55,15 +58,19 @@ export class MetricsWriter {
    * @throws {SessionFileLockTimeoutError} When the metrics lock stays held past the window's bounds
    */
   async appendDeltas(
-    deltas: Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>>,
+    deltas: DeltaBatch | ((existing: MetricDelta[]) => DeltaBatch),
     window: RunWindow
   ): Promise<AppendResult> {
     const result: AppendResult = { written: 0, gone: false, dup: 0, beforeStart: 0, afterEnd: 0 };
+    let offered = Array.isArray(deltas) ? deltas.length : 0;
     try {
       const done = await withSessionFile('metrics', this.sessionId, window, false, async () => {
+        // A builder is given what is on disk under the lock, so it never plans from a stale read
+        const batch = typeof deltas === 'function' ? deltas(await this.readAll()) : deltas;
+        offered = batch.length;
         const known = await this.readRecordIds();
-        const accepted: Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> = [];
-        for (const delta of deltas) {
+        const accepted: DeltaBatch = [];
+        for (const delta of batch) {
           if (known.has(delta.recordId)) {
             result.dup++;
             continue;
@@ -94,7 +101,7 @@ export class MetricsWriter {
       });
       result.gone = done !== true;
       logger.debug(
-        `[MetricsWriter] in=${deltas.length} dup=${result.dup} before_start=${result.beforeStart} ` +
+        `[MetricsWriter] in=${offered} dup=${result.dup} before_start=${result.beforeStart} ` +
         `after_end=${result.afterEnd} written=${result.written} gone=${result.gone}`
       );
       return result;
