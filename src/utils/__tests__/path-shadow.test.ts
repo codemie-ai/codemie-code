@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { classifyShadow } from '../path-shadow.js';
+import {
+  classifyShadow,
+  formatShadowWarning,
+  formatNotOnPathHint,
+  formatNotOnPathShort,
+} from '../path-shadow.js';
 import { isSamePath } from '../paths.js';
 
 const samePath = (a: string, b: string): boolean => isSamePath(a, b, 'win32');
@@ -51,5 +56,51 @@ describe('classifyShadow', () => {
     expect(classifyShadow({ matches: null, managedDir, managedShimPath: shim, samePath })).toEqual({ status: 'unknown' });
     expect(classifyShadow({ matches: ['C:\\a\\x.cmd'], managedDir: null, managedShimPath: null, samePath }))
       .toEqual({ status: 'unknown' });
+  });
+});
+
+describe('shadow formatters', () => {
+  const B = String.fromCharCode(92);
+  const mDir = `C:${B}Users${B}me${B}.codemie${B}npm-global`;
+  const active = `C:${B}Other${B}claude.cmd`;
+  const shadowed = { status: 'shadowed' as const, active, managedDir: mDir };
+  const missing = { status: 'missing-on-path' as const, managedDir: mDir, shimPath: `${mDir}${B}claude.cmd` };
+
+  it('shadow warning names both locations, command, new terminal and remedies', () => {
+    const text = formatShadowWarning(shadowed, 'win32').join('\n');
+    expect(text).toContain(active);
+    expect(text).toContain(mDir);
+    expect(text).toContain(`Put "${mDir}" ahead of "C:${B}Other" on your PATH`);
+    expect(text).toContain("SetEnvironmentVariable('Path', '" + mDir + ";'");
+    expect(text).toContain('open a new terminal');
+    expect(text).toMatch(/remove or rename/i);
+    expect(text).toMatch(/machine-wide PATH as administrator/);
+  });
+
+  it('shadow warning omits the copy-paste command for unsafe directories', () => {
+    for (const bad of [`C:${B}a;b`, `C:${B}100%${B}x`, `C:${B}it's`, `C:${B}q"x`, `C:${B}t\tab`]) {
+      const text = formatShadowWarning({ ...shadowed, managedDir: bad }, 'win32').join('\n');
+      expect(text).not.toContain('SetEnvironmentVariable');
+      expect(text).toContain('open a new terminal');
+    }
+  });
+
+  it('not-on-path hint names the shim location and the add command', () => {
+    const text = formatNotOnPathHint(missing, 'win32').join('\n');
+    expect(text).toContain('not found on PATH');
+    expect(text).toContain(mDir);
+    expect(text).toContain("SetEnvironmentVariable('Path'");
+    expect(text).toContain("+ ';" + mDir + "'");
+    expect(text).toContain('open a new terminal');
+  });
+
+  it('not-on-path hint has no command for unsafe directories', () => {
+    const text = formatNotOnPathHint({ ...missing, managedDir: `C:${B}a;b` }, 'win32').join('\n');
+    expect(text).not.toContain('SetEnvironmentVariable');
+    expect(text).toContain('not found on PATH');
+  });
+
+  it('short form is one line', () => {
+    expect(formatNotOnPathShort(missing)).toBe(`not found on PATH — shim at ${mDir}`);
   });
 });

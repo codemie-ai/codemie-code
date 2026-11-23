@@ -4,6 +4,9 @@
  * directory, the managed shim path (only when found on disk) and a sync comparer.
  */
 
+import { formatPutAheadLine } from './active-cli.js';
+import { getPathModule } from './platform.js';
+
 export type ShadowVerdict =
   | { status: 'shadowed'; active: string; managedDir: string }
   | { status: 'missing-on-path'; managedDir: string; shimPath: string }
@@ -43,4 +46,72 @@ export function classifyShadow(input: ShadowInput): ShadowVerdict {
     return { status: 'shadowed', active: matches[0], managedDir };
   }
   return { status: 'clear' };
+}
+
+type ShadowedVerdict = Extract<ShadowVerdict, { status: 'shadowed' }>;
+type MissingOnPathVerdict = Extract<ShadowVerdict, { status: 'missing-on-path' }>;
+
+/** A directory is safe to embed in a single-quoted PowerShell literal and a PATH entry. */
+function isSafeForPowerShell(dir: string): boolean {
+  // eslint-disable-next-line no-control-regex
+  return !/['";%\u0000-\u001f\u007f]/.test(dir);
+}
+
+/** Copy-paste PowerShell command that edits the user PATH, or null when `dir` is not safe to quote. */
+function userPathCommand(dir: string, position: 'prepend' | 'append'): string | null {
+  if (!isSafeForPowerShell(dir)) return null;
+  const current = "[Environment]::GetEnvironmentVariable('Path','User')";
+  const value = position === 'prepend' ? `'${dir};' + ${current}` : `${current} + ';${dir}'`;
+  return `[Environment]::SetEnvironmentVariable('Path', ${value}, 'User')`;
+}
+
+/** Warning lines for an agent whose first PATH match is not the CodeMie-managed install. Never runs anything. */
+export function formatShadowWarning(
+  verdict: ShadowedVerdict,
+  platform: NodeJS.Platform = process.platform
+): string[] {
+  const { active, managedDir } = verdict;
+  const activeDir = getPathModule(platform).dirname(active);
+  const lines: string[] = [
+    '⚠ Another install of this agent shadows the CodeMie-managed one.',
+    `  Active:  ${active}`,
+    `  Managed: ${managedDir}`,
+    '',
+    '  To use the managed install:',
+    formatPutAheadLine(managedDir, activeDir),
+  ];
+  const command = userPathCommand(managedDir, 'prepend');
+  if (command) {
+    lines.push('    In PowerShell:', `    ${command}`);
+  }
+  lines.push(
+    `  - Or remove or rename the stale copy in "${activeDir}"`,
+    '  - Or edit the machine-wide PATH as administrator',
+    '  Then open a new terminal.'
+  );
+  return lines;
+}
+
+/** Hint lines for a managed shim that exists on disk but whose directory is not on PATH. */
+export function formatNotOnPathHint(
+  verdict: MissingOnPathVerdict,
+  _platform: NodeJS.Platform = process.platform
+): string[] {
+  const { managedDir, shimPath } = verdict;
+  const lines: string[] = [
+    '⚠ Agent not found on PATH.',
+    `  Managed shim: ${shimPath}`,
+    `  - Add "${managedDir}" to your PATH`,
+  ];
+  const command = userPathCommand(managedDir, 'append');
+  if (command) {
+    lines.push('    In PowerShell:', `    ${command}`);
+  }
+  lines.push('  Then open a new terminal.');
+  return lines;
+}
+
+/** One-line form of {@link formatNotOnPathHint} for list rows. */
+export function formatNotOnPathShort(verdict: MissingOnPathVerdict): string {
+  return `not found on PATH — shim at ${verdict.managedDir}`;
 }
