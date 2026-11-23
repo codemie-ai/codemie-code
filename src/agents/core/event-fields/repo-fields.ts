@@ -3,6 +3,7 @@ import { detectGitBranch, detectGitCommitsByAuthor, detectGitHeadSha, detectGitR
 import type { GitCommitSummary } from '@/utils/processes.js';
 import type { OtlpHookContext } from '../OtlpAgentAdapter.js';
 import { resolveStoryFor } from '../story-resolver.js';
+import type { TicketTracker } from '../ticket-parser.js';
 
 export type { GitCommitSummary };
 
@@ -25,13 +26,13 @@ export interface GitHeadEndFields {
 }
 
 /** A failed lookup yields empty fields, never a dropped event. */
-export async function resolveRepoFields({ cwd, prompt }: OtlpHookContext): Promise<RepoFields> {
+export async function resolveRepoFields({ cwd, prompt }: OtlpHookContext, tracker?: TicketTracker): Promise<RepoFields> {
   const empty: RepoFields = { git_branch: '', repo_remote: '', story_id: '', story_source: '' };
   try {
     const [branch, remote] = cwd
       ? await Promise.all([detectGitBranch(cwd), detectGitRemoteRepo(cwd)])
       : [undefined, undefined];
-    const story = await resolveStoryFor({ cwd, branch, prompt });
+    const story = await resolveStoryFor({ cwd, branch, prompt, tracker });
     return {
       git_branch: branch ?? '',
       repo_remote: remote ?? '',

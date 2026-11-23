@@ -2,6 +2,8 @@ import { logger } from '@/utils/logger.js';
 import { extractRepository } from '@/utils/paths.js';
 import { AnalyticsSourceError } from '@/utils/errors.js';
 import { boundedText, maskAndBoundFields, MAX_PROMPT_CHARS } from './otlp-field-limits.js';
+import { OBFUSCATION_RULES_VERSION, type ObfuscationMode } from '@/utils/analytics-obfuscation.js';
+import { resolveAnalyticsSettings, type AnalyticsSettings } from '@/utils/analytics-settings.js';
 import { AgentAdapterType, type OtlpAdapterDeps } from './types.js';
 import { resolveRepoFields, type RepoFields } from './event-fields/repo-fields.js';
 import { resolveIdentityFields, resolveProjectAtCwd, type IdentityFields, type ProjectPolicy } from './event-fields/identity-fields.js';
@@ -53,9 +55,21 @@ interface InvocationContext {
   hookTime: Date;
   commonFields: CommonFields;
   agentFields: Record<string, unknown>;
+  /** Analytics settings read once from the hook's cwd; they apply to every event of the invocation. */
+  settings: AnalyticsSettings;
 }
 
 const SCHEMA_VERSION = 2;
+
+/** Analytics settings for a hook's cwd; a failed read means defaults (obfuscation off), never a dropped event. */
+function readSettings(cwd: string): AnalyticsSettings {
+  try {
+    return resolveAnalyticsSettings(cwd);
+  } catch (error) {
+    logger.debug(`[otlp] analytics settings unavailable: ${error instanceof Error ? error.name : 'error'}`);
+    return { obfuscation: 'off' };
+  }
+}
 
 /**
  * Base class for adapters that ingest a coding tool's native hook events into the
@@ -186,11 +200,12 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       record = stamp.record;
       if ((await this.recordGate(context, record)) === 'stop') return { events: [], failure: 'Session scope check stopped publication; hook event not enqueued' };
     }
+    const settings = readSettings(context.cwd);
     const [commonFields, agentFields] = await Promise.all([
-      this.resolveCommonFields(context, record),
+      this.resolveCommonFields(context, record, settings),
       this.resolveAgentFields(hookInput),
     ]);
-    const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(), commonFields, agentFields };
+    const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(), commonFields, agentFields, settings };
     return {
       events: decision.payload.map((hookEvent) => this.buildEvent(hookEvent, invocation)),
       options: record ? { evidenceV: 1 } : undefined,
@@ -219,8 +234,9 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     try {
       const now = Date.now();
       const provisional: EvidenceRecord = { schema: 1, ...pending.fields, owner_hash: '', created: now, last_used: now };
-      const [commonFields, agentFields] = await Promise.all([this.resolveCommonFields(context, provisional), this.resolveAgentFields(hookInput)]);
-      const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(now), commonFields, agentFields };
+      const settings = readSettings(context.cwd);
+      const [commonFields, agentFields] = await Promise.all([this.resolveCommonFields(context, provisional, settings), this.resolveAgentFields(hookInput)]);
+      const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(now), commonFields, agentFields, settings };
       return await enqueuePendingOwner({
         fp: pending.fp,
         agentName: this.name,
@@ -292,7 +308,8 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
 
   /** Assembles the final event: masked and truncated hook fields plus the common and agent fields, all at the top level. */
   private buildEvent(hookEvent: Record<string, unknown>, ctx: InvocationContext): Record<string, unknown> {
-    const limited = this.limitPayload(hookEvent);
+    const mode = ctx.settings.obfuscation;
+    const limited = this.limitPayload(hookEvent, mode);
     const explicitType = hookEvent['type'];
 
     const event: Record<string, unknown> = {
@@ -302,8 +319,9 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       session_id: String(hookEvent['session_id'] ?? ''),
       timestamp: this.resolveEventTimestamp(hookEvent['timestamp'], ctx.hookTime),
       cwd: extractRepository(ctx.cwd),
-      prompt_body: boundedText(limited['prompt'], MAX_PROMPT_CHARS),
+      prompt_body: boundedText(limited['prompt'], MAX_PROMPT_CHARS, mode),
       schema_version: SCHEMA_VERSION,
+      ...(mode === 'on' && { rules_version: OBFUSCATION_RULES_VERSION }),
     };
     event['event_id'] = this.buildEventId(event, limited, String(event['timestamp']));
     return event;
@@ -321,7 +339,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
    * Masks secrets in every field, then truncates the free-text fields: `prompt` and the
    * tool fields (mask first, so a secret straddling a cut is never half-shown). An incoming `raw` is dropped so it cannot bypass the limits.
    */
-  private limitPayload(hookEvent: Record<string, unknown>): Record<string, unknown> {
+  private limitPayload(hookEvent: Record<string, unknown>, mode: ObfuscationMode): Record<string, unknown> {
     const dropped = new Set(this.droppedFields(hookEvent));
     const unmasked: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(hookEvent)) {
@@ -338,7 +356,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         delete unmasked['effort'];
       }
     }
-    return maskAndBoundFields(unmasked);
+    return maskAndBoundFields(unmasked, mode);
   }
 
   /**
@@ -355,9 +373,9 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     return hookTime.toISOString();
   }
 
-  private async resolveCommonFields(context: OtlpHookContext, record?: EvidenceRecord): Promise<CommonFields> {
+  private async resolveCommonFields(context: OtlpHookContext, record: EvidenceRecord | undefined, settings: AnalyticsSettings): Promise<CommonFields> {
     const [repoFields, identityFields] = await Promise.all([
-      resolveRepoFields(context),
+      resolveRepoFields(context, settings.ticketTracker),
       resolveIdentityFields(context, record, this.projectPolicy),
     ]);
     return { ...repoFields, ...identityFields };

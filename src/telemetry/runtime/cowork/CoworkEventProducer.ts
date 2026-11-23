@@ -45,6 +45,7 @@ import { detectGitBranch, detectGitRemoteRepo, resolveRepositoryName } from '@/u
 import { coworkCursorPath, emptyCoworkCursor, loadCoworkCursor, saveCoworkCursor, type CoworkCursor } from './cowork-cursor.js';
 import { coworkFundingSource, loadCoworkAttribution, saveCoworkAttribution, type CoworkAttribution } from './cowork-attribution.js';
 import { coworkServedMarkPath, forgetCoworkServedMark, listCoworkServedMarks } from './cowork-served-mark.js';
+import { resolveAnalyticsSettings } from '@/utils/analytics-settings.js';
 import { buildCoworkEvents, stampCoworkEvent, type CoworkEnvelope, type CoworkSubagentInput } from './cowork-events.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -412,6 +413,7 @@ export class CoworkEventProducer {
       repository,
       repoRemote,
       ...(branch && { branch }),
+      obfuscation: resolveAnalyticsSettings(workingDirectory).obfuscation,
       cliVersion: cliVersion ?? '',
       entrypoint: cursor.events.entrypoint,
       clientVersion: cursor.events.clientVersion,

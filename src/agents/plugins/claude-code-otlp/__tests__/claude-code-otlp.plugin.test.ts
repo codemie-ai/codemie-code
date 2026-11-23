@@ -23,6 +23,7 @@ beforeEach(() => {
     value: { version: 1, enabled: true, excludedProjects: [] },
   });
 });
+vi.mock('@/utils/analytics-settings.js', () => ({ resolveAnalyticsSettings: vi.fn(() => ({ obfuscation: 'off' })) }));
 vi.mock('@/utils/processes.js', () => ({
   detectGitBranch: vi.fn(async () => 'main'),
   detectGitRemoteRepo: vi.fn(async () => 'org/repo'),
@@ -114,6 +115,7 @@ vi.mock('../event-fields/session-env-fields.js', () => ({
   resolveSessionEnvFields: resolveSessionEnvFieldsMock,
 }));
 
+import { resolveAnalyticsSettings } from '@/utils/analytics-settings.js';
 import { isProjectTracked, readPromptHookTimeoutSeconds } from '../claude-code-otlp.allowlist.js';
 import { ensureCodeMieSsoAuthOrWait } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
@@ -1694,6 +1696,7 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
     forwardOtlpEventsToSpool.mockResolvedValue(true);
     openMainTranscriptPassMock.mockResolvedValue(emptyPass());
     openSessionEnvCheckPassMock.mockResolvedValue(emptyEnvCheck());
+    vi.mocked(resolveAnalyticsSettings).mockReturnValue({ obfuscation: 'off' });
   });
 
   it('stamps command_name, story_marker, ticket_mentions and prompt_length', async () => {
@@ -1707,6 +1710,19 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
     expect(forwarded['story_marker']).toBe('ABC-12');
     expect(forwarded['ticket_mentions']).toEqual(['ABC-12', 'XYZ-3']);
     expect(forwarded['prompt_length']).toBe('/sdlc-factory:sdlc-standard story: abc-12 and see XYZ-3, abc-12'.length);
+  });
+
+  it('derives ticket fields from the raw prompt and obfuscates prompt_body when obfuscation is on', async () => {
+    vi.mocked(resolveAnalyticsSettings).mockReturnValue({ obfuscation: 'on' });
+    await plugin.processOtlpEvent(promptEvent(`AB#123 mail a@b.com ${'word '.repeat(80)}`), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    const [forwarded] = forwardedEvents();
+    expect(forwarded['ticket_mentions']).toEqual(['AB#123']);
+    expect(forwarded['story_id']).toBe('AB#123');
+    expect(forwarded['rules_version']).toBe('1');
+    expect(String(forwarded['prompt_body'])).toContain('[REDACTED:EMAIL]');
+    expect(String(forwarded['prompt_body']).length).toBeLessThanOrEqual(200);
+    expect(String(forwarded['prompt_body'])).not.toMatch(/\[REDACTED[^\]]*$/);
   });
 
   it('derives prompt_length from the full prompt, not the 200-char prompt_body', async () => {

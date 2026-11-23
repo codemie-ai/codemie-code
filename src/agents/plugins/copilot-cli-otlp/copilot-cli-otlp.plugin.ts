@@ -6,7 +6,8 @@ import { isSafeSessionId } from '@/agents/core/session-id.js';
 import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { describeLogin, type DetachedLoginOutcome } from '@/providers/plugins/sso/sso.detached-login.js';
 import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
-import { maskSecretsInText } from '@/utils/security.js';
+import { sanitizeText, trimBeforeOpenPlaceholder, type ObfuscationMode } from '@/utils/analytics-obfuscation.js';
+import { resolveAnalyticsSettings } from '@/utils/analytics-settings.js';
 import { logger } from '@/utils/logger.js';
 import { detectGitBranch } from '@/utils/processes.js';
 import { evaluateCopilotAnalyticsGate } from '@/agents/core/copilot-analytics-gate.js';
@@ -282,52 +283,53 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
 
   /** Normalizes camelCase native fields to the base class's expected keys, before truncation. */
   private normalizeEvent(input: CopilotCliHookInput): Record<string, unknown> {
+    const mode = resolveAnalyticsSettings(input.cwd).obfuscation;
     const normalized: Record<string, unknown> = {
       session_id: input.sessionId,
       timestamp: new Date(input.timestamp ?? Date.now()).toISOString(),
       type: HOOK_EVENT_TYPE_MAP[input.codemieEventName] ?? 'agent.event',
     };
 
-    if (input.source !== undefined) normalized.source = this.boundedFreeText(input.source);
-    if (input.reason !== undefined) normalized.reason = this.boundedFreeText(input.reason);
+    if (input.source !== undefined) normalized.source = this.boundedFreeText(mode, input.source);
+    if (input.reason !== undefined) normalized.reason = this.boundedFreeText(mode, input.reason);
     const prompt = userPrompt(input.prompt, input.transformedPrompt);
     if (prompt !== undefined) normalized.prompt = prompt;
     if (input.codemieEventName === 'userPromptTransformed') {
       const command = extractSlashCommand(input.prompt, input.transformedPrompt);
       if (command !== undefined) normalized.command_name = command;
     }
-    if (input.stopReason !== undefined) normalized.stop_reason = this.boundedFreeText(input.stopReason);
+    if (input.stopReason !== undefined) normalized.stop_reason = this.boundedFreeText(mode, input.stopReason);
     if (input.error !== undefined) {
       const err = input.error;
       if (typeof err === 'object' && err !== null) {
         const errRecord = err as Record<string, unknown>;
         if ('message' in errRecord) {
-          normalized.error_message = this.boundedFreeText(errRecord.message);
+          normalized.error_message = this.boundedFreeText(mode, errRecord.message);
         }
         // errorOccurred forwards error.name alongside error.message; never the stack.
         if (typeof errRecord.name === 'string') {
-          normalized.error_type = this.boundedFreeText(errRecord.name);
+          normalized.error_type = this.boundedFreeText(mode, errRecord.name);
         }
       } else {
-        normalized.error_message = this.boundedFreeText(err);
+        normalized.error_message = this.boundedFreeText(mode, err);
       }
     }
     if (input.errorContext !== undefined) {
-      normalized.error_context = this.boundedFreeText(input.errorContext);
+      normalized.error_context = this.boundedFreeText(mode, input.errorContext);
     }
     if (input.recoverable !== undefined) normalized.recoverable = input.recoverable;
-    if (input.agentName !== undefined) normalized.agent_name = this.boundedFreeText(input.agentName);
-    if (input.agentId !== undefined) normalized.agent_id = this.boundedFreeText(input.agentId);
-    if (input.agentType !== undefined) normalized.agent_type = this.boundedFreeText(input.agentType);
-    if (input.trigger !== undefined) normalized.trigger = this.boundedFreeText(input.trigger);
+    if (input.agentName !== undefined) normalized.agent_name = this.boundedFreeText(mode, input.agentName);
+    if (input.agentId !== undefined) normalized.agent_id = this.boundedFreeText(mode, input.agentId);
+    if (input.agentType !== undefined) normalized.agent_type = this.boundedFreeText(mode, input.agentType);
+    if (input.trigger !== undefined) normalized.trigger = this.boundedFreeText(mode, input.trigger);
     if (input.title !== undefined) {
-      normalized.title = this.boundedFreeText(input.title);
+      normalized.title = this.boundedFreeText(mode, input.title);
     }
     if (input.notification_type !== undefined) {
-      normalized.notification_type = this.boundedFreeText(input.notification_type);
+      normalized.notification_type = this.boundedFreeText(mode, input.notification_type);
     }
     if (input.message !== undefined) {
-      normalized.message = this.boundedFreeText(input.message);
+      normalized.message = this.boundedFreeText(mode, input.message);
     }
     return normalized;
   }
@@ -337,9 +339,10 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
    * Masked before the cut: the base class only sees the already-cut text, where a secret
    * straddling the limit would be left as a fragment too short to recognise.
    */
-  private boundedFreeText(value: unknown): string {
+  private boundedFreeText(mode: ObfuscationMode, value: unknown): string {
     const text = typeof value === 'string' ? value : JSON.stringify(value) ?? String(value);
-    return maskSecretsInText(text).slice(0, FREE_TEXT_MAX_CHARS);
+    const masked = sanitizeText(text, mode);
+    return mode === 'on' ? trimBeforeOpenPlaceholder(masked, FREE_TEXT_MAX_CHARS) : masked.slice(0, FREE_TEXT_MAX_CHARS);
   }
 
   private buildBlock(

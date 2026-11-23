@@ -25,6 +25,7 @@ import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { parsePromptFields } from '@/agents/core/ticket-parser.js';
+import { resolveAnalyticsSettings } from '@/utils/analytics-settings.js';
 import { stripPastedContentTags } from '@/agents/core/pasted-content.js';
 import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
 import { resolveEnvFields } from '@/agents/core/event-fields/env-fields.js';
@@ -715,7 +716,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
         decision: 'forward',
         payload: [{
           ...hookInput,
-          ...parsePromptFields(typed),
+          ...parsePromptFields(typed, resolveAnalyticsSettings(hookInput.cwd).ticketTracker),
           prompt_length: prompt.length,
           ...resolveCommandFields(typed),
           ...(cleaned !== prompt && { prompt: cleaned }),

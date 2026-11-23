@@ -11,6 +11,7 @@ vi.mock('@/utils/config.js', () => ({
 vi.mock('@/agents/core/copilot-analytics-gate.js', () => ({
   evaluateCopilotAnalyticsGate: vi.fn(),
 }));
+vi.mock('@/utils/analytics-settings.js', () => ({ resolveAnalyticsSettings: vi.fn(() => ({ obfuscation: 'off' })) }));
 vi.mock('@/utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -18,6 +19,7 @@ vi.mock('@/utils/logger.js', () => ({
 import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
 import { logger } from '@/utils/logger.js';
+import { resolveAnalyticsSettings } from '@/utils/analytics-settings.js';
 import { evaluateCopilotAnalyticsGate } from '@/agents/core/copilot-analytics-gate.js';
 import { CopilotCliOtlpPlugin } from '../copilot-cli-otlp.plugin.js';
 import { toolsStatePath } from '../copilot-cli-otlp.state.js';
@@ -394,6 +396,19 @@ describe('CopilotCliOtlpPlugin desktop prompt preamble', () => {
     delete process.env.CODEMIE_SESSION_ID;
     vi.mocked(evaluateCopilotAnalyticsGate).mockResolvedValue({ tracked: true });
     vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: true } as never);
+    vi.mocked(resolveAnalyticsSettings).mockReturnValue({ obfuscation: 'off' });
+  });
+
+  it('derives story from the raw prompt and obfuscates the forwarded text when obfuscation is on', async () => {
+    vi.mocked(resolveAnalyticsSettings).mockReturnValue({ obfuscation: 'on' });
+    const event = await forwardedPrompt(`AB#123 mail a@b.com ${'word '.repeat(80)}`);
+
+    expect(event.story_id).toBe('AB#123');
+    expect(event.rules_version).toBe('1');
+    expect(String(event.prompt_body)).toContain('[REDACTED:EMAIL]');
+    expect(String(event.prompt_body).length).toBeLessThanOrEqual(200);
+    expect(String(event.prompt_body)).not.toMatch(/\[REDACTED[^\]]*$/);
+    expect(String(event.prompt)).not.toContain('a@b.com');
   });
 
   it('forwards only the user text when the desktop app wraps the prompt in internal blocks', async () => {

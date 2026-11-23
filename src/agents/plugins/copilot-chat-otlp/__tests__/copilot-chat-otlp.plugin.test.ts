@@ -13,10 +13,12 @@ vi.mock('@/agents/core/copilot-analytics-preferences.js', () => ({
   readCopilotAnalyticsPreferences: vi.fn(),
   isCopilotAnalyticsProjectExcluded: vi.fn(),
 }));
+vi.mock('@/utils/analytics-settings.js', () => ({ resolveAnalyticsSettings: vi.fn(() => ({ obfuscation: 'off' })) }));
 vi.mock('@/utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+import { resolveAnalyticsSettings } from '@/utils/analytics-settings.js';
 import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
 import { isCopilotProjectTracked, readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
@@ -60,6 +62,23 @@ describe('CopilotChatOtlpPlugin', () => {
       value: { enabled: true, excludedProjects: [] },
     });
     vi.mocked(isCopilotAnalyticsProjectExcluded).mockResolvedValue(false);
+    vi.mocked(resolveAnalyticsSettings).mockReturnValue({ obfuscation: 'off' });
+  });
+
+  it('derives story from the raw prompt and obfuscates prompt_body when obfuscation is on', async () => {
+    vi.mocked(resolveAnalyticsSettings).mockReturnValue({ obfuscation: 'on' });
+    vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: true } as never);
+    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'UserPromptSubmit', prompt: `AB#123 mail a@b.com ${'word '.repeat(80)}` }), {
+      ensureOtlpProxy,
+      forwardOtlpEventsToSpool,
+    });
+
+    const event = (forwardOtlpEventsToSpool.mock.calls[0] as unknown as [Array<Record<string, unknown>>])[0][0];
+    expect(event['story_id']).toBe('AB#123');
+    expect(event['rules_version']).toBe('1');
+    expect(String(event['prompt_body'])).toContain('[REDACTED:EMAIL]');
+    expect(String(event['prompt_body']).length).toBeLessThanOrEqual(200);
+    expect(String(event['prompt_body'])).not.toMatch(/\[REDACTED[^\]]*$/);
   });
 
   afterEach(() => {

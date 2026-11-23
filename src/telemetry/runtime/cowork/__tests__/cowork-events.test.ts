@@ -161,6 +161,20 @@ describe('buildCoworkEvents', () => {
 });
 
 describe('stampCoworkEvent', () => {
+  it('obfuscates prompt_body and the envelope branch when the envelope turns obfuscation on', () => {
+    const stamped = stampCoworkEvent(
+      { type: 'agent.prompt.submit', timestamp: '2026-11-10T11:00:00.000Z', prompt_body: `AB#123 mail a@b.com ${'word '.repeat(80)}`, event_id: 'agent.prompt.submit:x:3' },
+      { ...ENVELOPE, obfuscation: 'on', branch: 'fix/a@b.com' },
+      ''
+    );
+
+    expect(String(stamped['prompt_body'])).toContain('[REDACTED:EMAIL]');
+    expect(String(stamped['prompt_body']).length).toBeLessThanOrEqual(200);
+    expect(String(stamped['prompt_body'])).not.toMatch(/\[REDACTED[^\]]*$/);
+    expect(stamped['git_branch']).not.toContain('a@b.com');
+    expect(stamped['rules_version']).toBe('1');
+  });
+
   it('masks a secret-shaped token in a prompt and cuts the prompt to 200 characters', () => {
     const secret = `sk-ant-${'a1B2'.repeat(10)}`;
     const masked = stampCoworkEvent({ type: 'agent.prompt.submit', timestamp: '2026-11-10T11:00:00.000Z', prompt_body: `use ${secret} now`, event_id: 'agent.prompt.submit:x:1' }, ENVELOPE, '');

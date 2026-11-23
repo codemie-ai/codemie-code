@@ -5,7 +5,7 @@
  */
 
 import { boundedText, maskAndBoundFields, TEXT_FIELD_LIMITS } from '@/agents/core/otlp-field-limits.js';
-import { maskSecretsDeep } from '@/utils/security.js';
+import { OBFUSCATION_RULES_VERSION, sanitizeText, type ObfuscationMode } from '@/utils/analytics-obfuscation.js';
 import { stripPastedContentTags } from '@/agents/core/pasted-content.js';
 import { isCountedTranscriptLine, keepFirstByUuid } from '@/agents/plugins/claude/session/transcript-lines.js';
 import { buildClaudeEventId } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.event-id.js';
@@ -68,6 +68,8 @@ export interface CoworkEnvelope {
   clientVersion: string;
   /** The branch Git reports for the session's folder on the host; absent when the folder has none. */
   branch?: string;
+  /** Analytics obfuscation for the session's folder; absent means off. */
+  obfuscation?: ObfuscationMode;
 }
 
 interface ContentBlock {
@@ -320,6 +322,7 @@ function subagentEvent(type: string, sessionId: string, subagent: CoworkSubagent
  */
 export function stampCoworkEvent(event: WireEvent, envelope: CoworkEnvelope, fallbackTimestamp: string): WireEvent {
   const { event_id: ownId, ...own } = Object.fromEntries(Object.entries(event).filter(([, value]) => value !== undefined));
+  const mode = envelope.obfuscation ?? 'off';
   const masked = maskAndBoundFields({
     session_id: envelope.sessionId,
     schema_version: 2,
@@ -332,13 +335,14 @@ export function stampCoworkEvent(event: WireEvent, envelope: CoworkEnvelope, fal
     ...(envelope.project && { codemie_project_name: envelope.project }),
     ...own,
     timestamp: own['timestamp'] || fallbackTimestamp,
-  }) as WireEvent;
+    ...(mode === 'on' && { rules_version: OBFUSCATION_RULES_VERSION }),
+  }, mode) as WireEvent;
   if (typeof masked['prompt_body'] === 'string') {
-    masked['prompt_body'] = boundedText(masked['prompt_body'], TEXT_FIELD_LIMITS['prompt']);
+    masked['prompt_body'] = boundedText(masked['prompt_body'], TEXT_FIELD_LIMITS['prompt'], mode);
   }
   const payload = Object.fromEntries(Object.keys(own).map((key) => [key, masked[key]]));
   const id = typeof ownId === 'string' ? ownId : buildClaudeEventId(masked, payload, String(masked['timestamp']));
-  const branch = envelope.branch ? String(maskSecretsDeep(envelope.branch)) : '';
+  const branch = envelope.branch ? sanitizeText(envelope.branch, mode) : '';
   delete masked['branch_counts'];
   delete masked['branch_dominant'];
   masked['git_branch'] = branch;

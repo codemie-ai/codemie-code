@@ -1,4 +1,4 @@
-import { maskSecretsDeep } from '@/utils/security.js';
+import { sanitizeDeep, trimBeforeOpenPlaceholder, type ObfuscationMode } from '@/utils/analytics-obfuscation.js';
 
 /**
  * The masking and length rules every forwarded OTLP hook event follows. A leaf module on purpose: the proxy
@@ -26,7 +26,7 @@ export const UNMASKED_FIELD_KEYS: ReadonlySet<string> = new Set([
   'notification_type', 'error_type',
 ]);
 
-export function boundedText(value: unknown, maxChars: number): string {
+export function boundedText(value: unknown, maxChars: number, mode: ObfuscationMode = 'off'): string {
   if (value === undefined || value === null) {
     return '';
   }
@@ -40,17 +40,29 @@ export function boundedText(value: unknown, maxChars: number): string {
       text = String(value);
     }
   }
-  const cut = text.slice(0, maxChars);
+  // In `on` mode the cut never lands inside a `[REDACTED...]` placeholder or a ticket reference.
+  const cut = mode === 'on' ? trimBeforeOpenPlaceholder(text, maxChars) : text.slice(0, maxChars);
   // A cut inside a surrogate pair would leave a lone high surrogate, which strict UTF-8 consumers reject.
   return /[\ud800-\udbff]$/.test(cut) ? cut.slice(0, -1) : cut;
 }
 
-/** Masks secrets in every field, then cuts the free-text fields to their limits (mask first, so a secret straddling a cut is never half-shown). */
-export function maskAndBoundFields(fields: Record<string, unknown>): Record<string, unknown> {
-  const limited = maskSecretsDeep(fields, UNMASKED_FIELD_KEYS) as Record<string, unknown>;
+/**
+ * Masks secrets (and, with `mode` `on`, PII) in every free-text field, then cuts the free-text fields to their limits
+ * (mask first, so a secret straddling a cut is never half-shown). Identifier fields are never touched.
+ */
+export function maskAndBoundFields(fields: Record<string, unknown>, mode: ObfuscationMode = 'off'): Record<string, unknown> {
+  const free: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(fields)) {
+    if (!UNMASKED_FIELD_KEYS.has(key)) free[key] = value;
+  }
+  const sanitized = sanitizeDeep(free, mode);
+  const limited: Record<string, unknown> = {};
+  for (const key of Object.keys(fields)) {
+    limited[key] = UNMASKED_FIELD_KEYS.has(key) ? fields[key] : sanitized[key];
+  }
   for (const [field, maxChars] of Object.entries(TEXT_FIELD_LIMITS)) {
     if (Object.prototype.hasOwnProperty.call(limited, field)) {
-      limited[field] = boundedText(limited[field], maxChars);
+      limited[field] = boundedText(limited[field], maxChars, mode);
     }
   }
   return limited;

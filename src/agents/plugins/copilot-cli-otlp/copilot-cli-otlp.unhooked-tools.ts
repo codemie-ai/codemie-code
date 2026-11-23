@@ -1,4 +1,5 @@
 import { maskAndBoundFields } from '@/agents/core/otlp-field-limits.js';
+import type { ObfuscationMode } from '@/utils/analytics-obfuscation.js';
 import type {
   CopilotEvent,
   CopilotToolCompleteData,
@@ -61,7 +62,7 @@ function toolEnd(toolName: string, toolArgs: unknown, complete: CopilotToolCompl
  * session whose transcript shows no tool hook at all, or for a tail-only transcript, where a missing hook
  * cannot be told from a cut one.
  */
-export function buildUnhookedToolEvents(sessionId: string, events: CopilotEvent[]): Record<string, unknown>[] {
+export function buildUnhookedToolEvents(sessionId: string, events: CopilotEvent[], mode: ObfuscationMode = 'off'): Record<string, unknown>[] {
   const hooked = hookedToolCallIds(events);
   if (hooked.size === 0) return [];
 
@@ -91,7 +92,7 @@ export function buildUnhookedToolEvents(sessionId: string, events: CopilotEvent[
     out.push(maskAndBoundFields({
       ...buildToolEvent(base(TOOL_START_TYPE, event.timestamp), toolName, toolArgs, { toolUseId }),
       event_id: stableEventId(TOOL_START_TYPE, sessionId, toolUseId),
-    }));
+    }, mode));
 
     const complete = completions.get(toolUseId);
     if (!complete) continue;
@@ -100,7 +101,7 @@ export function buildUnhookedToolEvents(sessionId: string, events: CopilotEvent[
     out.push(maskAndBoundFields({
       ...endEvent,
       event_id: stableEventId(String(endEvent['type']), sessionId, toolUseId),
-    }));
+    }, mode));
   }
   return out;
 }

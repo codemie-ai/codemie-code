@@ -53,3 +53,24 @@ describe('maskAndBoundFields', () => {
     expect(out).toEqual({ session_id: 'abc-123', tool_use_id: 'call_1', agent_id: 'agent-0001' });
   });
 });
+
+describe('maskAndBoundFields with obfuscation on', () => {
+  it('replaces PII with typed placeholders and leaves identifier fields untouched', () => {
+    const out = maskAndBoundFields({ prompt: 'mail a@b.com now', session_id: 'a@b.com' }, 'on');
+
+    expect(out['prompt']).toBe('mail [REDACTED:EMAIL] now');
+    expect(out['session_id']).toBe('a@b.com');
+  });
+
+  it('never leaves half a placeholder when the cut lands inside one', () => {
+    const out = maskAndBoundFields({ prompt: `${'x'.repeat(MAX_PROMPT_CHARS - 10)} a@b.com tail` }, 'on');
+    const prompt = String(out['prompt']);
+
+    expect(prompt.length).toBeLessThanOrEqual(MAX_PROMPT_CHARS);
+    expect(prompt).not.toMatch(/\[REDACTED[^\]]*$/);
+  });
+
+  it('keeps the off-mode output unchanged', () => {
+    expect(maskAndBoundFields({ prompt: 'mail a@b.com now' })['prompt']).toBe('mail a@b.com now');
+  });
+});
