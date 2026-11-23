@@ -1,5 +1,7 @@
 # AGENTS.md
 
+test line
+
 Canonical instruction file for AI agents working in the CodeMie Code repository. This is the shared source of truth. `CLAUDE.md` should stay minimal and import this file.
 
 ## Purpose
