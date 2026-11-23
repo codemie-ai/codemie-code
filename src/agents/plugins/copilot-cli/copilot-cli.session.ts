@@ -34,7 +34,7 @@ import type { AgentMetadata } from '../../core/types.js';
 import type { Session } from '../../core/session/types.js';
 import { getCopilotSessionStateRoot } from './copilot-cli.paths.js';
 import { readWorkspaceManifest } from './copilot-cli.workspace.js';
-import { COPILOT_CLI_AGENT_NAME, extractSlashCommand, normalizeUserPrompt, resolveCopilotAgentKey } from './copilot-cli.constants.js';
+import { COPILOT_CLI_AGENT_NAME, extractSlashCommand, isSubagentPrompt, normalizeUserPrompt, resolveCopilotAgentKey } from './copilot-cli.constants.js';
 import { readCopilotEvents } from './copilot-cli.storage-utils.js';
 import { locateCopilotTranscript } from './copilot-cli.transcript-lookup.js';
 import {
@@ -287,17 +287,16 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
         case 'user.message': {
           const data = (event.data as { text?: string; content?: string; transformedContent?: string } | undefined) ?? {};
           const command = extractSlashCommand(data.content, data.transformedContent);
-          if (command && inRun(event, bounds)) {
-            commandInvocations[command] = (commandInvocations[command] ?? 0) + 1;
-          }
           const rawText = typeof data.text === 'string' && data.text.trim()
             ? data.text
             : typeof data.content === 'string'
               ? data.content
               : undefined;
           const text = typeof rawText === 'string' ? normalizeUserPrompt(rawText, data.transformedContent) : undefined;
-          if (typeof text === 'string' && text.trim() && inRun(event, bounds)) {
-            userPrompts.push({ count: 1, text });
+          // A sub-agent's injected prompt stays in the conversation record below but is not a user prompt or command.
+          if (!isSubagentPrompt(event.data) && inRun(event, bounds)) {
+            if (command) commandInvocations[command] = (commandInvocations[command] ?? 0) + 1;
+            if (typeof text === 'string' && text.trim()) userPrompts.push({ count: 1, text });
           }
           turnRecords.push({
             type: 'user',

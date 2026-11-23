@@ -76,6 +76,7 @@ import { readClaudeSettingsEnv } from './event-fields/claude-settings-env.js';
 import { resolveLocalProxy } from './event-fields/local-proxy.js';
 import { resolveClientVersion } from './client-version-cache.js';
 import { resolveCommandFields } from './event-fields/command-fields.js';
+import { resolvePromptSource, stripInjectedContext } from './event-fields/prompt-fields.js';
 import { resolveSessionEnvFields } from './event-fields/session-env-fields.js';
 import { resolveSubagentStopFields } from './event-fields/subagent-fields.js';
 import {
@@ -703,17 +704,22 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
 
     if (authResult.ok) {
       await markReopenedActive(hookInput.session_id); // a prompt is the reopened session's own activity
-      // Derived fields read the raw prompt (the base class truncates `prompt` to 200 chars later).
-      // `prompt` itself is cleaned of pasted-content tags.
+      // Derived fields read the untruncated prompt (the base class truncates `prompt` to 200 chars
+      // later) without the context Claude Code injects, so an IDE file path or a system reminder
+      // neither yields a ticket nor hides a slash command; pasted content stays in, as typed.
+      // `prompt` itself is also cleaned of pasted-content tags; `prompt_length` is the raw length.
       const prompt = typeof hookInput.prompt === 'string' ? hookInput.prompt : '';
-      const cleaned = stripPastedContentTags(prompt);
+      const typed = stripInjectedContext(prompt);
+      const cleaned = stripPastedContentTags(typed);
       return {
         decision: 'forward',
         payload: [{
           ...hookInput,
-          ...parsePromptFields(prompt),
-          ...resolveCommandFields(prompt),
+          ...parsePromptFields(typed),
+          prompt_length: prompt.length,
+          ...resolveCommandFields(typed),
           ...(cleaned !== prompt && { prompt: cleaned }),
+          prompt_source: resolvePromptSource(prompt),
         }],
       }
     }

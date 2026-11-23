@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+### Fixed
+
+- A Claude Code `Agent` or `Task` call that was denied or failed (by a hook, a permission prompt or an error) is no longer counted as an agent in the session's agent count in CLI Analytics; calls that ran are counted as before, and a call whose result has not arrived yet is counted only once that result succeeds. In the per-record agent metrics of a live session, a call whose turn is still held back at the end of the session (for example, a sibling tool call that never got a result) and that is followed by a later turn can be missed; the session summary count is not affected. Skill counts are unchanged
+
 ## [0.17.0] - 2026-11-19
 
 ### Added

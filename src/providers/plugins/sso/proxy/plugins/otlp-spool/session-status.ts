@@ -30,7 +30,16 @@ export interface ProjectSeal {
   hooksEnd: number;
 }
 
+/** Daemon-side producer evidence supplied before appending events; independent of the producing client. */
+export interface ProducerAttribution {
+  project: string;
+  projectSource: 'linked_folder' | 'profile';
+  routedViaCodemie: true;
+}
+
 export interface SessionStatus {
+  /** Optional producer metadata. Older statuses without it retain legacy forwarding behavior. */
+  producerAttribution?: ProducerAttribution;
   /**
    * Delivery progress. A cursor is a byte offset into the corresponding spool
    * file and is only advanced after the backend acknowledges those bytes.
@@ -312,6 +321,15 @@ function normalizeStatus(raw: unknown): SessionStatus {
   }
 
   const source = raw as Record<string, unknown>;
+  const attribution = source['producerAttribution'];
+  if (attribution && typeof attribution === 'object') {
+    const value = attribution as Record<string, unknown>;
+    if (typeof value['project'] === 'string' && value['project'].length > 0
+      && (value['projectSource'] === 'linked_folder' || value['projectSource'] === 'profile')
+      && value['routedViaCodemie'] === true) {
+      status.producerAttribution = { project: value['project'], projectSource: value['projectSource'], routedViaCodemie: true };
+    }
+  }
   const cursors = (source['cursors'] ?? {}) as Record<string, unknown>;
   for (const stream of SPOOL_STREAMS) {
     status.cursors[stream] = toOffset(cursors[stream]);
