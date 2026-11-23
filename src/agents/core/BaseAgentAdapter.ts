@@ -25,9 +25,11 @@ import { describeProjectBinding, parseProjectBinding, PROJECT_BINDING_ENV } from
 import { renderProfileInfo } from '../../utils/profile.js';
 import chalk from 'chalk';
 import { existsSync } from 'fs';
-import { mkdir, writeFile } from 'fs/promises';
-import { join } from 'path';
-import { resolveHomeDir } from '../../utils/paths.js';
+import { access, mkdir, writeFile } from 'fs/promises';
+import { join, win32 as winPath } from 'path';
+import { resolveHomeDir, isSamePathResolved } from '../../utils/paths.js';
+import { classifyShadow, type ShadowVerdict } from '../../utils/path-shadow.js';
+import { getCodemieNpmPrefix, getCodemieOrGlobalNpmPrefix, getNpmBinDir } from '../../utils/npm-prefix.js';
 import { getMCPConfigSummary as getMCPConfigSummaryUtil } from '../../utils/mcp-config.js';
 import { getExtensionsScanSummary } from '../../utils/extensions-scan.js';
 import {
@@ -59,6 +61,14 @@ import {
 import { noticeDeliveryAtExit } from './session/exit-notice.js';
 import { EXIT_NETWORK_BUDGET_MS, START_PASS_EXIT_BUDGET_MS, settleStartPass } from './session/start-pass.js';
 
+const PATH_LOOKUP_TIMEOUT_MS = 5000;
+
+/** Directory part of a file path, accepting both `/` and `\` separators (mirrors the classifier). */
+function dirOfPath(file: string): string {
+  const i = Math.max(file.lastIndexOf('/'), file.lastIndexOf('\\'));
+  return i <= 0 ? file : file.slice(0, i);
+}
+
 /**
  * Base class for all agent adapters
  * Implements common logic shared by external agents
@@ -67,6 +77,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   protected proxy: CodeMieProxy | null = null;
   /** The start pass over other sessions' records; awaited at exit within the budget */
   private startPass: ReconcilePass | null = null;
+  /** Memoized PATH lookup for `cliCommand`; shared by the shadow check and launch */
+  private pathMatches: Promise<string[] | null> | null = null;
   public readonly metadata: AgentMetadata;
   public readonly type = AgentAdapterType.BASE;
 
@@ -282,6 +294,82 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       return await commandExists(this.metadata.cliCommand);
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * PATH matches for `cliCommand` in PATH order, memoized per adapter instance.
+   * `null` when the lookup failed or exceeded the 5000 ms deadline; `[]` when nothing matched.
+   */
+  getPathMatches(): Promise<string[] | null> {
+    const command = this.metadata.cliCommand;
+    if (!command) return Promise.resolve(null);
+    this.pathMatches ??= (async (): Promise<string[] | null> => {
+      let timer: NodeJS.Timeout | undefined;
+      const timeout = new Promise<'timeout'>((resolve) => {
+        timer = setTimeout(() => resolve('timeout'), PATH_LOOKUP_TIMEOUT_MS);
+      });
+      try {
+        const lookup = await Promise.race([npm.getCommandMatches(command, PATH_LOOKUP_TIMEOUT_MS), timeout]);
+        return lookup !== 'timeout' && lookup.status === 'answered' ? lookup.matches : null;
+      } catch {
+        return null;
+      } finally {
+        clearTimeout(timer);
+      }
+    })();
+    return this.pathMatches;
+  }
+
+  /**
+   * Whether another install of this agent shadows the CodeMie-managed one on PATH.
+   * Windows only; never throws. `unknown` when the agent opts out, the prefix is unresolved
+   * (npm is only spawned to find it when `resolvePrefix` is set) or the lookup failed.
+   */
+  async checkPathShadow(opts: { resolvePrefix?: boolean } = {}): Promise<ShadowVerdict> {
+    const unknown: ShadowVerdict = { status: 'unknown' };
+    const { cliCommand, npmPackage, pathShadowCheck } = this.metadata;
+    if (process.platform !== 'win32' || !cliCommand || !npmPackage || pathShadowCheck === false) {
+      return unknown;
+    }
+
+    try {
+      const prefix = getCodemieNpmPrefix() ?? (opts.resolvePrefix ? await getCodemieOrGlobalNpmPrefix() : null);
+      if (!prefix) return unknown;
+      const managedDir = getNpmBinDir(prefix, 'win32');
+
+      const matches = await this.getPathMatches();
+      if (matches === null) return unknown;
+
+      let managedShimPath: string | null = null;
+      for (const name of [`${cliCommand}.cmd`, cliCommand]) {
+        const candidate = winPath.join(managedDir, name);
+        try {
+          await access(candidate);
+          managedShimPath = candidate;
+          break;
+        } catch {
+          // not present, try the next shim name
+        }
+      }
+
+      // The classifier compares synchronously; resolve directory equality up front.
+      const sameDir = new Map<string, boolean>();
+      for (const m of matches) {
+        const dir = dirOfPath(m);
+        if (!sameDir.has(dir)) sameDir.set(dir, await isSamePathResolved(dir, managedDir));
+      }
+      return classifyShadow({
+        matches,
+        managedDir,
+        managedShimPath,
+        samePath: (a, b) => b === managedDir && (sameDir.get(a) ?? false),
+      });
+    } catch (error) {
+      logger.debug(`[${this.displayName}] PATH shadow check failed`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return unknown;
     }
   }
 
