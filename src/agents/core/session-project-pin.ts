@@ -4,8 +4,10 @@ import { dirname, join } from 'node:path';
 import { getCodemiePath } from '@/utils/paths.js';
 import { logger } from '@/utils/logger.js';
 
-const PIN_DIR = getCodemiePath('otlp-session-project');
-const TTL_MS = 24 * 60 * 60 * 1000; // 24h - long enough for a `--resume`d session the next day.
+/** Shared with `session-cwd-pin.ts`, which keeps its own entries beside the project pins. */
+export const PIN_DIR = getCodemiePath('otlp-session-project');
+export const PIN_TTL_MS = 24 * 60 * 60 * 1000; // 24h - long enough for a `--resume`d session the next day.
+const TTL_MS = PIN_TTL_MS;
 
 interface PinEntry {
   project: string;
@@ -13,9 +15,12 @@ interface PinEntry {
 }
 
 /** `session_id` is hook-supplied input; hashed so it can never escape `PIN_DIR` as a path. */
+export function pinKey(sessionId: string): string {
+  return createHash('sha256').update(sessionId).digest('hex');
+}
+
 function pinFile(sessionId: string): string {
-  const hash = createHash('sha256').update(sessionId).digest('hex');
-  return join(PIN_DIR, `${hash}.json`);
+  return join(PIN_DIR, `${pinKey(sessionId)}.json`);
 }
 
 async function readPin(sessionId: string): Promise<PinEntry | undefined> {

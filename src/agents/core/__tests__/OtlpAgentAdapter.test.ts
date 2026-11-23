@@ -80,7 +80,8 @@ vi.mock('@/providers/core/codemie-auth-helpers.js', async () => ({
   getStoredPlatformCredentials: getStoredPlatformCredentialsMock,
 }));
 vi.mock('@/utils/cli-updater.js', () => ({ getCurrentCliVersion: getCurrentCliVersionMock }));
-vi.mock('../session-project-pin.js', () => ({
+vi.mock('../session-project-pin.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../session-project-pin.js')>()),
   readPinnedProjectName: readPinnedProjectNameMock,
   pinProjectName: pinProjectNameMock,
 }));
@@ -1325,6 +1326,28 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       });
       await run({ sessionId: 's-cwd' });
       expect(forwardToSpool).toHaveBeenCalledTimes(1);
+    });
+
+    it('records the cwd even when the batch is dropped early (evidence stamp failure)', async () => {
+      class StampAdapter extends FakeAdapter {
+        protected override extractHookContext(input: FakeInput): Context {
+          return {
+            ...super.extractHookContext(input),
+            evidenceInputs: { organization: 'Acme', routing: { routed: true, routing_proof: 'proven' } },
+          };
+        }
+      }
+      adapter = new StampAdapter();
+      resolveHookCredentialsMock.mockResolvedValue(null);
+      const { readSessionCwds } = await import('../session-cwd-pin.js');
+      await run({ sessionId: 's-early' });
+      expect(await readSessionCwds('s-early')).toEqual(['/repo']);
+    });
+
+    it('records nothing for an adapter that supplies no session id', async () => {
+      const { readSessionCwds } = await import('../session-cwd-pin.js');
+      await run({ payload: [{ session_id: 's-fallback' }] });
+      expect(await readSessionCwds('s-fallback')).toEqual([]);
     });
   });
 });

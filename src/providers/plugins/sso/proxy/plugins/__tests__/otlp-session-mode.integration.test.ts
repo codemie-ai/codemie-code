@@ -53,6 +53,17 @@ describe('resolveSessionObfuscationMode with the real session mapping and settin
     expect(await resolveSessionObfuscationMode('sess-2')).toBe('off');
   });
 
+  it('more directories than the cap resolves on even when every recorded project is off', async () => {
+    const { recordSessionCwd } = await import('@/agents/core/session-cwd-pin.js');
+    const { resolveSessionObfuscationMode } = await import('../otlp-json-masking.js');
+    for (let i = 0; i < 9; i++) {
+      const project = join(root, `proj-${i}`);
+      writeConfig(join(project, '.codemie'), 'off');
+      await recordSessionCwd('sess-cap', project);
+    }
+    expect(await resolveSessionObfuscationMode('sess-cap')).toBe('on');
+  });
+
   it('no mapping: the global layer decides (on when global is on, off otherwise)', async () => {
     const { resolveSessionObfuscationMode } = await import('../otlp-json-masking.js');
     expect(await resolveSessionObfuscationMode('sess-3')).toBe('off');

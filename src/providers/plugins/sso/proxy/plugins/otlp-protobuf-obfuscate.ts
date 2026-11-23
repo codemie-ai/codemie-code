@@ -1,4 +1,5 @@
 import { OBFUSCATION_FAILURE_PLACEHOLDER, sanitizeText, type ObfuscationMode } from '@/utils/analytics-obfuscation.js';
+import { PII_EXEMPT_KEYS } from '@/utils/analytics-pii-exempt.js';
 import { logger } from '@/utils/logger.js';
 import { MAX_SNAPSHOT_BYTES, type OtlpSignal } from './otlp-spool/otlp-reader.js';
 
@@ -23,12 +24,6 @@ const MAX_DEPTH = 32;
 
 /** Attributes the forwarder's range proof reads; their values are identifiers, never rewritten. */
 const PROOF_KEYS = new Set(['session.id', 'session_id', 'codemie_project_name']);
-
-/**
- * Identity attributes whose plain string value is not obfuscated as PII (Claude Code's `user.email` names the
- * session owner). Secret patterns are still masked in them; any other attribute and all free text are unaffected.
- */
-const PII_EXEMPT_KEYS = new Set(['user.email']);
 
 /** A proof attribute's value is kept only while it looks like an identifier; anything else is free text and is obfuscated. */
 const IDENTIFIER_VALUE = /^[A-Za-z0-9._:@-]{1,128}$/;

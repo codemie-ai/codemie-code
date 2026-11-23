@@ -206,6 +206,12 @@ describe('maskOtlpJson — obfuscation on', () => {
     expect(JSON.stringify(maskOtlpJsonWithMode(logsExport([emailAttr]), 'off'))).toContain('dev@example.com');
   });
 
+  it('does not recurse without bound into a very deeply nested export', () => {
+    let node: unknown = { attributes: [str('user.email', 'dev@example.com')] };
+    for (let i = 0; i < 5000; i++) node = { child: node };
+    expect(() => maskOtlpJson(node, 'on')).not.toThrow();
+  });
+
   it('keeps the user.email attribute while a prompt attribute holding an email is still masked', () => {
     const document = {
       resourceLogs: [
@@ -283,6 +289,15 @@ describe('resolveSessionObfuscationMode', () => {
   it('no mapping falls back to the global layer: off when it is off, on when it is on', async () => {
     expect(await resolveSessionObfuscationMode('n1', { sessionCwds: cwds([]), resolveSettings: settingsFor({}) })).toBe('off');
     expect(await resolveSessionObfuscationMode('n2', { sessionCwds: cwds([]), resolveSettings: settingsFor({}, on) })).toBe('on');
+  });
+
+  it('an overflowed session directory list resolves on, whatever the recorded directories say', async () => {
+    const mode = await resolveSessionObfuscationMode('ov1', {
+      sessionCwds: cwds(['/work/a']),
+      resolveSettings: settingsFor({}),
+      overflowed: async () => true,
+    });
+    expect(mode).toBe('on');
   });
 
   it('on stays on for the session once seen', async () => {

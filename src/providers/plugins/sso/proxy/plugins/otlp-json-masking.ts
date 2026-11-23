@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { sanitizeDeep, sanitizeText, type ObfuscationMode, type SanitizeOptions } from '@/utils/analytics-obfuscation.js';
 import { resolveAnalyticsSettings, type AnalyticsSettings } from '@/utils/analytics-settings.js';
 import { isSensitiveKey, REDACTED } from '@/utils/security.js';
-import { readSessionCwds } from '@/agents/core/session-cwd-pin.js';
+import { PII_EXEMPT_KEYS } from '@/utils/analytics-pii-exempt.js';
+import { readSessionCwds, hasSessionCwdOverflow } from '@/agents/core/session-cwd-pin.js';
 
 /** Deeper than any real OTLP export; anything beyond is left to `maskSecretsDeep`, which redacts it whole. */
 const MAX_WALK_DEPTH = 64;
@@ -13,26 +14,20 @@ function isKeyValue(node: Record<string, unknown>): node is { key: string; value
   return typeof key === 'string' && typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/**
- * Identity attributes whose plain string value is not obfuscated as PII (Claude Code's `user.email` names the
- * session owner). Matched on the exact attribute name; extend here if another identity attribute needs it.
- */
-const PII_EXEMPT_KEYS: ReadonlySet<string> = new Set(['user.email']);
-
 interface KeptValues {
   nonce: string;
   values: Map<string, string>;
 }
 
 /** Put the exempt values back where `redactSensitiveAttributes` swapped in a sentinel. */
-function restoreKeptValues(node: unknown, kept: KeptValues): unknown {
-  if (typeof node !== 'object' || node === null) return node;
-  if (Array.isArray(node)) return node.map((item) => restoreKeptValues(item, kept));
+function restoreKeptValues(node: unknown, kept: KeptValues, depth = 0): unknown {
+  if (typeof node !== 'object' || node === null || depth >= MAX_WALK_DEPTH) return node;
+  if (Array.isArray(node)) return node.map((item) => restoreKeptValues(item, kept, depth + 1));
   const out: Record<string, unknown> = {};
   for (const [name, child] of Object.entries(node as Record<string, unknown>)) {
     out[name] = name === 'stringValue' && typeof child === 'string' && kept.values.has(child)
       ? kept.values.get(child)
-      : restoreKeptValues(child, kept);
+      : restoreKeptValues(child, kept, depth + 1);
   }
   return out;
 }
@@ -94,6 +89,8 @@ export function maskOtlpJson(parsed: unknown, mode: ObfuscationMode, opts?: Sani
 export interface SessionModeDeps {
   sessionCwds: (sessionId: string) => Promise<string[]>;
   resolveSettings: (cwd: string | undefined) => AnalyticsSettings;
+  /** True when the session's directory list is incomplete (cap reached); resolves `on`. Absent: never. */
+  overflowed?: (sessionId: string) => Promise<boolean>;
 }
 
 /** Sessions resolved `on`: sticky for the life of the daemon, so a later config edit cannot drop a session to off. */
@@ -107,10 +104,14 @@ const sessionsKnownOn = new Set<string>();
  */
 export async function resolveSessionObfuscationMode(
   sessionId: string,
-  deps: SessionModeDeps = { sessionCwds: readSessionCwds, resolveSettings: resolveAnalyticsSettings }
+  deps: SessionModeDeps = { sessionCwds: readSessionCwds, resolveSettings: resolveAnalyticsSettings, overflowed: hasSessionCwdOverflow }
 ): Promise<ObfuscationMode> {
   try {
     if (sessionsKnownOn.has(sessionId)) return 'on';
+    if (await deps.overflowed?.(sessionId)) {
+      sessionsKnownOn.add(sessionId);
+      return 'on';
+    }
     const cwds = await deps.sessionCwds(sessionId);
     const scopes: (string | undefined)[] = cwds.length > 0 ? cwds : [undefined];
     if (scopes.some((cwd) => deps.resolveSettings(cwd).obfuscation === 'on')) {

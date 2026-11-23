@@ -145,6 +145,10 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         }
 
         const context = await this.extractHookContext(hookInput);
+        // The daemon has no cwd: tell it where this session runs, before any early return below and before the OTLP export.
+        // `context.sessionId` is the hook's own session id, the one Claude Code's OTLP `session.id` carries and the daemon
+        // looks up; adapters without it (Copilot) have no native OTLP export, so nothing would ever read a mapping.
+        if (context.sessionId) await recordSessionCwd(context.sessionId, context.cwd);
         const batch = await this.prepareForward(context, decision, hookInput);
         const args: Parameters<OtlpAdapterDeps['forwardOtlpEventsToSpool']> = batch.options
           ? [batch.events, this.name, batch.options]
@@ -208,9 +212,6 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     ]);
     const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(), commonFields, agentFields, settings };
     const events = decision.payload.map((hookEvent) => this.buildEvent(hookEvent, invocation));
-    // The daemon has no cwd: tell it where this session runs, before the events (and the OTLP export that follows) arrive.
-    const sessionId = context.sessionId ?? String(events[0]?.['session_id'] ?? '');
-    await recordSessionCwd(sessionId, context.cwd);
     return { events, options: record ? { evidenceV: 1 } : undefined };
   }
 
