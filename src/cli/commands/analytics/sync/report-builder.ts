@@ -9,6 +9,9 @@
 import { loadAnalytics } from '../analytics-core.js';
 import type { AnalyticsSource } from '../sources/types.js';
 import { buildPayload } from '../report/payload-builder.js';
+import { obfuscatePayload } from '../report/redact.js';
+import { resolveAnalyticsSettings } from '@/utils/analytics-settings.js';
+import type { ObfuscationMode } from '@/utils/analytics-obfuscation.js';
 import { emailSlug } from '../report/report-generator.js';
 import type { SyncReport } from './types.js';
 import type { SyncWindow } from './window.js';
@@ -19,6 +22,8 @@ export interface BuildSyncReportOptions {
   email: string;
   includeExternal: boolean;
   now: Date;
+  /** Overrides the mode resolved from the analytics settings of the command cwd. */
+  obfuscation?: ObfuscationMode;
 }
 
 function formatUtcDate(date: Date): string {
@@ -35,6 +40,7 @@ function formatUtcDate(date: Date): string {
  */
 export async function buildSyncReport(opts: BuildSyncReportOptions): Promise<SyncReport | null> {
   const { source, window, email, includeExternal, now } = opts;
+  const mode = opts.obfuscation ?? resolveAnalyticsSettings(process.cwd()).obfuscation;
 
   const loaded = await loadAnalytics(
     source,
@@ -50,7 +56,7 @@ export async function buildSyncReport(opts: BuildSyncReportOptions): Promise<Syn
   const { analytics, costResult } = loaded;
   const { index: costIndex, summary } = costResult;
 
-  const payload = buildPayload(analytics, costIndex, summary, {
+  const built = buildPayload(analytics, costIndex, summary, {
     rangeLabel: window.label,
     projectFilter: 'all',
     generatedAt: now.toISOString(),
@@ -58,6 +64,8 @@ export async function buildSyncReport(opts: BuildSyncReportOptions): Promise<Syn
     periodStart: window.from.toISOString(),
     periodEnd: window.to.toISOString(),
   });
+
+  const payload = obfuscatePayload(built, mode);
 
   // Lowercase is applied here only (sync's attachment name), never in the shared `emailSlug`
   // helper or the interactive export path, so two differently-cased emails for the same

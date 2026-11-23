@@ -112,4 +112,23 @@ describe('buildSyncReport', () => {
     // Bytes match the exact `generateReportJson` shape: JSON.stringify(payload, null, 2).
     expect(report!.bytes.toString('utf-8')).toBe(JSON.stringify(payload, null, 2));
   });
+
+  it('obfuscates session titles in the payload when obfuscation is on, and leaves them when off', async () => {
+    const now = new Date('2026-10-29T12:34:56.000Z');
+    const window = dailyWindow(now, null, 7);
+    const base = session('s1');
+    const titled = {
+      ...base,
+      deltas: [{ ...base.deltas[0], userPrompts: [{ text: 'ping bob@example.com' }] }, ...base.deltas.slice(1)],
+    } as RawSessionData;
+    const mk = (): StubSource => new StubSource({ rawSessions: [titled], cost: cost('s1') });
+
+    const on = await buildSyncReport({ source: mk(), window, email: EMAIL, includeExternal: false, now, obfuscation: 'on' });
+    const off = await buildSyncReport({ source: mk(), window, email: EMAIL, includeExternal: false, now, obfuscation: 'off' });
+
+    const onText = on!.bytes.toString('utf-8');
+    const offText = off!.bytes.toString('utf-8');
+    expect(onText).not.toContain('bob@example.com');
+    expect(offText).toContain('bob@example.com');
+  });
 });

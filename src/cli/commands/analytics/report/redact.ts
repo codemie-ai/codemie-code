@@ -15,6 +15,7 @@
  * Pure: returns a new payload and never mutates its input.
  */
 
+import { sanitizeText, type ObfuscationMode } from '@/utils/analytics-obfuscation.js';
 import type { ReportPayload, ReportSessionRecord } from './types.js';
 
 /** Value substituted for a `--project` filter that may have been a full path. */
@@ -44,5 +45,23 @@ export function redactPayload(payload: ReportPayload): ReportPayload {
       projectFilter: projectFilter === 'all' ? projectFilter : REDACTED_PROJECT_FILTER,
     },
     sessions: payload.sessions.map(redactSession),
+  };
+}
+
+/**
+ * Opt-in analytics obfuscation (not `--redact`): masks PII/secrets in the free-text `title`
+ * of every session. Returns the input unchanged when mode is `off`; `--redact` stays stronger
+ * because it blanks the title outright.
+ */
+export function obfuscatePayload(payload: ReportPayload, mode: ObfuscationMode): ReportPayload {
+  if (mode === 'off') {
+    return payload;
+  }
+  return {
+    ...payload,
+    sessions: payload.sessions.map((session) => ({
+      ...session,
+      title: sanitizeText(session.title ?? '', mode),
+    })),
   };
 }

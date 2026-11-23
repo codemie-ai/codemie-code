@@ -327,7 +327,8 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
       const { buildPayload } = await import('./report/payload-builder.js');
       const { generateReport, generateReportJson, writeReportWithFallback } = await import('./report/report-generator.js');
       const { resolveOutputTargets } = await import('./report/output-target.js');
-      const { redactPayload } = await import('./report/redact.js');
+      const { redactPayload, obfuscatePayload } = await import('./report/redact.js');
+      const { resolveAnalyticsSettings } = await import('@/utils/analytics-settings.js');
 
       // Load user email for report metadata and filename; non-fatal if config is unavailable.
       let userEmail: string | undefined;
@@ -367,7 +368,9 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
         ...(filter.fromDate !== undefined && { periodStart: filter.fromDate.toISOString() }),
         ...(filter.toDate !== undefined && { periodEnd: filter.toDate.toISOString() }),
       });
-      const payload = options.redact ? redactPayload(builtPayload) : builtPayload;
+      const payload = options.redact
+        ? redactPayload(builtPayload)
+        : obfuscatePayload(builtPayload, resolveAnalyticsSettings(process.cwd()).obfuscation);
 
       const targets = resolveOutputTargets(exportFormat, output, process.cwd(), userEmail);
       let htmlPath = targets.html;
