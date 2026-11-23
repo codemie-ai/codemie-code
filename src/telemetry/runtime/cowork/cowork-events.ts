@@ -5,7 +5,7 @@
  */
 
 import { boundedText, maskAndBoundFields, TEXT_FIELD_LIMITS } from '@/agents/core/otlp-field-limits.js';
-import { OBFUSCATION_RULES_VERSION, sanitizeText, type ObfuscationMode } from '@/utils/analytics-obfuscation.js';
+import { OBFUSCATION_RULES_VERSION, sanitizeHookText, type ObfuscationMode } from '@/utils/analytics-obfuscation.js';
 import { stripPastedContentTags } from '@/agents/core/pasted-content.js';
 import { isCountedTranscriptLine, keepFirstByUuid } from '@/agents/plugins/claude/session/transcript-lines.js';
 import { buildClaudeEventId } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.event-id.js';
@@ -342,7 +342,7 @@ export function stampCoworkEvent(event: WireEvent, envelope: CoworkEnvelope, fal
   }
   const payload = Object.fromEntries(Object.keys(own).map((key) => [key, masked[key]]));
   const id = typeof ownId === 'string' ? ownId : buildClaudeEventId(masked, payload, String(masked['timestamp']));
-  const branch = envelope.branch ? sanitizeText(envelope.branch, mode) : '';
+  const branch = envelope.branch ? sanitizeHookText(envelope.branch, mode) : '';
   delete masked['branch_counts'];
   delete masked['branch_dominant'];
   masked['git_branch'] = branch;

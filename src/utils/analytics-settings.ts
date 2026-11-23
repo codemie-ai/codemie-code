@@ -14,8 +14,10 @@
  * - Obfuscation is on if the global or the project layer is on. A project can only turn it on.
  * - `ticketTracker` resolves project over global; unset by default (no git-remote inference).
  * - Results are cached per file and re-read when the file mtime changes.
- * - An unreadable or unparsable file keeps that layer's prior value; a layer never read before
- *   contributes nothing. Obfuscation therefore never silently drops to off once a layer was on.
+ * - An unreadable or unparsable file keeps that layer's prior value; a layer that was never read and
+ *   cannot be parsed counts as on. A file that disappears after it was read as on keeps its on state.
+ *   Obfuscation therefore never silently drops to off once a layer was on.
+ * - A missing or non-string `cwd` skips the project layer instead of throwing.
  */
 
 import { statSync, readFileSync } from 'node:fs';
@@ -39,6 +41,8 @@ interface LayerState {
 const CONFIG_FILE = 'codemie-cli.config.json';
 const TRACKERS: readonly TicketTracker[] = ['jira', 'azure-devops', 'github', 'gitlab'];
 const ABSENT: LayerState = { mtimeMs: -1, obfuscationOn: false };
+/** A file that exists but could not be parsed on first read: protective, and never cached. */
+const UNREADABLE: LayerState = { mtimeMs: -2, obfuscationOn: true };
 
 const layerCache = new Map<string, LayerState>();
 
@@ -67,16 +71,18 @@ function readLayer(file: string): LayerState | undefined {
     return next;
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+      // A config deleted or replaced after an `on` read keeps its `on` state.
+      if (prior?.obfuscationOn) return prior;
       layerCache.set(file, ABSENT);
       return ABSENT;
     }
-    return prior;
+    return prior ?? UNREADABLE;
   }
 }
 
-export function resolveAnalyticsSettings(cwd: string): AnalyticsSettings {
+export function resolveAnalyticsSettings(cwd: string | undefined): AnalyticsSettings {
   const global = readLayer(getCodemiePath(CONFIG_FILE));
-  const project = readLayer(join(cwd, '.codemie', CONFIG_FILE));
+  const project = typeof cwd === 'string' && cwd.length > 0 ? readLayer(join(cwd, '.codemie', CONFIG_FILE)) : undefined;
   const ticketTracker = project?.ticketTracker ?? global?.ticketTracker;
   return {
     obfuscation: global?.obfuscationOn || project?.obfuscationOn ? 'on' : 'off',

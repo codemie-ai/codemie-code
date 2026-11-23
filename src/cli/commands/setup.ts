@@ -464,7 +464,12 @@ async function promptAnalyticsSettings(workingDir: string): Promise<void> {
       const { scope } = await inquirer.prompt([
         { type: 'list', name: 'scope', message: 'Save obfuscation setting:', choices: scopeChoices, default: 'global' }
       ]);
-      await saveAnalyticsSettings(scope as AnalyticsScope, workingDir, { obfuscation });
+      if (obfuscation === 'off' && scope === 'local') {
+        // A project can only turn obfuscation on; saving Off here would silently do nothing.
+        logger.warn('Obfuscation cannot be turned off for one project: a project setting only adds to the global one. Nothing was saved.');
+      } else {
+        await saveAnalyticsSettings(scope as AnalyticsScope, workingDir, { obfuscation });
+      }
     }
 
     const { ticketTracker } = await inquirer.prompt([

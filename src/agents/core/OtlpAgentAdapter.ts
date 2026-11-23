@@ -2,7 +2,7 @@ import { logger } from '@/utils/logger.js';
 import { extractRepository } from '@/utils/paths.js';
 import { AnalyticsSourceError } from '@/utils/errors.js';
 import { boundedText, maskAndBoundFields, MAX_PROMPT_CHARS } from './otlp-field-limits.js';
-import { OBFUSCATION_RULES_VERSION, type ObfuscationMode } from '@/utils/analytics-obfuscation.js';
+import { OBFUSCATION_RULES_VERSION, sanitizeHookText, type ObfuscationMode } from '@/utils/analytics-obfuscation.js';
 import { resolveAnalyticsSettings, type AnalyticsSettings } from '@/utils/analytics-settings.js';
 import { AgentAdapterType, type OtlpAdapterDeps } from './types.js';
 import { resolveRepoFields, type RepoFields } from './event-fields/repo-fields.js';
@@ -61,13 +61,13 @@ interface InvocationContext {
 
 const SCHEMA_VERSION = 2;
 
-/** Analytics settings for a hook's cwd; a failed read means defaults (obfuscation off), never a dropped event. */
+/** Analytics settings for a hook's cwd; a failed read is protective (obfuscation on), never a dropped event. */
 function readSettings(cwd: string): AnalyticsSettings {
   try {
     return resolveAnalyticsSettings(cwd);
   } catch (error) {
     logger.debug(`[otlp] analytics settings unavailable: ${error instanceof Error ? error.name : 'error'}`);
-    return { obfuscation: 'off' };
+    return { obfuscation: 'on' };
   }
 }
 
@@ -313,7 +313,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     const explicitType = hookEvent['type'];
 
     const event: Record<string, unknown> = {
-      ...this.mergeCommonFields(limited, ctx.commonFields),
+      ...this.mergeCommonFields(limited, ctx.commonFields, mode),
       ...ctx.agentFields,
       type: typeof explicitType === 'string' && explicitType.length > 0 ? explicitType : this.resolveEventType(hookEvent),
       session_id: String(hookEvent['session_id'] ?? ''),
@@ -382,7 +382,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   }
 
   /** Stamps the common fields; for the overridable ones a hook event's own non-empty string value wins. */
-  private mergeCommonFields(hookEvent: Record<string, unknown>, commonFields: CommonFields): Record<string, unknown> {
+  private mergeCommonFields(hookEvent: Record<string, unknown>, commonFields: CommonFields, mode: ObfuscationMode): Record<string, unknown> {
     const merged: Record<string, unknown> = { ...hookEvent, ...commonFields };
     for (const key of OVERRIDABLE_FIELD_KEYS) {
       const own = hookEvent[key];
@@ -407,6 +407,13 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       const rebased = resolveBranchStory(ownBranch);
       merged['story_id'] = rebased?.storyId ?? '';
       merged['story_source'] = rebased?.storySource ?? '';
+    }
+
+    if (mode === 'on') {
+      for (const key of ['git_branch', 'repo_remote'] as const) {
+        const value = merged[key];
+        if (typeof value === 'string' && value.length > 0) merged[key] = sanitizeHookText(value, mode);
+      }
     }
 
     return merged;

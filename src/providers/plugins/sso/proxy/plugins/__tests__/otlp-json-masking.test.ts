@@ -224,31 +224,41 @@ describe('maskOtlpJson — obfuscation on', () => {
 describe('resolveSessionObfuscationMode', () => {
   const on = () => ({ obfuscation: 'on' as const });
   const off = () => ({ obfuscation: 'off' as const });
+  const evidence = (value: 'on' | 'off' | 'none') => async () => value;
 
-  it('uses the mapped session and the settings layer', async () => {
-    const mode = await resolveSessionObfuscationMode('s1', {
-      readStatus: async () => ({ project: 'p' }) as never,
-      resolveSettings: on,
-    });
-    expect(mode).toBe('on');
+  it('the global layer on gives on whatever the hooks say', async () => {
+    expect(await resolveSessionObfuscationMode('g1', { hookEvidence: evidence('off'), resolveSettings: on })).toBe('on');
   });
 
-  it('an unmapped session still obfuscates when a known layer is on', async () => {
-    expect(
-      await resolveSessionObfuscationMode('s1', { readStatus: async () => null, resolveSettings: on })
-    ).toBe('on');
-    expect(
-      await resolveSessionObfuscationMode('s1', { readStatus: async () => null, resolveSettings: off })
-    ).toBe('off');
+  it('a project-scoped on, seen as rules_version on the session hooks, gives on', async () => {
+    expect(await resolveSessionObfuscationMode('p1', { hookEvidence: evidence('on'), resolveSettings: off })).toBe('on');
   });
 
-  it('a failing status read or settings read gives on', async () => {
+  it('on stays on for the session once seen', async () => {
+    await resolveSessionObfuscationMode('p2', { hookEvidence: evidence('on'), resolveSettings: off });
+    expect(await resolveSessionObfuscationMode('p2', { hookEvidence: evidence('off'), resolveSettings: off })).toBe('on');
+  });
+
+  it('hooks without rules_version, or no hooks yet, follow the global layer (off)', async () => {
+    expect(await resolveSessionObfuscationMode('o1', { hookEvidence: evidence('off'), resolveSettings: off })).toBe('off');
+    expect(await resolveSessionObfuscationMode('o2', { hookEvidence: evidence('none'), resolveSettings: off })).toBe('off');
+  });
+
+  it('a failing evidence or settings read gives on', async () => {
     expect(
-      await resolveSessionObfuscationMode('s1', {
-        readStatus: async () => {
+      await resolveSessionObfuscationMode('f1', {
+        hookEvidence: async () => {
           throw new Error('boom');
         },
         resolveSettings: off,
+      })
+    ).toBe('on');
+    expect(
+      await resolveSessionObfuscationMode('f2', {
+        hookEvidence: evidence('off'),
+        resolveSettings: () => {
+          throw new Error('boom');
+        },
       })
     ).toBe('on');
   });

@@ -84,4 +84,21 @@ describe('resolveAnalyticsSettings', () => {
     writeProject(cfg({ obfuscation: 'off' }));
     expect(resolveAnalyticsSettings(project).obfuscation).toBe('off');
   });
+
+  it('keeps on when the config file is deleted after an on read', () => {
+    writeGlobal(cfg({ obfuscation: 'on' }));
+    expect(resolveAnalyticsSettings(project).obfuscation).toBe('on');
+    rmSync(join(home, 'codemie-cli.config.json'));
+    expect(resolveAnalyticsSettings(project).obfuscation).toBe('on');
+  });
+
+  it('treats a config that cannot be parsed on first read as on', () => {
+    writeProject('{ not json');
+    expect(resolveAnalyticsSettings(project).obfuscation).toBe('on');
+  });
+
+  it('skips the project layer for a missing cwd instead of throwing', () => {
+    writeGlobal(cfg({ obfuscation: 'off' }));
+    expect(resolveAnalyticsSettings(undefined).obfuscation).toBe('off');
+  });
 });

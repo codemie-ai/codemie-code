@@ -1,4 +1,4 @@
-import { sanitizeText, type ObfuscationMode } from '@/utils/analytics-obfuscation.js';
+import { OBFUSCATION_FAILURE_PLACEHOLDER, sanitizeText, type ObfuscationMode } from '@/utils/analytics-obfuscation.js';
 import { logger } from '@/utils/logger.js';
 import { MAX_SNAPSHOT_BYTES, type OtlpSignal } from './otlp-spool/otlp-reader.js';
 
@@ -24,6 +24,9 @@ const MAX_DEPTH = 32;
 /** Attributes the forwarder's range proof reads; their values are identifiers, never rewritten. */
 const PROOF_KEYS = new Set(['session.id', 'session_id', 'codemie_project_name']);
 
+/** A proof attribute's value is kept only while it looks like an identifier; anything else is free text and is obfuscated. */
+const IDENTIFIER_VALUE = /^[A-Za-z0-9._:@-]{1,128}$/;
+
 const SHAPES: Record<string, MessageShape> = {
   any: { strings: [1], kids: { 5: 'array', 6: 'kvlist' } },
   array: { kids: { 1: 'any' } },
@@ -35,12 +38,12 @@ const SHAPES: Record<string, MessageShape> = {
   logsReq: { kids: { 1: 'logsRes' } },
   logsRes: { kids: { 1: 'resource', 2: 'logsScope' } },
   logsScope: { kids: { 1: 'scope', 2: 'logRecord' } },
-  logRecord: { kids: { 5: 'any', 6: 'kv' } },
+  logRecord: { strings: [12], kids: { 5: 'any', 6: 'kv' } },
   // traces
   tracesReq: { kids: { 1: 'tracesRes' } },
   tracesRes: { kids: { 1: 'resource', 2: 'tracesScope' } },
   tracesScope: { kids: { 1: 'scope', 2: 'span' } },
-  span: { strings: [5], kids: { 9: 'kv', 11: 'spanEvent', 13: 'spanLink', 15: 'spanStatus' } },
+  span: { strings: [3, 5], kids: { 9: 'kv', 11: 'spanEvent', 13: 'spanLink', 15: 'spanStatus' } },
   spanEvent: { strings: [2], kids: { 3: 'kv' } },
   spanLink: { kids: { 5: 'kv' } },
   spanStatus: { strings: [2] },
@@ -48,7 +51,7 @@ const SHAPES: Record<string, MessageShape> = {
   metricsReq: { kids: { 1: 'metricsRes' } },
   metricsRes: { kids: { 1: 'resource', 2: 'metricsScope' } },
   metricsScope: { kids: { 1: 'scope', 2: 'metric' } },
-  metric: { kids: { 5: 'gauge', 7: 'gauge', 9: 'histogram', 10: 'expHistogram', 11: 'gauge' } },
+  metric: { strings: [1, 2, 3], kids: { 5: 'gauge', 7: 'gauge', 9: 'histogram', 10: 'expHistogram', 11: 'gauge' } },
   gauge: { kids: { 1: 'numberPoint' } },
   histogram: { kids: { 1: 'histogramPoint' } },
   expHistogram: { kids: { 1: 'expHistogramPoint' } },
@@ -96,6 +99,10 @@ function encodeVarint(n: number): Buffer {
 
 function sanitizeLeaf(buf: Buffer, start: number, end: number, mode: ObfuscationMode): Buffer | null {
   const text = buf.toString('utf8', start, end);
+  // Invalid UTF-8 would be rewritten lossily (U+FFFD) and cannot be proven free of sensitive text.
+  if (mode === 'on' && !Buffer.from(text, 'utf8').equals(buf.subarray(start, end))) {
+    return Buffer.from(OBFUSCATION_FAILURE_PLACEHOLDER, 'utf8');
+  }
   const clean = sanitizeText(text, mode);
   return clean === text ? null : Buffer.from(clean, 'utf8');
 }
@@ -108,12 +115,45 @@ function rewriteKeyValue(buf: Buffer, start: number, end: number, mode: Obfuscat
     if (tag === 10) {
       const len = readVarint(buf, c, end);
       if (c.p + len > end) throw new MalformedProtobuf('length');
-      if (PROOF_KEYS.has(buf.toString('utf8', c.p, c.p + len))) return null;
+      if (PROOF_KEYS.has(buf.toString('utf8', c.p, c.p + len)) && proofValueIsIdentifier(buf, c.p + len, end)) return null;
       break;
     }
     skipPayload(buf, tag % 8, c, end);
   }
   return rewriteMessage(buf, start, end, 'kv', mode, depth, true);
+}
+
+/** True when the `AnyValue` string that follows the attribute name (KeyValue field 2) looks like an identifier. */
+function proofValueIsIdentifier(buf: Buffer, from: number, end: number): boolean {
+  const c: Cursor = { p: from };
+  while (c.p < end) {
+    const tag = readVarint(buf, c, end);
+    if (tag % 8 !== 2) {
+      skipPayload(buf, tag % 8, c, end);
+      continue;
+    }
+    const len = readVarint(buf, c, end);
+    if (c.p + len > end) throw new MalformedProtobuf('length');
+    if (Math.floor(tag / 8) === 2) {
+      // AnyValue.string_value is field 1: tag 10, length, bytes
+      const inner: Cursor = { p: c.p };
+      const innerEnd = c.p + len;
+      while (inner.p < innerEnd) {
+        const innerTag = readVarint(buf, inner, innerEnd);
+        if (innerTag % 8 !== 2) {
+          skipPayload(buf, innerTag % 8, inner, innerEnd);
+          continue;
+        }
+        const innerLen = readVarint(buf, inner, innerEnd);
+        if (inner.p + innerLen > innerEnd) throw new MalformedProtobuf('length');
+        if (innerTag === 10) return IDENTIFIER_VALUE.test(buf.toString('utf8', inner.p, inner.p + innerLen));
+        inner.p += innerLen;
+      }
+      return true;
+    }
+    c.p += len;
+  }
+  return true;
 }
 
 function skipPayload(buf: Buffer, wire: number, c: Cursor, end: number): void {
@@ -178,34 +218,49 @@ function rewriteMessage(
 }
 
 let droppedBodies = 0;
+let lastDropWarnAt = 0;
+const DROP_WARN_INTERVAL_MS = 60_000;
 
 /** Count of bodies dropped so far (size limit or malformed); content-free. */
 export function protobufObfuscationDropCount(): number {
   return droppedBodies;
 }
 
-function drop(reason: 'too_large' | 'malformed'): null {
+export type ProtobufObfuscation =
+  | { kind: 'ok'; body: Buffer }
+  | { kind: 'dropped'; reason: 'too_large' | 'malformed' };
+
+function drop(reason: 'too_large' | 'malformed'): ProtobufObfuscation {
   droppedBodies++;
-  logger.warn(`[otlp-ingest] protobuf obfuscation dropped a body (${reason}); drops so far: ${droppedBodies}`);
-  return null;
+  const now = Date.now();
+  if (now - lastDropWarnAt >= DROP_WARN_INTERVAL_MS) {
+    lastDropWarnAt = now;
+    logger.warn(`[otlp-ingest] protobuf obfuscation dropped a body (${reason}); drops so far: ${droppedBodies}`);
+  }
+  return { kind: 'dropped', reason };
 }
 
 /**
- * Obfuscate the string leaves of one OTLP/protobuf export request. Returns the same buffer when
- * nothing changes, the re-encoded buffer otherwise, and null when the body must be dropped: the
- * result would exceed the forwarder's 5 MiB range limit, or (in `on` mode) the input is malformed
- * and cannot be proven free of sensitive strings. Strings that fail obfuscation become the failure
- * placeholder; the rest of the body is kept.
+ * Obfuscate the string leaves of one OTLP/protobuf export request. `ok` carries the same buffer when
+ * nothing changes and the re-encoded buffer otherwise; `dropped` means the result would exceed the
+ * forwarder's 5 MiB range limit, or (in `on` mode) the input is malformed and cannot be proven free
+ * of sensitive strings. Strings that fail obfuscation become the failure placeholder; the rest of the body is kept.
  */
-export function obfuscateOtlpProtobuf(body: Buffer, mode: ObfuscationMode, signal: OtlpSignal): Buffer | null {
+export function obfuscateOtlpProtobufResult(body: Buffer, mode: ObfuscationMode, signal: OtlpSignal): ProtobufObfuscation {
   let rewritten: Buffer | null;
   try {
     rewritten = rewriteMessage(body, 0, body.length, ROOT_BY_SIGNAL[signal], mode, 0);
   } catch (err) {
-    if (err instanceof MalformedProtobuf && mode === 'off') return body;
+    if (err instanceof MalformedProtobuf && mode === 'off') return { kind: 'ok', body };
     return drop('malformed');
   }
-  if (rewritten === null) return body;
+  if (rewritten === null) return { kind: 'ok', body };
   if (rewritten.length > MAX_SNAPSHOT_BYTES) return drop('too_large');
-  return rewritten;
+  return { kind: 'ok', body: rewritten };
+}
+
+/** As `obfuscateOtlpProtobufResult`, with every drop reported as null. */
+export function obfuscateOtlpProtobuf(body: Buffer, mode: ObfuscationMode, signal: OtlpSignal): Buffer | null {
+  const result = obfuscateOtlpProtobufResult(body, mode, signal);
+  return result.kind === 'ok' ? result.body : null;
 }

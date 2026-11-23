@@ -6,7 +6,7 @@ import { isSafeSessionId } from '@/agents/core/session-id.js';
 import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { describeLogin, type DetachedLoginOutcome } from '@/providers/plugins/sso/sso.detached-login.js';
 import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
-import { sanitizeText, trimBeforeOpenPlaceholder, type ObfuscationMode } from '@/utils/analytics-obfuscation.js';
+import { sanitizeHookText, trimBeforeOpenPlaceholder, type ObfuscationMode } from '@/utils/analytics-obfuscation.js';
 import { resolveAnalyticsSettings } from '@/utils/analytics-settings.js';
 import { logger } from '@/utils/logger.js';
 import { detectGitBranch } from '@/utils/processes.js';
@@ -341,7 +341,7 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
    */
   private boundedFreeText(mode: ObfuscationMode, value: unknown): string {
     const text = typeof value === 'string' ? value : JSON.stringify(value) ?? String(value);
-    const masked = sanitizeText(text, mode);
+    const masked = sanitizeHookText(text, mode);
     return mode === 'on' ? trimBeforeOpenPlaceholder(masked, FREE_TEXT_MAX_CHARS) : masked.slice(0, FREE_TEXT_MAX_CHARS);
   }
 

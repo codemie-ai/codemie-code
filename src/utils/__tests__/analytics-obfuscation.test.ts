@@ -5,12 +5,15 @@ import { dirname, join } from 'node:path';
 import {
   sanitizeText,
   sanitizeDeep,
+  sanitizeHookFields,
+  sanitizeHookText,
   trimBeforeOpenPlaceholder,
   OBFUSCATION_RULES_VERSION,
   OBFUSCATION_FAILURE_PLACEHOLDER,
   DEFAULT_OBFUSCATION_MAX_INPUT,
 } from '../analytics-obfuscation.js';
 import { maskSecretsInLongText } from '../long-text-masking.js';
+import { maskSecretsDeep, maskSecretsInText } from '../security.js';
 
 interface Fixture {
   rulesVersion: string;
@@ -103,4 +106,34 @@ describe('analytics-obfuscation worst-case timing (AC13)', () => {
       expect(performance.now() - start).toBeLessThan(CEILING_MS);
     });
   }
+});
+
+describe('hook-route helpers', () => {
+  const skip = new Set(['session_id']);
+  const fields = {
+    session_id: 'token=abc123secretvalue',
+    prompt: 'mail a@b.io token=abc123secretvalue',
+    nested: { tool_input: 'api_key=zzzzzzzzzzzz 10.2.3.4' },
+    big: 'filler '.repeat(20000) + 'token=abc123secretvalue',
+  };
+
+  it('off mode is byte-equal to the previous maskSecretsDeep / maskSecretsInText output', () => {
+    expect(sanitizeHookFields(fields, 'off', skip)).toEqual(maskSecretsDeep(fields, skip));
+    expect(sanitizeHookText(fields.big, 'off')).toBe(maskSecretsInText(fields.big));
+  });
+
+  it('on mode obfuscates PII in nested fields and leaves exempt keys alone', () => {
+    const out = sanitizeHookFields(fields, 'on', skip);
+    expect(out['session_id']).toBe(fields.session_id);
+    expect(out['prompt']).toContain('[REDACTED:EMAIL]');
+    expect(JSON.stringify(out['nested'])).toContain('[REDACTED:IP]');
+  });
+
+  it('on mode fills each free field with the failure placeholder when the walk fails', () => {
+    const cyclic: Record<string, unknown> = { prompt: 'x' };
+    cyclic['self'] = { get boom(): string { throw new Error('boom'); } };
+    const out = sanitizeHookFields({ ...cyclic, session_id: 's' }, 'on', skip);
+    expect(out['prompt']).toBe(OBFUSCATION_FAILURE_PLACEHOLDER);
+    expect(out['session_id']).toBe('s');
+  });
 });

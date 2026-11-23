@@ -67,3 +67,30 @@ export async function readHookProjectNames(sessionId: string): Promise<string[]>
   }
   return names;
 }
+
+/** Most of a session's hooks spool read to learn whether its hooks obfuscated (the head holds the first events). */
+const OBFUSCATION_EVIDENCE_BYTES = 256 * 1024;
+
+/**
+ * Whether the session's hook events were obfuscated. A hook stamps `rules_version` on every event it forwards while
+ * obfuscation is on for its folder, so this is how the daemon, which has no project directory, learns a project-scoped
+ * setting. `none`: no usable hook event on disk yet.
+ */
+export async function hookObfuscationEvidence(sessionId: string): Promise<'on' | 'off' | 'none'> {
+  const head = await readRange(sessionId, 'hooks', 0, OBFUSCATION_EVIDENCE_BYTES);
+  if (!head) return 'none';
+  let sawEvent = false;
+  for (const line of head.toString('utf-8').split('\n')) {
+    if (line.trim().length === 0) continue;
+    try {
+      const { hookEvent } = JSON.parse(line) as { hookEvent: string };
+      const event = JSON.parse(hookEvent) as Record<string, unknown> | null;
+      if (typeof event !== 'object' || event === null) continue;
+      sawEvent = true;
+      if (event['rules_version'] !== undefined) return 'on';
+    } catch {
+      // partial or unusable record
+    }
+  }
+  return sawEvent ? 'off' : 'none';
+}

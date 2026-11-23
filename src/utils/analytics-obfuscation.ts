@@ -11,7 +11,7 @@
  * and the sample fixture, so change the version whenever any rule changes.
  */
 
-import { maskSecretsDeep } from './security.js';
+import { maskSecretsDeep, maskSecretsInText } from './security.js';
 import { maskSecretsInLongText } from './long-text-masking.js';
 import { TICKET_REF_RE } from '../agents/core/ticket-parser.js';
 import { logger } from './logger.js';
@@ -197,6 +197,37 @@ export function sanitizeText(text: string, mode: ObfuscationMode, opts?: Sanitiz
   } catch (error) {
     return failure(error);
   }
+}
+
+/**
+ * Hook-route text: off mode is byte-identical to the previous hook masking (`maskSecretsInText`), so turning
+ * obfuscation off changes nothing; on mode is `sanitizeText`.
+ */
+export function sanitizeHookText(text: string, mode: ObfuscationMode): string {
+  return mode === 'off' ? maskSecretsInText(text) : sanitizeText(text, mode);
+}
+
+/**
+ * Hook-route field maps: off mode is byte-identical to the previous `maskSecretsDeep(fields, skipKeys)`;
+ * on mode obfuscates every string the same walk reaches. A failed on-mode walk fills each field with the failure placeholder.
+ */
+export function sanitizeHookFields(
+  fields: Record<string, unknown>,
+  mode: ObfuscationMode,
+  skipKeys?: ReadonlySet<string>
+): Record<string, unknown> {
+  if (mode === 'off') {
+    return maskSecretsDeep(fields, skipKeys) as Record<string, unknown>;
+  }
+  try {
+    const out = maskSecretsDeep(fields, skipKeys, text => sanitizeText(text, mode));
+    if (typeof out === 'object' && out !== null && !Array.isArray(out)) return out as Record<string, unknown>;
+  } catch (error) {
+    failure(error);
+  }
+  const failed: Record<string, unknown> = {};
+  for (const key of Object.keys(fields)) failed[key] = skipKeys?.has(key) ? fields[key] : OBFUSCATION_FAILURE_PLACEHOLDER;
+  return failed;
 }
 
 /**

@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import { sanitizeDeep, type ObfuscationMode, type SanitizeOptions } from '@/utils/analytics-obfuscation.js';
 import { resolveAnalyticsSettings, type AnalyticsSettings } from '@/utils/analytics-settings.js';
 import { isSensitiveKey, REDACTED } from '@/utils/security.js';
-import { readStatus } from './otlp-spool/session-status.js';
+import { hookObfuscationEvidence } from './otlp-spool/spool-files.js';
 
 /** Deeper than any real OTLP export; anything beyond is left to `maskSecretsDeep`, which redacts it whole. */
 const MAX_WALK_DEPTH = 64;
@@ -55,23 +55,30 @@ export function maskOtlpJson(parsed: unknown, mode: ObfuscationMode, opts?: Sani
 }
 
 export interface SessionModeDeps {
-  readStatus: typeof readStatus;
+  hookEvidence: typeof hookObfuscationEvidence;
   resolveSettings: (cwd: string) => AnalyticsSettings;
 }
 
+/** Sessions whose hooks were seen obfuscated: `on` is sticky for the life of the daemon. */
+const sessionsKnownOn = new Set<string>();
+
 /**
- * Obfuscation mode for one session's OTLP export. The session status carries the bound project name
- * but no directory, so the settings are read from the layers the daemon can see (global; the project
- * layer when its directory is the lookup root). A session with no mapping resolves from those same
- * layers; any read failure gives the protective value `on`. Nothing in the request is consulted.
+ * Obfuscation mode for one session's OTLP export. The daemon has no project directory for a session, so a
+ * project-scoped setting is learned from the session's own hook events (a hook stamps `rules_version` while
+ * obfuscation is on for its folder); the global layer is read directly. A session with no hook event yet follows the
+ * global layer only (the completeness gate never sends a session without hook data). Any read failure gives the
+ * protective value `on`. Nothing in the request is consulted.
  */
 export async function resolveSessionObfuscationMode(
   sessionId: string,
-  deps: SessionModeDeps = { readStatus, resolveSettings: resolveAnalyticsSettings }
+  deps: SessionModeDeps = { hookEvidence: hookObfuscationEvidence, resolveSettings: resolveAnalyticsSettings }
 ): Promise<ObfuscationMode> {
   try {
-    await deps.readStatus(sessionId);
-    return deps.resolveSettings(homedir()).obfuscation;
+    if (deps.resolveSettings(homedir()).obfuscation === 'on' || sessionsKnownOn.has(sessionId)) return 'on';
+    const evidence = await deps.hookEvidence(sessionId);
+    if (evidence !== 'on') return 'off';
+    sessionsKnownOn.add(sessionId);
+    return 'on';
   } catch {
     return 'on';
   }

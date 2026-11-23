@@ -8,7 +8,7 @@ import { isSafeSessionId } from '../../../../../agents/core/session-id.js';
 import { logger } from '../../../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../../../utils/security.js';
 import { maskOtlpJson, resolveSessionObfuscationMode } from './otlp-json-masking.js';
-import { obfuscateOtlpProtobuf } from './otlp-protobuf-obfuscate.js';
+import { obfuscateOtlpProtobufResult } from './otlp-protobuf-obfuscate.js';
 import { listSessionIds, OTEL_JSON_STREAM_BY_SIGNAL } from './otlp-spool/spool-paths.js';
 import { sweepSpool } from './otlp-spool/sweep.js';
 import { processSessionTick } from './otlp-spool/tick-processor.js';
@@ -421,14 +421,14 @@ class OtlpInterceptor implements ProxyInterceptor {
     try {
       // Obfuscation is opt-in: with it off the bytes are forwarded exactly as before.
       const mode = await resolveSessionObfuscationMode(sessionId);
-      const toSpool = mode === 'on' ? obfuscateOtlpProtobuf(bytes, mode, signal) : bytes;
-      if (toSpool === null) {
-        // Re-encoded body over the forwarder limit, or malformed: dropped, never spooled raw.
-        res.statusCode = 200;
+      const result = mode === 'on' ? obfuscateOtlpProtobufResult(bytes, mode, signal) : ({ kind: 'ok', body: bytes } as const);
+      if (result.kind === 'dropped') {
+        // Re-encoded body over the forwarder limit, or malformed: dropped, never spooled raw. Not a 2xx, so the exporter knows.
+        res.statusCode = result.reason === 'too_large' ? 413 : 400;
         res.end();
         return true;
       }
-      await appendSpool(sessionId, signal, toSpool);
+      await appendSpool(sessionId, signal, result.body);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(`[otlp-ingest] ${signal} disk write error`, ...sanitizeLogArgs({ sessionId, err: msg }));

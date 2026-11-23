@@ -191,6 +191,18 @@ describe('ticket-parser', () => {
   });
 
   describe('extractTicketMarker', () => {
+    it('a later Jira marker is found when an earlier numeric marker does not resolve', () => {
+      expect(extractTicketMarker('story: 42 and story: abc-1')).toBe('ABC-1');
+    });
+
+    it('keeps attributing a Jira marker followed by word characters', () => {
+      expect(extractTicketMarker('story: ABC-12x')).toBe('ABC-12');
+    });
+
+    it('a bare hash glued to a file name is not a ticket for github', () => {
+      expect(extractTicketMentions('see file.md#12 and (x)#3', 5, { tracker: 'github' })).toEqual([]);
+    });
+
     it('returns the upper-cased id of a marker phrase', () => {
       expect(extractTicketMarker('please start on ticket #abc-7')).toBe('ABC-7');
     });

@@ -3,7 +3,7 @@
  * @group unit
  */
 import { describe, it, expect } from 'vitest';
-import { obfuscateOtlpProtobuf } from '../otlp-protobuf-obfuscate.js';
+import { obfuscateOtlpProtobuf, obfuscateOtlpProtobufResult } from '../otlp-protobuf-obfuscate.js';
 import { proveRange, MAX_SNAPSHOT_BYTES } from '../otlp-spool/otlp-reader.js';
 import { OBFUSCATION_FAILURE_PLACEHOLDER } from '@/utils/analytics-obfuscation.js';
 
@@ -142,3 +142,33 @@ describe('obfuscateOtlpProtobuf', () => {
     expect(obfuscateOtlpProtobuf(body, 'on', 'logs')).toBeNull();
   });
 });
+
+describe('obfuscateOtlpProtobufResult', () => {
+  it('reports a malformed body as dropped with its reason', () => {
+    const bad = Buffer.concat([logs('x'), Buffer.from([0x0a, 0x7f, 0x01])]);
+    expect(obfuscateOtlpProtobufResult(bad, 'on', 'logs')).toEqual({ kind: 'dropped', reason: 'malformed' });
+  });
+
+  it('obfuscates a session.id attribute whose value is free text, not an identifier', () => {
+    const body = ld(1, ld(2, ld(2, Buffer.concat([ld(5, anyStr('x')), attr6('session.id', anyStr('mail bob@example.com please'))]))));
+    const result = obfuscateOtlpProtobufResult(body, 'on', 'logs');
+    expect(result.kind).toBe('ok');
+    if (result.kind === 'ok') expect(result.body.toString('latin1')).not.toContain('bob@example.com');
+  });
+
+  it('replaces a leaf that is not valid UTF-8 with the failure placeholder', () => {
+    const body = ld(1, ld(2, ld(2, Ld5(Buffer.from([0x61, 0xff, 0xfe, 0x62])))));
+    const result = obfuscateOtlpProtobufResult(body, 'on', 'logs');
+    expect(result.kind).toBe('ok');
+    if (result.kind === 'ok') expect(result.body.includes(Buffer.from(OBFUSCATION_FAILURE_PLACEHOLDER))).toBe(true);
+  });
+
+  it('obfuscates the event name of a log record', () => {
+    const body = ld(1, ld(2, ld(2, Buffer.concat([ld(5, anyStr('x')), ld(12, 'event for bob@example.com')]))));
+    const result = obfuscateOtlpProtobufResult(body, 'on', 'logs');
+    expect(result.kind === 'ok' && result.body.toString('latin1')).not.toContain('bob@example.com');
+  });
+});
+function Ld5(payload: Buffer): Buffer {
+  return ld(5, ld(1, payload));
+}

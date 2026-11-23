@@ -1,4 +1,4 @@
-import { sanitizeDeep, trimBeforeOpenPlaceholder, type ObfuscationMode } from '@/utils/analytics-obfuscation.js';
+import { sanitizeHookFields, trimBeforeOpenPlaceholder, type ObfuscationMode } from '@/utils/analytics-obfuscation.js';
 
 /**
  * The masking and length rules every forwarded OTLP hook event follows. A leaf module on purpose: the proxy
@@ -51,15 +51,7 @@ export function boundedText(value: unknown, maxChars: number, mode: ObfuscationM
  * (mask first, so a secret straddling a cut is never half-shown). Identifier fields are never touched.
  */
 export function maskAndBoundFields(fields: Record<string, unknown>, mode: ObfuscationMode = 'off'): Record<string, unknown> {
-  const free: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(fields)) {
-    if (!UNMASKED_FIELD_KEYS.has(key)) free[key] = value;
-  }
-  const sanitized = sanitizeDeep(free, mode);
-  const limited: Record<string, unknown> = {};
-  for (const key of Object.keys(fields)) {
-    limited[key] = UNMASKED_FIELD_KEYS.has(key) ? fields[key] : sanitized[key];
-  }
+  const limited = sanitizeHookFields(fields, mode, UNMASKED_FIELD_KEYS);
   for (const [field, maxChars] of Object.entries(TEXT_FIELD_LIMITS)) {
     if (Object.prototype.hasOwnProperty.call(limited, field)) {
       limited[field] = boundedText(limited[field], maxChars, mode);

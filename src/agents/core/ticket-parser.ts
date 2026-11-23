@@ -26,7 +26,7 @@ const BARE_HASH_TRACKERS: ReadonlySet<TicketTracker> = new Set<TicketTracker>(['
  * only when the tracker is github or gitlab; `extractTicketMentions` applies that gate.
  */
 export const TICKET_REF_RE = new RegExp(
-  `${TICKET_RE.source}|(?<![A-Za-z0-9])AB#\\d+(?!\\d)|(?<![\\w.\\/-])[A-Za-z0-9][\\w.-]*\\/[A-Za-z0-9][\\w.-]*#\\d+(?!\\d)|(?<![\\w&#/])#\\d+(?![\\w])`,
+  `${TICKET_RE.source}|(?<![A-Za-z0-9])AB#\\d+(?!\\d)|(?<![\\w.\\/-])[A-Za-z0-9][\\w.-]*\\/[A-Za-z0-9][\\w.-]*#\\d+(?!\\d)|(?<!\\S)#\\d+(?![\\w])`,
   TICKET_RE.flags
 );
 
@@ -223,7 +223,7 @@ function isUuidShaped(run: Run, keyIndex: number): boolean {
  * returning, consistent with every other regex-derived tier in this module.
  */
 const MARKER_RE =
-  /\b(?:story|ticket)\b\s*[:#]\s*([A-Za-z][A-Za-z0-9]+-\d+|AB#\d+|[A-Za-z0-9][\w.-]*\/[A-Za-z0-9][\w.-]*#\d+|\d+)(?![\w])/i;
+  /\b(?:story|ticket)\b\s*[:#]\s*([A-Za-z][A-Za-z0-9]+-\d+|(?:AB#\d+|[A-Za-z0-9][\w.-]*\/[A-Za-z0-9][\w.-]*#\d+|\d+)(?![\w]))/gi;
 
 /** Upper bound on `ticket_mentions`, so a pasted log cannot bloat the event. */
 const MAX_TICKET_MENTIONS = 20;
@@ -350,14 +350,17 @@ export function extractTicketMarker(text: string, tracker?: TicketTracker): stri
   if (!text) {
     return '';
   }
-  const id = text.match(MARKER_RE)?.[1];
-  if (!id) {
-    return '';
+  // The first phrase that resolves to an id wins: an early `story: 42` without a bare-hash tracker
+  // must not hide a later `story: ABC-1`.
+  for (const match of text.matchAll(new RegExp(MARKER_RE.source, MARKER_RE.flags))) {
+    const id = match[1];
+    if (/^\d+$/.test(id)) {
+      if (tracker && BARE_HASH_TRACKERS.has(tracker)) return `#${id}`;
+      continue;
+    }
+    return id.includes('/') ? id : id.toUpperCase();
   }
-  if (/^\d+$/.test(id)) {
-    return tracker && BARE_HASH_TRACKERS.has(tracker) ? `#${id}` : '';
-  }
-  return id.includes('/') ? id : id.toUpperCase();
+  return '';
 }
 
 /** Opt-in for prompt-submit events: values derived from the full, untruncated prompt. */

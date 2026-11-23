@@ -2,7 +2,7 @@ import type { CopilotEvent, CopilotShutdownData } from '@/agents/plugins/copilot
 import { extractCopilotToolActivity, type OpenToolCall } from '@/agents/plugins/copilot-cli/copilot-cli.tool-activity.js';
 import { extractSlashCommand, isSubagentPrompt } from '@/agents/plugins/copilot-cli/copilot-cli.constants.js';
 import { buildUsageRows, stableEventId, USAGE_REQUEST_EVENT_TYPE, type PendingMessage } from './copilot-cli-otlp.request-usage.js';
-import { OBFUSCATION_RULES_VERSION, type ObfuscationMode } from '@/utils/analytics-obfuscation.js';
+import { type ObfuscationMode } from '@/utils/analytics-obfuscation.js';
 import { buildUnhookedToolEvents } from './copilot-cli-otlp.unhooked-tools.js';
 
 export type { PendingMessage };
@@ -246,7 +246,7 @@ export function buildDeferredUsageEvents(
   // A tail-only transcript would yield a final summary that understates the incremental totals, so omit it.
   const outgoing: Record<string, unknown>[] = [...slice.rows];
   // The hook that produced the template stamped `rules_version` when obfuscation was on for its folder.
-  const mode: ObfuscationMode = template['rules_version'] === OBFUSCATION_RULES_VERSION ? 'on' : 'off';
+  const mode: ObfuscationMode = template['rules_version'] !== undefined ? 'on' : 'off';
   if (!truncated) outgoing.push(...buildUnhookedToolEvents(sessionId, events, mode));
   if (!truncated && !withoutSummary) {
     outgoing.push(buildSessionSummaryEvent({

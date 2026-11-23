@@ -50,7 +50,8 @@ export function redactPayload(payload: ReportPayload): ReportPayload {
 
 /**
  * Opt-in analytics obfuscation (not `--redact`): masks PII/secrets in the free-text `title`
- * of every session. Returns the input unchanged when mode is `off`; `--redact` stays stronger
+ * of every session (the only free-text field of the payload; settings come from the command's cwd, as the
+ * export itself is a per-invocation command). Returns the input unchanged when mode is `off`; `--redact` stays stronger
  * because it blanks the title outright.
  */
 export function obfuscatePayload(payload: ReportPayload, mode: ObfuscationMode): ReportPayload {
@@ -64,4 +65,9 @@ export function obfuscatePayload(payload: ReportPayload, mode: ObfuscationMode):
       title: sanitizeText(session.title ?? '', mode),
     })),
   };
+}
+
+/** The payload an export writes: `--redact` is stronger than obfuscation and wins; otherwise the mode applies. */
+export function selectExportPayload(payload: ReportPayload, redact: boolean, mode: ObfuscationMode): ReportPayload {
+  return redact ? redactPayload(payload) : obfuscatePayload(payload, mode);
 }
