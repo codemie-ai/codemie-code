@@ -3,7 +3,7 @@ import { spawn } from 'child_process';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { getCommandPath } from '../../../utils/processes.js';
+import { getCommandMatches, getCommandPath } from '../../../utils/processes.js';
 import { BaseAgentAdapter } from '../BaseAgentAdapter.js';
 import type { AgentMetadata } from '../types.js';
 import { logger } from '../../../utils/logger.js';
@@ -59,6 +59,7 @@ vi.mock('../../../utils/processes.js', () => ({
   installGlobal:      vi.fn(),
   uninstallGlobal:    vi.fn(),
   getCommandPath:     vi.fn(() => Promise.resolve(null)),
+  getCommandMatches:  vi.fn(() => Promise.resolve({ status: 'unanswered' })),
   processStartedAt:   vi.fn(() => 0),
   WRAPPER_PID_ENV: 'CODEMIE_WRAPPER_PID',
   WRAPPER_STARTED_AT_ENV: 'CODEMIE_WRAPPER_STARTED_AT',
@@ -625,6 +626,41 @@ describe('BaseAgentAdapter', () => {
 
       expect(spawnMock).toHaveBeenCalledWith(
         `"C:\\Users\\Name${char}Org\\bin\\cmd.exe"`,
+        [],
+        expect.objectContaining({ shell: true }),
+      );
+    });
+
+    it('launches the first memoized PATH match with a single PATH lookup shared with the shadow check', async () => {
+      const spawnMock = vi.mocked(spawn);
+      vi.mocked(getCommandMatches).mockResolvedValue({
+        status: 'answered',
+        matches: ['C:\\Tools\\bin\\pathagent.cmd', 'C:\\Other\\pathagent.cmd'],
+      });
+
+      const adapter = new RunPathAdapter({ ...baseMetadata, cliCommand: 'pathagent' });
+      await adapter.getPathMatches(); // what checkPathShadow() does at launch
+      await adapter.run([], {});
+
+      expect(getCommandMatches).toHaveBeenCalledTimes(1);
+      expect(getCommandPath).not.toHaveBeenCalled();
+      expect(spawnMock).toHaveBeenCalledWith(
+        'C:\\Tools\\bin\\pathagent.cmd',
+        [],
+        expect.objectContaining({ shell: true }),
+      );
+    });
+
+    it('falls back to getCommandPath when the PATH lookup has no usable match', async () => {
+      vi.mocked(getCommandMatches).mockResolvedValue({ status: 'answered', matches: [] });
+      vi.mocked(getCommandPath).mockResolvedValueOnce('C:\\Fallback\\pathagent.cmd');
+
+      const adapter = new RunPathAdapter({ ...baseMetadata, cliCommand: 'pathagent' });
+      await adapter.run([], {});
+
+      expect(getCommandPath).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(spawn)).toHaveBeenCalledWith(
+        'C:\\Fallback\\pathagent.cmd',
         [],
         expect.objectContaining({ shell: true }),
       );

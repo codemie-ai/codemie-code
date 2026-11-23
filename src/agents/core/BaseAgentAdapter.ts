@@ -954,8 +954,13 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       let commandPath = this.metadata.cliCommand;
 
       // Try to resolve full path via PATH first
-      const { getCommandPath } = await import('../../utils/processes.js');
-      const resolvedPath = await getCommandPath(this.metadata.cliCommand);
+      // Reuse the memoized PATH lookup (shared with the shadow check) so launch costs one lookup.
+      const memoizedMatches = await this.getPathMatches();
+      let resolvedPath: string | null = memoizedMatches?.[0] ?? null;
+      if (!resolvedPath) {
+        const { getCommandPath } = await import('../../utils/processes.js');
+        resolvedPath = await getCommandPath(this.metadata.cliCommand);
+      }
       if (resolvedPath) {
         commandPath = isWindows && /[ \t,;=()&|<>^%[\]{}]/.test(resolvedPath) ? `"${resolvedPath}"` : resolvedPath;
         logger.debug(`Resolved command path: ${resolvedPath}`);
