@@ -75,6 +75,11 @@ export interface SessionStatus {
   projectConflict?: string[];
   /** Only with `projectConflict` and a bound `project`: the hooks prefix that is still provably that project's. */
   projectSeal?: ProjectSeal;
+  /**
+   * Reduction decision bound to the session (EPMCDME-17748): a hook of the session stamped `analytics_reduction: true`.
+   * Sticky, written beside `project` in the same critical section as the hook append. Absent = no hook asked for it.
+   */
+  reduction?: true;
   /** The on-disk hooks were scanned for a project (legacy recovery) or there was nothing to scan. */
   projectScanned?: true;
   /**
@@ -359,6 +364,9 @@ function normalizeStatus(raw: unknown): SessionStatus {
   const project = source['project'];
   if (typeof project === 'string' && isSendableProjectName(project)) {
     status.project = project;
+  }
+  if (source['reduction'] === true) {
+    status.reduction = true;
   }
   const conflict = source['projectConflict'];
   if (Array.isArray(conflict) && conflict.length > 0 && conflict.every((n) => typeof n === 'string')) {

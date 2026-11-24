@@ -35,6 +35,8 @@ import { authHeadersFor, resolveAnalyticsEndpoint, sessionPolicyState, type Anal
 import { advertisesContract } from './policy-cache.js';
 import { MAX_SNAPSHOT_BYTES, proveHookLines, proveRange, type ProofReason } from './otlp-reader.js';
 import { proveJsonRecord } from './otlp-json-reader.js';
+import { reduceOtlpJsonRecord } from './otlp-json-reduction.js';
+import { noteProtobufDropped } from './protobuf-drop.js';
 import { PROJECT_HEADER, producerAttributionHeaders, evidenceContext, evidenceHeaders, reclassify, sendGuard, type EvidenceContext } from './evidence-send.js';
 import { BOUND_PROJECT_HEADER, CONTRACT_HEADER, DESTINATION_HEADER, PUBLICATION_CONTRACT } from '@/agents/core/evidence/publication-contract.js';
 import { writeNotice, writeStop } from '@/agents/core/evidence/stop-marker.js';
@@ -470,6 +472,15 @@ async function forwardOtelStream(
   for (let window = 0; window < (evidence ? MAX_OTEL_WINDOWS : 1); window++) {
     const pending = await snapshotPendingBytes(sessionId, stream, evidence ? MAX_SNAPSHOT_BYTES : undefined);
     if (!pending) return last;
+    // The session decision is not bound yet: nothing leaves until a hook (or the legacy scan) settles it.
+    if (pending.reduction === 'unbound') return last;
+    if (pending.reduction === 'on') {
+      // Protobuf is never decoded, so it cannot be reduced: bytes spooled before the decision was bound are dropped here.
+      noteProtobufDropped();
+      await advanceCursor(sessionId, stream, pending.cursor + pending.bytes.length);
+      if (!pending.more) break;
+      continue;
+    }
 
     let bytes = pending.bytes;
     if (evidence) {
@@ -517,6 +528,10 @@ async function forwardOtelJsonStream(
     return 'idle';
   }
 
+  // The decision is not bound yet: nothing leaves, the cursor stays, the next tick asks again.
+  if (batch.reduction === 'unbound') return 'idle';
+  const reduced = batch.reduction === 'on';
+
   const url = `${baseUrl}${OTEL_ENDPOINTS[OTEL_SIGNAL_BY_JSON_STREAM[stream]]}`;
   // Acknowledge each record right after its own confirmed send — not once for the whole
   // batch — so a failure partway through a batch never re-sends what already succeeded.
@@ -524,12 +539,24 @@ async function forwardOtelJsonStream(
   for (const record of batch.records) {
     const recordByteLength = Buffer.byteLength(record, 'utf8') + 1; // +1 for the newline cut off when the batch was split
     const range = { cursor, end: cursor + recordByteLength, filtered: false };
+    let body = record;
+    if (reduced) {
+      const reducedRecord = reduceOtlpJsonRecord(record);
+      if (reducedRecord === undefined) {
+        // Fail closed: a record that cannot be reduced is never sent. Its bytes are consumed so the cursor cannot stall on it.
+        logger.debug('[otlp-forwarder] unreducible native record dropped', ...sanitizeLogArgs({ sessionId, stream }));
+        cursor += recordByteLength;
+        await advanceCursor(sessionId, stream, cursor);
+        continue;
+      }
+      body = reducedRecord;
+    }
     if (evidence) {
-      const proof = proveJsonRecord(record, { sessionId, project: evidence.record.project || undefined, signal: OTEL_SIGNAL_BY_JSON_STREAM[stream] });
-      if ((await noteProof(sessionId, stream, proof.verified, Buffer.byteLength(record), proof.hold)) === 'lost') return 'idle';
+      const proof = proveJsonRecord(body, { sessionId, project: evidence.record.project || undefined, signal: OTEL_SIGNAL_BY_JSON_STREAM[stream] });
+      if ((await noteProof(sessionId, stream, proof.verified, Buffer.byteLength(body), proof.hold)) === 'lost') return 'idle';
       if (proof.hold) return 'idle';
     }
-    const result = await send({ sessionId, stream, url, body: record, contentType: 'application/json', credentials,
+    const result = await send({ sessionId, stream, url, body, contentType: 'application/json', credentials,
       project: batch.project, range, evidence, guard });
     if (!acknowledged(result)) return result;
     cursor += recordByteLength;

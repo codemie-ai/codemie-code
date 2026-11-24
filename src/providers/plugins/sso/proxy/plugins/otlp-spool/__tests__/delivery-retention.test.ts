@@ -325,4 +325,83 @@ describe('delivery retention', () => {
     expect((await readStatus(SESSION))?.delivery).toBeUndefined();
     expect(await deliveryGate(SESSION, 'hooks')).toBe('go');
   });
+
+  describe('native OTLP follows the session decision bound from its hooks (EPMCDME-17748)', () => {
+    const nativeLine = JSON.stringify({
+      resourceLogs: [{ scopeLogs: [{ logRecords: [{ attributes: [
+        { key: 'session.id', value: { stringValue: SESSION } },
+        { key: 'user.email', value: { stringValue: 'dev@example.com' } },
+        { key: 'tool_parameters', value: { stringValue: JSON.stringify({ skill_name: 'review', bash_command: 'echo private' }) } },
+      ] }] }] }],
+    }) + '\n';
+    const stampedHook = JSON.stringify({ agentName: 'claude-code-otlp', hookEvent: JSON.stringify({ type: 'agent.tool.end', session_id: SESSION, codemie_project_name: 'A', analytics_reduction: true }) }) + '\n';
+    const logsBody = (): string => String(fetchMock.mock.calls.find(([url]) => String(url).endsWith('/logs'))?.[1].body);
+
+    beforeEach(() => {
+      fetchMock.mockImplementation(async (url: string) => ok(url));
+    });
+
+    it('reduces native JSON that reached the spool before the stamped hook (same tick), with the binding stored beside the project', async () => {
+      const { appendSpool, forwardSession, readStatus } = await modules();
+      await appendSpool(SESSION, 'logsJson', nativeLine);
+      await appendSpool(SESSION, 'hooks', stampedHook, ['A'], undefined, true);
+
+      const status = await readStatus(SESSION);
+      expect(status).toMatchObject({ project: 'A', reduction: true });
+      await forwardSession(SESSION, false, credentials as never);
+
+      const sent = logsBody();
+      expect(sent).not.toContain('dev@example.com');
+      expect(sent).not.toContain('echo private');
+      expect(sent).toContain('REDACTED:USER.EMAIL');
+      expect(sent).toContain('review');
+      expect((await readStatus(SESSION))?.cursors.logsJson).toBe(Buffer.byteLength(nativeLine));
+    });
+
+    it('forwards an unstamped session exactly as on main', async () => {
+      const { appendSpool, forwardSession, readStatus } = await modules();
+      await appendSpool(SESSION, 'hooks', hookLine(1), ['A']);
+      await appendSpool(SESSION, 'logsJson', nativeLine);
+
+      expect((await readStatus(SESSION))?.reduction).toBeUndefined();
+      await forwardSession(SESSION, false, credentials as never);
+
+      expect(logsBody()).toBe(nativeLine.trimEnd());
+    });
+
+    it('binds the decision of hooks already on disk (legacy scan) the same way', async () => {
+      const { forwardSession, readStatus, writeStatus, createStatus } = await modules();
+      const { appendFile, mkdir } = await import('node:fs/promises');
+      await mkdir(state.root, { recursive: true });
+      await appendFile(join(state.root, SESSION + '.hooks.ndjson'), stampedHook);
+      await appendFile(join(state.root, SESSION + '.otel_logs.ndjson'), nativeLine);
+      await writeStatus(SESSION, createStatus());
+
+      await forwardSession(SESSION, false, credentials as never);
+
+      expect((await readStatus(SESSION))?.reduction).toBe(true);
+      expect(logsBody()).not.toContain('dev@example.com');
+    });
+
+    it('reports an evidence session with no hooks yet as unbound, and a settled session as on or off', async () => {
+      const { appendSpool, snapshotPendingNdjsonRecords, writeStatus, createStatus } = await modules();
+      await writeStatus(SESSION, { ...createStatus(), sendMode: 'evidence' });
+      await appendSpool(SESSION, 'logsJson', nativeLine);
+      expect((await snapshotPendingNdjsonRecords(SESSION, 'logsJson'))?.reduction).toBe('unbound');
+
+      await appendSpool(SESSION, 'hooks', stampedHook, ['A'], undefined, true);
+      expect((await snapshotPendingNdjsonRecords(SESSION, 'logsJson'))?.reduction).toBe('on');
+    });
+
+    it('drops protobuf already spooled for a reduced session instead of sending it', async () => {
+      const { appendSpool, forwardSession, readStatus } = await modules();
+      await appendSpool(SESSION, 'logs', Buffer.from('pb-bytes'));
+      await appendSpool(SESSION, 'hooks', stampedHook, ['A'], undefined, true);
+
+      await forwardSession(SESSION, false, credentials as never);
+
+      expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/logs'))).toBe(false);
+      expect((await readStatus(SESSION))?.cursors.logs).toBe(8);
+    });
+  });
 });

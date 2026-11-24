@@ -12,7 +12,9 @@ import { listSessionIds, OTEL_JSON_STREAM_BY_SIGNAL } from './otlp-spool/spool-p
 import { sweepSpool } from './otlp-spool/sweep.js';
 import { processSessionTick } from './otlp-spool/tick-processor.js';
 import { appendSpool, recordStampLoss } from './otlp-spool/spool-io.js';
-import { hookEventProjectNames } from './otlp-spool/session-project.js';
+import { hookEventProjectNames, hookEventReduced } from './otlp-spool/session-project.js';
+import { noteJsonRequestSeen, noteProtobufDropped } from './otlp-spool/protobuf-drop.js';
+import { readStatus } from './otlp-spool/session-status.js';
 import { scheduleCopilotUsageEnrichment } from './otlp-spool/copilot-usage-enrichment.js';
 import { sendIntervalMs, sweepIntervalMs } from './otlp-spool/spool-config.js';
 import { processPendingOwner } from './otlp-spool/owner-pending-replay.js';
@@ -284,6 +286,7 @@ class OtlpInterceptor implements ProxyInterceptor {
     let sessionId = '';
     const lines: string[] = [];
     const projectNames: string[] = [];
+    let reduced = false;
     for (const event of batch.hookEvents) {
       const eventSessionId = String((event as Record<string, unknown> | null)?.['session_id'] ?? '');
       if (!eventSessionId) {
@@ -301,6 +304,7 @@ class OtlpInterceptor implements ProxyInterceptor {
       const spoolRecord: OtlpHookSpoolData = { agentName: batch.agentName, hookEvent: JSON.stringify(event), ...(batch.evidence_v === 1 ? { evidence_v: 1 as const } : {}) };
       lines.push(JSON.stringify(spoolRecord));
       projectNames.push(...hookEventProjectNames(event));
+      reduced ||= hookEventReduced(event);
     }
 
     if (lines.length === 0) {
@@ -312,7 +316,7 @@ class OtlpInterceptor implements ProxyInterceptor {
     }
 
     try {
-      await appendSpool(sessionId, 'hooks', lines.join('\n') + '\n', projectNames);
+      await appendSpool(sessionId, 'hooks', lines.join('\n') + '\n', projectNames, undefined, reduced);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn('[otlp-ingest] hooks disk write error', ...sanitizeLogArgs({ sessionId, err: msg }));
@@ -361,6 +365,7 @@ class OtlpInterceptor implements ProxyInterceptor {
     res: ServerResponse,
     signal: 'logs' | 'metrics' | 'traces'
   ): Promise<true> {
+    noteJsonRequestSeen();
     const text = body.toString('utf8');
     const jsonMatch = UUID_V4_RE.exec(text);
     const sessionId = jsonMatch ? jsonMatch[0] : '';
@@ -412,6 +417,15 @@ class OtlpInterceptor implements ProxyInterceptor {
 
     if (!sessionId) {
       logger.debug('[otlp-ingest] no session id in payload, dropping', ...sanitizeLogArgs({ signal, bytes: bytes.length }));
+      res.statusCode = 200;
+      res.end();
+      return true;
+    }
+
+    // A session whose hook decided reduction sends no protobuf: it is never decoded, so it cannot be reduced. A decision
+    // bound later is applied at forward time, to what is already spooled.
+    if ((await readStatus(sessionId))?.reduction) {
+      noteProtobufDropped();
       res.statusCode = 200;
       res.end();
       return true;

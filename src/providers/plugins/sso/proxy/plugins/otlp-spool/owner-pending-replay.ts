@@ -18,7 +18,7 @@ import { credentialFingerprint } from '@/providers/core/credential-owner.js';
 import { isSSOCredentials, type JWTCredentials, type SSOCredentials } from '@/providers/core/types.js';
 import { heldRetentionMs } from './spool-config.js';
 import { appendSpool, recordStampLoss } from './spool-io.js';
-import { hookEventProjectNames } from './session-project.js';
+import { hookEventProjectNames, hookEventReduced } from './session-project.js';
 
 const STALE_TMP_MS = 60 * 60_000;
 const EXPIRED_REASON = 'owner_unresolved_expired';
@@ -118,7 +118,7 @@ async function replayEntry(path: string, fp: string, api: string, email: string)
   // Hook-time facts stay as captured; only identity comes from the verified login (never git/OS/config values).
   const events = entry.events.map((event) => ({ ...event, user_email: email, developer_name: email, identity_source: 'jwt' }));
   const lines = events.map((event) => JSON.stringify({ agentName: entry.agentName, hookEvent: JSON.stringify(event), evidence_v: 1 }));
-  const appended = await appendSpool(entry.session_id, 'hooks', lines.join('\n') + '\n', events.flatMap((event) => hookEventProjectNames(event)), entry.first_at);
+  const appended = await appendSpool(entry.session_id, 'hooks', lines.join('\n') + '\n', events.flatMap((event) => hookEventProjectNames(event)), entry.first_at, events.some((event) => hookEventReduced(event)));
   if (!appended) return false; // not the head of the pending range, or too many ranges: stays queued with its original age
   await rename(path, path.replace(/\.json$/, '.done'));
   await unlink(path.replace(/\.json$/, '.done')).catch(() => undefined);

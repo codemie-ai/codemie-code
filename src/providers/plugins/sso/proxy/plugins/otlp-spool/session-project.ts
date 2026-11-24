@@ -148,6 +148,16 @@ export function hookEventProjectNames(event: unknown): string[] {
   return names;
 }
 
+/**
+ * The hook's reduction decision (EPMCDME-17748): true when the event carries `analytics_reduction: true`, at the top
+ * level or inside `raw`. Absent or any other value = the hook did not decide reduction for this event.
+ */
+export function hookEventReduced(event: unknown): boolean {
+  const reduced = (holder: unknown): boolean =>
+    typeof holder === 'object' && holder !== null && (holder as Record<string, unknown>)['analytics_reduction'] === true;
+  return reduced(event) || reduced((event as Record<string, unknown> | null)?.['raw']);
+}
+
 export type ProjectDecision =
   | { action: 'noop' }
   | { action: 'bind'; project: string }

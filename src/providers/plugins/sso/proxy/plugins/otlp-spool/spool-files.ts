@@ -1,6 +1,6 @@
 import { open, readFile, stat } from 'node:fs/promises';
 import { streamFile, type SpoolStream } from './spool-paths.js';
-import { hookEventProjectNames } from './session-project.js';
+import { hookEventProjectNames, hookEventReduced } from './session-project.js';
 
 /* Read-only spool file helpers; callers that need consistency hold the session lock. */
 
@@ -66,4 +66,25 @@ export async function readHookProjectNames(sessionId: string): Promise<string[]>
     }
   }
   return names;
+}
+
+/** True when any hook on disk (acknowledged prefix included) carries the reduction stamp. Malformed lines are skipped. */
+export async function readHookReduction(sessionId: string): Promise<boolean> {
+  let text: string;
+  try {
+    text = await readFile(streamFile(sessionId, 'hooks'), 'utf-8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw err;
+  }
+  for (const line of text.split('\n')) {
+    if (line.trim().length === 0) continue;
+    try {
+      const { hookEvent } = JSON.parse(line) as { hookEvent: string };
+      if (hookEventReduced(JSON.parse(hookEvent))) return true;
+    } catch {
+      // unusable record: carries no decision
+    }
+  }
+  return false;
 }
