@@ -197,6 +197,7 @@ export function createInstallCommand(): Command {
                 // Different version installed, ask to reinstall
                 const versionDisplay = options?.supported ? `${actualVersionToInstall} (supported)` : actualVersionToInstall;
                 console.log(chalk.yellow(`${agent.displayName} v${installedVersion} is already installed (requested: ${versionDisplay})`));
+                await printPathShadowAdvice(agent);
                 const inquirer = (await import('inquirer')).default;
                 const { confirm } = await inquirer.prompt([
                   {
