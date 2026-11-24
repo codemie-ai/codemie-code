@@ -42,7 +42,7 @@ export const MAX_SNAPSHOT_BYTES = 5_242_880;
 export const OTLP_ATTRIBUTE_KEEP_LIST: KeepList = {
   keep: new Set([
     'session.id', 'event.name', 'event.timestamp', 'service.name', 'service.version',
-    'session_id', 'codemie_project_name', 'tool_name',
+    'session_id', 'codemie_project_name', 'tool_name', 'type', 'model',
   ]),
   nested: {
     tool_parameters: { keep: new Set(['skill_name', 'mcp_server_name', 'mcp_tool_name']) },

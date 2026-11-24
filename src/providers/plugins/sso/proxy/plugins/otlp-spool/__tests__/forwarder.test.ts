@@ -1190,6 +1190,8 @@ describe('forwardSession (native OTLP reduction, EPMCDME-17748)', () => {
             { key: 'event.name', value: { stringValue: 'tool_result' } },
             { key: 'event.timestamp', value: { stringValue: '2026-01-01T00:00:00.000Z' } },
             { key: 'user.email', value: { stringValue: 'dev@example.com' } },
+            { key: 'type', value: { stringValue: 'cacheRead' } },
+            { key: 'model', value: { stringValue: 'claude-sonnet-4-5' } },
             { key: 'duration_ms', value: { intValue: '42' } },
             { key: 'success', value: { boolValue: true } },
             { key: 'tool_parameters', value: { stringValue: JSON.stringify({ skill_name: 'review', mcp_server_name: 'jira', mcp_tool_name: 'search', bash_command: 'rm -rf secret-dir', description: 'private words' }) } },
@@ -1243,6 +1245,8 @@ describe('forwardSession (native OTLP reduction, EPMCDME-17748)', () => {
     expect(a['event.name']).toEqual({ stringValue: 'tool_result' });
     expect(a['event.timestamp']).toEqual({ stringValue: '2026-01-01T00:00:00.000Z' });
     expect(a['user.email']).toEqual({ stringValue: 'REDACTED:USER.EMAIL' });
+    expect(a['type']).toEqual({ stringValue: 'cacheRead' });
+    expect(a['model']).toEqual({ stringValue: 'claude-sonnet-4-5' });
     expect(a['duration_ms']).toEqual({ intValue: '42' });
     expect(a['success']).toEqual({ boolValue: true });
     expect(JSON.parse(String(a['tool_parameters']['stringValue']))).toEqual({
