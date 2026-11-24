@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "task": "Make /compact and auto-compaction requests to Bedrock-backed Claude models via the SSO proxy avoid litellm UnsupportedParamsError by preserving or injecting the tools param in the proxy request normalizer.",
+  "generated": "2026-11-24T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 14,
+  "size": "S",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "requirements_clarity", "reason": "Open design decisions: the repro agent codemie-code is not in the Claude normalizer's client list, no Bedrock signal exists in the plugin context so the condition must be body-shape only, dummy tool schema is undefined, and server-side modify_params state is unverifiable from this repo." },
+    { "dimension": "technical_risk", "reason": "No existing handler touches tools. Nearest pattern is the handler shape in claude-request-normalizer.plugin.ts, which mutates sampling/effort/thinking params and does not cover injecting content that alters upstream model behavior. Injection would apply to all backends (Vertex/Anthropic-direct), and tool-schema validity is unchecked." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

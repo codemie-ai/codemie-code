@@ -1,0 +1,162 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "request-changes",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "CR-001 accepted by user: tool_choice none disabled (description-only fallback); CR-002 resolved"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "Fix set CR-001, CR-002 fix-now"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "CR-001 accepted by user: tool_choice none disabled (description-only fallback); CR-002 resolved"
+    }
+  ],
+  "reviewed_head": "74367f5edb6f2f26ab8946b2559ac2d165b9e2b0",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "CR-001 is an evidence finding but fix_evidence maps only a decision record (no artifact or exit-0 command), and source cannot resolve evidence findings, so it stays unresolved even though the description-only fallback is in the source. CR-002 (advisory) is resolved.",
+  "confidence": "medium",
+  "check_confidence": "medium",
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 0,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 1
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "evidence",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/claude-tools-guard.ts",
+      "line": 63,
+      "title": "tool_choice none acceptance unverified",
+      "problem": "Required criterion AC5 is partial: the guard sets tool_choice none alongside the placeholder tool, but acceptance of that by the gateway and Bedrock, and the text-block compaction reply, are not evidenced.",
+      "impact": "If the gateway or Bedrock rejects tool_choice none on a compaction-shaped request, the original EPMCDME-16965 failure persists or changes form.",
+      "recommendation": "Provide captured request/response or gateway evidence that tool_choice none is accepted; otherwise set SET_TOOL_CHOICE_NONE to false (description-only fallback).",
+      "status": "wont-fix",
+      "check_notes": "Evidence-kind finding: fix_evidence has only a decision record, no artifact or exit-0 command. Source shows SET_TOOL_CHOICE_NONE=false, but source cannot resolve an evidence finding; supply artifact/command evidence or re-classify.",
+      "fix": {
+        "change": "SET_TOOL_CHOICE_NONE=false; comments and docs updated",
+        "test": "n/a"
+      },
+      "decision": {
+        "outcome": "No captured evidence; SET_TOOL_CHOICE_NONE set to false (description-only fallback)",
+        "rationale": "Gateway/Bedrock acceptance of tool_choice none is unverified, so the guard no longer sends it."
+      },
+      "disposition": {
+        "rationale": "tool_choice none disabled via SET_TOOL_CHOICE_NONE=false; no evidence available so the unverified setting is inactive",
+        "source": "hitl",
+        "action": "accept"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/providers/plugins/sso/proxy/plugins/claude-tools-guard.ts",
+      "line": 63,
+      "title": "Null tool_choice forwarded with placeholder",
+      "problem": "tool_choice is only set when === undefined; an explicit null from a client stays null alongside the injected placeholder tool.",
+      "impact": "Narrow trigger: only clients sending tool_choice null on a tool-history request with empty tools; reachability not confirmed against a real client.",
+      "recommendation": "Treat null like undefined: if (body.tool_choice === undefined || body.tool_choice === null).",
+      "status": "resolved",
+      "check_notes": "Line 63 and 70 treat null like undefined (and the flag is now off).",
+      "fix": {
+        "change": "Treat null tool_choice like undefined when injecting placeholder",
+        "test": "n/a"
+      },
+      "disposition": {
+        "rationale": "user chose fix-now for the minor finding",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "AC1 placeholder tools in own shape",
+      "status": "pass",
+      "notes": "Both shapes injected in applyToolsGuard"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC2 following request with tools unchanged",
+      "status": "pass",
+      "notes": "Non-empty tools returns null before any mutation"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC3 no tool history or non-empty tools byte-identical",
+      "status": "pass",
+      "notes": "Body is only rewritten when a shape is returned"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC4 other clients and Claude normalizer unchanged",
+      "status": "pass",
+      "notes": "Separate plugin with its own clients list; normalizer not in diff"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC5 tool_choice none when absent; compaction text confirmed",
+      "status": "partial",
+      "notes": "tool_choice set when undefined; acceptance by gateway and Bedrock not evidenced in diff"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC6 docs records",
+      "status": "pass",
+      "notes": "ARCHITECTURE-PROXY.md sections 6.6 and tree updated; PR description not in diff"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC7 captured request shape confirmed",
+      "status": "pending-stage-7",
+      "notes": "Needs captured request or issue 283 evidence"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "na",
+      "notes": "standards not expected for this profile"
+    },
+    {
+      "kind": "code-quality",
+      "status": "na",
+      "notes": "standards not expected for this profile"
+    },
+    {
+      "kind": "security",
+      "status": "na",
+      "notes": "standards not expected for this profile"
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "Acceptance AC5 is partial (tool_choice none acceptance by gateway/Bedrock unevidenced), which blocks; AC7 is pending-stage-7. 1 advisory finding; 4 candidates dismissed as noise; 0 deferred.",
+    "confidence": "medium",
+    "risk_flags": []
+  }
+}

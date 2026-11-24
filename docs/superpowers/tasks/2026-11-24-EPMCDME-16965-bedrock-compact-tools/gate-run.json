@@ -1,0 +1,10 @@
+{"schema":1,"branch":"EPMCDME-16965_bedrock-compact-tools3","head":"74367f5edb6f2f26ab8946b2559ac2d165b9e2b0","runner":"npm","started_at":"2026-11-24T13:27:02Z","completed_at":"2026-11-24T13:27:02Z","status":"PASSED","drift_detected":false,"gates":[
+{"id":"license-check","source":"guide","status":"PASS","duration_ms":7951,"command":"npm run license-check","exit_code":0},
+{"id":"lint","source":"guide","status":"PASS","duration_ms":61332,"command":"npm run lint","exit_code":0},
+{"id":"typecheck","source":"guide","status":"PASS","duration_ms":18230,"command":"npm run typecheck","exit_code":0},
+{"id":"build","source":"guide","status":"PASS","duration_ms":34809,"command":"npm run build","exit_code":0},
+{"id":"commitlint","source":"guide","status":"PASS","duration_ms":3554,"command":"npm run commitlint:last","exit_code":0},
+{"id":"secrets","source":"hook","status":"SKIPPED","duration_ms":3217,"command":"npm run validate:secrets","exit_code":0,"notes":"Output: 'No staged changes to scan'. Stage changes with Docker running to scan locally; CI runs it unconditionally."},
+{"id":"unit","source":"guide","status":"SKIPPED","command":"npx vitest run --project unit","notes":"Skipped per AGENTS.md: tests only on explicit user request."},
+{"id":"integration","source":"guide","status":"SKIPPED","command":"npx vitest run --project cli","notes":"Skipped per AGENTS.md: tests only on explicit user request."}
+],"failures":{}}
