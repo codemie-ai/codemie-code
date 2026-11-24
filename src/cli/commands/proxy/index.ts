@@ -173,6 +173,7 @@ interface UnifiedConnectOptions extends AggregateOptions {
   claudeDesktop?: boolean;
   codexDesktop?: boolean;
   force?: boolean;
+  includePersonalSubscriptions?: boolean;
   insiders?: boolean;
   model?: string;
   omp?: boolean;
@@ -356,6 +357,10 @@ export function createProxyCommand(): Command {
       `Skip the confirmation prompts (required when non-interactive; applies to ${AGGREGATE_FLAGS.join(' / ')})`,
     )
     .addOption(deprecatedOption(CONNECT_SILENT_DEPRECATION, '--silent', 'Same as --yes'))
+    .option(
+      '--include-personal-subscriptions',
+      'With --claude-otlp: also send analytics from personal Claude subscriptions, for this repository (--scope project) or any repository (--scope user). Without it, connect asks.',
+    )
     .action(async (opts: UnifiedConnectOptions) => {
       if (opts.force) deprecate(CONNECT_FORCE_DEPRECATION);
       if (opts.silent) deprecate(CONNECT_SILENT_DEPRECATION);
@@ -381,6 +386,7 @@ export function createProxyCommand(): Command {
         // Left undefined when omitted: the orchestrator coalesces it, and an aggregate's member then keeps its project list.
         scope: opts.scope,
         yes: Boolean(opts.yes || opts.silent),
+        includePersonalSubscriptions: Boolean(opts.includePersonalSubscriptions),
         aggregates: aggregatesGiven(opts),
         // `--claude-otlp` implies both flags (source `implied`); only a typed flag routes its client unconditionally.
         explicitRoutes: {

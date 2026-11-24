@@ -278,4 +278,89 @@ describe('promptAnalyticsConfirmation', () => {
 
     await expect(promptAnalyticsConfirmation(options({ kind: 'absent' }))).rejects.toThrow('boom');
   });
+
+  describe('work-consent question', () => {
+    const answers = (...values: boolean[]): void => {
+      for (const enable of values) promptMock.mockResolvedValueOnce({ enable });
+    };
+
+    it.each([
+      ['project', 'Send analytics from personal Claude subscriptions in this repository?'],
+      ['user', 'Send analytics from personal Claude subscriptions in any repository?'],
+    ] as const)('asks a Confirm / Decline list first for %s scope, Confirm preselected, then the unchanged main question', async (scope, text) => {
+      answers(true, true);
+
+      await promptAnalyticsConfirmation(options({ kind: 'absent' }, { workConsentQuestion: { scope } }));
+
+      expect(promptMock).toHaveBeenCalledTimes(2);
+      expect(promptMock.mock.calls[0][0][0]).toMatchObject({
+        type: 'list',
+        message: text,
+        default: true,
+        choices: [
+          { name: 'Confirm', value: true },
+          { name: 'Decline', value: false },
+        ],
+      });
+      expect(promptMock.mock.calls[1][0][0]).toMatchObject({
+        type: 'list',
+        message: 'Enable Claude Code analytics?',
+        choices: [
+          { name: 'Confirm', value: true },
+          { name: 'Decline', value: false },
+        ],
+      });
+    });
+
+    it('prints the header once, before the first question', async () => {
+      const order: string[] = [];
+      logSpy.mockImplementation(() => { order.push('log'); });
+      promptMock.mockImplementation(async () => { order.push('prompt'); return { enable: true }; });
+
+      await promptAnalyticsConfirmation(options({ kind: 'absent' }, { workConsentQuestion: { scope: 'user' } }));
+
+      expect(order).toEqual(['log', 'prompt', 'prompt']);
+    });
+
+    it.each([
+      ['Confirm then Confirm', [true, true], 'enable-with-consent'],
+      ['Decline then Confirm', [false, true], 'enable'],
+      ['Confirm then Decline', [true, false], 'cancel'],
+      ['Decline then Decline', [false, false], 'cancel'],
+    ] as const)('%s resolves %s', async (_name, replies, expected) => {
+      answers(...replies);
+
+      await expect(
+        promptAnalyticsConfirmation(options({ kind: 'absent' }, { workConsentQuestion: { scope: 'project' } })),
+      ).resolves.toBe(expected);
+    });
+
+    it.each(['ExitPromptError', 'AbortPromptError'])('a closed first question (%s) cancels without asking the main question', async (name) => {
+      const error = new Error('closed');
+      error.name = name;
+      promptMock.mockRejectedValueOnce(error);
+
+      await expect(
+        promptAnalyticsConfirmation(options({ kind: 'absent' }, { workConsentQuestion: { scope: 'user' } })),
+      ).resolves.toBe('cancel');
+      expect(promptMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('a closed main question cancels', async () => {
+      const error = new Error('closed');
+      error.name = 'ExitPromptError';
+      promptMock.mockResolvedValueOnce({ enable: true }).mockRejectedValueOnce(error);
+
+      await expect(
+        promptAnalyticsConfirmation(options({ kind: 'absent' }, { workConsentQuestion: { scope: 'user' } })),
+      ).resolves.toBe('cancel');
+    });
+
+    it('without workConsentQuestion only the main question is asked (unchanged)', async () => {
+      answers(true);
+
+      await expect(promptAnalyticsConfirmation(options({ kind: 'absent' }))).resolves.toBe('enable');
+      expect(promptMock).toHaveBeenCalledTimes(1);
+    });
+  });
 });

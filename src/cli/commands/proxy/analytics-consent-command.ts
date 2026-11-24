@@ -7,20 +7,21 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { ConfigurationError } from '@/utils/errors.js';
-import { rawProjectHeader } from '@/utils/header-value.js';
 import { resolveProjectRoot } from '@/utils/project-root.js';
 import { renderHint } from '@/utils/hint.js';
 import { canonicalizePath } from '@/agents/core/project-allowlist.js';
 import { currentEvidenceIdentity } from '@/agents/core/evidence/hook-identity.js';
 import {
+  connectAllFolders,
   connectFolder,
   consentStorePath,
   coveringEntries,
+  disconnectAllFolders,
   disconnectFolder,
   listConsents,
 } from '@/agents/core/evidence/consent-store.js';
-import { resolveSessionProject } from '@/agents/core/event-fields/identity-fields.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
+import { resolveConsentProject } from './consent-project.js';
 import { DEPRECATION_REMOVE_ON, deprecatedCommand } from '../../deprecation.js';
 import {
   reportEffectiveState,
@@ -45,34 +46,47 @@ export async function requireIdentity(): Promise<{ api_identity: string; owner_h
   return identity;
 }
 
-async function connectWorkFolder(path: string | undefined, opts: ConnectorOptions & { project?: string; yes?: boolean }): Promise<void> {
+type GrantOptions = ConnectorOptions & { project?: string; yes?: boolean; all?: boolean };
+
+/** The confirmation every grant needs unless `--yes`; false when the user declined (nothing changed). */
+async function confirmGrant(opts: { yes?: boolean }, message: string, refusal: string): Promise<boolean> {
+  if (opts.yes) return true;
+  if (!process.stdin.isTTY) throw new ConfigurationError(refusal);
+  const { ok } = await inquirer.prompt<{ ok: boolean }>([{ type: 'confirm', name: 'ok', message, default: false }]);
+  if (!ok) console.log(chalk.dim('Nothing changed.'));
+  return ok;
+}
+
+async function connectAllWorkFolders(path: string | undefined, opts: GrantOptions): Promise<void> {
+  await withErrorHandling(async () => {
+    assertClaudeOnly(opts);
+    if (path !== undefined || opts.project !== undefined) {
+      throw new ConfigurationError('--all authorizes every repository: do not combine it with a path or --project.');
+    }
+    const identity = await requireIdentity();
+    console.log('Scope:   any repository');
+    console.log(chalk.yellow('Conversation content (prompts, tool input and output, transcripts) of Claude Code sessions in any repository that are billed to a personal subscription becomes visible to the admins of the CodeMie project of each session.'));
+    if (!(await confirmGrant(opts, 'Authorize every repository?', 'Confirmation required: re-run with --yes to authorize every repository.'))) return;
+    await connectAllFolders(identity);
+    console.log(chalk.green('✓ Authorized every repository. Applies to sessions that start after this.'));
+    console.log(chalk.dim('Authorizing does not turn collection on and does not change what is collected; it only authorizes sending analytics from personal Claude subscriptions.'));
+    await reportEffectiveState(CLAUDE_CODE_OTLP_AGENT_NAME, resolveProjectRoot());
+  });
+}
+
+async function connectWorkFolder(path: string | undefined, opts: GrantOptions): Promise<void> {
+  if (opts.all) return connectAllWorkFolders(path, opts);
   await withErrorHandling(async () => {
     assertClaudeOnly(opts);
     const target = path ?? resolveProjectRoot();
     const canonical = await canonicalizePath(target);
-    // The project may come from the profile or workspace configuration; that only proposes it, never grants consent.
-    const project = (opts.project ?? (await resolveSessionProject(canonical, undefined))).trim();
-    if (!project) {
-      throw new ConfigurationError('No CodeMie project resolved for this folder. Pass --project <name>.');
-    }
-    if (rawProjectHeader(project) === undefined) {
-      throw new ConfigurationError(`Project "${project}" cannot be used for a connected work folder: its name has characters the analytics protocol cannot send (only Latin-1 text is supported). Use a project with a supported name.`);
-    }
+    const project = await resolveConsentProject(canonical, opts.project);
     const identity = await requireIdentity();
     console.log(`Folder:  ${canonical}`);
     console.log(`Project: ${project}`);
     console.log('This covers every sub-folder of that folder that resolves to the same project.');
     console.log(chalk.yellow('Conversation content (prompts, tool input and output, transcripts) of those sessions becomes visible to the project admins.'));
-    if (!opts.yes) {
-      if (!process.stdin.isTTY) {
-        throw new ConfigurationError('Confirmation required: re-run with --yes to connect this folder.');
-      }
-      const { ok } = await inquirer.prompt<{ ok: boolean }>([{ type: 'confirm', name: 'ok', message: 'Connect this folder?', default: false }]);
-      if (!ok) {
-        console.log(chalk.dim('Nothing changed.'));
-        return;
-      }
-    }
+    if (!(await confirmGrant(opts, 'Connect this folder?', 'Confirmation required: re-run with --yes to connect this folder.'))) return;
     const saved = await connectFolder({ ...identity, project }, canonical);
     console.log(chalk.green(`✓ Connected ${saved} to project ${project}. Applies to sessions that start after this.`));
     console.log(chalk.dim('Connecting does not turn collection on and does not change what is collected; it only authorizes this folder.'));
@@ -80,7 +94,24 @@ async function connectWorkFolder(path: string | undefined, opts: ConnectorOption
   });
 }
 
-async function disconnectWorkFolder(path: string | undefined, opts: ConnectorOptions): Promise<void> {
+async function disconnectAllWorkFolders(path: string | undefined, opts: ConnectorOptions): Promise<void> {
+  await withErrorHandling(async () => {
+    assertClaudeOnly(opts);
+    if (path !== undefined) {
+      throw new ConfigurationError('--all withdraws the all-repositories authorization: do not combine it with a path.');
+    }
+    const removed = await disconnectAllFolders(await requireIdentity());
+    if (removed > 0) {
+      console.log(chalk.green('✓ Withdrew the all-repositories authorization. Sessions that rely on it stop publishing, including queued data.'));
+      console.log(chalk.dim('Authorizations for individual folders were not touched.'));
+    } else {
+      console.log(chalk.dim('Nothing to change: there is no all-repositories authorization.'));
+    }
+  });
+}
+
+async function disconnectWorkFolder(path: string | undefined, opts: ConnectorOptions & { all?: boolean }): Promise<void> {
+  if (opts.all) return disconnectAllWorkFolders(path, opts);
   await withErrorHandling(async () => {
     assertClaudeOnly(opts);
     const canonical = await canonicalizePath(path ?? resolveProjectRoot());
@@ -96,10 +127,17 @@ async function disconnectWorkFolder(path: string | undefined, opts: ConnectorOpt
     for (const e of covering) {
       console.log(
         chalk.yellow(
-          renderHint({
-            reason: `${canonical} is still covered by the connection ${e.folder} (project ${e.project})`,
-            command: `codemie proxy analytics consent revoke "${e.folder}"`
-          })
+          renderHint(
+            e.all_folders
+              ? {
+                  reason: `${canonical} is still covered by the all-repositories authorization (any repository)`,
+                  command: 'codemie proxy analytics consent revoke --all'
+                }
+              : {
+                  reason: `${canonical} is still covered by the connection ${e.folder} (project ${e.project})`,
+                  command: `codemie proxy analytics consent revoke "${e.folder}"`
+                }
+          )
         )
       );
     }
@@ -119,10 +157,12 @@ async function listWorkConsents(): Promise<void> {
     }
     for (const e of entries) {
       const since = typeof e.connected_at === 'number' ? ` (since ${new Date(e.connected_at).toISOString().slice(0, 10)})` : '';
-      console.log(`${e.folder}  project ${e.project}  ${e.api_identity}${since}`);
+      console.log(e.all_folders ? `${ALL_FOLDERS_LABEL}  ${e.api_identity}${since}` : `${e.folder}  project ${e.project}  ${e.api_identity}${since}`);
     }
   });
 }
+
+const ALL_FOLDERS_LABEL = 'any repository';
 
 const CONNECT_FOLDER_DEPRECATION = {
   kind: 'deprecated',
@@ -148,10 +188,14 @@ export function addConsentCommands(analytics: Command): void {
   const consent = new Command('consent').description('Manage work-project consent folders (Claude Code only)');
   addGrantOptions(
     consent.command('grant [path]').description('Authorize work-project analytics for a folder (default: the current project root); Claude Code only')
-  ).action((path: string | undefined, opts: ConnectorOptions & { project?: string; yes?: boolean }) => connectWorkFolder(path, opts));
+  )
+    .option('--all', 'Authorize work-project analytics in any repository instead of one path')
+    .action((path: string | undefined, opts: GrantOptions) => connectWorkFolder(path, opts));
   withConnectorOptions(
     consent.command('revoke [path]').description('Withdraw work-project authorization for a folder (default: the current project root)')
-  ).action((path: string | undefined, opts: ConnectorOptions) => disconnectWorkFolder(path, opts));
+  )
+    .option('--all', 'Withdraw the all-repositories authorization (per-path authorizations are not touched)')
+    .action((path: string | undefined, opts: ConnectorOptions & { all?: boolean }) => disconnectWorkFolder(path, opts));
   consent.command('list').description('List the folders authorized for work-project analytics under the signed-in account').action(() => listWorkConsents());
   analytics.addCommand(consent);
 

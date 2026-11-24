@@ -522,6 +522,58 @@ describe('composeProxyDoctor', () => {
     expect(delivery.find((s) => s.message.startsWith('Last dropped'))?.hint).toContain('codemie setup');
   });
 
+  describe('unsent data on hold, per reason', () => {
+    const unsent = async (): Promise<string[]> => {
+      const report = await compose();
+      return report.sections.filter((s) => s.id === 'delivery' && s.message.startsWith('Unsent data')).map((s) => s.message);
+    };
+
+    it('stays one line without a hold (f)', async () => {
+      collectDeliveryHealth.mockResolvedValue({ status: 'healthy', pendingBytes: 16650 });
+      expect(await unsent()).toEqual(['Unsent data: 16.26 KB (all sessions on this machine)']);
+    });
+
+    it('keeps the one line when bytes are held for a reason the table does not know', async () => {
+      collectDeliveryHealth.mockResolvedValue({ status: 'healthy', pendingBytes: 16650, heldBytes: 16650, heldByReason: { some_unlisted_reason: 16650 } });
+      expect(await unsent()).toEqual(['Unsent data: 16.26 KB (all sessions on this machine), 16.26 KB of it on hold']);
+    });
+
+    it('adds an On hold / Fix block for one reason', async () => {
+      collectDeliveryHealth.mockResolvedValue({ status: 'healthy', pendingBytes: 16650, heldBytes: 16650, heldByReason: { work_consent_required: 16650 } });
+      expect(await unsent()).toEqual([
+        [
+          'Unsent data: 16.26 KB (all sessions on this machine), 16.26 KB of it on hold',
+          '      On hold: personal Claude subscription sessions need work consent',
+          '      Fix: run in the repository: codemie proxy analytics consent grant (applies to new sessions only)',
+        ].join('\n'),
+      ]);
+    });
+
+    it('adds one block per reason, in table order', async () => {
+      const { HOLD_REASONS } = await import('../doctor/delivery-sections.js');
+      HOLD_REASONS.test_second_reason = { text: 'second reason text', fix: 'second fix text' };
+      try {
+        collectDeliveryHealth.mockResolvedValue({
+          status: 'healthy',
+          pendingBytes: 20480,
+          heldBytes: 20480,
+          heldByReason: { test_second_reason: 4096, work_consent_required: 16384 },
+        });
+        expect(await unsent()).toEqual([
+          [
+            'Unsent data: 20.00 KB (all sessions on this machine), 20.00 KB of it on hold',
+            '      On hold: personal Claude subscription sessions need work consent',
+            '      Fix: run in the repository: codemie proxy analytics consent grant (applies to new sessions only)',
+            '      On hold: second reason text',
+            '      Fix: second fix text',
+          ].join('\n'),
+        ]);
+      } finally {
+        delete HOLD_REASONS.test_second_reason;
+      }
+    });
+  });
+
   it('delivery explains a project-conflict discard as the last drop, with no command to run', async () => {
     collectDeliveryHealth.mockResolvedValue({
       status: 'healthy',

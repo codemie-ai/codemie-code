@@ -51,6 +51,8 @@ export interface SpoolDeliverySummary {
    * reason the status does not already name. Absent when there is none.
    */
   heldBytes?: number;
+  /** `heldBytes` split by the session hold reason (the values sum to `heldBytes`). Absent when nothing is held. */
+  heldByReason?: Record<string, number>;
   /** The spool could not be read completely, so `pendingBytes` may be too low. */
   incomplete?: boolean;
   /** A session with pending data is held because the analytics endpoint does not match the credential identity. */
@@ -142,7 +144,7 @@ async function summarizeSession(sessionId: string): Promise<SpoolDeliverySummary
     mismatchHeld,
     classificationStalled,
     organizationEncodingStalled,
-    ...(heldBytes > 0 ? { heldBytes } : {}),
+    ...(heldBytes > 0 ? { heldBytes, heldByReason: { [holdReason]: heldBytes } } : {}),
     ...(sendFailure ? { sendFailure } : {}),
     ...(latestDrop ? { latestDrop } : {}),
   };
@@ -169,6 +171,9 @@ export async function summarizeSpoolDelivery(): Promise<SpoolDeliverySummary> {
       for (const s of batch) {
         summary.pendingBytes += s.pendingBytes;
         if (s.heldBytes) summary.heldBytes = (summary.heldBytes ?? 0) + s.heldBytes;
+        for (const [reason, bytes] of Object.entries(s.heldByReason ?? {})) {
+          summary.heldByReason = { ...summary.heldByReason, [reason]: (summary.heldByReason?.[reason] ?? 0) + bytes };
+        }
         summary.mismatchHeld ||= s.mismatchHeld;
         const sendFailure = earlier(summary.sendFailure, s.sendFailure);
         if (sendFailure) summary.sendFailure = sendFailure;
