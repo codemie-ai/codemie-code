@@ -1067,8 +1067,9 @@ export async function readDesktopGateway(baseDir?: string, stateFile?: string): 
 
 /**
  * Reverse {@link writeDesktopConfig}: strip the CodeMie gateway settings and managed MCP
- * servers from the applied `configLibrary/<UUID>.json`, so Claude Desktop returns to its
- * normal login.
+ * servers from the CodeMie `configLibrary/<UUID>.json` ({@link resolveCodeMieDesktopConfig}),
+ * whichever config is applied, so Claude Desktop returns to its normal login. Never creates an
+ * entry and never touches another config; `appliedId` is dropped only when it named the deleted entry.
  *
  * Only acts on a config whose gateway points at a loopback address with a key the local daemon accepts (or one
  * Desktop has sealed) — any other gateway, a local one with another key included, was configured by the user, not
@@ -1089,7 +1090,8 @@ export async function removeDesktopConfig(
 
   let meta: ConfigMeta;
   try {
-    meta = JSON.parse(await readFile(metaPath, 'utf-8')) as ConfigMeta;
+    const parsed: unknown = JSON.parse(await readFile(metaPath, 'utf-8'));
+    meta = isRecord(parsed) ? (parsed as ConfigMeta) : {};
   } catch (error) {
     throw new ConfigurationError(
       `Claude Desktop config index at ${metaPath} is unreadable: ` +
@@ -1097,10 +1099,12 @@ export async function removeDesktopConfig(
     );
   }
 
-  const configId = appliedConfigId(meta);
-  const configPath = configId ? join(libDir, `${configId}.json`) : undefined;
-  if (!configId || !configPath || !existsSync(configPath)) {
-    return { removed: false, deletedConfigFile: false, reason: 'no applied Claude Desktop config' };
+  const localKey = (await readState())?.gatewayKey ?? DEFAULT_GATEWAY_KEY;
+  const target = await resolveCodeMieDesktopConfig(libDir, meta, localKey);
+  const { configId } = target;
+  const configPath = join(libDir, `${configId}.json`);
+  if (target.isNew || !existsSync(configPath)) {
+    return { removed: false, deletedConfigFile: false, reason: 'no CodeMie Claude Desktop config' };
   }
 
   let existing: Record<string, unknown>;
@@ -1118,7 +1122,6 @@ export async function removeDesktopConfig(
   if (!isCodeMieGatewayConfig(existing)) {
     return { removed: false, configPath, deletedConfigFile: false, reason: 'no CodeMie gateway configured' };
   }
-  const localKey = (await readState())?.gatewayKey ?? DEFAULT_GATEWAY_KEY;
   if (!isDesktopPointedAtLocalProxy(desktopGatewayOfEntry(existing), localKey)) {
     return { removed: false, configPath, deletedConfigFile: false, reason: 'its local gateway is not CodeMie\'s' };
   }
@@ -1163,12 +1166,12 @@ export async function removeDesktopConfig(
     await rm(configPath, { force: true });
     const updatedMeta: ConfigMeta = {
       ...meta,
-      entries: (meta.entries ?? []).filter((entry) => entry.id !== configId),
+      entries: (Array.isArray(meta.entries) ? meta.entries : []).filter((entry) => entry?.id !== configId),
     };
-    delete updatedMeta.appliedId;
-    await writeFile(metaPath, JSON.stringify(updatedMeta, null, 2), 'utf-8');
+    if (updatedMeta.appliedId === configId) delete updatedMeta.appliedId;
+    await writeFileAtomic(metaPath, JSON.stringify(updatedMeta, null, 2));
   } else {
-    await writeFile(configPath, JSON.stringify(existing, null, 2), 'utf-8');
+    await writeFileAtomic(configPath, JSON.stringify(existing, null, 2));
   }
 
   await rm(managedStatePath, { force: true });

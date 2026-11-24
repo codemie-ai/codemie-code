@@ -1571,10 +1571,75 @@ describe('removeDesktopConfig', () => {
     await writeFile(metaPath, JSON.stringify({ appliedId: 'a', entries: [{ id: 'a', name: 'Local' }] }), 'utf-8');
     await writeFile(join(libDir, 'a.json'), foreign, 'utf-8');
 
+    const metaText = await readFile(metaPath, 'utf-8');
+
     const result = await removeDesktopConfig(baseDir, statePath);
 
-    expect(result.removed).toBe(false);
+    expect(result).toEqual({ removed: false, deletedConfigFile: false, reason: 'no CodeMie Claude Desktop config' });
     expect(await readFile(join(libDir, 'a.json'), 'utf-8')).toBe(foreign);
+    expect(await readFile(metaPath, 'utf-8')).toBe(metaText);
+    expect((await readdir(libDir)).sort()).toEqual(['_meta.json', 'a.json']);
+  });
+
+  describe('while another config is applied', () => {
+    const OTHER_CONFIG = JSON.stringify({
+      inferenceProvider: 'gateway',
+      inferenceGatewayBaseUrl: 'https://qa-gateway.example.com',
+      inferenceGatewayApiKey: 'qa-key',
+    });
+    const META = {
+      appliedId: 'other',
+      entries: [{ id: 'c', name: 'CodeMie Proxy' }, { id: 'other', name: 'QA Other Gateway' }],
+      extra: 'keep',
+    };
+
+    beforeEach(async () => {
+      await writeFile(metaPath, JSON.stringify(META), 'utf-8');
+      await writeFile(join(libDir, 'other.json'), OTHER_CONFIG, 'utf-8');
+    });
+
+    it('deletes the CodeMie entry and keeps the applied one', async () => {
+      await writeFile(join(libDir, 'c.json'), LOOPBACK_GATEWAY_CONFIG, 'utf-8');
+
+      const result = await removeDesktopConfig(baseDir, statePath);
+
+      expect(result).toEqual({ removed: true, configPath: join(libDir, 'c.json'), deletedConfigFile: true });
+      expect(existsSync(join(libDir, 'c.json'))).toBe(false);
+      expect(JSON.parse(await readFile(metaPath, 'utf-8'))).toEqual({
+        appliedId: 'other',
+        entries: [{ id: 'other', name: 'QA Other Gateway' }],
+        extra: 'keep',
+      });
+      expect(await readFile(join(libDir, 'other.json'), 'utf-8')).toBe(OTHER_CONFIG);
+    });
+
+    it('rewrites only the CodeMie entry when it keeps a server the user added', async () => {
+      const userServer = { name: 'teamtools', url: 'https://tools.example.com/mcp', transport: 'http', oauth: false };
+      await writeFile(join(libDir, 'c.json'), JSON.stringify({
+        ...JSON.parse(LOOPBACK_GATEWAY_CONFIG),
+        managedMcpServers: JSON.stringify([...DEFAULT_MANAGED_MCP_SERVERS, userServer]),
+      }), 'utf-8');
+      const metaText = await readFile(metaPath, 'utf-8');
+
+      const result = await removeDesktopConfig(baseDir, statePath);
+
+      expect(result).toEqual({ removed: true, configPath: join(libDir, 'c.json'), deletedConfigFile: false });
+      expect(JSON.parse(await readFile(join(libDir, 'c.json'), 'utf-8'))).toEqual({
+        managedMcpServers: JSON.stringify([userServer]),
+      });
+      expect(await readFile(metaPath, 'utf-8')).toBe(metaText);
+      expect(await readFile(join(libDir, 'other.json'), 'utf-8')).toBe(OTHER_CONFIG);
+    });
+
+    it('removes nothing when the CodeMie entry has no file', async () => {
+      const metaText = await readFile(metaPath, 'utf-8');
+
+      const result = await removeDesktopConfig(baseDir, statePath);
+
+      expect(result).toEqual({ removed: false, deletedConfigFile: false, reason: 'no CodeMie Claude Desktop config' });
+      expect(await readFile(metaPath, 'utf-8')).toBe(metaText);
+      expect(await readFile(join(libDir, 'other.json'), 'utf-8')).toBe(OTHER_CONFIG);
+    });
   });
 
   it('removes an emptied applied entry whose file is gone before the link check', async () => {
@@ -1710,9 +1775,10 @@ describe('removeDesktopConfig', () => {
 
     const result = await removeDesktopConfig(baseDir, statePath);
 
-    expect(result).toEqual({ removed: false, deletedConfigFile: false, reason: 'no applied Claude Desktop config' });
+    expect(result).toEqual({ removed: false, deletedConfigFile: false, reason: 'no CodeMie Claude Desktop config' });
     expect(await readFile(join(baseDir, 'outside.json'), 'utf-8')).toBe(LOOPBACK_GATEWAY_CONFIG);
     expect(await readFile(metaPath, 'utf-8')).toBe(metaText);
+    expect(await readdir(libDir)).toEqual(['_meta.json']);
   });
 });
 
