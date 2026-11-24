@@ -194,7 +194,8 @@ export function hookEnv(home: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.NO_COLOR;
   for (const key of Object.keys(env)) {
-    if (key.startsWith('CODEMIE_') || key.startsWith('VITEST') || key.toLowerCase().startsWith('npm_config_')) {
+    // GIT_*: a git hook running the tests (pre-commit) exports its own repository and index, which the CLI's git calls would read.
+    if (key.startsWith('CODEMIE_') || key.startsWith('VITEST') || key.startsWith('GIT_') || key.toLowerCase().startsWith('npm_config_')) {
       delete env[key];
     }
   }
