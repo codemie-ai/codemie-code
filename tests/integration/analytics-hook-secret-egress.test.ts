@@ -22,6 +22,7 @@ import {
   createCliHome,
   deliveredHookEvents,
   disposeCliHome,
+  fileLog,
   recordProxyConnection,
   runHook,
   startMockBackend,
@@ -122,6 +123,24 @@ describe.skipIf(!existsSync(DAEMON_DIST))('secrets in Claude Code hook payloads'
     });
   }
 
+  /** Stops the proxy daemon `home` started and waits until its process is gone. */
+  async function stopDaemon(home: string): Promise<void> {
+    const { pid } = JSON.parse(readFileSync(join(home, 'proxy-daemon.json'), 'utf-8')) as { pid: number };
+    process.kill(pid, 'SIGKILL');
+    await waitFor(
+      () => {
+        try {
+          process.kill(pid, 0);
+          return undefined;
+        } catch {
+          return true;
+        }
+      },
+      10_000,
+      'the proxy daemon to exit'
+    );
+  }
+
   // The bug of EPMCDME-16383: free-text hook fields were forwarded to analytics with their secrets, some in full.
   it(
     'delivers every hook event with no secret in any field, masking the fields analytics use and dropping the rest',
@@ -162,7 +181,12 @@ describe.skipIf(!existsSync(DAEMON_DIST))('secrets in Claude Code hook payloads'
         for (const secret of SECRETS) expect(request.body).not.toContain(secret);
       }
       // Neither does anything the hook or the daemon left on disk: spool, state, logs and config. The home holds no
-      // legitimate copy of the secrets (the transcript is empty), so the whole of it is scanned.
+      // legitimate copy of the secrets (the transcript is empty), so the whole of it is scanned. The daemon is stopped
+      // first: it renames and sweeps files every few seconds, and a file gone between listing and reading would fail the scan.
+      await stopDaemon(home);
+      // The scan covers the payload-bearing files: the debug log and the session's spooled hook events.
+      expect(fileLog(home)).toContain('[DEBUG]');
+      expect(existsSync(join(home, 'proxy', 'otlp-spool', `${SESSION_ID}.hooks.ndjson`))).toBe(true);
       for (const file of filesUnder(home)) {
         for (const secret of SECRETS) expect(file).not.toContain(secret);
       }
