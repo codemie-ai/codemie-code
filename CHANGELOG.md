@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+### Added
+
+- `codemie proxy connect --claude-otlp --include-personal-subscriptions` sends analytics from personal Claude subscriptions: for this repository with `--scope project`, for any repository with `--scope user`. Without the flag, an interactive connect asks; `--yes` records consent only with the flag
+- `codemie proxy analytics consent grant --all` and `revoke --all` manage a consent that covers any repository (`any repository` in `consent list` and `status`)
+- `codemie proxy doctor` shows an `On hold:` / `Fix:` pair under `Unsent data` for sessions held back for lack of consent
+
 ## [0.17.1] - 2026-11-23
 
 ### Fixed
