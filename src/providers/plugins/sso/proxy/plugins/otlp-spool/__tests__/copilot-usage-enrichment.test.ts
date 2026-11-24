@@ -9,6 +9,7 @@ vi.mock('@/utils/logger.js', () => ({
 }));
 
 import { logger } from '@/utils/logger.js';
+import { createStatus, writeStatus } from '../session-status.js';
 
 import {
   COPILOT_CLI_OTLP_AGENT,
@@ -141,6 +142,39 @@ describe('enrichSessionUsage', () => {
         developer_name: 'dev@example.com',
       });
       expect(e.event_id).not.toBe('hook-event-id');
+    }
+  });
+
+  it('reduces every row and the summary when the hook-built template is reduced', async () => {
+    await writeFile(eventsFile, `${startLine}\n${shutdownLine(END_MS + 1200)}\n`);
+    const clock = fakeClock();
+    expect(await enrichSessionUsage(sessionEnd({ analytics_reduction: true }), clock.sleep, clock.now)).toBe('enriched');
+
+    const events = await spooled();
+    expect(events.map((e) => e.type)).toEqual(['agent.usage.request', 'agent.session.summary']);
+    for (const e of events) {
+      expect(e.analytics_reduction).toBe(true);
+      expect(e).toMatchObject({ session_id: SID, platform: 'copilot-cli', codemie_project_name: 'github_copilot_analytics' });
+      expect(e).not.toHaveProperty('developer_name', 'dev@example.com');
+    }
+    expect(events[0]).toMatchObject({ input_tokens: 6, output_tokens: 67 });
+  });
+
+  it('reduces when the template has no flag but the session binding says reduced', async () => {
+    await writeFile(eventsFile, `${startLine}\n${shutdownLine(END_MS + 1200)}\n`);
+    await writeStatus(SID, { ...createStatus(), reduction: true });
+    const clock = fakeClock();
+    await enrichSessionUsage(sessionEnd(), clock.sleep, clock.now);
+    for (const e of await spooled()) expect(e.analytics_reduction).toBe(true);
+  });
+
+  it('leaves rows unchanged when neither the template nor the session is reduced', async () => {
+    await writeFile(eventsFile, `${startLine}\n${shutdownLine(END_MS + 1200)}\n`);
+    const clock = fakeClock();
+    await enrichSessionUsage(sessionEnd(), clock.sleep, clock.now);
+    for (const e of await spooled()) {
+      expect(e).not.toHaveProperty('analytics_reduction');
+      expect(e.developer_name).toBe('dev@example.com');
     }
   });
 

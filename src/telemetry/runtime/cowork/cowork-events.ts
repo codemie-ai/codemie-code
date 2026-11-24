@@ -4,8 +4,12 @@
  * state in, wire events out; the state is updated in place so the next batch continues where this one ended.
  */
 
+import path from 'node:path';
 import { boundedText, maskAndBoundFields, TEXT_FIELD_LIMITS } from '@/agents/core/otlp-field-limits.js';
 import { maskSecretsDeep } from '@/utils/security.js';
+import { reduceBranch, reducePrompt, reduceRecord } from '@/agents/core/analytics-reduction.js';
+import { HOOK_EVENT_KEEP_LIST } from '@/agents/core/hook-event-keep-list.js';
+import { isReductionOn, readOptedInProjects } from '@/utils/analytics-reduction-setting.js';
 import { stripPastedContentTags } from '@/agents/core/pasted-content.js';
 import { isCountedTranscriptLine, keepFirstByUuid } from '@/agents/plugins/claude/session/transcript-lines.js';
 import { buildClaudeEventId } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.event-id.js';
@@ -68,6 +72,8 @@ export interface CoworkEnvelope {
   clientVersion: string;
   /** The branch Git reports for the session's folder on the host; absent when the folder has none. */
   branch?: string;
+  /** The session's folder on the host; matched against the opted-in project list. Absent when unknown. */
+  workingDirectory?: string;
 }
 
 interface ContentBlock {
@@ -308,6 +314,25 @@ function subagentEvent(type: string, sessionId: string, subagent: CoworkSubagent
   };
 }
 
+/** True when `dir` is `root` or inside it (separator boundary, so `/a/b-two` is not inside `/a/b`). */
+function isWithin(dir: string, root: string): boolean {
+  const rel = path.relative(path.resolve(root), path.resolve(dir));
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+/**
+ * Whether a Cowork session's events are reduced (EPMCDME-17748): the global setting is on, or the session's working
+ * directory is an opted-in project or inside one. An unreadable setting or list reduces. Read per call, never cached.
+ * An envelope without a working directory follows the global setting alone.
+ */
+export async function resolveCoworkReduction(envelope: Pick<CoworkEnvelope, 'workingDirectory'>): Promise<boolean> {
+  if (await isReductionOn({ configDirs: [] })) return true;
+  const projects = await readOptedInProjects();
+  if (projects === 'unreadable') return true;
+  const dir = envelope.workingDirectory;
+  return Boolean(dir) && projects.some((root) => isWithin(dir as string, root));
+}
+
 /**
  * The wire form of one event, the producer's or the transcript orchestrator's: the envelope under the event's own
  * fields, every string masked with the hook path's rules, every field of `TEXT_FIELD_LIMITS` cut to its limit and
@@ -316,9 +341,17 @@ function subagentEvent(type: string, sessionId: string, subagent: CoworkSubagent
  * event's own fields as they arrived; `timestamp` falls back to `fallbackTimestamp` when the event has none. The
  * branch fields are the envelope's, written over the event's own: every transcript line's branch is `HEAD` inside
  * Cowork's VM. `git_branch` is the envelope's branch or `''`, `branch_counts` is dropped, and a summary's
- * `branch_dominant` is the envelope's branch, dropped without one.
+ * `branch_dominant` is the envelope's branch, dropped without one. With `reduced`, the event is stamped
+ * `analytics_reduction: true`, its id is computed first (`reduced` id rules), the branch is cut to its ticket keys
+ * and every field off `HOOK_EVENT_KEEP_LIST` is replaced, in the hook path's order.
  */
-export function stampCoworkEvent(event: WireEvent, envelope: CoworkEnvelope, fallbackTimestamp: string): WireEvent {
+export function stampCoworkEvent(
+  event: WireEvent,
+  envelope: CoworkEnvelope,
+  fallbackTimestamp: string,
+  opts: { reduced?: boolean } = {}
+): WireEvent {
+  const reduced = opts.reduced === true;
   const { event_id: ownId, ...own } = Object.fromEntries(Object.entries(event).filter(([, value]) => value !== undefined));
   const masked = maskAndBoundFields({
     session_id: envelope.sessionId,
@@ -337,12 +370,22 @@ export function stampCoworkEvent(event: WireEvent, envelope: CoworkEnvelope, fal
     masked['prompt_body'] = boundedText(masked['prompt_body'], TEXT_FIELD_LIMITS['prompt']);
   }
   const payload = Object.fromEntries(Object.keys(own).map((key) => [key, masked[key]]));
-  const id = typeof ownId === 'string' ? ownId : buildClaudeEventId(masked, payload, String(masked['timestamp']), { reduced: false });
+  const id = typeof ownId === 'string' ? ownId : buildClaudeEventId(masked, payload, String(masked['timestamp']), { reduced });
   const branch = envelope.branch ? String(maskSecretsDeep(envelope.branch)) : '';
   delete masked['branch_counts'];
   delete masked['branch_dominant'];
   masked['git_branch'] = branch;
   if (branch && own['type'] === 'agent.session.summary') masked['branch_dominant'] = branch;
   masked['event_id'] = id;
-  return masked;
+  if (!reduced) return masked;
+  // The id above came from the unreduced payload; now the branch is cut and everything off the keep-list is replaced.
+  masked['analytics_reduction'] = true;
+  // The prompt is reduced from the raw text, before the length cut, like the hook path.
+  if (typeof own['prompt_body'] === 'string') {
+    masked['prompt_body'] = boundedText(maskAndBoundFields({ prompt: reducePrompt(own['prompt_body']) })['prompt'], TEXT_FIELD_LIMITS['prompt']);
+  }
+  const reducedBranch = branch ? (reduceBranch(branch) ?? '') : '';
+  masked['git_branch'] = reducedBranch;
+  if (typeof masked['branch_dominant'] === 'string') masked['branch_dominant'] = reducedBranch;
+  return reduceRecord(masked, HOOK_EVENT_KEEP_LIST) as WireEvent;
 }
