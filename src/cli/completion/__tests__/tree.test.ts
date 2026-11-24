@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Command, Option } from 'commander';
 import { markHidden } from '@/cli/hidden.js';
-import { buildModel } from '../tree.js';
+import { buildModel, effectiveOptions } from '../tree.js';
 
 function sample(): Command {
   const root = new Command('tool').version('1.2.3').option('--task <task>', 'Run a task');
@@ -71,5 +71,30 @@ describe('buildModel', () => {
     const c = sub(sub(sub(model, 'a'), 'b'), 'c');
     expect(c.subs).toEqual([]);
     expect(c.options.some(o => o.long === '--deep')).toBe(true);
+  });
+});
+
+describe('effectiveOptions', () => {
+  const model = buildModel(sample());
+  const list = model.subs.find(s => s.name === 'list') as typeof model;
+
+  it('merges root options into a subcommand, deduped, node own options first', () => {
+    const opts = effectiveOptions(model, list);
+    const longs = opts.map(o => o.long);
+    expect(longs).toEqual(expect.arrayContaining(['--task', '--version', '--verbose', '--format']));
+    expect(longs.filter(l => l === '--help')).toHaveLength(1);
+    expect(opts.filter(o => o.short === '-h')).toHaveLength(1);
+  });
+
+  it('lets the node own option win over a root option with the same name', () => {
+    const root = { ...model, options: [{ long: '--x', description: 'root', takesValue: 'none' as const, valueKind: 'none' as const, choices: [] }] };
+    const node = { ...list, options: [{ long: '--x', description: 'own', takesValue: 'required' as const, valueKind: 'value' as const, choices: ['a'] }] };
+    const opts = effectiveOptions(root, node);
+    expect(opts).toHaveLength(1);
+    expect(opts[0].description).toBe('own');
+  });
+
+  it('returns the root options unchanged for the root itself', () => {
+    expect(effectiveOptions(model, model).map(o => o.long)).toEqual(model.options.map(o => o.long));
   });
 });

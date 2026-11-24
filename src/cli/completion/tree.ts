@@ -8,7 +8,9 @@ import { isHiddenCommand, isHiddenOption } from '@/cli/hidden.js';
  *   accepted AFTER a subcommand (src/cli/index.ts scans argv for --task).
  *   Therefore emitters offer the root's options at every node, not only root.
  * buildModel itself records each node's own options only; the root-only
- * `-V/--version` and `--task` live on the root node and emitters propagate them.
+ * `-V/--version` and `--task` live on the root node. Emitters MUST obtain a
+ * node's offered options through `effectiveOptions(root, node)`, which merges
+ * the root's options with the node's own (deduped by long/short; node wins).
  */
 
 export type ValueKind = 'none' | 'value' | 'path';
@@ -76,4 +78,21 @@ function buildNode(cmd: Command): NodeModel {
 
 export function buildModel(root: Command): NodeModel {
   return buildNode(root);
+}
+
+function sameOption(a: OptionModel, b: OptionModel): boolean {
+  return (!!a.long && a.long === b.long) || (!!a.short && a.short === b.short);
+}
+
+/**
+ * Options offered at `node`: the node's own options followed by the root's
+ * options that the node does not redeclare (matched by long or short name).
+ */
+export function effectiveOptions(root: NodeModel, node: NodeModel): OptionModel[] {
+  if (node === root) return [...root.options];
+  const merged = [...node.options];
+  for (const opt of root.options) {
+    if (!merged.some(m => sameOption(m, opt))) merged.push(opt);
+  }
+  return merged;
 }
