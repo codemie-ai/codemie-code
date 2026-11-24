@@ -33,6 +33,7 @@ function schedulerStub(state: JobState): Scheduler {
     register: async () => ({}),
     unregister: async () => false,
     query: async () => state,
+    exists: async () => 'present',
   };
 }
 

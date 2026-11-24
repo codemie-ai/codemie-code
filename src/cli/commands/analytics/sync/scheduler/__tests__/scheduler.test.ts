@@ -57,6 +57,9 @@ function fakeFs(present: string[] = []): FakeFs {
       writes.push({ path, data });
       existing.add(path);
     },
+    async exists(path: string) {
+      return existing.has(path);
+    },
     async rm(path: string) {
       if (!existing.has(path)) {
         throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' });

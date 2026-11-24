@@ -31,7 +31,7 @@ export interface InstallCommandOptions {
   at?: string;
   lookbackDays?: number;
   includeExternal?: IncludeExternalPolicy;
-  /** Scheduler task-name suffix (`--task-name`); omitted when absent or empty. */
+  /** Full scheduler task name (`--task-name`); omitted when absent or empty. */
   taskName?: string;
 }
 

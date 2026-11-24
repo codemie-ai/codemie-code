@@ -13,14 +13,9 @@
 import { SyncConfigError } from '@/utils/errors.js';
 
 import { DEFAULT_LOOKBACK_DAYS, validateIncludeExternal, validateLookbackDays } from '../config-store.js';
-import { buildInstallCommand } from '../install-command.js';
+import { assertPrintableValue, buildInstallCommand } from '../install-command.js';
 import { errorMessage } from '../redact.js';
-import {
-  LAUNCHD_LABEL,
-  SYSTEMD_UNIT_NAME,
-  WINDOWS_TASK_NAME,
-  validateSchedulerSuffix
-} from '../scheduler/generators.js';
+import { validateSchedulerName } from '../scheduler/generators.js';
 import { validateTriggerUrl } from '../trigger-url.js';
 import type { IncludeExternalPolicy } from '../types.js';
 import { askGitDetails, testGitCheck } from './git-step.js';
@@ -250,27 +245,29 @@ async function step7Lookback(deps: BootstrapDeps, state: BootstrapState, save: S
 }
 
 /**
- * The "Scheduler task name" step: an optional suffix for the scheduler job each developer's
- * `sync install` registers. Empty means the default name (saved as `''`, the flag omitted).
- * Bootstrap installs nothing and never asks for a per-platform name: the one suffix is
- * prefixed per platform when a developer runs the printed command.
+ * The "Scheduler task name" step: an optional full name for the scheduler job each developer's
+ * `sync install` registers. Empty means each platform's default name (saved as `''`, the flag
+ * omitted). Bootstrap installs nothing and prints no platform-specific text: the printed
+ * command may run on any OS, where the name is used as-is.
  */
 async function stepTaskName(deps: BootstrapDeps, state: BootstrapState, save: SaveBootstrapState): Promise<BootstrapState> {
   deps.err('');
   deps.err(stepHeading(stepsFor(state.targets), 'task-name'));
 
-  deps.err('Developers can give their scheduler job a custom name suffix; the tool adds a fixed prefix per platform:');
-  deps.err(`  macOS:   ${LAUNCHD_LABEL}.<suffix>`);
-  deps.err(`  Linux:   ${SYSTEMD_UNIT_NAME}-<suffix>`);
-  deps.err(`  Windows: ${WINDOWS_TASK_NAME} - <suffix>`);
-  deps.err('Leave it empty to keep the default name.');
+  deps.err('Developers can give their scheduler job a custom name; it is used as-is on every platform.');
+  deps.err('Leave it empty to keep each platform\'s default name.');
 
   const taskName = await askValidated(
     deps,
-    'Name suffix for the scheduler task (empty for default)',
+    'Scheduler task name (Enter for the default)',
     (raw) => {
       const trimmed = raw.trim();
-      return trimmed === '' ? '' : validateSchedulerSuffix(trimmed);
+      if (trimmed === '') {
+        return '';
+      }
+      validateSchedulerName(trimmed);
+      assertPrintableValue('--task-name', trimmed);
+      return trimmed;
     },
     state.taskName !== undefined && state.taskName !== '' ? state.taskName : undefined
   );

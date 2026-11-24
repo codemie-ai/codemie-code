@@ -25,7 +25,7 @@ import {
   validateLookbackDays
 } from '../config-store.js';
 import { SyncConfigError } from '@/utils/errors.js';
-import { validateSchedulerSuffix } from '../scheduler/index.js';
+import { validateSchedulerName } from '../scheduler/index.js';
 import { validateTriggerUrl } from '../trigger-url.js';
 import type { InstallCommandOptions } from '../install-command.js';
 import type { IncludeExternalPolicy } from '../types.js';
@@ -66,7 +66,7 @@ export interface BootstrapState {
   gitTest?: 'passed' | 'skipped';
   includeExternal?: IncludeExternalPolicy;
   lookbackDays?: number | 'default';
-  /** Optional scheduler task-name suffix; `''` means the lead answered "default name" (omit
+  /** Optional full scheduler task name; `''` means the lead answered "default name" (omit
    * `--task-name`). Absent in state files saved before this step existed. */
   taskName?: string;
 }
@@ -267,7 +267,7 @@ const REVALIDATORS: Partial<Record<string, (state: BootstrapState) => void>> = {
   },
   'task-name': (state) => {
     if (state.taskName !== undefined && state.taskName !== '') {
-      validateSchedulerSuffix(state.taskName);
+      validateSchedulerName(state.taskName);
     }
   },
   lookback: (state) => {
@@ -413,7 +413,7 @@ export function summarizeState(state: BootstrapState): string[] {
     lines.push(`Lookback: ${state.lookbackDays === 'default' ? 'default' : `${state.lookbackDays} days`}`);
   }
   if (state.taskName !== undefined && state.taskName !== '') {
-    lines.push(`Scheduler task name suffix: ${state.taskName}`);
+    lines.push(`Scheduler task name: ${state.taskName}`);
   }
 
   return lines;

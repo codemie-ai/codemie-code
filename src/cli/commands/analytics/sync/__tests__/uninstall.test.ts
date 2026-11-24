@@ -10,6 +10,7 @@ function schedulerReturning(present: boolean): Scheduler {
     register: async () => ({}),
     unregister: async () => present,
     query: async () => 'disabled',
+    exists: async () => 'absent',
   };
 }
 
@@ -33,6 +34,7 @@ function makeDeps(overrides: Partial<UninstallDeps> = {}): Harness {
       register: async () => ({}),
       unregister: (...args: []) => unregister(...args),
       query: async () => 'disabled',
+      exists: async () => 'absent',
     })
   );
 

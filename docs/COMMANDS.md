@@ -1002,22 +1002,28 @@ is logged out, via `loginctl enable-linger`.
 **`install` options:** `--webhook <url>` (required, https; or `--webhook-b64 <value>`, the
 same URL base64url-encoded as printed by `bootstrap` — pass one, not both), `--at <HH:MM>` (default
 `03:00`), `--lookback-days <1-30>` (default `7`, follows CLI updates when omitted),
-`--include-external <windows|always|never>` (default `never`), `--task-name <suffix>` (optional scheduler job-name suffix). Install prints the run
+`--include-external <windows|always|never>` (default `never`), `--task-name <name>` (full scheduler task name, used as-is), `--force` (overwrite an existing task with that name that this tool did not create). Install prints the run
 time, lookback, policy, the webhook host (signature masked), the email the reports will
 carry, and a hint to verify with `sync run`/`sync status`. Running `install` again
 replaces the existing job and settings rather than duplicating them, and keeps the
 last-sent marker.
 
-**Job name.** `--task-name <suffix>` appends a suffix to the per-platform default name:
-`.X` on macOS (`com.epam.codemie.analytics-sync.X`), `-X` on Linux (`codemie-analytics-sync-X`),
-` - X` on Windows (`CodeMie Analytics Sync - X`). The suffix is 1-32 characters of letters,
-digits, `.`, `_`, `-`, not starting with `.` or `-`. In a terminal without the flag, install
-prompts for it (Enter keeps the default); without a terminal it uses the default. It is saved
-as `taskName` in `analytics-sync.json`, and reinstalling under a new suffix replaces the old
-job. `status` prints the resolved name as `OS job name`; `uninstall` and `status` resolve it
-from saved settings (an unreadable file is reported, not guessed). `bootstrap` asks for an
-optional suffix and prints `--task-name` in the install command. Manual
-`launchctl`/`systemctl`/`schtasks` commands must use the resolved name.
+**Job name.** `--task-name <name>` sets the full name of the scheduler task and is used
+as-is on every platform (launchd label and plist file name, systemd unit base name, Windows
+`schtasks /TN`); the defaults are `com.epam.codemie.analytics-sync`, `codemie-analytics-sync`
+and `CodeMie Analytics Sync`. Names may hold spaces and other printable characters, but not
+control characters, `/`, `\`, `..`, a leading `-` or `.`, or more than 100 characters; systemd
+and Task Scheduler add limits of their own, reported before anything is changed. In a
+terminal without the flag, install prompts `Scheduler task name (Enter for default "<default>"):`;
+without a terminal it uses the default. The name is saved as `taskName` in
+`analytics-sync.json` only when it differs from the default. If a task with that name already
+exists and is neither the previously installed job nor the platform default, install warns
+that it will be deleted and overwritten: it asks `y/N` (default No) when you typed the name
+at the prompt, and otherwise refuses unless `--force` is given. `status` prints the resolved
+name as `OS job name`; `uninstall` and `status` resolve it from saved settings (an unreadable
+file is reported, not guessed). `bootstrap` asks for an optional name and prints `--task-name`
+in the install command. Manual `launchctl`/`systemctl`/`schtasks` commands must use the
+resolved name.
 
 **Taking over the standalone collector.** If the standalone collector's daily job is
 already registered, `install` removes it before registering the CLI's job and keeps the

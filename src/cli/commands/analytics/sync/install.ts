@@ -1,8 +1,8 @@
 /**
  * Install runner for `codemie analytics sync install`.
  *
- * Fixed order (spec §Install): validate options -> platform preflight -> resolve email ->
- * detect the standalone collector -> test-push the git target (if configured) -> unregister
+ * Fixed order (spec §Install): validate options -> platform preflight -> resolve the task name
+ * and check it does not overwrite a foreign task -> resolve email -> detect the standalone collector -> test-push the git target (if configured) -> unregister
  * any existing job (collector's or a previous CLI install's — same job identities, see
  * `./scheduler/generators.ts`) -> write settings -> register the job -> print the summary.
  * Every side effect is injected via {@link InstallDeps} so tests run without touching the
@@ -45,7 +45,9 @@ import {
   ownedNames,
   resolveJobCommand,
   resolveSchedulerName,
-  validateSchedulerSuffix
+  sameSchedulerName,
+  assertNameSupportedOnPlatform,
+  validateSchedulerName
 } from './scheduler/index.js';
 import type { JobCommand, RegisterResult, Scheduler } from './scheduler/index.js';
 import { createGitRunner, gitHint } from './targets/git-client.js';
@@ -69,10 +71,12 @@ export interface InstallDeps {
   isTTY: boolean;
   /** Only called when `isTTY` is true and `resolveIdentity()` throws. */
   promptEmail(): Promise<string>;
-  /** Only called when `isTTY` is true and no `--task-name` was given. `prefixHint` is the full
-   * name up to the suffix, `defaultName` the name an empty answer keeps. Returns the raw
-   * answer; empty means the default. */
-  promptTaskName(prefixHint: string, defaultName: string): Promise<string>;
+  /** Only called when `isTTY` is true and no `--task-name` was given. `defaultName` is the
+   * name an empty answer keeps. Returns the raw answer; empty means the default. */
+  promptTaskName(defaultName: string): Promise<string>;
+  /** Only called when `isTTY` is true, the name was typed at the prompt and a task with that
+   * name already exists that this tool does not own. `true` means overwrite it. */
+  confirmOverwrite(name: string): Promise<boolean>;
   saveUserEmail(email: string): Promise<void>;
   /** Whether the standalone collector's clone is still present (`~/.codemie/codemie-onboarding`). */
   collectorDirExists(): boolean;
@@ -229,12 +233,12 @@ interface PreviousInstall {
   names: string[];
 }
 
-/** The saved suffix in the stored settings, or `undefined` when absent, invalid or unreadable
+/** The saved name in the stored settings, or `undefined` when absent, invalid or unreadable
  * (then only the default name is owned, so no path is built from a bad value). */
 function previousTaskName(settingsRaw: string | null): string | undefined {
   try {
     const taskName = (JSON.parse(settingsRaw ?? '{}') as { taskName?: unknown }).taskName;
-    return typeof taskName === 'string' ? validateSchedulerSuffix(taskName) : undefined;
+    return typeof taskName === 'string' ? validateSchedulerName(taskName) : undefined;
   } catch {
     return undefined;
   }
@@ -351,20 +355,94 @@ async function replaceJob(deps: InstallDeps, settings: SyncSettings): Promise<Re
   }
 }
 
-/** The suffix to install with: `--task-name` (already in `settings`), else on a terminal the
- * prompt's answer (empty keeps the default), else the default. Throws `SyncConfigError` on an
- * invalid answer. */
-async function resolveTaskName(opts: InstallOptions, settings: SyncSettings, deps: InstallDeps): Promise<SyncSettings> {
-  if (opts.taskName !== undefined || !deps.isTTY) {
+/** Where the install's task name came from: the `--task-name` flag, an answer typed at the
+ * prompt, or nothing (the platform default). */
+type TaskNameSource = 'flag' | 'prompt' | 'default';
+
+interface ResolvedTaskName {
+  settings: SyncSettings;
+  source: TaskNameSource;
+}
+
+/** Drops `taskName` when it is the platform default, so default installs store nothing. */
+function withoutDefaultName(settings: SyncSettings): SyncSettings {
+  const defaultName = defaultSchedulerName(process.platform);
+  if (settings.taskName === undefined || !sameSchedulerName(settings.taskName, defaultName, process.platform)) {
     return settings;
+  }
+  const { taskName: _default, ...rest } = settings;
+  return rest;
+}
+
+/** The name to install with: `--task-name` (already in `settings`), else on a terminal the
+ * prompt's answer (empty keeps the default), else the default. Throws `SyncConfigError` on an
+ * invalid answer or a name this OS cannot use. */
+async function resolveTaskName(opts: InstallOptions, settings: SyncSettings, deps: InstallDeps): Promise<ResolvedTaskName> {
+  let resolved: ResolvedTaskName = { settings, source: opts.taskName !== undefined ? 'flag' : 'default' };
+
+  if (opts.taskName === undefined && deps.isTTY) {
+    const answer = (await deps.promptTaskName(defaultSchedulerName(process.platform))).trim();
+    if (answer !== '') {
+      resolved = { settings: { ...settings, taskName: validateSchedulerName(answer) }, source: 'prompt' };
+    }
   }
 
-  const prefixHint = resolveSchedulerName({ taskName: '' }, process.platform);
-  const answer = (await deps.promptTaskName(prefixHint, defaultSchedulerName(process.platform))).trim();
-  if (answer === '') {
-    return settings;
+  const normalized = withoutDefaultName(resolved.settings);
+  if (normalized.taskName === undefined) {
+    return { settings: normalized, source: 'default' };
   }
-  return { ...settings, taskName: validateSchedulerSuffix(answer) };
+  assertNameSupportedOnPlatform(normalized.taskName, process.platform);
+  return { settings: normalized, source: resolved.source };
+}
+
+/**
+ * Before anything is removed: when the chosen name is neither the previously saved name nor
+ * the platform default, checks whether a scheduler task with that name already exists (enabled
+ * or not). An existing foreign task, or one whose presence cannot be determined, is only
+ * replaced on `--force` or after an interactive yes (name typed at the prompt). Returns
+ * `true` to proceed; `false` (after printing why) leaves everything untouched.
+ */
+async function confirmNameAvailable(
+  opts: InstallOptions,
+  resolved: ResolvedTaskName,
+  deps: InstallDeps
+): Promise<boolean> {
+  const name = resolved.settings.taskName;
+  if (name === undefined) {
+    return true;
+  }
+
+  const saved = previousTaskName(await deps.readSettingsRaw().catch(() => null));
+  if (saved !== undefined && sameSchedulerName(name, saved, process.platform)) {
+    return true;
+  }
+
+  const presence = await deps.schedulerFor(name).exists().catch(() => 'unknown' as const);
+  if (presence === 'absent') {
+    return true;
+  }
+
+  const warning =
+    presence === 'present'
+      ? `The following task already exists and will be deleted and overwritten by this one: ${name}`
+      : `Could not check whether a scheduler task named "${name}" already exists; if it does, it will be deleted and overwritten by this one.`;
+  deps.print(warning);
+
+  if (opts.force === true) {
+    return true;
+  }
+
+  if (resolved.source === 'prompt' && deps.isTTY) {
+    if (await deps.confirmOverwrite(name)) {
+      return true;
+    }
+    deps.print(`Install cancelled. The task "${name}" was not changed. Nothing was changed.`);
+    return false;
+  }
+
+  deps.print('Re-run with --force to overwrite it.');
+  deps.print('Nothing was changed.');
+  return false;
 }
 
 export async function runInstall(opts: InstallOptions, deps: InstallDeps): Promise<number> {
@@ -375,7 +453,11 @@ export async function runInstall(opts: InstallOptions, deps: InstallDeps): Promi
 
   let settings: SyncSettings;
   try {
-    settings = await resolveTaskName(opts, validated, deps);
+    const resolved = await resolveTaskName(opts, validated, deps);
+    if (!(await confirmNameAvailable(opts, resolved, deps))) {
+      return 1;
+    }
+    settings = resolved.settings;
   } catch (err) {
     printFailure(deps, err);
     return 1;
@@ -425,19 +507,17 @@ export function createRealInstallDeps(): InstallDeps {
       ]);
       return email.trim();
     },
-    promptTaskName: async (prefixHint: string, defaultName: string): Promise<string> => {
+    promptTaskName: async (defaultName: string): Promise<string> => {
       const inquirer = (await import('inquirer')).default;
       const { taskName } = await inquirer.prompt<{ taskName: string }>([
         {
           type: 'input',
           name: 'taskName',
-          message:
-            `Name suffix for the scheduler task (full name will be \`${prefixHint}<suffix>\`, ` +
-            `Enter for default \`${defaultName}\`):`,
+          message: `Scheduler task name (Enter for default "${defaultName}"):`,
           validate: (value: string) => {
             if (value.trim() === '') return true;
             try {
-              validateSchedulerSuffix(value.trim());
+              assertNameSupportedOnPlatform(validateSchedulerName(value.trim()), process.platform);
               return true;
             } catch (err) {
               return errorMessage(err);
@@ -446,6 +526,18 @@ export function createRealInstallDeps(): InstallDeps {
         }
       ]);
       return taskName.trim();
+    },
+    confirmOverwrite: async (name: string): Promise<boolean> => {
+      const inquirer = (await import('inquirer')).default;
+      const { overwrite } = await inquirer.prompt<{ overwrite: boolean }>([
+        {
+          type: 'confirm',
+          name: 'overwrite',
+          message: `A task named "${name}" already exists and will be deleted and overwritten. Continue?`,
+          default: false
+        }
+      ]);
+      return overwrite;
     },
     saveUserEmail: (email: string) => ConfigLoader.saveUserEmail(email),
     collectorDirExists: () => existsSync(getCodemiePath('codemie-onboarding')),

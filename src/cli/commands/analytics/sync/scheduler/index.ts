@@ -11,7 +11,7 @@
 
 import { dirname, join } from 'path';
 import { homedir as osHomedir, tmpdir, userInfo } from 'os';
-import { mkdir, rm, writeFile } from 'fs/promises';
+import { access, mkdir, rm, writeFile } from 'fs/promises';
 
 import { exec as realExec, type ExecResult } from '@/utils/exec.js';
 import { SyncSchedulerRegisterError, SyncSchedulerUnsupportedError } from '@/utils/errors.js';
@@ -27,7 +27,7 @@ import {
   type JobCommand
 } from './generators.js';
 
-export { resolveJobCommand, validateSchedulerSuffix } from './generators.js';
+export { assertNameSupportedOnPlatform, resolveJobCommand, validateSchedulerName } from './generators.js';
 
 /** Settings shape the name resolver needs (a subset of `SyncSettings`). */
 export interface SchedulerNameSettings {
@@ -41,14 +41,15 @@ export function defaultSchedulerName(platform: NodeJS.Platform): string {
   return SYSTEMD_UNIT_NAME;
 }
 
-/** Scheduler job name for the saved settings: the default, or default plus the saved suffix
- * (`.X` launchd, `-X` systemd, ` - X` Windows). */
+/** Scheduler job name for the saved settings: the saved full name, or the platform default. */
 export function resolveSchedulerName(settings: SchedulerNameSettings, platform: NodeJS.Platform): string {
-  const base = defaultSchedulerName(platform);
-  if (settings.taskName === undefined) return base;
-  if (platform === 'darwin') return `${base}.${settings.taskName}`;
-  if (platform === 'win32') return `${base} - ${settings.taskName}`;
-  return `${base}-${settings.taskName}`;
+  return settings.taskName ?? defaultSchedulerName(platform);
+}
+
+/** Whether two job names are the same job on `platform` (launchd and Task Scheduler names are
+ * case-insensitive in practice; systemd unit names are case-sensitive). */
+export function sameSchedulerName(a: string, b: string, platform: NodeJS.Platform): boolean {
+  return platform === 'linux' ? a === b : a.toLowerCase() === b.toLowerCase();
 }
 
 /** Names this installation owns on the platform: the saved name plus the default, de-duplicated. */
@@ -63,6 +64,8 @@ export interface SchedulerFs {
   mkdir(path: string, options: { recursive: boolean }): Promise<unknown>;
   writeFile(path: string, data: string | Buffer, options?: { encoding?: BufferEncoding }): Promise<void>;
   rm(path: string, options?: { force?: boolean }): Promise<void>;
+  /** Whether `path` exists (any file type). */
+  exists(path: string): Promise<boolean>;
 }
 
 export interface SchedulerDeps {
@@ -87,11 +90,17 @@ export interface RegisterResult {
 
 export type JobState = 'enabled' | 'disabled';
 
+/** Whether a scheduler task with a name exists, enabled or not. `unknown` means the check
+ * itself failed, so the task may or may not be there. */
+export type TaskPresence = 'present' | 'absent' | 'unknown';
+
 export interface Scheduler {
   preflight(): Promise<void>;
   register(cmd: JobCommand, at: string): Promise<RegisterResult>;
   unregister(): Promise<boolean>;
   query(): Promise<JobState>;
+  /** Whether a task with this name exists (enabled or disabled); errors yield `unknown`. */
+  exists(): Promise<TaskPresence>;
 }
 
 const SUPPORTED_PLATFORMS: readonly NodeJS.Platform[] = ['darwin', 'linux', 'win32'];
@@ -308,6 +317,72 @@ async function query(deps: SchedulerDeps, name: string): Promise<JobState> {
   }
 }
 
+/** systemd states `is-enabled` prints for a unit file that exists, enabled or not. */
+const SYSTEMD_KNOWN_STATES = new Set([
+  'enabled', 'enabled-runtime', 'linked', 'linked-runtime', 'alias', 'masked', 'masked-runtime',
+  'static', 'indirect', 'disabled', 'generated', 'transient', 'bad'
+]);
+
+async function existsDarwin(deps: SchedulerDeps, name: string): Promise<TaskPresence> {
+  try {
+    if ((await deps.exec('launchctl', ['print', darwinDomainTarget(deps, name)])).code === 0) {
+      return 'present';
+    }
+    return (await deps.fs.exists(darwinPlistPath(deps, name))) ? 'present' : 'absent';
+  } catch {
+    return 'unknown';
+  }
+}
+
+async function existsLinux(deps: SchedulerDeps, name: string): Promise<TaskPresence> {
+  try {
+    if ((await deps.fs.exists(linuxServicePath(deps, name))) || (await deps.fs.exists(linuxTimerPath(deps, name)))) {
+      return 'present';
+    }
+    const result = await deps.exec('systemctl', ['--user', 'is-enabled', linuxTimerUnit(name)]);
+    if (result.code === 0 || SYSTEMD_KNOWN_STATES.has(result.stdout.trim())) {
+      return 'present';
+    }
+    return /no such file|not found|does not exist/i.test(commandOutput(result)) ? 'absent' : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/** Matches the first CSV field (`"\\Task Name"`) of each `schtasks /Query /FO CSV /NH` line. */
+const SCHTASKS_FIRST_FIELD = /^"((?:[^"]|"")*)"/;
+
+async function existsWindows(deps: SchedulerDeps, name: string): Promise<TaskPresence> {
+  try {
+    // The full listing is locale-independent, unlike the error text of `/Query /TN <name>`.
+    const result = await deps.exec('schtasks', ['/Query', '/FO', 'CSV', '/NH']);
+    if (result.code !== 0) {
+      return 'unknown';
+    }
+    const wanted = `\\${name}`.toLowerCase();
+    const found = result.stdout.split(/\r?\n/).some((line) => {
+      const field = SCHTASKS_FIRST_FIELD.exec(line.trim())?.[1]?.replace(/""/g, '"');
+      return field !== undefined && field.toLowerCase() === wanted;
+    });
+    return found ? 'present' : 'absent';
+  } catch {
+    return 'unknown';
+  }
+}
+
+async function exists(deps: SchedulerDeps, name: string): Promise<TaskPresence> {
+  switch (deps.platform) {
+    case 'darwin':
+      return existsDarwin(deps, name);
+    case 'linux':
+      return existsLinux(deps, name);
+    case 'win32':
+      return existsWindows(deps, name);
+    default:
+      return 'unknown';
+  }
+}
+
 async function unregisterDarwin(deps: SchedulerDeps, name: string): Promise<boolean> {
   const bootedOut = await succeeded(deps, 'launchctl', ['bootout', darwinDomainTarget(deps, name)]);
   const plistRemoved = await removeFile(deps, darwinPlistPath(deps, name));
@@ -350,7 +425,8 @@ export function createScheduler(deps: SchedulerDeps, name: string): Scheduler {
     preflight: () => preflight(deps),
     register: (cmd: JobCommand, at: string) => register(deps, name, cmd, at),
     unregister: () => unregister(deps, name),
-    query: () => query(deps, name)
+    query: () => query(deps, name),
+    exists: () => exists(deps, name)
   };
 }
 
@@ -369,6 +445,11 @@ export function createRealSchedulerDeps(): SchedulerDeps {
     uid: () => process.getuid?.() ?? 0,
     username: () => userInfo().username,
     sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
-    fs: { mkdir, writeFile, rm }
+    fs: {
+      mkdir,
+      writeFile,
+      rm,
+      exists: (path: string) => access(path).then(() => true, () => false)
+    }
   };
 }

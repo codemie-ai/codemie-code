@@ -19,6 +19,7 @@ function makeScheduler(overrides: Partial<Scheduler> = {}): Scheduler {
     register: vi.fn(async (): Promise<RegisterResult> => ({})),
     unregister: vi.fn(async () => false),
     query: vi.fn(async () => 'disabled' as const),
+    exists: vi.fn(async () => 'absent' as const),
     ...overrides,
   };
 }
@@ -57,6 +58,7 @@ function makeDeps(overrides: Partial<InstallDeps> & { scheduler?: Scheduler } = 
     isTTY: false,
     promptEmail,
     promptTaskName: async () => '',
+    confirmOverwrite: async () => false,
     saveUserEmail,
     collectorDirExists: () => false,
     resolveJobCommand: async () => ({

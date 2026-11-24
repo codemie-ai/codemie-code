@@ -32,7 +32,7 @@ export interface SyncSettings {
   includeExternal: IncludeExternalPolicy;
   at: string;
   lookbackDays?: number;
-  /** Optional scheduler task-name suffix. */
+  /** Full scheduler task name, stored only when it differs from the platform default. */
   taskName?: string;
 }
 
@@ -48,8 +48,10 @@ export interface InstallOptions {
   at?: string;
   lookbackDays?: string;
   includeExternal?: string;
-  /** `--task-name`: optional scheduler task-name suffix. */
+  /** `--task-name`: full scheduler task name, used as-is on every platform. */
   taskName?: string;
+  /** `--force`: overwrite an existing scheduler task that this tool does not own. */
+  force?: boolean;
 }
 
 export type SyncStatus = 'ok' | 'skip' | 'fail';
