@@ -59,7 +59,8 @@ import {
   selectCodexModel,
   writeCodexDesktopConfig,
 } from './connectors/codex-desktop.js';
-import { confirmClaudeCodeOtlp, runClaudeCodeOtlp, type ClaudeCodeOtlpDisplay } from './claude-code-otlp-flow.js';
+import { confirmClaudeCodeOtlp, runClaudeCodeOtlp, type ClaudeCodeOtlpAgreement, type ClaudeCodeOtlpDisplay } from './claude-code-otlp-flow.js';
+import { printEnableLaterHint, recordConnectConsent } from './connect-consent.js';
 import { writeCopilotChatOtlpConfig } from './connectors/copilot-chat-otlp.js';
 import { writeCopilotCliOtlpConfig } from './connectors/copilot-cli-otlp.js';
 import { isOmpExtensionInstalled, writeOmpExtension } from './connectors/omp.js';
@@ -144,6 +145,11 @@ export interface ConnectOptions {
    * non-interactive success path for the Claude Code analytics target.
    */
   yes?: boolean;
+  /**
+   * `--include-personal-subscriptions`: with Claude Code analytics, also record work consent (this repository for
+   * `--scope project`, every folder for `user`), so personal-subscription sessions are sent too.
+   */
+  includePersonalSubscriptions?: boolean;
   /** The analytics aggregates given; absent is none. */
   aggregates?: readonly AggregateId[];
   /**
@@ -1150,7 +1156,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     console.log(chalk.yellow('Note: --model has no effect without --codex-desktop.'));
   }
 
-  warnIgnoredAnalyticsFlags(targets, opts.scope, Boolean(opts.yes));
+  warnIgnoredAnalyticsFlags(targets, opts.scope, Boolean(opts.yes), Boolean(opts.includePersonalSubscriptions));
   // Coalesced only after the ignored-flag checks above, which need to see an omitted --scope.
   const scope: AllowlistScope = opts.scope ?? 'user';
 
@@ -1177,6 +1183,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   let config: Awaited<ReturnType<typeof ConfigLoader.load>>;
   let profile: string;
   let otlpDisplay: ClaudeCodeOtlpDisplay | undefined;
+  let agreement: ClaudeCodeOtlpAgreement | undefined;
   let projectBinding: ProjectBindingState | undefined;
   let settingsSwitch: ProviderSettingsSwitch | null = null;
   let scopeBaselines: ScopeBaselines;
@@ -1250,6 +1257,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
         Boolean(opts.overwrite),
         Boolean(opts.yes),
         otlpDisplay,
+        Boolean(opts.includePersonalSubscriptions),
       ).catch((error: unknown) => failAggregateInvalidProjectList(error, members, results, () => {
         // The list is checked before the prompt opens, so the prompt never named the profile.
         if (confirmationWillBeShown) printProfileLine();
@@ -1257,6 +1265,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       // `false` is a decline or a cancelled prompt; a falsy `undefined` is the analytics failing on its own (an invalid
       // project list), which leaves the other clients to be configured.
       const declined = confirmed === false;
+      if (confirmed) agreement = confirmed;
       // The prompt printed the profile line; the route lines come after it. A declined run turns no analytics on and
       // routes nothing the aggregate set, so its skip and hint lines would describe something that does not happen.
       if (!declined) printClaudeRoutePlan(routePlan);
@@ -1347,6 +1356,11 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     const r = await runIfScopeUnchanged(target, scopeBaselines, analyticsWriters[target.key]);
     results.push(r);
     memberOk.set(target.key, r.ok);
+    // The consent is recorded only once Claude Code settings are written; a denied question leaves the way to grant it later.
+    if (target.key === 'claudeCodeOtlp' && r.ok && agreement) {
+      if (agreement.workConsent) results.push(await recordConnectConsent(scope));
+      else if (agreement.deniedQuestion) printEnableLaterHint(scope);
+    }
   }
   for (const member of notFound) {
     if (memberOk.get(member)) console.log(chalk.yellow(notInstalledLine(member)));
