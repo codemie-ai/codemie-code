@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "branch": "feat/wizard-scheduler-name-override",
+  "head": "08be02f7e0c0d9bda42132eef1f8debb4e9db4f3",
+  "runner": "npm",
+  "started_at": "2026-11-24T12:00:00Z",
+  "completed_at": "2026-11-24T12:15:00Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2000,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3000,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4000,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 6000,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 174000,
+      "command": "CI=1 npx vitest run --project unit",
+      "exit_code": 0
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 47000,
+      "command": "CI=1 npx vitest run --project cli",
+      "exit_code": 0
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 0,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 1000,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Output: 'No staged changes to scan'; scan did nothing. Stage changes to scan locally; CI runs it."
+    }
+  ],
+  "failures": {}
+}
