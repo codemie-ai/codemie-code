@@ -17,6 +17,17 @@ import { AgentRegistry } from '../../agents/registry.js';
 import type { VersionCompatibilityResult } from '../../agents/core/types.js';
 import { createAssistantsSetupCommand } from './assistants/setup/index.js';
 import { createSkillsSetupCommand } from './skills/setup/index.js';
+import { join } from 'path';
+import { ConfigurationError } from '../../utils/errors.js';
+import { getCodemiePath } from '../../utils/paths.js';
+import { resolveProjectRoot } from '../../utils/project-root.js';
+import {
+  addOptedInProject,
+  readReductionFlag,
+  writeGlobalReductionFlag,
+  writeProjectReductionFlag,
+} from '../../utils/analytics-reduction-setting.js';
+import { isClaudeCodeOtlpOnProtobuf } from './proxy/connectors/claude-code-otlp.js';
 
 /**
  * Global profile record for a setup result. A subscription profile whose owner
@@ -392,6 +403,9 @@ async function handlePluginSetup(
         console.log();
       }
 
+      // Analytics prompt reduction step (all providers)
+      await runAnalyticsReductionStep();
+
       // Check and install Claude if needed (only during first-time setup, not updates)
       if (!isUpdate && storageLocation === 'global') {
         await checkAndInstallClaude();
@@ -407,6 +421,101 @@ async function handlePluginSetup(
     const providerTemplate = ProviderRegistry.getProvider(providerName);
     displaySetupError(new Error(errorMessage), providerTemplate?.setupInstructions);
     throw error;
+  }
+}
+
+type ReductionChoice = 'off' | 'keep' | 'global' | 'project';
+
+/** Re-run `codemie proxy connect --claude-otlp` (same code path, JSON protocol) after reduction was turned on. */
+async function reconnectClaudeOtlp(): Promise<void> {
+  const { connectTargets } = await import('./proxy/connect-orchestrator.js');
+  const { ANALYTICS_AGGREGATES } = await import('./proxy/analytics-clients.js');
+  const aggregate = ANALYTICS_AGGREGATES.find((a) => a.id === 'claude-otlp');
+  const targets = Object.fromEntries((aggregate?.members ?? []).map((member) => [member, true]));
+  await connectTargets({ targets, aggregates: ['claude-otlp'] });
+}
+
+/**
+ * Setup step: "Analytics prompt reduction". Writes only the flag (and, for a project, the home list entry);
+ * "off" with nothing on leaves every file untouched. Write failures are shown and setup continues.
+ */
+export async function runAnalyticsReductionStep(): Promise<void> {
+  console.log(chalk.cyan('\nAnalytics prompt reduction'));
+  console.log(chalk.dim('Reduces prompts and other free text in analytics to command names, ticket refs and counts.'));
+  console.log(chalk.dim('Conversation history sync is not reduced: full conversation content is still uploaded.'));
+
+  const projectDir = resolveProjectRoot(process.cwd());
+  const globalState = await readReductionFlag(getCodemiePath('codemie-cli.config.json'));
+  const globalOn = globalState !== 'off';
+
+  let choices: Array<{ name: string; value: ReductionChoice }>;
+  let defaultChoice: ReductionChoice;
+  if (globalOn) {
+    console.log(chalk.dim('Reduction is on globally, so the global setting applies to every project.'));
+    choices = [
+      { name: 'Keep on globally', value: 'keep' },
+      { name: 'Turn off globally', value: 'off' }
+    ];
+    defaultChoice = 'keep';
+  } else {
+    choices = [
+      { name: 'Off globally', value: 'off' },
+      { name: 'On globally', value: 'global' },
+      { name: 'On for the current project', value: 'project' }
+    ];
+    defaultChoice = 'off';
+  }
+
+  const { reduction } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'reduction',
+      message: 'Reduce prompts in analytics?',
+      choices,
+      default: defaultChoice
+    }
+  ]);
+
+  try {
+    if (reduction === 'off') {
+      if (globalOn) {
+        await writeGlobalReductionFlag(false);
+        console.log(chalk.green('✓ Prompt reduction turned off globally'));
+      }
+      return;
+    }
+    if (reduction === 'global') {
+      await writeGlobalReductionFlag(true);
+      console.log(chalk.green('✓ Prompt reduction turned on globally'));
+    } else if (reduction === 'project') {
+      await writeProjectReductionFlag(projectDir);
+      await addOptedInProject(projectDir);
+      console.log(chalk.green(`✓ Prompt reduction turned on for ${projectDir}`));
+      console.log(chalk.dim(`  Saved in ${join(projectDir, '.codemie', 'codemie-cli.config.json')}`));
+    }
+  } catch (error) {
+    const message = error instanceof ConfigurationError || error instanceof Error ? error.message : String(error);
+    console.log(chalk.red(`Could not save the prompt reduction setting: ${message}`));
+    return;
+  }
+
+  if (await isClaudeCodeOtlpOnProtobuf()) {
+    console.log(chalk.yellow('Your Claude Code analytics connection uses http/protobuf, which cannot be reduced and is dropped for reduced sessions.'));
+    const { reconnect } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'reconnect',
+        message: 'Reconnect now with codemie proxy connect --claude-otlp (switches to http/json)?',
+        default: true
+      }
+    ]);
+    if (reconnect) {
+      try {
+        await reconnectClaudeOtlp();
+      } catch (error) {
+        console.log(chalk.red(`Reconnect failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    }
   }
 }
 
