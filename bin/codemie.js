@@ -25,7 +25,11 @@ for (const stream of [process.stdout, process.stderr]) {
 // so the logger never writes to the console there: the log file only.
 const invocation = getInvocationContext({ argv: process.argv });
 const isHookProcess = invocation.hook;
-if (isHookProcess) {
+// `codemie completion <shell>`: stdout is a script that gets eval'ed or redirected into a
+// file, so nothing but the script may reach it (not even debug logging). Like a hook, no
+// migrations, update check or what's-new notice run; unlike a hook, errors still print.
+const isCompletion = invocation.completion;
+if (isHookProcess || isCompletion) {
   logger.setConsoleStream(null);
 }
 
@@ -48,7 +52,7 @@ const { checkAndPromptForUpdate } = await import('../dist/utils/cli-updater.js')
 // Auto-run pending migrations (happens at startup)
 // Migrations are tracked in ~/.codemie/migrations.json and only run once
 try {
-  if (await MigrationRunner.hasPending()) {
+  if (!isCompletion && await MigrationRunner.hasPending()) {
     const migrationResult = await MigrationRunner.runPending({
       // Show migration messages to user, except in a hook, an unattended run or for --json output
       silent: isHookProcess || isScheduledRun || isMachineOutput
@@ -74,7 +78,7 @@ try {
 // Skip for the unattended scheduled analytics sync job (no user to notify)
 // Non-blocking: failures don't prevent CLI from running
 const isTestEnvironment = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true';
-if (!isTestEnvironment && !isHookProcess && !isScheduledRun && !isMachineOutput) {
+if (!isTestEnvironment && !isHookProcess && !isScheduledRun && !isMachineOutput && !isCompletion) {
   try {
     await checkAndPromptForUpdate();
   } catch (error) {
@@ -89,7 +93,7 @@ if (!isTestEnvironment && !isHookProcess && !isScheduledRun && !isMachineOutput)
 // a hook process (`hook`, `sound`) or a `--json` invocation never reaches it. A
 // skipped notice writes no marker, so it shows on the next run in a terminal.
 // Also skipped for the unattended scheduled analytics sync job.
-if (!isTestEnvironment && !isHookProcess && !isScheduledRun && !isMachineOutput) {
+if (!isTestEnvironment && !isHookProcess && !isScheduledRun && !isMachineOutput && !isCompletion) {
   try {
     const { readFileSync } = await import('node:fs');
     const { shouldRunUpgradeNotice, showUpgradeNotice } = await import('../dist/utils/whatsnew.js');

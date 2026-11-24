@@ -8,6 +8,8 @@ export interface InvocationContext {
   scheduled: boolean;
   /** Machine-readable output requested (parsed `--json` option or `--json` in argv). */
   json: boolean;
+  /** `codemie completion <shell>`: stdout is the script, to be eval'ed or redirected into a file. */
+  completion: boolean;
   /** Hook or scheduled run: no notices, hints or prompts. */
   silent: boolean;
 }
@@ -23,5 +25,6 @@ export function getInvocationContext(
   const hook = argv[2] === 'hook' || argv[2] === 'sound';
   const scheduled = isScheduledSyncRun(argv);
   const json = options.json === true || isMachineOutputInvocation(argv.slice(2));
-  return { hook, scheduled, json, silent: hook || scheduled };
+  const completion = argv[2] === 'completion';
+  return { hook, scheduled, json, completion, silent: hook || scheduled };
 }
