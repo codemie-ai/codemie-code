@@ -47,6 +47,8 @@ Report only.
 - AC11: Bounded cost.
   - `list` computes all verdicts once, concurrently, under one shared deadline. It skips agents with no managed shim, which can only be `missing`. Agents with a managed shim that `commandExists` reports absent are still classified, since they are the `missing-on-path` case.
   - Launch reuses a single lookup (not a third beside its existing two) and treats an unresolved prefix as `unknown`, without spawning npm just for this check.
+  - Exception for #493: when the derived prefix has no managed shim and the agent is nowhere on PATH, `list` and `doctor` (never launch) fall back to the npm-config prefix (`npm prefix -g`) to find a shim installed under another global prefix. That lookup is memoized per process, so npm is spawned at most once, bounded by the 5000 ms deadline. Any failure gives `missing`.
+  - Running that npm lookup from a neutral working directory is tracked separately as EPMCDME-17866, because the same exposure exists in other shell-spawned commands.
   - The lookup child process is killed on timeout.
   - A timeout gives `unknown`, with no message.
   - The deadline follows the 5000 ms pattern in `active-cli.ts`.
