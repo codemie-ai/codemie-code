@@ -28,6 +28,12 @@ describe('copilot-cli registration', () => {
     expect(metadata.npmPackage).toBe('@github/copilot');
   });
 
+  it('declares the supported and minimum Copilot versions', () => {
+    const metadata = AgentRegistry.getAgent('copilot-cli')!.metadata;
+    expect(metadata.supportedVersion).toBe('1.0.92');
+    expect(metadata.minimumSupportedVersion).toBe('1.0.83');
+  });
+
   it('advertises Copilot MCP, extension, and hook metadata', () => {
     const metadata = AgentRegistry.getAgent('copilot-cli')!.metadata;
 

@@ -4,7 +4,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const AGENT = 'claude-code-otlp';
@@ -28,10 +28,15 @@ vi.mock('../connectors/desktop.js', async (importOriginal) => ({
 describe('ensureOtlpProxy reaching spawnDaemon', () => {
   let home: string;
   let outputSpies: Array<ReturnType<typeof vi.spyOn>>;
+  const realHome = process.env.HOME;
+  const realUserProfile = process.env.USERPROFILE;
 
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'codemie-hook-cold-start-'));
     process.env.CODEMIE_HOME = home;
+    // Claude Code's settings (the OTLP endpoint port) are read from the home directory.
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
     vi.resetModules();
     outputSpies = [
       vi.spyOn(process.stdout, 'write').mockImplementation(() => true),
@@ -47,10 +52,18 @@ describe('ensureOtlpProxy reaching spawnDaemon', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     delete process.env.CODEMIE_HOME;
+    if (realHome === undefined) delete process.env.HOME;
+    else process.env.HOME = realHome;
+    if (realUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = realUserProfile;
     rmSync(home, { recursive: true, force: true });
   });
 
-  it('writes nothing to stdout or stderr, logs the spawn and the profile, and records the connection', async () => {
+  it('runs under the temporary home', () => {
+    expect(homedir()).toBe(home);
+  });
+
+  it('writes nothing to stdout or stderr, logs the spawn and the profile, and records the profile and port with no identity', async () => {
     const { ensureOtlpProxy } = await import('../otlp-cold-start.js');
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { spawnDetached } = await import('@/utils/processes.js');
@@ -80,24 +93,28 @@ describe('ensureOtlpProxy reaching spawnDaemon', () => {
         gatewayKey: arg('--gateway-key'),
         targetUrl: arg('--target-url'),
         provider: arg('--provider'),
-        clientType: arg('--client-type'),
         startedAt: new Date().toISOString(),
       }), 'utf-8');
+      return process.pid;
     }) as unknown as typeof spawnDetached);
 
     await ensureOtlpProxy(AGENT);
 
     expect(spawnDetached).toHaveBeenCalledTimes(1);
+    const args = vi.mocked(spawnDetached).mock.calls[0][1] as string[];
+    expect(args).not.toContain('--client-type');
+    expect(args).not.toContain('--telemetry-mode');
     for (const spy of outputSpies) {
       expect(spy).not.toHaveBeenCalled();
     }
     expect(debug.mock.calls.some(call => call[0] === '[daemon-manager] Spawning daemon')).toBe(true);
     expect(status).toHaveBeenCalledWith('Starting proxy (profile: work)...');
     const record = JSON.parse(readFileSync(join(home, 'proxy-connection.json'), 'utf-8'));
-    expect(record).toMatchObject({ version: 1, profile: 'work', clientType: AGENT });
+    expect(record).toMatchObject({ version: 1, profile: 'work', port: 4001 });
+    expect(record).not.toHaveProperty('clientType');
   });
 
-  it('starts in Desktop mode on the gateway port while Claude Desktop is connected, writing nothing to stdout or stderr', async () => {
+  it('starts with no identity on Claude Desktop\'s gateway port when nothing else names one, writing nothing to stdout or stderr', async () => {
     const { ensureOtlpProxy } = await import('../otlp-cold-start.js');
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { spawnDetached } = await import('@/utils/processes.js');
@@ -125,20 +142,23 @@ describe('ensureOtlpProxy reaching spawnDaemon', () => {
         url: `http://127.0.0.1:${arg('--port')}`,
         profile: arg('--profile'),
         gatewayKey: arg('--gateway-key'),
-        clientType: arg('--client-type'),
-        telemetryMode: arg('--telemetry-mode'),
         startedAt: new Date().toISOString(),
       }), 'utf-8');
+      return process.pid;
     }) as unknown as typeof spawnDetached);
 
     await ensureOtlpProxy(AGENT);
 
     const arg = (name: string): string => spawnArgs[spawnArgs.indexOf(name) + 1];
-    expect([arg('--client-type'), arg('--telemetry-mode'), arg('--port')]).toEqual(['claude-desktop', 'claude-desktop', '4005']);
+    expect(arg('--port')).toBe('4005');
+    expect(spawnArgs).not.toContain('--client-type');
+    expect(spawnArgs).not.toContain('--telemetry-mode');
     for (const spy of outputSpies) {
       expect(spy).not.toHaveBeenCalled();
     }
     const record = JSON.parse(readFileSync(join(home, 'proxy-connection.json'), 'utf-8'));
-    expect(record).toMatchObject({ profile: 'work', clientType: 'claude-desktop', telemetryMode: 'claude-desktop' });
+    expect(record).toMatchObject({ profile: 'work', port: 4005 });
+    expect(record).not.toHaveProperty('clientType');
+    expect(record).not.toHaveProperty('telemetryMode');
   });
 });

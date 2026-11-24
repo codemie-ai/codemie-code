@@ -1,24 +1,43 @@
 /**
- * The daemon entry point writes its state file before the Desktop telemetry runtime starts.
+ * The daemon entry point writes its state file before the Desktop telemetry runtime starts, serves the shared key
+ * as the default client of the connection record, and removes only its own state file.
  * @group unit
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { WatcherCallbacks } from '../../cli/commands/proxy/watcher.js';
 import type { AwaitingLoginListener } from '../../cli/commands/proxy/awaiting-login-listener.js';
 
 const runtimeStart = vi.fn();
+const runtimeStop = vi.fn();
 const writeFileSpy = vi.fn();
 const proxyStart = vi.fn();
+const cliVersion = vi.fn();
+/** The config each CodeMieProxy was built with, and each runtime's options. */
+const proxyConfigs: Array<Record<string, unknown>> = [];
+const runtimeConfigs: Array<Record<string, unknown>> = [];
+const resolversBuilt: unknown[][] = [];
+/** `config.desktopRepositoryResolver` at each proxy `start()`: the moment the proxy creates its plugins. */
+const resolversAtStart: unknown[] = [];
 const storedCredentials = vi.fn();
 const loginListeners: AwaitingLoginListener[] = [];
 let watcherCallbacks: WatcherCallbacks;
 
 vi.mock('../../providers/core/codemie-auth-helpers.js', () => ({
   getStoredPlatformCredentials: storedCredentials,
+}));
+const startSignIn = vi.fn();
+const markAuthInvalid = vi.fn();
+vi.mock('../../providers/plugins/sso/sso.detached-login.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../providers/plugins/sso/sso.detached-login.js')>()),
+  startDetachedSsoLogin: startSignIn,
+}));
+vi.mock('../../utils/analytics-auth-status.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../utils/analytics-auth-status.js')>()),
+  markAnalyticsAuthInvalid: markAuthInvalid,
 }));
 vi.mock('../../cli/commands/proxy/awaiting-login-listener.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../cli/commands/proxy/awaiting-login-listener.js')>();
@@ -44,22 +63,31 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 });
 vi.mock('../../providers/plugins/sso/index.js', () => ({
   CodeMieProxy: class {
-    start = proxyStart;
+    constructor(private readonly config: Record<string, unknown>) { proxyConfigs.push(config); }
+    start = (...args: unknown[]) => {
+      resolversAtStart.push(this.config.desktopRepositoryResolver);
+      return proxyStart(...args);
+    };
     stop = async () => undefined;
   },
 }));
+// The package.json read: the boundary that gives the daemon its version
+vi.mock('../../utils/cli-updater.js', () => ({ getCurrentCliVersion: cliVersion }));
 vi.mock('../../providers/plugins/sso/proxy/plugins/index.js', () => ({}));
 vi.mock('../../telemetry/clients/claude-desktop/ClaudeDesktopTelemetryAdapter.js', () => ({
   ClaudeDesktopTelemetryAdapter: class {},
 }));
 vi.mock('../../telemetry/runtime/DesktopRepositoryResolver.js', () => ({
-  DesktopRepositoryResolver: class {},
+  DesktopRepositoryResolver: class {
+    constructor(...args: unknown[]) { resolversBuilt.push(args); }
+  },
 }));
 vi.mock('../../telemetry/runtime/DesktopTelemetryRuntime.js', () => ({
   DesktopTelemetryRuntime: class {
+    constructor(_adapter: unknown, config: Record<string, unknown>) { runtimeConfigs.push(config); }
     start = runtimeStart;
     triggerPoll = async () => undefined;
-    stop = async () => undefined;
+    stop = runtimeStop;
   },
 }));
 vi.mock('../../utils/system-proxy-dispatcher.js', () => ({
@@ -84,35 +112,53 @@ async function waitFor(condition: () => boolean): Promise<void> {
   throw new Error('condition not met');
 }
 
+type RuntimeOptions = { onDesktopConnectedChange: (since: string | undefined) => Promise<void> };
+
 describe('proxy-daemon entry point', () => {
   const originalArgv = process.argv;
   const signalListeners = { SIGTERM: process.listeners('SIGTERM'), SIGINT: process.listeners('SIGINT') };
   let tempDir: string;
   let stateFile: string;
+  let codemieHome: string;
 
   beforeEach(async () => {
     vi.resetModules();
     proxyStart.mockReset().mockResolvedValue({ port: 47999, url: 'http://127.0.0.1:47999' });
     storedCredentials.mockReset().mockResolvedValue({ credentials: { cookies: { test: 'synthetic' } } });
+    runtimeStart.mockReset();
+    runtimeStop.mockReset();
+    cliVersion.mockReset().mockResolvedValue('1.2.3');
+    proxyConfigs.length = 0;
+    runtimeConfigs.length = 0;
+    resolversBuilt.length = 0;
+    resolversAtStart.length = 0;
     tempDir = await mkdtemp(join(tmpdir(), 'proxy-daemon-'));
     stateFile = join(tempDir, 'proxy-daemon.json');
+    codemieHome = join(tempDir, '.codemie');
+    // Before the daemon's import: the connection record's path is fixed when its module loads
+    vi.stubEnv('HOME', tempDir);
+    vi.stubEnv('USERPROFILE', tempDir);
+    vi.stubEnv('CODEMIE_HOME', codemieHome);
     process.argv = [
       'node', 'proxy-daemon',
       '--target-url', 'https://upstream.example.com',
       '--state-file', stateFile,
-      '--telemetry-mode', 'claude-desktop',
+      '--model', 'claude-sonnet-5',
     ];
   });
 
   afterEach(async () => {
     await Promise.all(loginListeners.splice(0).map(listener => listener.stop()));
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
     process.argv = originalArgv;
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
       for (const listener of process.listeners(signal)) {
         if (!signalListeners[signal].includes(listener)) process.off(signal, listener);
       }
     }
-    await rm(tempDir, { recursive: true, force: true });
+    await (await import('../../utils/logger.js')).logger.close();
+    await rm(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   it('writes a live state while the runtime start is still pending', async () => {
@@ -125,24 +171,179 @@ describe('proxy-daemon entry point', () => {
 
     expect(existsSync(stateFile)).toBe(true);
     const state = JSON.parse(await readFile(stateFile, 'utf-8')) as DaemonState;
-    expect(state).toMatchObject({ pid: process.pid, port: 47999, telemetryMode: 'claude-desktop' });
+    expect(state).toMatchObject({ pid: process.pid, port: 47999, model: 'claude-sonnet-5', version: '1.2.3', clientType: 'codemie-daemon' });
+    expect(state).not.toHaveProperty('telemetryMode');
     expect(await isDaemonAlive(state)).toBe(true);
 
     finishStart();
     await daemon;
   });
 
-  it('writes the state through a temp file named after its own pid', async () => {
-    process.argv = process.argv.slice(0, -2);
+  it('builds the resolver and the Desktop runtime with no option, on the daemon\'s port and key', async () => {
+    await import('../proxy-daemon.js');
 
+    expect(resolversBuilt).toEqual([[]]);
+    expect(runtimeConfigs).toEqual([expect.objectContaining({ clientType: 'claude-desktop', port: 47999, gatewayKey: 'codemie-proxy' })]);
+    expect(runtimeStart).toHaveBeenCalled();
+  });
+
+  it('gives the proxy the resolver before its first start, and the runtime the same instance', async () => {
+    await import('../proxy-daemon.js');
+
+    expect(resolversAtStart).toHaveLength(1);
+    expect(resolversAtStart[0]).toBeDefined();
+    expect(runtimeConfigs[0].repositoryResolver).toBe(resolversAtStart[0]);
+  });
+
+  it('edge: the proxy the watcher restarts starts with the same resolver', async () => {
+    await import('../proxy-daemon.js');
+    await watcherCallbacks.restart();
+
+    expect(resolversAtStart).toHaveLength(2);
+    expect(resolversAtStart[1]).toBeDefined();
+    expect(resolversAtStart[1]).toBe(resolversAtStart[0]);
+  });
+
+  it('serves the shared key as the client the connection record names', async () => {
+    await mkdir(codemieHome, { recursive: true });
+    await writeFile(join(codemieHome, 'proxy-connection.json'), JSON.stringify({ version: 1, profile: 'p', clientType: 'codex-desktop' }));
+
+    await import('../proxy-daemon.js');
+
+    expect(proxyConfigs[0]).toMatchObject({ clientType: 'codex-desktop' });
+    expect(JSON.parse(await readFile(stateFile, 'utf-8'))).toMatchObject({ clientType: 'codex-desktop' });
+  });
+
+  it('serves the shared key as codemie-daemon with no connection record', async () => {
+    await import('../proxy-daemon.js');
+
+    expect(proxyConfigs[0]).toMatchObject({ clientType: 'codemie-daemon' });
+  });
+
+  it.each([
+    ['not JSON', '{not json'],
+    ['not an object', '["claude-desktop"]'],
+    ['without a profile', JSON.stringify({ version: 1, clientType: 'codex-desktop' })],
+  ])('edge: a connection record %s gives codemie-daemon and the daemon starts', async (_case, raw) => {
+    await mkdir(codemieHome, { recursive: true });
+    await writeFile(join(codemieHome, 'proxy-connection.json'), raw);
+
+    await import('../proxy-daemon.js');
+
+    expect(proxyConfigs[0]).toMatchObject({ clientType: 'codemie-daemon' });
+    expect(JSON.parse(await readFile(stateFile, 'utf-8'))).toMatchObject({ pid: process.pid, clientType: 'codemie-daemon' });
+  });
+
+  it('edge: the --client-type and --telemetry-mode of an older caller are ignored and the daemon starts', async () => {
+    process.argv.push('--client-type', 'x', '--telemetry-mode', 'claude-desktop');
+
+    await import('../proxy-daemon.js');
+
+    const state = JSON.parse(await readFile(stateFile, 'utf-8')) as Record<string, unknown>;
+    expect(state).toMatchObject({ pid: process.pid, clientType: 'codemie-daemon' });
+    expect(state).not.toHaveProperty('telemetryMode');
+  });
+
+  it('edge: an unreadable package version gives version 0.0.0 in the state and to the proxy', async () => {
+    cliVersion.mockResolvedValue(null);
+
+    await import('../proxy-daemon.js');
+
+    expect(JSON.parse(await readFile(stateFile, 'utf-8'))).toMatchObject({ version: '0.0.0' });
+    expect(proxyConfigs[0]).toMatchObject({ version: '0.0.0' });
+  });
+
+  it('edge: a health tick and a Desktop connection change at the same moment both land in valid JSON', async () => {
+    await import('../proxy-daemon.js');
+    const { onDesktopConnectedChange } = runtimeConfigs[0] as unknown as RuntimeOptions;
+
+    await Promise.all([watcherCallbacks.onHealthy!(), onDesktopConnectedChange('2026-11-16T10:00:00.000Z')]);
+    expect(JSON.parse(await readFile(stateFile, 'utf-8'))).toMatchObject({
+      health: 'ok', desktopConnectedSince: '2026-11-16T10:00:00.000Z',
+    });
+
+    await onDesktopConnectedChange(undefined);
+    expect(JSON.parse(await readFile(stateFile, 'utf-8'))).not.toHaveProperty('desktopConnectedSince');
+  });
+
+  describe('cleanup', () => {
+    /** Sends SIGTERM and waits for the cleanup to reach its exit. */
+    async function terminate(): Promise<void> {
+      const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+      process.emit('SIGTERM');
+      await waitFor(() => exit.mock.calls.length > 0);
+    }
+
+    it('removes a state file that names this process', async () => {
+      await import('../proxy-daemon.js');
+
+      await terminate();
+
+      expect(existsSync(stateFile)).toBe(false);
+    });
+
+    it('leaves a state file that names another process', async () => {
+      await import('../proxy-daemon.js');
+      const successor = JSON.stringify({ pid: process.pid + 1, port: 47999 });
+      await writeFile(stateFile, successor);
+
+      await terminate();
+
+      expect(await readFile(stateFile, 'utf-8')).toBe(successor);
+    });
+
+    it('edge: a Desktop connection change arriving while the cleanup runs creates no state file again', async () => {
+      await import('../proxy-daemon.js');
+      const { onDesktopConnectedChange } = runtimeConfigs[0] as unknown as RuntimeOptions;
+      // The runtime's final poll on stop sees Desktop connected
+      runtimeStop.mockImplementation(() => onDesktopConnectedChange('2026-11-16T10:00:00.000Z'));
+
+      await terminate();
+
+      expect(runtimeStop).toHaveBeenCalled();
+      expect(existsSync(stateFile)).toBe(false);
+    });
+  });
+
+  it('writes the state through a temp file named after its own pid', async () => {
     await import('../proxy-daemon.js');
 
     expect(writeFileSpy).toHaveBeenCalledWith(`${stateFile}.${process.pid}.tmp`);
     expect(existsSync(stateFile)).toBe(true);
   });
 
+  it('starts a browser sign-in only for a request that carries the gateway key while it holds the port', async () => {
+    startSignIn.mockReset().mockResolvedValue('started');
+    markAuthInvalid.mockReset().mockResolvedValue(undefined);
+    const { AuthenticationError } = await import('../../providers/plugins/sso/proxy/proxy-errors.js');
+    proxyStart.mockRejectedValueOnce(new AuthenticationError('SSO credentials not found; run codemie profile login'));
+    await import('../proxy-daemon.js');
+    const state = JSON.parse(await readFile(stateFile, 'utf-8')) as DaemonState;
+
+    expect(watcherCallbacks.isAwaitingLogin?.()).toBe(true);
+
+    const anonymous = await fetch(`${state.url}/v1/messages`, { signal: AbortSignal.timeout(5000) });
+    expect(await anonymous.json()).toMatchObject({ error: { message: 'Invalid API key' } });
+    expect(startSignIn).not.toHaveBeenCalled();
+
+    const signedRequest = await fetch(`${state.url}/v1/messages`, {
+      headers: { Authorization: `Bearer ${state.gatewayKey}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    expect(signedRequest.status).toBe(401);
+    expect(await signedRequest.json()).toMatchObject({
+      error: { message: expect.stringContaining('A browser sign-in window has been opened automatically') },
+    });
+    expect(startSignIn).toHaveBeenCalledWith('https://upstream.example.com');
+    expect(markAuthInvalid).toHaveBeenCalledTimes(1);
+
+    // Once the real proxy is back the watcher goes back to deep checks.
+    proxyStart.mockResolvedValueOnce({ port: state.port, url: state.url });
+    await watcherCallbacks.onUnauthorized!();
+    expect(watcherCallbacks.isAwaitingLogin?.()).toBe(false);
+  });
+
   it('restores the held 401 listener after a failed replacement and retries after sign-in', async () => {
-    process.argv = process.argv.slice(0, -2);
     const { AuthenticationError } = await import('../../providers/plugins/sso/proxy/proxy-errors.js');
     proxyStart.mockRejectedValueOnce(new AuthenticationError('SSO credentials not found; run codemie profile login'));
     await import('../proxy-daemon.js');
@@ -150,7 +351,10 @@ describe('proxy-daemon entry point', () => {
 
     proxyStart.mockRejectedValueOnce(new Error('transient startup failure'));
     await expect(watcherCallbacks.onUnauthorized!()).rejects.toThrow('transient startup failure');
-    const response = await fetch(`${before.url}/v1/messages`, { signal: AbortSignal.timeout(5000) });
+    const response = await fetch(`${before.url}/v1/messages`, {
+      headers: { Authorization: `Bearer ${before.gatewayKey}` },
+      signal: AbortSignal.timeout(5000),
+    });
     expect(response.status).toBe(401);
     expect(await response.json()).toMatchObject({ error: { message: expect.stringContaining('Automatic recovery will retry') } });
     expect(JSON.parse(await readFile(stateFile, 'utf-8'))).toMatchObject({ port: before.port, pid: before.pid, health: 'unhealthy' });

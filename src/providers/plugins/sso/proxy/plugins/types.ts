@@ -32,6 +32,9 @@ export interface ProxyPlugin {
   /** Plugin dependencies (other plugin IDs) */
   dependencies?: string[];
 
+  /** The clients whose requests the plugin acts on (`ProxyContext.agentName`); absent = every client */
+  clients?: readonly string[];
+
   /** Create interceptor instance */
   createInterceptor(context: PluginContext): ProxyInterceptor | Promise<ProxyInterceptor>;
 
@@ -92,6 +95,12 @@ export interface AnalyticsHealthReply {
  */
 export interface ProxyInterceptor {
   name: string;
+
+  /**
+   * The clients whose requests this interceptor's request hooks run for, put here by the registry from its plugin;
+   * absent = every client. The proxy lifecycle hooks and `healthStatus` run whatever it holds.
+   */
+  clients?: readonly string[];
 
   /** Report analytics delivery health for the `/health` reply (first interceptor to answer wins) */
   healthStatus?(): AnalyticsHealthReply;

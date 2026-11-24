@@ -7,6 +7,7 @@
 import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
+import { CLAUDE_DESKTOP, VSCODE_CLAUDE_CODE } from '../proxy-clients.js';
 import { fetchCodeMieLlmModels } from '../../sso.http-client.js';
 import { isClaudeServableDeployment, resolveClaudeDeployment } from './claude-model-resolver.js';
 import { CredentialRefresher } from './credential-refresh.js';
@@ -187,19 +188,16 @@ function handleDeprecatedSamplingParams(body: any, caps: ModelCapabilities, mode
   return true;
 }
 
-const ALLOWED_AGENTS = ['codemie-claude', 'codemie-copilot', 'claude-desktop'];
+const ALLOWED_AGENTS: readonly string[] = ['codemie-claude', 'codemie-copilot', CLAUDE_DESKTOP, VSCODE_CLAUDE_CODE];
 
 export class ClaudeRequestNormalizerPlugin implements ProxyPlugin {
   id = '@codemie/proxy-claude-request-normalizer';
   name = 'Claude Request Normalizer';
   version = '1.0.0';
   priority = 14; // Before RequestSanitizer (15)
+  clients = ALLOWED_AGENTS;
 
   async createInterceptor(context: PluginContext): Promise<ProxyInterceptor> {
-    const clientType = context.config.clientType;
-    if (!clientType || !ALLOWED_AGENTS.includes(clientType)) {
-      throw new Error(`Plugin disabled for agent: ${clientType}`);
-    }
     return new ClaudeRequestNormalizerInterceptor(context);
   }
 }

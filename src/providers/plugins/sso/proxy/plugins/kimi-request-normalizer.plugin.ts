@@ -12,7 +12,7 @@ import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
 
-const ALLOWED_AGENTS = ['codemie-kimi', 'codemie-kimi-acp'];
+const ALLOWED_AGENTS: readonly string[] = ['codemie-kimi', 'codemie-kimi-acp'];
 const MAX_KIMI_OUTPUT_TOKENS = 64000;
 const TOKEN_FIELDS = ['max_tokens', 'max_completion_tokens', 'maxTokens'];
 
@@ -21,13 +21,9 @@ export class KimiRequestNormalizerPlugin implements ProxyPlugin {
   name = 'Kimi Request Normalizer';
   version = '1.0.0';
   priority = 14;
+  clients = ALLOWED_AGENTS;
 
-  async createInterceptor(context: PluginContext): Promise<ProxyInterceptor> {
-    const clientType = context.config.clientType;
-    if (!clientType || !ALLOWED_AGENTS.includes(clientType)) {
-      throw new Error(`Plugin disabled for agent: ${clientType}`);
-    }
-
+  async createInterceptor(_context: PluginContext): Promise<ProxyInterceptor> {
     return new KimiRequestNormalizerInterceptor();
   }
 }

@@ -143,7 +143,8 @@ export function clearHold(status: SessionStatus, scope: HoldScope): void {
  * The one place that applies the project policy, for the tick and for the snapshots. Caller holds
  * the lock. Runs the one-time legacy scan, evaluates `evaluateProjectPolicy`, executes every discard
  * it demands and persists the status once when anything changed. A discard for want of a project is
- * recorded as `lastLoss` (`no_project`) and warned once per session; a conflict discard is warned only.
+ * recorded as `lastLoss` (`no_project`) and warned once per session; a conflict discard is recorded as
+ * `lastLoss` (`project_conflict_discard`) and also warned once per session.
  */
 export async function applyProjectPolicyLocked(
   sessionId: string,
@@ -177,12 +178,13 @@ export async function applyProjectPolicyLocked(
       dirty ||= result.changed;
     }
   }
-  const noProjectLoss = policy.state === 'unbound' && hooksBytes + otelBytes > 0;
-  if (noProjectLoss) {
+  const discardedBytes = hooksBytes + otelBytes;
+  const lossReason = policy.state === 'unbound' ? 'no_project' : policy.state === 'conflict' ? 'project_conflict_discard' : undefined;
+  if (lossReason && discardedBytes > 0) {
     status.lastLoss = {
-      reason: 'no_project',
+      reason: lossReason,
       at: Date.now(),
-      bytes: hooksBytes + otelBytes,
+      bytes: discardedBytes,
       stream: hooksBytes > 0 ? 'hooks' : otelStream,
     };
   }
@@ -198,7 +200,7 @@ export async function applyProjectPolicyLocked(
     if (policy.state === 'conflict') {
       warnDiscardOnce(sessionId, { sessionId, reason: policy.reason ?? 'none', hooksBytes, otelBytes });
     }
-    if (noProjectLoss) {
+    if (policy.state === 'unbound') {
       warnNoProjectDiscardOnce(sessionId, { sessionId, hooksBytes, otelBytes });
     }
   }

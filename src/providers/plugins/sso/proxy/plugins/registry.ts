@@ -42,6 +42,7 @@ export class PluginRegistry {
     for (const plugin of enabledPlugins) {
       try {
         const interceptor = await plugin.createInterceptor(context);
+        if (plugin.clients) interceptor.clients = plugin.clients;
         this.interceptors.set(plugin.id, interceptor);
         interceptors.push(interceptor);
 

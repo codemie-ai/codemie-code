@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "generated": "2026-11-18T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 6, "label": "XXL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 5, "label": "XL" }
+  },
+  "total": 25,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 103,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Spans several subsystems in one repo: the proxy command family (new proxy doctor composer and sections, connect/disconnect orchestrators, status, clients, analytics targets, delivery health), the analytics command, the top-level codemie doctor checks (ProxyCheck, formatter), analytics connectors (VS Code, Codex desktop, Claude Code OTLP, OMP, desktop), the consent store and project allowlist in agents/core, and the otlp-spool consent publication. It also adds new cross-cutting CLI abstractions (deprecation registry with a release-gate check, related-command hints, invocation context, hint renderer, tips validator). Base XL; bumped because it changes shared core utilities (pid-lock, tips, program/index wiring)." },
+    { "dimension": "technical_risk", "reason": "Most pieces follow existing patterns (doctor checks, connector writers, commander commands). The risk comes from connectors rewriting users' client config files (VS Code, Codex desktop, Claude settings) symmetrically on connect and disconnect, from consent-store and work-consent publication semantics that affect what analytics data is collected, from daemon contact rules in doctor (no keyed request while sign-in is pending, pid-checked /health), and from a deprecation release gate that fails main/tag builds once a removal date has passed. Rollback is still a plain revert, so not XL." },
+    { "dimension": "file_change_estimate", "reason": "The diffstat reports 103 files (7668 insertions, 2525 deletions) across src/cli, src/agents, src/providers, src/utils, docs and tests. This is far past the 16+ XXL threshold. Roughly 15+ new source files (proxy doctor modules, deprecation, related-commands, hint, invocation-context, tips-validator, connector scope helpers, delivery lines) plus many new test suites." },
+    { "dimension": "affected_layers", "reason": "Touches the CLI/UI surface (commands, help, hints, tips), Service logic (orchestrators, doctor composition, delivery health), Persistence (consent store, client config files, allowlist), Infrastructure (daemon launch, pid-lock, CI release gate for deprecations) and External client integrations (VS Code, Codex desktop, Claude Code settings). The deprecation and hint concerns are added across several layers. No DB schema migration." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from XL (5) to XXL (6): touches core shared utilities (src/utils/pid-lock.ts, tips, hint/invocation-context wiring in src/cli/program.ts and index.ts) and affects multiple command workflows (proxy, analytics, doctor)."
+  ],
+  "split_recommendation": null
+}

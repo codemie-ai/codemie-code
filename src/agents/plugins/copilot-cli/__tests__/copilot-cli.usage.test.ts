@@ -43,6 +43,31 @@ function turn(model: string, outputTokens: number): CopilotEvent {
   return { type: 'assistant.message', data: { model, outputTokens } };
 }
 
+describe('extractCopilotUsage — tier 0 (session.usage_record)', () => {
+  const record = (model: string, apiCallId: string, outputTokens = 1): CopilotEvent => ({
+    type: 'session.usage_record',
+    data: { usage: { model, apiCallId, outputTokens } },
+  });
+
+  it('dedups by apiCallId, lets the rollup win on more requests and keeps rollup-only models', () => {
+    const result = extractCopilotUsage([
+      record('gpt-5.2', 'a'),
+      record('gpt-5.2', 'a'),
+      record('claude-sonnet-4.5', 'b'),
+      shutdownEvent,
+    ]);
+
+    const byModel = new Map(result.messages.map((m) => [m.model, m]));
+    expect(byModel.get('claude-sonnet-4.5')?.requests).toBe(60);
+    expect(byModel.get('gpt-5.2')?.requests).toBe(374);
+    expect(result.messages).toHaveLength(2);
+
+    const rollupOnly = extractCopilotUsage([record('other-model', 'x'), shutdownEvent]);
+    expect(rollupOnly.messages.map((m) => m.model).sort()).toEqual(['claude-sonnet-4.5', 'gpt-5.2', 'other-model']);
+    expect(extractCopilotUsage([record('gpt-5.2', 'a'), record('gpt-5.2', 'a')]).messages[0].requests).toBe(1);
+  });
+});
+
 describe('extractCopilotUsage — tier 1 (session.shutdown)', () => {
   it('returns raw per-model buckets and premium requests', () => {
     const result = extractCopilotUsage([{ type: 'session.start', data: {} }, shutdownEvent]);

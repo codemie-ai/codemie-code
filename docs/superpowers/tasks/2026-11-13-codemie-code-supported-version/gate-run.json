@@ -1,0 +1,8 @@
+{"schema":1,"branch":"EPMCDME-16980_codemie-code-supported-version","head":"e9392e692d971998936a6f49fbf64520d86c2c15","runner":"npm","started_at":"2026-11-13T11:26:41Z","completed_at":"2026-11-13T11:26:41Z","status":"PASSED","drift_detected":false,"gates":[
+{"id":"license","source":"guide","status":"PASS","command":"npm run license-check","exit_code":0},
+{"id":"lint","source":"guide","status":"PASS","command":"npm run lint","exit_code":0},
+{"id":"typecheck","source":"guide","status":"PASS","command":"npm run typecheck","exit_code":0},
+{"id":"build","source":"guide","status":"PASS","command":"npm run build","exit_code":0},
+{"id":"affected-tests","source":"guide","status":"PASS","command":"npx vitest run <2 affected files> (temp HOME)","exit_code":0,"notes":"24 tests passed; full unit/cli suites intentionally not run per user constraint"},
+{"id":"secrets","source":"hook","status":"SKIPPED","command":"npm run validate:secrets","notes":"Docker daemon not running (docker info failed); CI runs gitleaks unconditionally. Start Docker to run locally."}
+],"failures":{}}

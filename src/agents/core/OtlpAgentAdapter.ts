@@ -1,7 +1,7 @@
 import { logger } from '@/utils/logger.js';
 import { extractRepository } from '@/utils/paths.js';
 import { AnalyticsSourceError } from '@/utils/errors.js';
-import { maskSecretsDeep } from '@/utils/security.js';
+import { boundedText, maskAndBoundFields, MAX_PROMPT_CHARS } from './otlp-field-limits.js';
 import { AgentAdapterType, type OtlpAdapterDeps } from './types.js';
 import { resolveRepoFields, type RepoFields } from './event-fields/repo-fields.js';
 import { resolveIdentityFields, resolveProjectAtCwd, type IdentityFields, type ProjectPolicy } from './event-fields/identity-fields.js';
@@ -56,43 +56,6 @@ interface InvocationContext {
 }
 
 const SCHEMA_VERSION = 2;
-const MAX_PROMPT_CHARS = 200;
-export const MAX_TOOL_FIELD_CHARS = 300;
-
-/** Free-text fields cut after masking, each to its own limit. */
-export const TEXT_FIELD_LIMITS: Readonly<Record<string, number>> = {
-  prompt: MAX_PROMPT_CHARS,
-  tool_input: MAX_TOOL_FIELD_CHARS,
-  tool_response: MAX_TOOL_FIELD_CHARS,
-  error: MAX_TOOL_FIELD_CHARS,
-  description: MAX_TOOL_FIELD_CHARS,
-};
-
-/** Top-level identifier fields that are never free text; masking must not touch them. */
-export const UNMASKED_FIELD_KEYS: ReadonlySet<string> = new Set([
-  'session_id', 'type', 'timestamp', 'file_path', 'skill_name', 'subagent_type', 'fork_agent_id',
-  'hook_event_name', 'tool_name', 'tool_use_id', 'agent_id', 'agent_type', 'agent_name',
-  'notification_type', 'error_type',
-]);
-
-export function boundedText(value: unknown, maxChars: number): string {
-  if (value === undefined || value === null) {
-    return '';
-  }
-  let text: string;
-  if (typeof value === 'string') {
-    text = value;
-  } else {
-    try {
-      text = JSON.stringify(value) ?? String(value);
-    } catch {
-      text = String(value);
-    }
-  }
-  const cut = text.slice(0, maxChars);
-  // A cut inside a surrogate pair would leave a lone high surrogate, which strict UTF-8 consumers reject.
-  return /[\ud800-\udbff]$/.test(cut) ? cut.slice(0, -1) : cut;
-}
 
 /**
  * Base class for adapters that ingest a coding tool's native hook events into the
@@ -141,7 +104,8 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
 
     try {
       try {
-        await ensureOtlpProxy(this.name);
+        const event = (hookInput as { hook_event_name?: unknown }).hook_event_name;
+        await ensureOtlpProxy(this.name, typeof event === 'string' ? event : undefined);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         logger.warn(`[${this.name}] ensureOtlpProxy failed (non-blocking): ${message}`);
@@ -166,7 +130,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         }
 
         const context = await this.extractHookContext(hookInput);
-        const batch = await this.prepareForward(context, decision);
+        const batch = await this.prepareForward(context, decision, hookInput);
         const args: Parameters<OtlpAdapterDeps['forwardOtlpEventsToSpool']> = batch.options
           ? [batch.events, this.name, batch.options]
           : [batch.events, this.name];
@@ -199,13 +163,14 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   /** Prepare data or a loss report before the single transport step; no source cursor is committed here. */
   private async prepareForward(
     context: OtlpHookContext,
-    decision: Extract<ForwardDecision<TBlockOutput>, { decision: 'forward' }>
+    decision: Extract<ForwardDecision<TBlockOutput>, { decision: 'forward' }>,
+    hookInput: TInput
   ): Promise<PreparedForward> {
     let record: EvidenceRecord | undefined;
     if (context.evidenceInputs) {
       const stamp = await stampEvidence(context, context.evidenceInputs, this.projectPolicy);
       if (!stamp.ok) {
-        if (stamp.pending && (await this.holdForOwner(context, decision.payload, stamp.pending))) {
+        if (stamp.pending && (await this.holdForOwner(context, decision.payload, stamp.pending, hookInput))) {
           logger.warn(`[${this.name}] owner not resolved yet; ${decision.payload.length} event(s) held for this login`);
           return { events: [], pendingStored: true };
         }
@@ -223,7 +188,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     }
     const [commonFields, agentFields] = await Promise.all([
       this.resolveCommonFields(context, record),
-      this.resolveAgentFields(),
+      this.resolveAgentFields(hookInput),
     ]);
     const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(), commonFields, agentFields };
     return {
@@ -248,12 +213,13 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   private async holdForOwner(
     context: OtlpHookContext,
     payload: Record<string, unknown>[],
-    pending: NonNullable<Extract<Awaited<ReturnType<typeof stampEvidence>>, { ok: false }>['pending']>
+    pending: NonNullable<Extract<Awaited<ReturnType<typeof stampEvidence>>, { ok: false }>['pending']>,
+    hookInput: TInput
   ): Promise<boolean> {
     try {
       const now = Date.now();
       const provisional: EvidenceRecord = { schema: 1, ...pending.fields, owner_hash: '', created: now, last_used: now };
-      const [commonFields, agentFields] = await Promise.all([this.resolveCommonFields(context, provisional), this.resolveAgentFields()]);
+      const [commonFields, agentFields] = await Promise.all([this.resolveCommonFields(context, provisional), this.resolveAgentFields(hookInput)]);
       const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(now), commonFields, agentFields };
       return await enqueuePendingOwner({
         fp: pending.fp,
@@ -319,7 +285,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   protected abstract isTracked(input: TInput): Promise<boolean>;
   protected abstract evaluate(input: TInput): Promise<ForwardDecision<TBlockOutput>>;
   /** Agent-owned fields (platform, version, entrypoint, ...); override everything else. */
-  protected abstract resolveAgentFields(): Promise<Record<string, unknown>>;
+  protected abstract resolveAgentFields(input: TInput): Promise<Record<string, unknown>>;
   /** `type` of a native event that does not carry an explicit one. */
   protected abstract resolveEventType(event: Record<string, unknown>): string;
   protected abstract buildEventId(event: Record<string, unknown>, payload: Record<string, unknown>, timestamp: string): string;
@@ -372,13 +338,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         delete unmasked['effort'];
       }
     }
-    const limited = maskSecretsDeep(unmasked, UNMASKED_FIELD_KEYS) as Record<string, unknown>;
-    for (const [field, maxChars] of Object.entries(TEXT_FIELD_LIMITS)) {
-      if (Object.prototype.hasOwnProperty.call(limited, field)) {
-        limited[field] = boundedText(limited[field], maxChars);
-      }
-    }
-    return limited;
+    return maskAndBoundFields(unmasked);
   }
 
   /**

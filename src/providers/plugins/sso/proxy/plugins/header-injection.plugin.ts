@@ -6,8 +6,9 @@
  * KISS: Straightforward header injection
  *
  * Repository and branch attribution for Claude Desktop is derived by
- * DesktopRepositoryResolver in the telemetry layer. This interceptor only writes the
- * resolved values into headers — it performs no discovery of its own.
+ * DesktopRepositoryResolver in the telemetry layer and put into the request's metadata by the
+ * client-attribution plugin. This interceptor only writes the resolved values into headers —
+ * it performs no discovery of its own.
  */
 
 import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
@@ -15,7 +16,10 @@ import { ProxyContext } from '../proxy-types.js';
 import { ProviderRegistry } from '../../../../core/registry.js';
 import { CODEMIE_ENDPOINTS } from '../../sso.http-client.js';
 import { logger } from '../../../../../utils/logger.js';
+import { sanitizeLogArgs } from '../../../../../utils/security.js';
 import { encodeAttributionHeader, rawProjectHeader } from '../../../../../utils/header-value.js';
+import { CLAUDE_DESKTOP, VSCODE_CLAUDE_CODE } from '../proxy-clients.js';
+import { DESKTOP_ATTRIBUTION_KEY, type ResolvedDesktopAttribution } from './client-attribution.plugin.js';
 
 import { CONSENT_HEADER, CONSENT_VALUE, CONTRACT_HEADER, FUNDING_HEADER, PUBLICATION_CONTRACT, stripAnalyticsOnlyHeaders } from '../../../../../agents/core/evidence/publication-contract.js';
 import type { ClassResult } from '../../../../../agents/core/evidence/classify.js';
@@ -141,19 +145,15 @@ class HeaderInjectionInterceptor implements ProxyInterceptor {
     const requiresIntegration = provider?.customProperties?.requiresIntegration === true;
     // Analytics-only headers are built by the forwarder from the frozen record; a model request never carries them.
     stripAnalyticsOnlyHeaders(context.headers);
-    let repository = config.repository || undefined;
-    let branch = config.branch;
-    let clientType = config.clientType;
-    const resolver = config.desktopRepositoryResolver;
-    if (resolver) {
-      const attribution = await resolver.resolveForRequest(
-        context.headers['x-claude-code-session-id'],
-        { remotePort: context.remotePort, url: context.url }
-      );
-      repository = attribution.repository ?? config.repository ?? 'Cowork';
-      branch = config.branch || attribution.branch || undefined;
-      if (attribution.isCowork) clientType = 'claude-desktop';
-    }
+    const resolved = context.metadata[DESKTOP_ATTRIBUTION_KEY] as ResolvedDesktopAttribution | undefined;
+    const repository = resolved?.repository
+      ?? (config.repository || undefined)
+      ?? (context.agentName === CLAUDE_DESKTOP ? 'Cowork' : undefined);
+    const branch = config.branch || resolved?.branch || undefined;
+    // The extension's requests keep the Desktop label; a proxy with no client type (`unknown`) sends none.
+    const clientType = context.agentName === VSCODE_CLAUDE_CODE
+      ? CLAUDE_DESKTOP
+      : context.agentName === 'unknown' ? undefined : context.agentName;
     // A metric may belong to another session or agent than this launch: MetricsApiClient sets these from its record.
     const isMetricsRequest = context.url.split('?')[0] === CODEMIE_ENDPOINTS.METRICS;
     Object.assign(context.headers, buildAttributionHeaders({
@@ -161,18 +161,19 @@ class HeaderInjectionInterceptor implements ProxyInterceptor {
       requestId: context.requestId,
       sessionId: context.sessionId,
       cliVersion: config.version,
-      sessionAffinity: ['codemie-codex', 'codemie-codex-acp', 'codemie-copilot'].includes(config.clientType ?? ''),
+      sessionAffinity: ['codemie-codex', 'codemie-codex-acp', 'codemie-copilot'].includes(context.agentName),
       integrationId: requiresIntegration ? config.integrationId : undefined,
       model: config.model,
       timeout: config.timeout,
       ...(!isMetricsRequest && { clientType, repository, branch, project: config.project }),
     }).headers);
-    logger.info('[header-injection] Request headers', {
+    // Attribution values (a repository path, a branch, the client label) never reach the log: only whether each is set.
+    logger.info('[header-injection] Request headers', ...sanitizeLogArgs({
       cliSessionId: context.headers['x-claude-code-session-id'] ?? null,
-      repository: context.headers['X-CodeMie-Repository'] ?? context.headers['x-codemie-repository'] ?? null,
-      branch: context.headers['X-CodeMie-Branch'] ?? context.headers['x-codemie-branch'] ?? null,
-      client: context.headers['X-CodeMie-Client'] ?? context.headers['x-codemie-client'] ?? null,
+      hasRepository: Boolean(context.headers['X-CodeMie-Repository'] ?? context.headers['x-codemie-repository']),
+      hasBranch: Boolean(context.headers['X-CodeMie-Branch'] ?? context.headers['x-codemie-branch']),
+      hasClient: Boolean(context.headers['X-CodeMie-Client'] ?? context.headers['x-codemie-client']),
       remotePort: context.remotePort,
-    });
+    }));
   }
 }

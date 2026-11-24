@@ -12,6 +12,14 @@ export class ConfigurationError extends CodeMieError {
   }
 }
 
+/** A client application (e.g. VS Code Insiders) is not installed on this machine: its user data directory is missing. */
+export class ClientNotInstalledError extends ConfigurationError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ClientNotInstalledError';
+  }
+}
+
 export class AgentNotFoundError extends CodeMieError {
   constructor(agentName: string) {
     super(`Agent not found: ${agentName}`);

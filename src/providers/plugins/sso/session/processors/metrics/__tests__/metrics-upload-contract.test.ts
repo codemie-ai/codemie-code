@@ -23,7 +23,8 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { MetricsSender } from '../metrics-api-client.js';
+import { MetricsRetryExhaustedError, MetricsSender } from '../metrics-api-client.js';
+import { attemptOutcome } from '../../../bounded-request.js';
 import type { SessionMetric } from '../metrics-types.js';
 import { SyncStoppedError } from '../../../../../../../agents/core/session/BaseProcessor.js';
 import { logger } from '../../../../../../../utils/logger.js';
@@ -410,6 +411,32 @@ describe('MetricsSender upload contract', () => {
       expect((error as Error).cause).toMatchObject({ statusCode: 503 });
       expect(server.captured).toHaveLength(1);
     });
+
+    it('a metric whose retries all fail throws a typed error carrying the last outcome and its cause', async () => {
+      server = new MockServer();
+      await server.start(unavailable);
+      const attempt = new AbortController();
+
+      const sender = new MetricsSender({ baseUrl: server.baseUrl, cookies: 'session=abc', retryAttempts: 0, abortSignal: attempt.signal });
+
+      const error = await sender.sendSessionMetric(usageMetric).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(MetricsRetryExhaustedError);
+      expect((error as MetricsRetryExhaustedError).outcome).toBe('outage');
+      expect((error as MetricsRetryExhaustedError).cause).toMatchObject({ statusCode: 503 });
+      expect(attemptOutcome(attempt.signal)).toBe('outage');
+    });
+
+    it('a 503 that the retry of the same metric answers with a success leaves no outage noted on the attempt signal', async () => {
+      server = new MockServer();
+      await server.start((req, res, index) => (index === 1 ? unavailable(req, res, index) : jsonOk(req, res, index)));
+      const attempt = new AbortController();
+
+      const sender = new MetricsSender({ baseUrl: server.baseUrl, cookies: 'session=abc', retryAttempts: 1, abortSignal: attempt.signal });
+
+      await expect(sender.sendSessionMetric(usageMetric)).resolves.toMatchObject({ success: true });
+      expect(server.captured).toHaveLength(2);
+      expect(attemptOutcome(attempt.signal)).toBeUndefined();
+    }, 15000);
 
     it('retryAttempts: 1 sends two requests on a 503 (one retry)', async () => {
       server = new MockServer();

@@ -157,7 +157,7 @@ function isAbortError(error: unknown): boolean {
  * exposes, in catalog order.
  *
  * Modeled on `desktop.ts`'s `fetchClaudeModels`, minus its Claude-family
- * filter and vertex/curated-list fallback — this is a generic catalog read
+ * filter, vertex handling and 5xx tolerance — this is a generic catalog read
  * consumed by connectors (VS Code Copilot BYOK) that enrich the result from
  * their own capability table rather than a Claude-specific curated list.
  */

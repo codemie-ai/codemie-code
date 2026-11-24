@@ -839,6 +839,29 @@ describe('send outcomes and evidence requests (Task 13)', () => {
     expect(headersOf(0)['X-CodeMie-Project']).toBe('Proj A');
   });
 
+  it('a recorded session never declares Cowork funding, even when it would pass the funding gate (EPMCDME-17410)', async () => {
+    readStatusMock.mockResolvedValue({ sendMode: 'legacy', producerAttribution: { project: 'Proj A', projectSource: 'profile', routedViaCodemie: true } });
+    fetchMock.mockImplementation(async () => json({}));
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', true, credentials);
+    expect(headersOf(0)).not.toHaveProperty('X-CodeMie-Routed-Via-CodeMie');
+    expect(headersOf(0)).not.toHaveProperty('X-CodeMie-Subscription-Type');
+    expect(headersOf(0)).not.toHaveProperty('X-CodeMie-Session-Id');
+    expect(headersOf(0)['X-CodeMie-Project']).toBe('Proj A');
+  });
+
+  it('an unrecorded session forwards producer funding metadata from the shared spool', async () => {
+    readRecordMock.mockResolvedValue(null);
+    readStatusMock.mockResolvedValue({ sendMode: 'legacy', producerAttribution: { project: 'Proj A', projectSource: 'profile', routedViaCodemie: true } });
+    fetchMock.mockImplementation(async () => json({}));
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', true, credentials);
+    expect(headersOf(0)).toMatchObject({
+      'X-CodeMie-Session-Id': 's1', 'X-CodeMie-Project': 'Proj A',
+      'X-CodeMie-Routed-Via-CodeMie': 'true', 'X-CodeMie-Subscription-Type': 'codemie', 'X-CodeMie-Project-Source': 'profile',
+    });
+  });
+
   it('hooks 2xx with an empty/non-JSON body: legacy acknowledges the range, an evidence request keeps it queued', async () => {
     snapshotPendingHookRecordsMock.mockResolvedValue({ ...hooksBatch([line('s1')]), cursor: 0 });
     fetchMock.mockImplementation(async () => new Response('', { status: 200, headers: { 'content-type': 'text/plain' } }));
@@ -903,14 +926,13 @@ describe('send outcomes and evidence requests (Task 13)', () => {
     expect(backendClass(h, ['Other'])).toBe('unknown');
   });
 
-  it('CR002 wire: a proven direct route keeps the organization and client and backend agree on Personal', async () => {
+  it('CR002 wire: a proven direct route with a non-matching organization is Personal and, without work consent, sends nothing', async () => {
     getPolicyStateMock.mockResolvedValue(usable({ organizations: ['Other'], version: 'v1' }));
     fetchMock.mockImplementation(async () => json({}));
     const { forwardSession } = await import('../forwarder.js');
     await forwardSession('s1', true, credentials);
-    const h = headersOf(0);
-    expect(h['X-CodeMie-Subscription-Type']).toBe('personal');
-    expect(backendClass(h, ['Other'])).toBe('personal');
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(advanceCursorMock).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -1056,7 +1078,7 @@ describe('send outcomes and evidence requests (Task 13)', () => {
   });
 
   it('AC4: 409 stale_policy refreshes, re-classifies and resends once', async () => {
-    refreshPolicyMock.mockResolvedValue(usable({ organizations: ['Other'], version: 'v2' }));
+    refreshPolicyMock.mockResolvedValue(usable({ organizations: ['Acme', 'Other'], version: 'v2' }));
     fetchMock
       .mockResolvedValueOnce(json({ reason: 'stale_policy', policy_version: 'v2' }, 409))
       .mockResolvedValueOnce(json({}));
@@ -1065,13 +1087,22 @@ describe('send outcomes and evidence requests (Task 13)', () => {
     expect(refreshPolicyMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ force: true }));
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(headersOf(0)['X-CodeMie-Subscription-Type']).toBe('corporate');
-    expect(headersOf(1)).toMatchObject({ 'X-CodeMie-Subscription-Type': 'personal', 'X-CodeMie-Policy-Version': 'v2' });
+    expect(headersOf(1)).toMatchObject({ 'X-CodeMie-Subscription-Type': 'corporate', 'X-CodeMie-Policy-Version': 'v2' });
     expect(fetchMock.mock.calls[1][1].body).toBe(fetchMock.mock.calls[0][1].body);
     expect(advanceCursorMock).toHaveBeenCalledTimes(1);
   });
 
-  it('AC4: a second 409 after the resend keeps the spool (once only)', async () => {
+  it('a 409 whose fresher policy turns the session Personal is not resent without work consent', async () => {
     refreshPolicyMock.mockResolvedValue(usable({ organizations: ['Other'], version: 'v2' }));
+    fetchMock.mockResolvedValueOnce(json({ reason: 'stale_policy', policy_version: 'v2' }, 409));
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', true, credentials);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+  });
+
+  it('AC4: a second 409 after the resend keeps the spool (once only)', async () => {
+    refreshPolicyMock.mockResolvedValue(usable({ organizations: ['Acme', 'Other'], version: 'v2' }));
     fetchMock.mockImplementation(async () => json({ reason: 'stale_policy', policy_version: 'v3' }, 409));
     const { forwardSession } = await import('../forwarder.js');
     await forwardSession('s1', true, credentials);

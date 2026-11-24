@@ -94,24 +94,8 @@ describe('RequestSanitizerPlugin', () => {
       expect(interceptor.name).toBe('request-sanitizer');
     });
 
-    it('throws for claude agent', async () => {
-      await expect(plugin.createInterceptor(createPluginContext('claude')))
-        .rejects.toThrow('Plugin disabled for agent: claude');
-    });
-
-    it('throws for gemini agent', async () => {
-      await expect(plugin.createInterceptor(createPluginContext('gemini')))
-        .rejects.toThrow('Plugin disabled for agent: gemini');
-    });
-
-    it('throws for undefined clientType', async () => {
-      await expect(plugin.createInterceptor(createPluginContext(undefined)))
-        .rejects.toThrow('Plugin disabled');
-    });
-
-    it('throws for empty string clientType', async () => {
-      await expect(plugin.createInterceptor(createPluginContext('')))
-        .rejects.toThrow('Plugin disabled');
+    it('declares exactly these clients', () => {
+      expect(plugin.clients).toEqual(['codemie-code', 'codemie-opencode', 'codemie-opencode-acp']);
     });
   });
 

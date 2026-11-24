@@ -35,6 +35,9 @@ export function buildDefaultHooks(binary: string): Record<string, unknown[]> {
   };
 }
 
+// Must match the @codemieai/codemie-opencode dependency in package.json.
+const CODEMIE_CODE_SUPPORTED_VERSION = '0.0.47';
+
 const OPENCODE_SUBCOMMANDS = ['run', 'chat', 'config', 'init', 'help', 'version'];
 
 /**
@@ -193,6 +196,7 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
   description: 'CodeMie Code - AI coding assistant',
 
   npmPackage: '@codemieai/codemie-opencode',
+  supportedVersion: CODEMIE_CODE_SUPPORTED_VERSION,
   cliCommand: resolvedBinary || null,
 
   dataPaths: {

@@ -1,26 +1,84 @@
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { liveDelivery } from './delivery-state.js';
-import { listSessionIds, SPOOL_STREAMS, type SpoolStream } from './spool-paths.js';
+import { listSessionIdsStrict, SPOOL_STREAMS, type SpoolStream } from './spool-paths.js';
 import { createStatus, readStatus, type SessionStatus } from './session-status.js';
 import { readSpoolState } from './spool-state.js';
 
 /** How many sessions are inspected at once (bounds open file handles on a large spool). */
 const SESSION_CONCURRENCY = 16;
 
-/** What the spool says about analytics delivery, aggregated over every session. Derived from existing files only. */
+/**
+ * Hold reasons that mean the session's local classification never completed. Deliberately
+ * excludes `publication_stopped`, which means the backend answered and declined, not that
+ * classification stalled.
+ */
+const CLASSIFICATION_STALL_REASONS = new Set(['publication_contract_unavailable', 'organization_encoding_unsupported']);
+
+/**
+ * The stall reason that outlives the publication contract: it persists until the backend advertises the
+ * organization encoding, so a backend that already advertises the contract does not clear it.
+ */
+const ORGANIZATION_ENCODING_STALL_REASON = 'organization_encoding_unsupported';
+
+/**
+ * Session holds whose unsent bytes are not reported as "on hold": the status already names them on its own
+ * (endpoint mismatch, classification stalls), or they are the short wait of a new session for its stamp, which
+ * would flicker in the status of a healthy machine.
+ */
+const NOT_REPORTED_AS_HELD = new Set(['analytics_endpoint_mismatch', 'stamp_pending', ...CLASSIFICATION_STALL_REASONS]);
+
+/**
+ * What the spool says about analytics delivery, aggregated over every session. Derived from
+ * existing files only, and deliberately capability-free: the daemon's capability resolve (a
+ * credential read, possibly an owner-verification network probe) and this spool scan touch
+ * disjoint data, so the caller runs them in parallel and reads `classificationStalled` against
+ * whichever capability it resolved — `'unknown'` means `classification_unreachable`, `'legacy'`
+ * means `classification_unsupported` (see `delivery-health.ts`'s `collectDeliveryHealth`).
+ *
+ * Known limitation (shared with `mismatchHeld`, not introduced by `classificationStalled`): the
+ * spool is one shared directory for the whole machine, and a session's own status file carries no
+ * `api_identity`/`owner_hash` of its own (see `session-status.ts`) — there is nothing to scope this
+ * roll-up to. Every flag here is read against whichever identity/capability is active right now.
+ * A session still pending from a profile the user has since switched away from is judged by the
+ * now-active profile's capability instead of its own, until it drains or is lost to retention.
+ */
 export interface SpoolDeliverySummary {
   /** Sum of unsent bytes (size - cursor) across all spool streams of all sessions. */
   pendingBytes: number;
+  /**
+   * The part of `pendingBytes` that belongs to sessions held as a whole (a hold on one stream does not count) for a
+   * reason the status does not already name. Absent when there is none.
+   */
+  heldBytes?: number;
+  /** The spool could not be read completely, so `pendingBytes` may be too low. */
+  incomplete?: boolean;
   /** A session with pending data is held because the analytics endpoint does not match the credential identity. */
   mismatchHeld: boolean;
-  /** At least one stream has a live delivery-failure record. */
-  sendFailed: boolean;
+  /**
+   * The live delivery-failure record that retries first, across all streams of sessions that are not held; absent when
+   * none fails. A held session is not retried (its forwarder never runs), so its old record is neither live nor a failure.
+   */
+  sendFailure?: SendFailure;
+  /** A session with pending data is held on a reason that means its classification never completed (see spec AC1-AC3). */
+  classificationStalled: boolean;
+  /**
+   * A session with pending data is held on `organization_encoding_unsupported` (implies `classificationStalled`). Unlike
+   * a contract stall it does not clear once the backend advertises the publication contract, so the caller reads it
+   * against the policy's advertised organization encodings instead.
+   */
+  organizationEncodingStalled: boolean;
   /**
    * The newest drop any session status records: a backend discard (`lastDiscard`, `local: false`) or a
    * local loss (`lastLoss`, `local: true`); `at` in epoch milliseconds. Absent when none records one.
    */
   latestDrop?: LatestDrop;
+}
+
+/** When the next delivery attempt is due (epoch milliseconds) and the error code of that failure. */
+export interface SendFailure {
+  nextAt: number;
+  detail?: string;
 }
 
 export interface LatestDrop {
@@ -34,6 +92,12 @@ function newer(a: LatestDrop | undefined, b: LatestDrop | undefined): LatestDrop
   if (!a) return b;
   if (!b) return a;
   return b.at > a.at ? b : a;
+}
+
+function earlier(a: SendFailure | undefined, b: SendFailure | undefined): SendFailure | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return b.nextAt < a.nextAt ? b : a;
 }
 
 function sessionDrop(status: SessionStatus): LatestDrop | undefined {
@@ -54,34 +118,68 @@ async function summarizeSession(sessionId: string): Promise<SpoolDeliverySummary
     const { size, cursor } = spool.streams[stream];
     return sum + Math.max(0, size - cursor);
   }, 0);
-  if (!status) return { pendingBytes, mismatchHeld: false, sendFailed: false };
+  if (!status) {
+    return { pendingBytes, mismatchHeld: false, classificationStalled: false, organizationEncodingStalled: false };
+  }
 
-  const mismatchHeld = pendingBytes > 0 && status.holds?.session?.reason === 'analytics_endpoint_mismatch';
-  const live = await Promise.all(SPOOL_STREAMS.map((stream) => liveDelivery(sessionId, status, stream)));
+  const holdReason = status.holds?.session?.reason ?? '';
+  const mismatchHeld = pendingBytes > 0 && holdReason === 'analytics_endpoint_mismatch';
+  const classificationStalled = pendingBytes > 0 && CLASSIFICATION_STALL_REASONS.has(holdReason);
+  const organizationEncodingStalled = pendingBytes > 0 && holdReason === ORGANIZATION_ENCODING_STALL_REASON;
+  // A session held as a whole sends nothing, so its failure record is frozen (its retry time passes and never recurs);
+  // its bytes still count as pending above. A hold on a single stream keeps its record: that stream is still retried.
+  const live = status.holds?.session
+    ? []
+    : await Promise.all(SPOOL_STREAMS.map((stream) => liveDelivery(sessionId, status, stream)));
+  const heldBytes = status.holds?.session && !NOT_REPORTED_AS_HELD.has(holdReason) ? pendingBytes : 0;
   const latestDrop = sessionDrop(status);
-  return { pendingBytes, mismatchHeld, sendFailed: live.some((rec) => rec !== undefined), ...(latestDrop ? { latestDrop } : {}) };
+  const sendFailure = live.reduce<SendFailure | undefined>(
+    (first, rec) => earlier(first, rec && { nextAt: rec.nextAt, ...(rec.detail ? { detail: rec.detail } : {}) }),
+    undefined
+  );
+  return {
+    pendingBytes,
+    mismatchHeld,
+    classificationStalled,
+    organizationEncodingStalled,
+    ...(heldBytes > 0 ? { heldBytes } : {}),
+    ...(sendFailure ? { sendFailure } : {}),
+    ...(latestDrop ? { latestDrop } : {}),
+  };
 }
 
 /**
  * Read-only roll-up of the OTLP spool's delivery state, with the newest recorded drop. Never throws: an
- * unreadable spool yields the empty summary, and a session whose status is unreadable counts its stream
+ * unreadable spool yields the empty summary marked `incomplete`, and a session whose status is unreadable counts its stream
  * bytes as pending without flags or drop.
+ * Takes no capability — see `SpoolDeliverySummary`'s docstring for why, and pair the result with the
+ * caller's own capability resolve.
  */
 export async function summarizeSpoolDelivery(): Promise<SpoolDeliverySummary> {
-  const summary: SpoolDeliverySummary = { pendingBytes: 0, mismatchHeld: false, sendFailed: false };
+  const summary: SpoolDeliverySummary = {
+    pendingBytes: 0,
+    mismatchHeld: false,
+    classificationStalled: false,
+    organizationEncodingStalled: false,
+  };
   try {
-    const ids = await listSessionIds();
+    const ids = await listSessionIdsStrict();
     for (let i = 0; i < ids.length; i += SESSION_CONCURRENCY) {
-      const batch = await Promise.all(ids.slice(i, i + SESSION_CONCURRENCY).map(summarizeSession));
+      const batch = await Promise.all(ids.slice(i, i + SESSION_CONCURRENCY).map((id) => summarizeSession(id)));
       for (const s of batch) {
         summary.pendingBytes += s.pendingBytes;
+        if (s.heldBytes) summary.heldBytes = (summary.heldBytes ?? 0) + s.heldBytes;
         summary.mismatchHeld ||= s.mismatchHeld;
-        summary.sendFailed ||= s.sendFailed;
+        const sendFailure = earlier(summary.sendFailure, s.sendFailure);
+        if (sendFailure) summary.sendFailure = sendFailure;
+        summary.classificationStalled ||= s.classificationStalled;
+        summary.organizationEncodingStalled ||= s.organizationEncodingStalled;
         const latestDrop = newer(summary.latestDrop, s.latestDrop);
         if (latestDrop) summary.latestDrop = latestDrop;
       }
     }
   } catch (err) {
+    summary.incomplete = true;
     logger.debug('[otlp-spool] delivery summary incomplete', ...sanitizeLogArgs({ err: err instanceof Error ? err.message : String(err) }));
   }
   return summary;

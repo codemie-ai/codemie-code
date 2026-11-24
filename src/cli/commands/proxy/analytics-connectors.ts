@@ -8,9 +8,15 @@
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
-import { readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
+import {
+  addCopilotConnectorProject,
+  readCopilotConnectorScope,
+  readCopilotConnectorScopeForAnalytics,
+} from '@/agents/core/copilot-connector-scope.js';
+import type { ConnectorScopeRead } from '@/agents/core/project-allowlist.js';
 import { logger } from '@/utils/logger.js';
 import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
+import { addClaudeCodeOtlpProject, readClaudeCodeOtlpScope } from './connectors/claude-code-otlp-scope.js';
 import { readDesktopGateway } from './connectors/desktop.js';
 import {
   collectClaudeAnalyticsStatus,
@@ -28,21 +34,29 @@ export type AnalyticsConnectorId =
 
 export type AnalyticsConnectorStatus = ClaudeAnalyticsStatus | CopilotAnalyticsStatus;
 
+export type { ConnectorScopeRead };
+
 export interface AnalyticsConnector {
   id: AnalyticsConnectorId;
-  /** The connector's effective analytics configuration for `cwd`. */
-  collect: (cwd: string) => Promise<AnalyticsConnectorStatus>;
+  /** The connector's effective analytics configuration. */
+  collect: () => Promise<AnalyticsConnectorStatus>;
   /** Renders a status produced by this same connector's `collect`. */
-  format: (status: AnalyticsConnectorStatus) => string;
+  format: (status: AnalyticsConnectorStatus) => Promise<string>;
   /** Whether the connector is connected (hooks installed / scope enabled), whatever the collection preference. */
   isActive: () => Promise<boolean>;
+  /** The connector's tracking scope from its own store; `{invalid}` when it cannot be read. Never throws. */
+  readScope: () => Promise<ConnectorScopeRead>;
+  /** Adds a project to the connector's own project list (project scope only). */
+  addProject: (path: string) => Promise<void>;
 }
 
 interface ConnectorSpec<S extends AnalyticsConnectorStatus> {
   id: AnalyticsConnectorId;
-  collect: (cwd: string) => Promise<S>;
-  format: (status: S) => string;
+  collect: () => Promise<S>;
+  format: (status: S) => Promise<string>;
   isActive: () => Promise<boolean>;
+  readScope: () => Promise<ConnectorScopeRead>;
+  addProject: (path: string) => Promise<void>;
 }
 
 /** `format` only ever receives the status its own `collect` returned, so the narrowing is sound. */
@@ -53,12 +67,14 @@ function connector<S extends AnalyticsConnectorStatus>(spec: ConnectorSpec<S>): 
 function copilotConnector(id: AnalyticsConnectorId): AnalyticsConnector {
   return connector<CopilotAnalyticsStatus>({
     id,
-    collect: (cwd) => collectCopilotAnalyticsStatus(id, cwd),
+    collect: () => collectCopilotAnalyticsStatus(id),
     format: formatCopilotAnalyticsStatus,
     isActive: async () => {
       const scope = await readCopilotConnectorScope(id);
       return scope.kind === 'ok' && scope.value.enabled;
     },
+    readScope: () => readCopilotConnectorScopeForAnalytics(id),
+    addProject: (path) => addCopilotConnectorProject(id, path),
   });
 }
 
@@ -67,18 +83,16 @@ export const ANALYTICS_CONNECTORS: readonly AnalyticsConnector[] = [
     id: CLAUDE_CODE_OTLP_AGENT_NAME,
     collect: collectClaudeAnalyticsStatus,
     format: formatClaudeAnalyticsStatus,
-    isActive: hasClaudeCodeOtlpHooks,
+    isActive: () => hasClaudeCodeOtlpHooks(),
+    readScope: readClaudeCodeOtlpScope,
+    addProject: addClaudeCodeOtlpProject,
   }),
   copilotConnector(COPILOT_CLI_OTLP_AGENT_NAME),
   copilotConnector(COPILOT_CHAT_OTLP_AGENT_NAME),
 ];
 
-/**
- * Whether any connector is connected, or Claude Desktop is connected to a local gateway (its Cowork
- * sessions go through the same delivery). A check that fails counts as inactive; never throws.
- */
-export async function hasActiveAnalyticsConnector(): Promise<boolean> {
-  if (await readDesktopGateway()) return true;
+/** The connectors that are connected, in table order. A check that fails counts as inactive; never throws. */
+export async function listActiveAnalyticsConnectors(): Promise<AnalyticsConnector[]> {
   const results = await Promise.all(
     ANALYTICS_CONNECTORS.map(async (entry) => {
       try {
@@ -89,5 +103,14 @@ export async function hasActiveAnalyticsConnector(): Promise<boolean> {
       }
     })
   );
-  return results.some(Boolean);
+  return ANALYTICS_CONNECTORS.filter((_, index) => results[index]);
+}
+
+/**
+ * Whether any connector is connected, or Claude Desktop is connected to a local gateway (its Cowork
+ * sessions go through the same delivery). A check that fails counts as inactive; never throws.
+ */
+export async function hasActiveAnalyticsConnector(): Promise<boolean> {
+  if (await readDesktopGateway()) return true;
+  return (await listActiveAnalyticsConnectors()).length > 0;
 }

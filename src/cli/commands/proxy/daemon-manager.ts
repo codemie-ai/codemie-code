@@ -6,8 +6,8 @@ import { logger } from '../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../utils/security.js';
 import { ToolExecutionError } from '../../../utils/errors.js';
 import { isOwnerAlive, processStartedAt, spawnDetached } from '../../../utils/processes.js';
+import { comparePrereleaseVersions } from '../../../utils/version-utils.js';
 import { fetchProxyHealth } from './health-check.js';
-import { getEffectiveClientType } from './client-type.js';
 
 /** Poll interval `spawnDaemon` uses while waiting for the daemon to become ready. */
 const DAEMON_READY_POLL_INTERVAL_MS = 100;
@@ -29,16 +29,18 @@ export interface DaemonState {
   url: string;
   profile: string;
   gatewayKey: string;
-  telemetryMode?: 'none' | 'claude-desktop';
   targetUrl?: string;
   provider?: string;
   project?: string;
   /** Binding state `project` was resolved with at start (absent in state files from older CLIs). */
   projectBinding?: ProjectBindingState;
   model?: string;
-  clientType?: string;
   syncApiUrl?: string;
   syncCodeMieUrl?: string;
+  /** Version of the CLI that started the daemon (absent in state files from older CLIs). */
+  version?: string;
+  /** When the daemon noticed Claude Desktop connected to it; absent while it is not. Written by the daemon alone. */
+  desktopConnectedSince?: string;
   startedAt: string;
   // Health tracking (written by the daemon's watcher; all optional and
   // backward-compatible — absent means "unknown / assume ok").
@@ -49,17 +51,18 @@ export interface DaemonState {
   recoveryAttempts?: number;
 }
 
-/** The identity fields a daemon, a spawn request and a record all share. */
-export interface ClientIdentity {
-  clientType?: string;
-  telemetryMode?: DaemonState['telemetryMode'];
-}
-
-/** Identity of the last daemon start, persisted in proxy-connection.json (no secrets, URL, model, provider or project). */
-export interface ProxyConnectionRecord extends ClientIdentity {
+/**
+ * The last daemon start, persisted in proxy-connection.json (no secrets, URL, model, provider or project): its
+ * profile and the port the clients were connected with. The legacy identity fields are kept as an older CLI left them,
+ * read for the daemon's default client and never written.
+ */
+export interface ProxyConnectionRecord {
   version: 1;
   profile: string;
   updatedAt: string;
+  port?: number;
+  clientType?: string;
+  telemetryMode?: 'none' | 'claude-desktop';
 }
 
 const DEFAULT_STATE_FILE = join(getCodemieHome(), 'proxy-daemon.json');
@@ -179,6 +182,12 @@ function normalizeConnectionRecord(data: Record<string, unknown>): ProxyConnecti
     logger.warn('[daemon-manager] Dropping proxy-connection.json field "telemetryMode": unsupported value');
   }
 
+  if (typeof data.port === 'number' && Number.isInteger(data.port) && data.port > 0 && data.port < 65536) {
+    record.port = data.port;
+  } else if (data.port !== undefined) {
+    logger.warn('[daemon-manager] Dropping proxy-connection.json field "port": not a valid port');
+  }
+
   return record;
 }
 
@@ -209,49 +218,25 @@ async function readExistingRecord(file: string): Promise<Record<string, unknown>
   return {};
 }
 
-/** Merges the daemon's identity over the existing record, keeping unknown fields. */
+/** Merges the daemon's profile (and `port`, when given) over the existing record, keeping every other field. */
 function buildConnectionRecord(
   existing: Record<string, unknown>,
-  state: DaemonState
+  state: DaemonState,
+  port: number | undefined
 ): Record<string, unknown> {
-  const { clientType: _clientType, telemetryMode: _telemetryMode, ...kept } = existing;
   return {
-    ...kept,
+    ...existing,
     version: 1,
     profile: state.profile,
-    ...(state.clientType !== undefined ? { clientType: state.clientType } : {}),
-    ...(state.telemetryMode !== undefined ? { telemetryMode: state.telemetryMode } : {}),
+    ...(port !== undefined ? { port } : {}),
     updatedAt: new Date().toISOString()
   };
 }
 
-/**
- * Records the identity of a daemon start. `profile`/`clientType` are what the caller asked for;
- * the write is refused (false) when the daemon state disagrees. Never throws.
- */
-export async function writeConnectionRecord(
-  state: DaemonState,
-  profile: string,
-  clientType?: string,
-  file: string = CONNECTION_FILE
-): Promise<boolean> {
-  if (state.profile !== profile) {
-    logger.warn(
-      `[daemon-manager] Not recording proxy-connection.json: daemon profile "${state.profile}" differs from requested profile "${profile}"`
-    );
-    return false;
-  }
-  const daemonClientType = getEffectiveClientType(state);
-  if (clientType !== undefined && daemonClientType !== clientType) {
-    logger.warn(
-      `[daemon-manager] Not recording proxy-connection.json: daemon client type "${daemonClientType}" differs from requested client type "${clientType}"`
-    );
-    return false;
-  }
-
+/** Replaces the record file by tmp + rename; false (with a warning) when that fails. Never throws. */
+async function replaceRecordFile(record: Record<string, unknown>, file: string): Promise<boolean> {
   const tmp = `${file}.${process.pid}.${++connectionTmpCounter}.tmp`;
   try {
-    const record = buildConnectionRecord(await readExistingRecord(file), state);
     await writeFile(tmp, JSON.stringify(record, null, 2), 'utf-8');
     await rename(tmp, file);
     return true;
@@ -266,13 +251,66 @@ export async function writeConnectionRecord(
   }
 }
 
+/**
+ * Records a daemon start: the daemon's profile, and `options.port` when given (else the record's port stays).
+ * `profile` is what the caller asked for; the write is refused (false) when the daemon state disagrees. Never throws.
+ */
+export async function writeConnectionRecord(
+  state: DaemonState,
+  profile: string,
+  options: { port?: number } = {},
+  file: string = CONNECTION_FILE
+): Promise<boolean> {
+  if (state.profile !== profile) {
+    logger.warn(
+      `[daemon-manager] Not recording proxy-connection.json: daemon profile "${state.profile}" differs from requested profile "${profile}"`
+    );
+    return false;
+  }
+  return replaceRecordFile(buildConnectionRecord(await readExistingRecord(file), state, options.port), file);
+}
+
+/** Sets the port of an existing valid record and nothing else; with no record nothing is written. Never throws. */
+export async function writeConnectionPort(port: number, file: string = CONNECTION_FILE): Promise<boolean> {
+  if (!(await readConnectionRecord(file))) return false;
+  return replaceRecordFile({ ...(await readExistingRecord(file)), port }, file);
+}
+
+/**
+ * Removes `clientType` and `telemetryMode`, the client identity an older CLI wrote, from an existing valid record,
+ * every other field kept; a record without them, or no valid record, is not written. Never throws.
+ */
+export async function clearLegacyClientIdentity(file: string = CONNECTION_FILE): Promise<boolean> {
+  if (!(await readConnectionRecord(file))) return false;
+  const record = await readExistingRecord(file);
+  if (!('clientType' in record) && !('telemetryMode' in record)) return false;
+  delete record.clientType;
+  delete record.telemetryMode;
+  return replaceRecordFile(record, file);
+}
+
+/**
+ * Whether the record file holds `clientType` or `telemetryMode`, the client identity an older CLI wrote, whatever
+ * their values; false for no record and an unreadable one. Never throws.
+ */
+export async function hasLegacyClientIdentity(file: string = CONNECTION_FILE): Promise<boolean> {
+  const record = await readExistingRecord(file);
+  return 'clientType' in record || 'telemetryMode' in record;
+}
+
+/** The port a start records: the one it asked for, once the daemon runs on it, when the record has none. */
+async function startPortToRecord(asked: number | undefined, state: DaemonState): Promise<number | undefined> {
+  if (asked === undefined || state.port !== asked) return undefined;
+  return (await readConnectionRecord())?.port === undefined ? asked : undefined;
+}
+
 /** Creates the connection record from a running daemon when none (valid) exists yet. */
 export async function seedConnectionRecord(
   state: DaemonState,
   file: string = CONNECTION_FILE
 ): Promise<void> {
   if (await readConnectionRecord(file)) return;
-  if (await writeConnectionRecord(state, state.profile, state.clientType, file)) {
+  if (await writeConnectionRecord(state, state.profile, {}, file)) {
     logger.info(`Seeding proxy-connection.json from the running daemon (profile: ${state.profile})`);
   }
 }
@@ -285,6 +323,7 @@ export async function clearState(stateFile: string = DEFAULT_STATE_FILE): Promis
   }
 }
 
+/** The daemon's status; the state of a daemon that is no longer alive is deleted. Called under the daemon lock only. */
 export async function checkStatus(
   stateFile: string = DEFAULT_STATE_FILE
 ): Promise<{ running: boolean; state: DaemonState | null }> {
@@ -299,6 +338,28 @@ export async function checkStatus(
   return { running: true, state };
 }
 
+/** The daemon's status for a command that only reads it: a daemon that is not alive reads as stopped, its file stays. */
+export async function readDaemonStatus(
+  stateFile: string = DEFAULT_STATE_FILE
+): Promise<{ running: boolean; state: DaemonState | null }> {
+  const state = await readState(stateFile);
+  return state && (await isDaemonAlive(state)) ? { running: true, state } : { running: false, state: null };
+}
+
+/**
+ * Whether the daemon was started by an older CLI than this one: a state without `version` is; one with a
+ * version is not when this CLI's own version is unreadable or either version is not `x.y.z` with an optional
+ * pre-release suffix and build metadata; otherwise it is when its version is lower by semantic-version precedence.
+ */
+export async function isOlderDaemon(state: Pick<DaemonState, 'version'>): Promise<boolean> {
+  if (state.version === undefined) return true;
+  // Loaded on first use: the many importers of this module need none of the updater's dependencies.
+  const { getCurrentCliVersion } = await import('../../../utils/cli-updater.js');
+  const own = await getCurrentCliVersion();
+  if (!own || typeof state.version !== 'string') return false;
+  return comparePrereleaseVersions(state.version, own) === -1;
+}
+
 export interface SpawnOptions {
   targetUrl: string;
   provider: string;
@@ -308,12 +369,15 @@ export interface SpawnOptions {
   model?: string;
   project?: string;
   projectBinding?: ProjectBindingState;
-  clientType?: string;
-  telemetryMode?: 'none' | 'claude-desktop';
   syncApiUrl?: string;
   syncCodeMieUrl?: string;
-  /** Record this start in proxy-connection.json (default true). Not passed to the daemon. */
+  /** Record this start's profile in proxy-connection.json (default true). Not passed to the daemon. */
   writeRecord?: boolean;
+  /**
+   * With `writeRecord: false`: still record `port` as the record's port once the daemon runs on it, when the
+   * record has none (default true). Not passed to the daemon.
+   */
+  recordPort?: boolean;
 }
 
 export async function spawnDaemon(opts: SpawnOptions): Promise<DaemonState> {
@@ -333,10 +397,8 @@ export async function spawnDaemon(opts: SpawnOptions): Promise<DaemonState> {
     ...(opts.model ? ['--model', opts.model] : []),
     ...(opts.project ? ['--project', opts.project] : []),
     ...(opts.projectBinding ? ['--project-binding', opts.projectBinding] : []),
-    ...(opts.clientType ? ['--client-type', opts.clientType] : []),
     '--state-file', stateFile,
     ...(opts.port ? ['--port', String(opts.port)] : []),
-    ...(opts.telemetryMode ? ['--telemetry-mode', opts.telemetryMode] : []),
     ...(opts.syncApiUrl ? ['--sync-api-url', opts.syncApiUrl] : []),
     ...(opts.syncCodeMieUrl ? ['--sync-codemie-url', opts.syncCodeMieUrl] : []),
   ];
@@ -352,23 +414,27 @@ export async function spawnDaemon(opts: SpawnOptions): Promise<DaemonState> {
       port: opts.port,
       model: opts.model,
       project: opts.project,
-      clientType: opts.clientType,
-      telemetryMode: opts.telemetryMode,
       syncApiUrl: opts.syncApiUrl,
       syncCodeMieUrl: opts.syncCodeMieUrl
     })
   );
 
-  spawnDetached(process.execPath, args);
+  // The child's pid is the one its daemon writes into the state: a state naming another pid is another daemon.
+  // A failed spawn returns -1, which no state names, so it ends in the timeout below.
+  const pid = spawnDetached(process.execPath, args);
 
-  // Poll for daemon readiness, up to DAEMON_READY_TIMEOUT_MS.
+  // Poll for daemon readiness, up to DAEMON_READY_TIMEOUT_MS. A child slower than that is left running: it
+  // comes up and the next start adopts it.
   const attempts = DAEMON_READY_TIMEOUT_MS / DAEMON_READY_POLL_INTERVAL_MS;
   for (let i = 0; i < attempts; i++) {
     await new Promise<void>(r => setTimeout(r, DAEMON_READY_POLL_INTERVAL_MS));
     const state = await readState(stateFile);
-    if (state && (await isDaemonAlive(state))) {
+    if (state && state.pid === pid && (await isDaemonAlive(state))) {
+      const port = await startPortToRecord(opts.port, state);
       if (opts.writeRecord !== false) {
-        await writeConnectionRecord(state, opts.profile, opts.clientType);
+        await writeConnectionRecord(state, opts.profile, { port });
+      } else if (opts.recordPort !== false && port !== undefined) {
+        await writeConnectionPort(port);
       }
       return state;
     }
