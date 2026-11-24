@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../claude-code-otlp.allowlist.js', () => ({
@@ -1981,6 +1983,45 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
     expect(output).toContain('"decision":"block"');
     expect(output).toContain('re-send your prompt');
     log.mockRestore();
+  });
+
+  describe('with analytics reduction on (EPMCDME-17748)', () => {
+    let project = '';
+    beforeEach(() => {
+      project = mkdtempSync(join(tmpdir(), 'claude-reduction-'));
+      mkdirSync(join(project, '.codemie'));
+      writeFileSync(join(project, '.codemie', 'codemie-cli.config.json'), JSON.stringify({ analytics: { promptReduction: true } }));
+    });
+    afterEach(() => {
+      rmSync(project, { recursive: true, force: true });
+    });
+
+    it('sends the command and refs only, from the typed text, and redacts unknown fields', async () => {
+      const injected = '<ide_opened_file>The user opened /repo/ABC-777.ts in the IDE.</ide_opened_file>';
+      await plugin.processOtlpEvent(
+        promptEvent(`${injected}\n/review-pr !456 secret`, { cwd: project, future_field: 'private text' }),
+        { ensureOtlpProxy, forwardOtlpEventsToSpool }
+      );
+
+      const [forwarded] = forwardedEvents();
+      expect(forwarded).toMatchObject({
+        prompt_body: '/review-pr !456',
+        analytics_reduction: true,
+        command_name: 'review-pr',
+        prompt: 'REDACTED:PROMPT',
+        future_field: 'REDACTED:FUTURE-FIELD',
+        git_branch: 'REDACTED:BRANCH',
+      });
+      expect(JSON.stringify(forwarded)).not.toContain('secret');
+      expect(forwarded['ticket_mentions']).toEqual([]);
+    });
+
+    it('leaves the event without analytics_reduction when the project is not flagged', async () => {
+      await plugin.processOtlpEvent(promptEvent('/review-pr !456 secret'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+      const [forwarded] = forwardedEvents();
+      expect(forwarded).not.toHaveProperty('analytics_reduction');
+      expect(forwarded['prompt_body']).toBe('/review-pr !456 secret');
+    });
   });
 });
 

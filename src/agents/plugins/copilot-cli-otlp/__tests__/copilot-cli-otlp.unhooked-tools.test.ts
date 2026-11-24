@@ -17,6 +17,27 @@ const complete = (toolCallId: string, ms: number, data: Record<string, unknown> 
   ev('tool.execution_complete', { toolCallId, ...data }, ms);
 
 describe('buildUnhookedToolEvents', () => {
+  it('reduces tool events against the hook keep-list when reduction is on', () => {
+    const events = [
+      hookedPre('hooked-1', 1),
+      start('runtime-1', 'read_agent', { agent_id: 'agent-0', secret: 'private' }, 2),
+      complete('runtime-1', 3, { success: true, result: { content: 'agent output' } }),
+    ];
+
+    const [startEvent, endEvent] = buildUnhookedToolEvents(SID, events, { reduced: true });
+
+    expect(startEvent).toMatchObject({ type: 'agent.tool.start', tool_name: 'read_agent', session_id: SID, analytics_reduction: true });
+    expect(endEvent).toMatchObject({ type: 'agent.tool.end', tool_response: 'REDACTED:TOOL-RESPONSE' });
+    expect(JSON.stringify([startEvent, endEvent])).not.toContain('private');
+    expect(JSON.stringify([startEvent, endEvent])).not.toContain('agent output');
+  });
+
+  it('is unchanged when reduction is off', () => {
+    const events = [hookedPre('hooked-1', 1), start('runtime-1', 'read_agent', { agent_id: 'agent-0' }, 2)];
+    expect(buildUnhookedToolEvents(SID, events)).toEqual(buildUnhookedToolEvents(SID, events, { reduced: false }));
+    expect(buildUnhookedToolEvents(SID, events)[0]).not.toHaveProperty('analytics_reduction');
+  });
+
   it('emits start and end events only for calls without a preToolUse hook', () => {
     const events = [
       hookedPre('hooked-1', 1),

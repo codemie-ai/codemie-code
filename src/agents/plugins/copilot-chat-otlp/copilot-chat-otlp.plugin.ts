@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
+import { reducePrompt } from '@/agents/core/analytics-reduction.js';
 import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { describeLogin, type DetachedLoginOutcome } from '@/providers/plugins/sso/sso.detached-login.js';
 import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
@@ -99,6 +100,12 @@ export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput
       // The host version is not detected: left empty rather than guessed.
       client_version: '',
     };
+  }
+
+  /** Copilot Chat has no slash command: only auto markers and ticket and MR refs are kept. */
+  protected override reducePromptBody(hookEvent: Record<string, unknown>): string {
+    const prompt = hookEvent['prompt'];
+    return typeof prompt === 'string' ? reducePrompt(prompt, { commandName: '' }) : '';
   }
 
   protected resolveEventType(event: Record<string, unknown>): string {

@@ -550,7 +550,8 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       process.env['CLAUDE_PROJECT_DIR'] = '   ';
       await run();
       expect(getActiveProfileNameMock).toHaveBeenCalledWith('/repo');
-      expect(hasLocalConfigMock).not.toHaveBeenCalled();
+      // The reduction decision looks up the hook cwd's project; the blank pin is never used as a start.
+      expect(hasLocalConfigMock.mock.calls.map(([dir]) => dir)).toEqual(['/repo']);
     });
 
     it('resolves the config from CLAUDE_PROJECT_DIR, not the hook cwd, when it is set', async () => {
@@ -1271,6 +1272,87 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
       expect(forwardToSpool).toHaveBeenCalledWith(expect.any(Array), 'fake');
       expect(readRecords()).toEqual([]);
+    });
+  });
+  describe('prompt reduction (EPMCDME-17748)', () => {
+    const roots: string[] = [];
+    const makeRepo = (flag: boolean): { repo: string; cwd: string } => {
+      const repo = mkdtempSync(join(tmpdir(), 'otlp-reduction-repo-'));
+      roots.push(repo);
+      mkdirSync(join(repo, '.git'));
+      mkdirSync(join(repo, '.codemie'));
+      if (flag) writeFileSync(join(repo, '.codemie', 'codemie-cli.config.json'), JSON.stringify({ analytics: { promptReduction: true } }));
+      const cwd = join(repo, 'packages', 'x');
+      mkdirSync(cwd, { recursive: true });
+      hasLocalConfigMock.mockImplementation(async (dir: string) => dir === repo);
+      return { repo, cwd };
+    };
+    const payload = (): Record<string, unknown>[] => [{
+      command_name: 'review-pr',
+      prompt: '/review-pr !456 secret',
+      prompt_source: 'user',
+      tool_input: { command: 'cat secrets.txt' },
+      error: 'boom with detail',
+      future_field: 'private text',
+      future_list: ['a', 'b'],
+    }];
+
+    afterEach(() => {
+      for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+    });
+
+    it('reduces an event from a monorepo subdirectory when the project flag sits at the repo root', async () => {
+      const { cwd } = makeRepo(true);
+      detectGitBranchMock.mockResolvedValue('feature/EPMCDME-17748-private-name');
+      await run({ cwd, prompt: '/review-pr !456 secret', payload: payload() });
+      const [event] = forwarded();
+      expect(event).toMatchObject({
+        prompt_body: '/review-pr !456',
+        analytics_reduction: true,
+        git_branch: 'EPMCDME-17748',
+        story_id: 'EPMCDME-17748',
+        story_source: 'branch',
+        platform: 'fake-platform',
+        prompt: 'REDACTED:PROMPT',
+        tool_input: 'REDACTED:TOOL-INPUT',
+        error: 'REDACTED:ERROR',
+        future_field: 'REDACTED:FUTURE-FIELD',
+        future_list: ['REDACTED:FUTURE-LIST'],
+      });
+    });
+
+    it('keeps the same story id and event id as a run with reduction off', async () => {
+      detectGitBranchMock.mockResolvedValue('feature/EPMCDME-17748-private-name');
+      const on = makeRepo(true);
+      await run({ cwd: on.cwd, prompt: '/review-pr !456 secret', payload: payload() });
+      const off = makeRepo(false);
+      await run({ cwd: off.cwd, prompt: '/review-pr !456 secret', payload: payload() });
+      const [reduced, plain] = forwarded();
+      expect(reduced['story_id']).toBe(plain['story_id']);
+      expect(plain).not.toHaveProperty('analytics_reduction');
+      expect(plain['git_branch']).toBe('feature/EPMCDME-17748-private-name');
+      expect(plain['tool_input']).toBe('{"command":"cat secrets.txt"}');
+      expect(plain['prompt_body']).toBe('/review-pr !456 secret');
+    });
+
+    it('a branch without a ticket key becomes REDACTED:BRANCH', async () => {
+      const { cwd } = makeRepo(true);
+      detectGitBranchMock.mockResolvedValue('my-private-branch');
+      await run({ cwd, payload: [{ a: 1 }] });
+      expect(forwarded()[0]['git_branch']).toBe('REDACTED:BRANCH');
+    });
+
+    it('the global setting alone turns reduction on', async () => {
+      const { cwd } = makeRepo(false);
+      mkdirSync(join(isolatedHome.dir, '.codemie'), { recursive: true });
+      const globalFile = join(isolatedHome.dir, '.codemie', 'codemie-cli.config.json');
+      writeFileSync(globalFile, JSON.stringify({ analytics: { promptReduction: true } }));
+      try {
+        await run({ cwd, payload: payload() });
+        expect(forwarded()[0]).toMatchObject({ analytics_reduction: true, future_field: 'REDACTED:FUTURE-FIELD' });
+      } finally {
+        rmSync(globalFile, { force: true });
+      }
     });
   });
 });
