@@ -22,12 +22,17 @@ import type {
   MetricsApiError,
   SessionLifecycleAttributes,
 } from './metrics-types.js';
+import { METRICS_KEEP_LIST } from './metrics-types.js';
 import type { Session } from '../../../../../../agents/core/session/types.js';
 import type { MCPConfigSummary, ExtensionsScanSummary } from '../../../../../../agents/core/types.js';
 import { logger } from '../../../../../../utils/logger.js';
 import { detectGitBranch } from '../../../../../../utils/processes.js';
 import { extractRepository } from '../../../../../../utils/paths.js';
 import { encodeAttributionHeader, rawProjectHeader } from '../../../../../../utils/header-value.js';
+import { createHash } from 'node:crypto';
+import { reduceBranch, reduceRecord } from '@/agents/core/analytics-reduction.js';
+import { findNearestConfigDir } from '@/agents/core/event-fields/identity-fields.js';
+import { isReductionOn } from '@/utils/analytics-reduction-setting.js';
 import { clearAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
 import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
 import { SyncStoppedError, type SyncBounds } from '../../../../../../agents/core/session/BaseProcessor.js';
@@ -35,6 +40,36 @@ import { backoffWithin, boundedRequest, newRequestGroup, noteAuthFailure, throwI
 import { CodeMieError } from '../../../../../../utils/errors.js';
 import { markAuthInvalidUnlessSuperseded } from '../../analytics-auth-marker.js';
 import type { CredentialsSupersededCheck } from '../../cookie-auth.js';
+
+/**
+ * The metric as it is posted: when prompt reduction is on for the session's working directory (read now,
+ * never cached), the branch is cut to its ticket keys and every field off the keep-list is redacted.
+ * Returns the given metric untouched when reduction is off. Never mutates its input.
+ */
+async function reduceMetric(metric: SessionMetric, workingDirectory?: string): Promise<SessionMetric> {
+  let configDir: string | undefined;
+  if (workingDirectory) {
+    try {
+      configDir = await findNearestConfigDir(workingDirectory);
+    } catch {
+      configDir = workingDirectory;
+    }
+  }
+  if (!(await isReductionOn({ configDirs: [configDir] }))) {
+    return metric;
+  }
+  const rawBranch = metric.attributes.branch;
+  const attributes: Record<string, unknown> = { ...metric.attributes, branch: reduceBranch(rawBranch) };
+  const deltaId = metric.attributes.delta_id;
+  if (deltaId !== undefined) {
+    // delta_id ends in `:<branch>`; swap the branch for a digest so ids of different branches stay distinct
+    const suffix = `:${rawBranch}`;
+    attributes.delta_id = deltaId.endsWith(suffix)
+      ? `${deltaId.slice(0, -suffix.length)}:${createHash('sha256').update(rawBranch).digest('hex').slice(0, 12)}`
+      : deltaId;
+  }
+  return { ...metric, attributes: reduceRecord(attributes, METRICS_KEEP_LIST) as unknown as SessionMetric['attributes'] };
+}
 
 interface MetricsRequestError extends Error {
   statusCode?: number;
@@ -517,7 +552,7 @@ export class MetricsSender {
       return { success: true, message: '[DRY-RUN] Session start metric logged' };
     }
 
-    const response = await this.client.sendMetric(metric);
+    const response = await this.client.sendMetric(await reduceMetric(metric, workingDirectory));
 
     logger.debug('[MetricsSender] Session start metric sent', {
       name: metric.name,
@@ -618,7 +653,7 @@ export class MetricsSender {
       return { success: true, message: '[DRY-RUN] Session end metric logged' };
     }
 
-    const response = await this.client.sendMetric(metric);
+    const response = await this.client.sendMetric(await reduceMetric(metric, workingDirectory));
 
     logger.debug('[MetricsSender] Session end metric sent', {
       name: metric.name,
@@ -639,8 +674,9 @@ export class MetricsSender {
    * Called by SSO metrics sync plugin for periodic sync
    *
    * @param metric - Aggregated session metric
+   * @param workingDirectory - The session's working directory (locates the project's reduction setting)
    */
-  async sendSessionMetric(metric: SessionMetric): Promise<MetricsSyncResponse> {
+  async sendSessionMetric(metric: SessionMetric, workingDirectory?: string): Promise<MetricsSyncResponse> {
     // Dry-run mode: log without sending
     if (this.dryRun) {
       logger.info('[MetricsSender] [DRY-RUN] Would send aggregated metric:', {
@@ -658,7 +694,7 @@ export class MetricsSender {
       return { success: true, message: '[DRY-RUN] Aggregated metric logged' };
     }
 
-    const response = await this.client.sendMetric(metric);
+    const response = await this.client.sendMetric(await reduceMetric(metric, workingDirectory));
 
     logger.debug('[MetricsSender] Aggregated usage metric sent', {
       agent: metric.attributes.agent,

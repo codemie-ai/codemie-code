@@ -270,7 +270,7 @@ export class MetricsSyncProcessor implements SessionProcessor {
         metric.attributes.delta_id = `${owner.batchId}:${metric.attributes.branch}`;
 
         try {
-          const response = await metricsSender.sendSessionMetric(metric);
+          const response = await metricsSender.sendSessionMetric(metric, sessionMetadata.workingDirectory);
 
           if (!response.success) {
             logger.error(`[${this.name}] Sync failed for branch "${metric.attributes.branch}": ${response.message}`);
