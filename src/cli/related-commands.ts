@@ -1,5 +1,6 @@
 import type { Command } from 'commander';
 import { getInvocationContext } from '../utils/invocation-context.js';
+import { isHiddenCommand } from './hidden.js';
 
 export interface RelatedCommand {
   /** Full runnable command, e.g. `codemie proxy status`. */
@@ -123,10 +124,6 @@ export const RELATED: Record<string, RelatedEntry> = {
   'analytics sync uninstall': { related: [SYNC_STATUS, { path: 'codemie analytics sync install', purpose: 'Install the scheduled sync' }], next: {} },
 };
 
-function isHidden(cmd: Command): boolean {
-  return (cmd as unknown as { _hidden?: boolean })._hidden === true;
-}
-
 function render(entry: RelatedEntry): string {
   return `\nRelated commands:\n${entry.related.map((r) => `  ${r.path}  ${r.purpose}`).join('\n')}\n`;
 }
@@ -135,7 +132,7 @@ function render(entry: RelatedEntry): string {
 export function applyRelatedHelp(root: Command): void {
   const walk = (cmd: Command, prefix: string): void => {
     for (const sub of cmd.commands) {
-      if (isHidden(sub)) continue;
+      if (isHiddenCommand(sub)) continue;
       const path = prefix ? `${prefix} ${sub.name()}` : sub.name();
       const entry = RELATED[path];
       if (entry) sub.addHelpText('after', render(entry));
