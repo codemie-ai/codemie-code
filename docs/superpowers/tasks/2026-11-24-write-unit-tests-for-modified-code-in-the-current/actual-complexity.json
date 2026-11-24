@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated": "2026-11-24T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 10,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 2,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Two new Vitest files cover the tools-guard helper, plugin interceptor and registration in the SSO proxy plugins directory." },
+    { "dimension": "requirements_clarity", "reason": "The scope is clear, and the tests follow the existing proxy plugin test patterns." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

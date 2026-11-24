@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "task": "Write Vitest unit tests for the SSO proxy tools-guard helper, plugin interceptor and index registration.",
+  "generated": "2026-11-24T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 11,
+  "size": "S",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "technical_risk", "reason": "Sibling tests (claude-request-normalizer.plugin.test.ts, plugin-order.test.ts) supply the context-helper pattern, but the many enumerated variants (three wire shapes, tool_choice cases, endpoint regex edges) have no parameterized-table template. The SET_TOOL_CHOICE_NONE branch is unreachable. Scored M." },
+    { "dimension": "component_scope", "reason": "Two new test files cover one pure helper and one plugin with a non-exported interceptor, all in one plugin directory." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

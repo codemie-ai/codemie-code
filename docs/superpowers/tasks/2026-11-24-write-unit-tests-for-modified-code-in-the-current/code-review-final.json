@@ -1,0 +1,122 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.final",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "No findings; user approved"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "No findings; user approved"
+    }
+  ],
+  "reviewed_head": "f1c02af79505c2e83458f2da21cb1912d73cf76d",
+  "rounds": [
+    "final"
+  ],
+  "rationale": "Compact profile: edge-case and acceptance lenses ran cleanly; AC1-AC9 pass, AC10 (test run/lint/typecheck) is pending-stage-7. 2 edge candidates dismissed as noise (pre-existing minor / no-op); 0 deferred. Brief and dismissed sidecars written.",
+  "confidence": "high",
+  "check_confidence": null,
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 0,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "AC1",
+      "status": "pass",
+      "notes": "Non-empty tools and no-history cases covered."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC2",
+      "status": "pass",
+      "notes": "it.each covers all six markers and wire shapes."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC3",
+      "status": "pass",
+      "notes": "Anthropic precedence, empty and non-array tools, malformed entries covered."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC4",
+      "status": "pass",
+      "notes": "Forcing and kept tool_choice tables present."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC5",
+      "status": "pass",
+      "notes": "id, priority, clients asserted."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC6",
+      "status": "pass",
+      "notes": "Endpoint table includes trailing slash and query."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC7",
+      "status": "pass",
+      "notes": "null body, content type, invalid JSON, null and primitives covered."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC8",
+      "status": "pass",
+      "notes": "Byte-length content-length asserted with non-ASCII; unchanged cases covered."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC9",
+      "status": "pass",
+      "notes": "Registry and index re-export asserted via private getEnabledPluginsSorted."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC10",
+      "status": "pending-stage-7",
+      "notes": "Needs test run, lint, typecheck."
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "na",
+      "notes": "Standards audit not expected for this profile."
+    },
+    {
+      "kind": "code-quality",
+      "status": "na",
+      "notes": "Standards audit not expected for this profile."
+    },
+    {
+      "kind": "security",
+      "status": "na",
+      "notes": "Standards audit not expected for this profile."
+    }
+  ],
+  "final_round": {
+    "decision": "approve",
+    "rationale": "Compact profile: edge-case and acceptance lenses ran cleanly; AC1-AC9 pass, AC10 (test run/lint/typecheck) is pending-stage-7. 2 edge candidates dismissed as noise (pre-existing minor / no-op); 0 deferred. Brief and dismissed sidecars written.",
+    "confidence": "high",
+    "risk_flags": []
+  }
+}
