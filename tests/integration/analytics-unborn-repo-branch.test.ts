@@ -86,7 +86,8 @@ describe.skipIf(!existsSync(DAEMON_DIST))('git branch of Claude Code analytics i
       { hook_event_name: 'SessionStart', source: 'startup', cwd: repo },
       { hook_event_name: 'UserPromptSubmit', prompt: 'Reply with OK.', cwd: repo },
     ]) {
-      const run = await runHook(home, sessionId, event);
+      // Claude Code runs hooks inside the project directory and names it in the payload too.
+      const run = await runHook(home, sessionId, event, { cwd: repo });
       expect(run.code).toBe(0);
       expect(run.stdout).toBe('');
       expect(run.stderr).toBe('');

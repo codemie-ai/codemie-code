@@ -117,7 +117,8 @@ describe.skipIf(!existsSync(DAEMON_DIST))('Claude Code analytics connected for o
       { hook_event_name: 'SessionStart', source: 'startup', cwd: project },
       { hook_event_name: 'UserPromptSubmit', prompt: 'Reply with OK.', cwd: project },
     ]) {
-      const run = await runHook(home, sessionId, event, { env: { [PROJECT_FILTER_ENV]: env[PROJECT_FILTER_ENV] } });
+      // Claude Code runs hooks inside the project directory, with the settings' env.
+      const run = await runHook(home, sessionId, event, { cwd: project, env: { [PROJECT_FILTER_ENV]: env[PROJECT_FILTER_ENV] } });
       expect(run.code).toBe(0);
       expect(run.stdout).toBe('');
       expect(run.stderr).toBe('');

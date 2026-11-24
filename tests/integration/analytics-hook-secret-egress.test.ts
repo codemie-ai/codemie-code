@@ -136,7 +136,8 @@ describe.skipIf(!existsSync(DAEMON_DIST))('secrets in Claude Code hook payloads'
       storeSsoLogin(home, backend.url, COOKIE);
 
       for (const event of SESSION) {
-        const run = await runHook(home, SESSION_ID, event);
+        // Debug logging writes the most, so a payload that reached any log line would show up in the scan below.
+        const run = await runHook(home, SESSION_ID, event, { env: { CODEMIE_DEBUG: 'true' } });
         expect(run.code).toBe(0);
         expect(run.stdout).toBe('');
         expect(run.stderr).toBe('');
@@ -160,8 +161,9 @@ describe.skipIf(!existsSync(DAEMON_DIST))('secrets in Claude Code hook payloads'
       for (const request of backend.requests) {
         for (const secret of SECRETS) expect(request.body).not.toContain(secret);
       }
-      // Neither does anything the hook or the daemon left on disk.
-      for (const file of [...filesUnder(join(home, 'proxy')), ...filesUnder(join(home, 'analytics'))]) {
+      // Neither does anything the hook or the daemon left on disk: spool, state, logs and config. The home holds no
+      // legitimate copy of the secrets (the transcript is empty), so the whole of it is scanned.
+      for (const file of filesUnder(home)) {
         for (const secret of SECRETS) expect(file).not.toContain(secret);
       }
 

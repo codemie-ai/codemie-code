@@ -46,7 +46,8 @@ const OWNER = {
 };
 const BLOCK_HEADER = 'Your CodeMie sign-in session has expired — this is expected and not a problem with your prompt.';
 const REJECTED = '(CodeMie metrics endpoint rejected the stored credentials (HTTP 401))';
-// The hook keeps this much of the installed timeout for itself (HOOK_TIMEOUT_HEADROOM_MS in the plugin).
+// The hook keeps this much of the installed timeout for itself: a copy of HOOK_TIMEOUT_HEADROOM_MS, which is private to
+// claude-code-otlp.plugin.ts, so a change there needs one here.
 const HEADROOM_MS = 15_000;
 // The 50 s case waits up to 35 s; the runner kills the hook well after Claude Code would have.
 const HOOK_RUN_TIMEOUT_MS = 90_000;
@@ -74,6 +75,16 @@ describe.skipIf(!existsSync(DAEMON_DIST))('prompt auth gate within the installed
    * A home whose session started while signed in, after which the backend rejected the cookies (the
    * metrics marker), with a browser sign-in in progress and the prompt hook installed with
    * `hookTimeoutSeconds`.
+   *
+   * Three files are written by hand in the product's own formats, because the real writers cannot run here:
+   * - `~/.claude/settings.json`: the hook timeout an older `proxy connect` installed. Today's connect writes 180 s, so
+   *   the 30 s and 50 s cases can only come from a hand-written file.
+   * - `analytics-auth-status.json` (`AnalyticsAuthStatus` in src/utils/analytics-auth-status.ts): the rejection marker.
+   *   Its reason is the one MetricsApiClient records for a 401. The proxy's own writer, sso-session-expiry, also opens
+   *   a browser sign-in, so it is not driven here.
+   * - `sso-login.lock` (`LoginLock` in src/providers/plugins/sso/sso.login-lock.ts): the sign-in in progress, held by
+   *   an idle child process in place of the detached browser sign-in.
+   * A change to any of these formats fails the tests loudly (the gate stops blocking); update them here with it.
    */
   async function rejectedSessionHome(hookTimeoutSeconds: number): Promise<{ home: string; backend: MockBackend }> {
     const backend = await startMockBackend(OWNER);
@@ -150,7 +161,8 @@ describe.skipIf(!existsSync(DAEMON_DIST))('prompt auth gate within the installed
       expect(block.reason).toContain('A browser sign-in is already in progress.');
       expect(block.reason).toContain('re-send your prompt');
       expect(run.stderr).toBe('');
-      expect(elapsedMs).toBeLessThan(10_000);
+      // At once means no wait for the sign-in, which would take up to 150 s; the margin covers process start on slow runners.
+      expect(elapsedMs).toBeLessThan(20_000);
     },
     TEST_TIMEOUT_MS
   );
