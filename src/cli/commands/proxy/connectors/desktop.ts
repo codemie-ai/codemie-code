@@ -13,6 +13,7 @@ import {
   isDesktopPointedAtLocalProxy,
   readDesktopGatewayConfig,
 } from '@/telemetry/clients/claude-desktop/claude-desktop.gateway.js';
+import { isSafeSessionId } from '@/agents/core/session-id.js';
 import { writeFileAtomic } from '@/utils/atomic-write.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
@@ -654,14 +655,28 @@ export interface DesktopGatewayConfig {
   inferenceCredentialKind: 'static';
 }
 
-interface ConfigMetaEntry {
+/** Name `connect` gives the Claude Desktop config entry it owns in `configLibrary/_meta.json`. */
+export const CODEMIE_DESKTOP_CONFIG_NAME = 'CodeMie Proxy';
+
+export interface ConfigMetaEntry {
   id: string;
   name: string;
 }
 
-interface ConfigMeta {
+export interface ConfigMeta {
   appliedId?: string;
   entries?: ConfigMetaEntry[];
+}
+
+/** The Claude Desktop config entry `connect` writes and `disconnect` cleans. */
+export interface CodeMieDesktopConfigTarget {
+  configId: string;
+  /** No CodeMie entry exists yet: `configId` is a fresh UUID with no file and no `_meta.json` entry. */
+  isNew: boolean;
+  /** The safe `appliedId` of `_meta.json`, if any. */
+  appliedId: string | undefined;
+  /** Name of the applied entry when it is not the CodeMie one and has a `_meta.json` entry. */
+  previousAppliedName: string | undefined;
 }
 
 export function buildGatewayConfig(proxyUrl: string, gatewayKey: string): DesktopGatewayConfig {
@@ -720,6 +735,70 @@ export async function getDesktopConfigPath(baseDir: string = getDesktopBaseDir()
     }
   }
   return join(libDir, `${randomUUID()}.json`);
+}
+
+async function readConfigEntry(configPath: string): Promise<unknown> {
+  try {
+    return JSON.parse(await readFile(configPath, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Picks the Claude Desktop config entry CodeMie owns, whichever entry is applied: (a) the entry named
+ * {@link CODEMIE_DESKTOP_CONFIG_NAME} (the applied one of several, else the first), even when its file is missing;
+ * (b) the applied entry when its file already points at the local proxy of `localKey`; (c) a new UUID. Entries
+ * whose id is not a safe file name are skipped. Read-only.
+ */
+export async function resolveCodeMieDesktopConfig(
+  libDir: string,
+  meta: ConfigMeta,
+  localKey: string
+): Promise<CodeMieDesktopConfigTarget> {
+  const appliedId = appliedConfigId(meta);
+  const entries = Array.isArray(meta.entries) ? meta.entries : [];
+  const named = entries.filter(
+    (entry) => entry?.name === CODEMIE_DESKTOP_CONFIG_NAME && typeof entry.id === 'string' && isSafeSessionId(entry.id)
+  );
+
+  let configId: string | undefined =
+    named.find((entry) => entry.id === appliedId)?.id ?? named[0]?.id;
+  if (!configId && appliedId) {
+    const applied = await readConfigEntry(join(libDir, `${appliedId}.json`));
+    if (isDesktopPointedAtLocalProxy(desktopGatewayOfEntry(applied), localKey)) configId = appliedId;
+  }
+  const isNew = configId === undefined;
+  const resolvedId = configId ?? randomUUID();
+  const previousAppliedName =
+    appliedId && appliedId !== resolvedId ? entries.find((entry) => entry?.id === appliedId)?.name : undefined;
+  return { configId: resolvedId, isNew, appliedId, previousAppliedName };
+}
+
+async function readConfigMeta(metaPath: string): Promise<ConfigMeta> {
+  if (!existsSync(metaPath)) return {};
+  try {
+    const parsed: unknown = JSON.parse(await readFile(metaPath, 'utf-8'));
+    return isRecord(parsed) ? (parsed as ConfigMeta) : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Path of the config entry `connect` writes and activates ({@link resolveCodeMieDesktopConfig}); a fresh UUID path
+ * when there is none yet. A corrupt `_meta.json` counts as empty. The local key is the one the daemon state file
+ * names, else the default key.
+ */
+export async function getCodeMieDesktopConfigPath(
+  baseDir: string = getDesktopBaseDir(),
+  stateFile?: string
+): Promise<string> {
+  const libDir = join(baseDir, 'configLibrary');
+  const meta = await readConfigMeta(join(libDir, '_meta.json'));
+  const localKey = (await readState(stateFile))?.gatewayKey ?? DEFAULT_GATEWAY_KEY;
+  const { configId } = await resolveCodeMieDesktopConfig(libDir, meta, localKey);
+  return join(libDir, `${configId}.json`);
 }
 
 /**
@@ -895,7 +974,7 @@ export async function writeDesktopConfig(
 
   const entries = meta.entries ?? [];
   if (!entries.find((e) => e.id === configId)) {
-    entries.push({ id: configId, name: 'CodeMie Proxy' });
+    entries.push({ id: configId, name: CODEMIE_DESKTOP_CONFIG_NAME });
   }
   const updatedMeta: ConfigMeta = {
     appliedId: configId,

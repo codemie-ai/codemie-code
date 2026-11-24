@@ -34,6 +34,9 @@ import {
 import {
   buildGatewayConfig,
   cloneManagedEntry,
+  CODEMIE_DESKTOP_CONFIG_NAME,
+  getCodeMieDesktopConfigPath,
+  resolveCodeMieDesktopConfig,
   DEFAULT_MANAGED_MCP_SERVERS,
   describeManagedSettingsOverride,
   type DesktopModel,
@@ -1706,6 +1709,119 @@ describe('getDesktopConfigPath', () => {
     await writeFile(join(baseDir, 'outside.json'), LOOPBACK_GATEWAY_CONFIG, 'utf-8');
 
     const path = await getDesktopConfigPath(baseDir);
+
+    expect(path.startsWith(libDir)).toBe(true);
+    expect(path).toMatch(/[0-9a-f-]{36}\.json$/);
+  });
+});
+
+describe('resolveCodeMieDesktopConfig', () => {
+  const LOCAL_KEY = 'local-key';
+  let baseDir: string;
+  let libDir: string;
+
+  beforeEach(async () => {
+    baseDir = join(tmpdir(), `desktop-resolve-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    libDir = join(baseDir, 'configLibrary');
+    await mkdir(libDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(baseDir, { recursive: true, force: true });
+  });
+
+  const gatewayFile = (key: string) => JSON.stringify({
+    inferenceProvider: 'gateway',
+    inferenceGatewayBaseUrl: 'http://127.0.0.1:4001',
+    inferenceGatewayApiKey: key,
+  });
+
+  it('finds the CodeMie Proxy entry while another config is applied', async () => {
+    const meta = { appliedId: 'A', entries: [{ id: 'A', name: 'QA Other' }, { id: 'C', name: CODEMIE_DESKTOP_CONFIG_NAME }] };
+
+    await expect(resolveCodeMieDesktopConfig(libDir, meta, LOCAL_KEY)).resolves.toEqual({
+      configId: 'C', isNew: false, appliedId: 'A', previousAppliedName: 'QA Other',
+    });
+  });
+
+  it('names the CodeMie entry "CodeMie Proxy"', () => {
+    expect(CODEMIE_DESKTOP_CONFIG_NAME).toBe('CodeMie Proxy');
+  });
+
+  it('prefers the applied entry of two CodeMie Proxy entries', async () => {
+    const meta = {
+      appliedId: 'C2',
+      entries: [{ id: 'C1', name: 'CodeMie Proxy' }, { id: 'C2', name: 'CodeMie Proxy' }],
+    };
+
+    await expect(resolveCodeMieDesktopConfig(libDir, meta, LOCAL_KEY)).resolves.toEqual({
+      configId: 'C2', isNew: false, appliedId: 'C2', previousAppliedName: undefined,
+    });
+  });
+
+  it('takes the first of two CodeMie Proxy entries when neither is applied', async () => {
+    const meta = {
+      appliedId: 'A',
+      entries: [{ id: 'A', name: 'Other' }, { id: 'C1', name: 'CodeMie Proxy' }, { id: 'C2', name: 'CodeMie Proxy' }],
+    };
+
+    expect((await resolveCodeMieDesktopConfig(libDir, meta, LOCAL_KEY)).configId).toBe('C1');
+  });
+
+  it('returns the CodeMie Proxy entry even when its file is missing', async () => {
+    const meta = { entries: [{ id: 'C', name: 'CodeMie Proxy' }] };
+
+    await expect(resolveCodeMieDesktopConfig(libDir, meta, LOCAL_KEY)).resolves.toEqual({
+      configId: 'C', isNew: false, appliedId: undefined, previousAppliedName: undefined,
+    });
+  });
+
+  it('skips a CodeMie Proxy entry with an unsafe id', async () => {
+    const meta = { entries: [{ id: '../x', name: 'CodeMie Proxy' }] };
+
+    const target = await resolveCodeMieDesktopConfig(libDir, meta, LOCAL_KEY);
+
+    expect(target.isNew).toBe(true);
+    expect(target.configId).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('chooses a renamed applied entry that already points at the local proxy', async () => {
+    await writeFile(join(libDir, 'M.json'), gatewayFile(`${LOCAL_KEY}.claude-desktop`), 'utf-8');
+    const meta = { appliedId: 'M', entries: [{ id: 'M', name: 'My CodeMie' }] };
+
+    await expect(resolveCodeMieDesktopConfig(libDir, meta, LOCAL_KEY)).resolves.toEqual({
+      configId: 'M', isNew: false, appliedId: 'M', previousAppliedName: undefined,
+    });
+  });
+
+  it.each([
+    ['a loopback gateway with another key', gatewayFile('ollama')],
+    ['a non-gateway file', JSON.stringify({ someUserPreference: 'x' })],
+    ['unparsable JSON', '{not json'],
+    ['a missing file', undefined],
+  ])('creates a new id when the applied entry is %s', async (_label, content) => {
+    if (content !== undefined) await writeFile(join(libDir, 'A.json'), content, 'utf-8');
+    const meta = { appliedId: 'A', entries: [{ id: 'A', name: 'Other' }] };
+
+    const target = await resolveCodeMieDesktopConfig(libDir, meta, LOCAL_KEY);
+
+    expect(target).toMatchObject({ isNew: true, appliedId: 'A', previousAppliedName: 'Other' });
+    expect(target.configId).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('getCodeMieDesktopConfigPath returns the CodeMie Proxy entry path', async () => {
+    await writeFile(join(libDir, '_meta.json'), JSON.stringify({
+      appliedId: 'A', entries: [{ id: 'A', name: 'QA Other' }, { id: 'C', name: 'CodeMie Proxy' }],
+    }), 'utf-8');
+
+    await expect(getCodeMieDesktopConfigPath(baseDir, join(baseDir, 'no-state.json')))
+      .resolves.toBe(join(libDir, 'C.json'));
+  });
+
+  it('getCodeMieDesktopConfigPath treats a corrupt _meta.json as empty', async () => {
+    await writeFile(join(libDir, '_meta.json'), '{oops', 'utf-8');
+
+    const path = await getCodeMieDesktopConfigPath(baseDir, join(baseDir, 'no-state.json'));
 
     expect(path.startsWith(libDir)).toBe(true);
     expect(path).toMatch(/[0-9a-f-]{36}\.json$/);
