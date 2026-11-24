@@ -24,9 +24,8 @@ const BUNDLE_FILENAME = 'statusline.bundle.mjs';
 // /compact, etc. — see https://code.claude.com/docs/en/statusline#how-status-lines-work);
 // `refreshInterval` is only the fallback timer for when those events "go quiet" (e.g. an idle
 // session). Keep it at the budget segment's HTTP cache TTL (CACHE_TTL_MS in plugin/statusline.ts):
-// the budget segment is rendered and calls GET /v1/analytics/budget_usage, and only a successful
-// response is cached. A faster timer re-asks the API every few seconds in every open session
-// whenever it is slow or failing (each abandoned request still runs to completion on the server).
+// the budget segment is rendered and calls GET /v1/analytics/budget_usage, whose outcome (success
+// or failure) is cached for that TTL. A faster timer would just re-render the cached figure.
 // It was lowered to 3s in #503 when the budget call had been removed; #594 restored the call
 // without restoring this value.
 const REFRESH_INTERVAL = 60;
