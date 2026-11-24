@@ -66,3 +66,11 @@ describe("network error store", () => {
     expect(takeNetworkError()).toBeUndefined();
   });
 });
+
+describe("stale capture", () => {
+  it("does not attach an unread capture to a later real empty-body 500", () => {
+    recordNetworkError(Object.assign(new Error("x"), { code: "ECONNRESET" }));
+    clearNetworkError(); // what the adapter does at the start of the next request
+    expect(run(new ApiError("HTTP 500 error", 500, {}))).toContain("API error: HTTP 500 error");
+  });
+});

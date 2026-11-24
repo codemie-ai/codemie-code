@@ -37,6 +37,7 @@ export function recordNetworkError(err: unknown): void {
   const code = typeof candidate.code === 'string' && candidate.code ? candidate.code : 'ERR_NETWORK';
   const message = typeof candidate.message === 'string' ? sanitizeMessage(candidate.message) : '';
   captured = { code, message };
+  logger.debug('Network error captured', ...sanitizeLogArgs({ code, message }));
 }
 
 /**
@@ -76,6 +77,7 @@ export function installNetworkErrorCapture(): boolean {
     }
     const resolved = axios.getAdapter(current);
     const wrapped = (async (config: InternalAxiosRequestConfig) => {
+      clearNetworkError();
       try {
         return await resolved(config);
       } catch (err) {

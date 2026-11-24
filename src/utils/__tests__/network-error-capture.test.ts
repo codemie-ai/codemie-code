@@ -76,3 +76,29 @@ describe('installNetworkErrorCapture', () => {
     expect(takeNetworkError()).toBeUndefined();
   });
 });
+
+describe('stale capture handling', () => {
+  it('clears an unread capture when the next request starts', async () => {
+    const real = vi.fn()
+      .mockRejectedValueOnce(networkError('ECONNRESET'))
+      .mockResolvedValueOnce({ status: 500, data: '' });
+    vi.spyOn(axios, 'getAdapter').mockReturnValue(real as unknown as AxiosAdapter);
+    installNetworkErrorCapture();
+    const adapter = axios.defaults.adapter as AxiosAdapter;
+
+    await expect(adapter(cfg)).rejects.toThrow();
+    await adapter(cfg);
+    expect(takeNetworkError()).toBeUndefined();
+  });
+
+  it('logs the captured error at debug level without the URL', async () => {
+    const err = Object.assign(new Error('failed https://host/secret?token=abc'), { code: 'ECONNRESET' });
+    vi.spyOn(axios, 'getAdapter').mockReturnValue(vi.fn().mockRejectedValue(err) as unknown as AxiosAdapter);
+    installNetworkErrorCapture();
+    await expect((axios.defaults.adapter as AxiosAdapter)(cfg)).rejects.toThrow();
+    const logged = JSON.stringify(vi.mocked(logger.debug).mock.calls);
+    expect(logged).toContain('ECONNRESET');
+    expect(logged).not.toContain('https://host');
+    expect(logged).not.toContain('abc');
+  });
+});
