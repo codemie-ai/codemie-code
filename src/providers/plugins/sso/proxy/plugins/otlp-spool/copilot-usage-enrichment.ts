@@ -190,13 +190,36 @@ function endOfLastRun(records: Record<string, unknown>[], startMs: number): Reco
   return records.filter((r) => r['type'] === SESSION_END_TYPE && timeOf(r) >= startMs).pop();
 }
 
-/** A recovered end at or after a hook end with no new start between them: the same run, so the hook end adds nothing. */
+/** The latest `agent.session.start` at or before `ms`: the run a timestamp belongs to (NaN when none). */
+function runStartAt(records: Record<string, unknown>[], ms: number): number {
+  const starts = records.filter((s) => s['type'] === START_TYPE && timeOf(s) <= ms).map(timeOf);
+  return starts.length ? Math.max(...starts) : NaN;
+}
+
+/**
+ * A recovered end of the same run as the hook end: the same latest start precedes both, whichever of the two is
+ * later (a hook end's timestamp can fall back to the wall clock and land after the shutdown). A start between them
+ * is a resume, i.e. a different run, so the hook end is kept.
+ */
 function recoveredEndCovers(sessionId: string, records: Record<string, unknown>[], hookEndMs: number): boolean {
-  return records.some((r) =>
+  const run = runStartAt(records, hookEndMs);
+  return Number.isFinite(run) && records.some((r) =>
     r['type'] === SESSION_END_TYPE &&
     r['event_id'] === recoveredEndId(sessionId, String(r['timestamp'])) &&
-    timeOf(r) >= hookEndMs &&
-    !records.some((s) => s['type'] === START_TYPE && timeOf(s) > hookEndMs && timeOf(s) <= timeOf(r)));
+    runStartAt(records, timeOf(r)) === run);
+}
+
+/**
+ * Under the spool lock: is the run that started at `startMs` already ended, or has a newer run taken over its shutdown?
+ * A newer start at or before the shutdown makes it that run's evidence, so no end is written for the old one now (the
+ * next tick re-reads the latest start). A newer start after the shutdown leaves the old run's end recoverable: only an
+ * end inside this run's window counts.
+ */
+function runEndedOrSuperseded(records: Record<string, unknown>[], startMs: number, endedMs: number): boolean {
+  const later = records.filter((r) => r['type'] === START_TYPE && timeOf(r) > startMs).map(timeOf);
+  if (later.some((s) => s <= endedMs)) return true;
+  const next = Math.min(Infinity, ...later);
+  return records.some((r) => r['type'] === SESSION_END_TYPE && timeOf(r) >= startMs && timeOf(r) < next);
 }
 
 /**
@@ -276,7 +299,7 @@ export async function recoverMissingSessionEnds(
       };
       const line = JSON.stringify({ agentName: COPILOT_CLI_OTLP_AGENT, hookEvent: JSON.stringify(end) }) + '\n';
       const written = await appendSpool(sessionId, 'hooks', line, undefined, undefined, async () =>
-        endOfLastRun(await readHookRecordsLocked(sessionId), startMs) !== undefined);
+        runEndedOrSuperseded(await readHookRecordsLocked(sessionId), startMs, endedMs));
       // A real end that won the race is enriched by its own hook batch (or by the next tick).
       if (written) {
         scheduleCopilotUsageEnrichment(COPILOT_CLI_OTLP_AGENT, [end]);

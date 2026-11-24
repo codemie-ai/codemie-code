@@ -1,5 +1,5 @@
 // Only the daemon's recovery append can be made to fail: the test's own seeding goes straight through.
-const faults = vi.hoisted(() => ({ append: false, reads: 0 }));
+const faults = vi.hoisted(() => ({ append: false, reads: 0, beforeAppend: undefined as (() => Promise<void>) | undefined }));
 vi.mock('@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.transcript.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.transcript.js')>();
   return { ...actual, readTranscriptFromAsync: (...args: Parameters<typeof actual.readTranscriptFromAsync>) => { faults.reads += 1; return actual.readTranscriptFromAsync(...args); } };
@@ -8,8 +8,13 @@ vi.mock('../spool-io.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../spool-io.js')>();
   return {
     ...actual,
-    appendSpool: (...args: Parameters<typeof actual.appendSpool>) =>
-      faults.append ? Promise.reject(new Error('EIO')) : actual.appendSpool(...args),
+    appendSpool: async (...args: Parameters<typeof actual.appendSpool>) => {
+      if (faults.append) throw new Error('EIO');
+      const race = faults.beforeAppend; // a write that lands after the caller decided, before its append takes the lock
+      faults.beforeAppend = undefined;
+      await race?.();
+      return actual.appendSpool(...args);
+    },
   };
 });
 
@@ -207,6 +212,49 @@ describe('recoverMissingSessionEnds', () => {
     await Promise.all([recoverMissingSessionEnds([SID], () => NOW), appendHook(late)]);
     await new Promise((resolve) => setTimeout(resolve, 400));
     expect(count(await spooled(), 'agent.session.end')).toBe(1);
+  });
+
+  it('a late native end stamped AFTER the shutdown (wall-clock fallback) is still the same run: no second end', async () => {
+    await spool([hook('agent.session.start', 0)]);
+    await writeTranscript(runLines(0, 5_000));
+    await recover();
+
+    for (const ms of [5_000, 9_000, NOW - T0]) {
+      expect(await appendHook(hook('agent.session.end', ms))).toBe(false);
+    }
+    expect(count(await spooled(), 'agent.session.end')).toBe(1);
+  });
+
+  it('a native end after a resume start is the resumed run\'s own end, not covered by the first run\'s recovered end', async () => {
+    await spool([hook('agent.session.start', 0)]);
+    await writeTranscript(runLines(0, 5_000));
+    await recover();
+    await spool([hook('agent.session.start', 60_000, { source: 'resume' })]);
+
+    expect(await appendHook(hook('agent.session.end', 70_000))).toBe(true);
+    expect((await spooled()).filter((e) => e['type'] === 'agent.session.end').map((e) => e['timestamp'])).toEqual([at(5_000), at(70_000)]);
+  });
+
+  it('a resume start that lands before the recovery append (after the old shutdown) does not drop the old run\'s end', async () => {
+    await spool([hook('agent.session.start', 0)]);
+    await writeTranscript(runLines(0, 5_000));
+    faults.beforeAppend = () => spool([hook('agent.session.start', 60_000, { source: 'resume' })]);
+
+    await recoverMissingSessionEnds([SID], () => NOW);
+
+    expect((await spooled()).filter((e) => e['type'] === 'agent.session.end').map((e) => e['timestamp'])).toEqual([at(5_000)]);
+  });
+
+  it('a start at or before the shutdown that lands before the append makes it that run\'s evidence: no end for the older run, the next tick ends the newer one', async () => {
+    await spool([hook('agent.session.start', 0)]);
+    await writeTranscript(runLines(0, 5_000));
+    faults.beforeAppend = () => spool([hook('agent.session.start', 4_000, { source: 'resume' })]);
+
+    await recoverMissingSessionEnds([SID], () => NOW);
+    expect(count(await spooled(), 'agent.session.end')).toBe(0);
+
+    await recover();
+    expect((await spooled()).filter((e) => e['type'] === 'agent.session.end').map((e) => e['timestamp'])).toEqual([at(5_000)]);
   });
 
   it('retries after a failed append: nothing is remembered, the next tick ends the session', async () => {
