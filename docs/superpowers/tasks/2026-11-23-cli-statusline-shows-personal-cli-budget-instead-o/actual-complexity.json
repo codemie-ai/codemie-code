@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "generated": "2026-11-24T12:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 10,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 3,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "All changes are within the Claude plugin's statusline subsystem (src/agents/plugins/claude/). The fix introduces selectBudgetRow alongside matchBudgetRow, updates resolveBudget to read the active project from CODEMIE_PROJECT env/profile config, and bumps the cache schema key — entirely self-contained in one component."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "3 files modified (statusline.ts, statusline.test.ts, statusline-installer.ts), 0 new files, all within a single directory tree — matches the S rubric of 3-4 modified, 0-1 new, one directory exactly. Calibration: bundle S example epmcdme-10102 also scores S at 3 files; agreement is strong."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "branch": "fix/EPMCDME-16845-statusline-project-budget",
+  "head": "3a494751e78609d8c6770b4d8e64dfa9419ec93c",
+  "runner": "npm",
+  "started_at": "2026-11-24T18:36:00.000Z",
+  "completed_at": "2026-11-24T18:42:00.000Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1000,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4000,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5000,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 9000,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 176000,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 45000,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0
+    },
+    {
+      "id": "secrets",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: 'No staged changes to scan' — script operates on staged files only (pre-commit mode); nothing is staged so Gitleaks did not run. CI runs the same scan unconditionally against the full diff and will settle this check."
+    }
+  ],
+  "failures": {}
+}
