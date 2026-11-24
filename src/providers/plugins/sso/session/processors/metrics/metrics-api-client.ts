@@ -29,8 +29,8 @@ import { logger } from '../../../../../../utils/logger.js';
 import { detectGitBranch } from '../../../../../../utils/processes.js';
 import { extractRepository } from '../../../../../../utils/paths.js';
 import { encodeAttributionHeader, rawProjectHeader } from '../../../../../../utils/header-value.js';
-import { createHash } from 'node:crypto';
 import { reduceBranch, reduceRecord } from '@/agents/core/analytics-reduction.js';
+import { keyedDigest } from '@/agents/core/analytics-event-key.js';
 import { findNearestConfigDir } from '@/agents/core/event-fields/identity-fields.js';
 import { isReductionOn } from '@/utils/analytics-reduction-setting.js';
 import { clearAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
@@ -62,10 +62,10 @@ async function reduceMetric(metric: SessionMetric, workingDirectory?: string): P
   const attributes: Record<string, unknown> = { ...metric.attributes, branch: reduceBranch(rawBranch) };
   const deltaId = metric.attributes.delta_id;
   if (deltaId !== undefined) {
-    // delta_id ends in `:<branch>`; swap the branch for a digest so ids of different branches stay distinct
+    // delta_id ends in `:<branch>`; swap the branch for a keyed digest (not a plain hash, branch names are guessable)
     const suffix = `:${rawBranch}`;
     attributes.delta_id = deltaId.endsWith(suffix)
-      ? `${deltaId.slice(0, -suffix.length)}:${createHash('sha256').update(rawBranch).digest('hex').slice(0, 12)}`
+      ? `${deltaId.slice(0, -suffix.length)}:${keyedDigest(rawBranch).slice(0, 12)}`
       : deltaId;
   }
   return { ...metric, attributes: reduceRecord(attributes, METRICS_KEEP_LIST) as unknown as SessionMetric['attributes'] };

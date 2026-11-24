@@ -10,6 +10,8 @@ import { join } from 'node:path';
 import { MetricsSender } from '../metrics-api-client.js';
 import type { SessionMetric } from '../metrics-types.js';
 import { logger } from '@/utils/logger.js';
+import { createHash } from 'node:crypto';
+import { keyedDigest, resetEventKeyCache } from '@/agents/core/analytics-event-key.js';
 
 const BRANCH = 'feature/EPMCDME-17748-secret-customer-name';
 
@@ -123,6 +125,32 @@ describe('MetricsSender prompt reduction', () => {
     const second = JSON.parse((fetchMock.mock.calls[1][1] as { body: string }).body).attributes;
     expect(first.branch).toBe('REDACTED:BRANCH');
     expect(first.delta_id).not.toBe(second.delta_id);
+  });
+
+  it('keys the reduced delta_id branch suffix with the local analytics key, not a plain sha256', async () => {
+    setReduction(project, true);
+    resetEventKeyCache();
+    await sender().sendSessionMetric(toolUsageMetric(), project);
+
+    const deltaId = posted().attributes.delta_id as string;
+    const suffix = deltaId.slice('batch-1:'.length);
+    expect(suffix).not.toBe(createHash('sha256').update(BRANCH).digest('hex').slice(0, 12));
+    expect(suffix).toBe(keyedDigest(BRANCH).slice(0, 12));
+  });
+
+  it('gives different branches different reduced delta_id suffixes', async () => {
+    setReduction(project, true);
+    resetEventKeyCache();
+    const a = toolUsageMetric();
+    a.attributes.branch = 'feature/one'; a.attributes.delta_id = 'batch-1:feature/one';
+    const b = toolUsageMetric();
+    b.attributes.branch = 'feature/two'; b.attributes.delta_id = 'batch-1:feature/two';
+    await sender().sendSessionMetric(a, project);
+    await sender().sendSessionMetric(b, project);
+
+    const first = JSON.parse(fetchMock.mock.calls[0][1].body).attributes.delta_id as string;
+    const second = JSON.parse(fetchMock.mock.calls[1][1].body).attributes.delta_id as string;
+    expect(first).not.toBe(second);
   });
 
   it('does not mutate the metric it was given', async () => {
