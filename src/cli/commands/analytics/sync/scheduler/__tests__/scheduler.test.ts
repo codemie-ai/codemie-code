@@ -94,7 +94,7 @@ const TIMER_PATH = join(UNIT_DIR, `${SYSTEMD_UNIT_NAME}.timer`);
 describe('preflight', () => {
   it('throws SyncSchedulerUnsupportedError for an unsupported platform, calling exec nothing', async () => {
     const { exec, calls } = fakeExec([]);
-    const scheduler = createScheduler(baseDeps('freebsd' as NodeJS.Platform, exec, fakeFs()));
+    const scheduler = createScheduler(baseDeps('freebsd' as NodeJS.Platform, exec, fakeFs()), SYSTEMD_UNIT_NAME);
 
     await expect(scheduler.preflight()).rejects.toThrow(SyncSchedulerUnsupportedError);
     expect(calls).toHaveLength(0);
@@ -102,7 +102,7 @@ describe('preflight', () => {
 
   it('passes on darwin without calling exec', async () => {
     const { exec, calls } = fakeExec([]);
-    const scheduler = createScheduler(baseDeps('darwin', exec, fakeFs()));
+    const scheduler = createScheduler(baseDeps('darwin', exec, fakeFs()), LAUNCHD_LABEL);
 
     await expect(scheduler.preflight()).resolves.toBeUndefined();
     expect(calls).toHaveLength(0);
@@ -110,7 +110,7 @@ describe('preflight', () => {
 
   it('passes on win32 without calling exec', async () => {
     const { exec, calls } = fakeExec([]);
-    const scheduler = createScheduler(baseDeps('win32', exec, fakeFs()));
+    const scheduler = createScheduler(baseDeps('win32', exec, fakeFs()), WINDOWS_TASK_NAME);
 
     await expect(scheduler.preflight()).resolves.toBeUndefined();
     expect(calls).toHaveLength(0);
@@ -118,7 +118,7 @@ describe('preflight', () => {
 
   it('on linux, checks systemctl --user and passes when it succeeds', async () => {
     const { exec, calls } = fakeExec([OK]);
-    const scheduler = createScheduler(baseDeps('linux', exec, fakeFs()));
+    const scheduler = createScheduler(baseDeps('linux', exec, fakeFs()), SYSTEMD_UNIT_NAME);
 
     await expect(scheduler.preflight()).resolves.toBeUndefined();
     expect(calls).toEqual([{ command: 'systemctl', args: ['--user', 'show-environment'] }]);
@@ -126,7 +126,7 @@ describe('preflight', () => {
 
   it('on linux, fails when systemctl --user errors and calls nothing else', async () => {
     const { exec, calls } = fakeExec([FAIL]);
-    const scheduler = createScheduler(baseDeps('linux', exec, fakeFs()));
+    const scheduler = createScheduler(baseDeps('linux', exec, fakeFs()), SYSTEMD_UNIT_NAME);
 
     await expect(scheduler.preflight()).rejects.toThrow(SyncSchedulerUnsupportedError);
     expect(calls).toHaveLength(1);
@@ -135,7 +135,7 @@ describe('preflight', () => {
 
   it('on linux, fails when systemctl --user is unreachable (exec rejects) and calls nothing else', async () => {
     const { exec, calls } = fakeExec([new Error('ENOENT')]);
-    const scheduler = createScheduler(baseDeps('linux', exec, fakeFs()));
+    const scheduler = createScheduler(baseDeps('linux', exec, fakeFs()), SYSTEMD_UNIT_NAME);
 
     await expect(scheduler.preflight()).rejects.toThrow(SyncSchedulerUnsupportedError);
     expect(calls).toHaveLength(1);
@@ -146,7 +146,7 @@ describe('register on darwin', () => {
   it('writes the plist then runs bootout before bootstrap', async () => {
     const { exec, calls } = fakeExec([FAIL, OK]); // bootout tolerates "not loaded" (non-zero)
     const fs = fakeFs();
-    const scheduler = createScheduler(baseDeps('darwin', exec, fs));
+    const scheduler = createScheduler(baseDeps('darwin', exec, fs), LAUNCHD_LABEL);
 
     const result = await scheduler.register(CMD, '07:05');
 
@@ -162,7 +162,7 @@ describe('register on darwin', () => {
 
   it('throws SyncSchedulerRegisterError when bootstrap fails twice', async () => {
     const { exec, calls } = fakeExec([FAIL, FAIL, FAIL]);
-    const scheduler = createScheduler(baseDeps('darwin', exec, fakeFs()));
+    const scheduler = createScheduler(baseDeps('darwin', exec, fakeFs()), LAUNCHD_LABEL);
 
     await expect(scheduler.register(CMD, '07:05')).rejects.toThrow(SyncSchedulerRegisterError);
     expect(calls.filter((c) => c.args[0] === 'bootstrap')).toHaveLength(2);
@@ -173,7 +173,7 @@ describe('register on darwin', () => {
     const { exec, calls } = fakeExec([OK, busy, OK]);
     const sleeps: number[] = [];
     const deps = { ...baseDeps('darwin', exec, fakeFs()), sleep: async (ms: number) => void sleeps.push(ms) };
-    const scheduler = createScheduler(deps);
+    const scheduler = createScheduler(deps, LAUNCHD_LABEL);
 
     await expect(scheduler.register(CMD, '07:05')).resolves.toEqual({});
     expect(calls.filter((c) => c.args[0] === 'bootstrap')).toHaveLength(2);
@@ -183,7 +183,7 @@ describe('register on darwin', () => {
   it('points launchd stdout/stderr at its own log, not the run log, and creates the logs dir', async () => {
     const { exec } = fakeExec([OK, OK]);
     const fs = fakeFs();
-    const scheduler = createScheduler(baseDeps('darwin', exec, fs));
+    const scheduler = createScheduler(baseDeps('darwin', exec, fs), LAUNCHD_LABEL);
 
     await scheduler.register(CMD, '07:05');
 
@@ -199,7 +199,7 @@ describe('register on linux', () => {
   it('writes service+timer, then daemon-reload, enable --now, loginctl enable-linger', async () => {
     const { exec, calls } = fakeExec([OK, OK, OK]);
     const fs = fakeFs();
-    const scheduler = createScheduler(baseDeps('linux', exec, fs));
+    const scheduler = createScheduler(baseDeps('linux', exec, fs), SYSTEMD_UNIT_NAME);
 
     const result = await scheduler.register(CMD, '07:05');
 
@@ -221,7 +221,7 @@ describe('register on linux', () => {
 
   it('returns a lingerWarning (not a throw) when loginctl enable-linger fails', async () => {
     const { exec } = fakeExec([OK, OK, FAIL]);
-    const scheduler = createScheduler(baseDeps('linux', exec, fakeFs()));
+    const scheduler = createScheduler(baseDeps('linux', exec, fakeFs()), SYSTEMD_UNIT_NAME);
 
     const result = await scheduler.register(CMD, '07:05');
 
@@ -230,7 +230,7 @@ describe('register on linux', () => {
 
   it('returns a lingerWarning when loginctl enable-linger rejects outright', async () => {
     const { exec } = fakeExec([OK, OK, new Error('loginctl not found')]);
-    const scheduler = createScheduler(baseDeps('linux', exec, fakeFs()));
+    const scheduler = createScheduler(baseDeps('linux', exec, fakeFs()), SYSTEMD_UNIT_NAME);
 
     const result = await scheduler.register(CMD, '07:05');
 
@@ -239,7 +239,7 @@ describe('register on linux', () => {
 
   it('throws SyncSchedulerRegisterError when daemon-reload fails, without calling enable --now', async () => {
     const { exec, calls } = fakeExec([FAIL]);
-    const scheduler = createScheduler(baseDeps('linux', exec, fakeFs()));
+    const scheduler = createScheduler(baseDeps('linux', exec, fakeFs()), SYSTEMD_UNIT_NAME);
 
     await expect(scheduler.register(CMD, '07:05')).rejects.toThrow(SyncSchedulerRegisterError);
     expect(calls).toHaveLength(1);
@@ -247,7 +247,7 @@ describe('register on linux', () => {
 
   it('throws SyncSchedulerRegisterError when enable --now fails', async () => {
     const { exec } = fakeExec([OK, FAIL]);
-    const scheduler = createScheduler(baseDeps('linux', exec, fakeFs()));
+    const scheduler = createScheduler(baseDeps('linux', exec, fakeFs()), SYSTEMD_UNIT_NAME);
 
     await expect(scheduler.register(CMD, '07:05')).rejects.toThrow(SyncSchedulerRegisterError);
   });
@@ -257,7 +257,7 @@ describe('register on win32', () => {
   it('writes the task XML as a Buffer, then runs /Delete /F before /Create /XML', async () => {
     const { exec, calls } = fakeExec([FAIL, OK]); // delete tolerates "task not found"
     const fs = fakeFs();
-    const scheduler = createScheduler(baseDeps('win32', exec, fs));
+    const scheduler = createScheduler(baseDeps('win32', exec, fs), WINDOWS_TASK_NAME);
 
     const result = await scheduler.register(CMD, '07:05');
 
@@ -274,7 +274,7 @@ describe('register on win32', () => {
 
   it('throws SyncSchedulerRegisterError when /Create /XML fails', async () => {
     const { exec } = fakeExec([FAIL, FAIL]);
-    const scheduler = createScheduler(baseDeps('win32', exec, fakeFs()));
+    const scheduler = createScheduler(baseDeps('win32', exec, fakeFs()), WINDOWS_TASK_NAME);
 
     await expect(scheduler.register(CMD, '07:05')).rejects.toThrow(SyncSchedulerRegisterError);
   });
@@ -283,43 +283,43 @@ describe('register on win32', () => {
 describe('query', () => {
   it('darwin: maps a successful launchctl print to enabled', async () => {
     const { exec } = fakeExec([OK]);
-    const scheduler = createScheduler(baseDeps('darwin', exec, fakeFs()));
+    const scheduler = createScheduler(baseDeps('darwin', exec, fakeFs()), LAUNCHD_LABEL);
     await expect(scheduler.query()).resolves.toBe('enabled');
   });
 
   it('darwin: maps a not-listed job (print rejects) to disabled', async () => {
     const { exec } = fakeExec([new Error('Could not find service')]);
-    const scheduler = createScheduler(baseDeps('darwin', exec, fakeFs()));
+    const scheduler = createScheduler(baseDeps('darwin', exec, fakeFs()), LAUNCHD_LABEL);
     await expect(scheduler.query()).resolves.toBe('disabled');
   });
 
   it('linux: maps is-enabled stdout "enabled" to enabled', async () => {
     const { exec } = fakeExec([{ code: 0, stdout: 'enabled', stderr: '' }]);
-    const scheduler = createScheduler(baseDeps('linux', exec, fakeFs()));
+    const scheduler = createScheduler(baseDeps('linux', exec, fakeFs()), SYSTEMD_UNIT_NAME);
     await expect(scheduler.query()).resolves.toBe('enabled');
   });
 
   it('linux: maps is-enabled stdout "disabled" to disabled', async () => {
     const { exec } = fakeExec([{ code: 1, stdout: 'disabled', stderr: '' }]);
-    const scheduler = createScheduler(baseDeps('linux', exec, fakeFs()));
+    const scheduler = createScheduler(baseDeps('linux', exec, fakeFs()), SYSTEMD_UNIT_NAME);
     await expect(scheduler.query()).resolves.toBe('disabled');
   });
 
   it('win32: maps a schtasks "Status: Disabled" line to disabled', async () => {
     const { exec } = fakeExec([{ code: 0, stdout: 'TaskName: X\r\nStatus:               Disabled\r\n', stderr: '' }]);
-    const scheduler = createScheduler(baseDeps('win32', exec, fakeFs()));
+    const scheduler = createScheduler(baseDeps('win32', exec, fakeFs()), WINDOWS_TASK_NAME);
     await expect(scheduler.query()).resolves.toBe('disabled');
   });
 
   it('win32: maps a schtasks "Status: Ready" line to enabled', async () => {
     const { exec } = fakeExec([{ code: 0, stdout: 'TaskName: X\r\nStatus:               Ready\r\n', stderr: '' }]);
-    const scheduler = createScheduler(baseDeps('win32', exec, fakeFs()));
+    const scheduler = createScheduler(baseDeps('win32', exec, fakeFs()), WINDOWS_TASK_NAME);
     await expect(scheduler.query()).resolves.toBe('enabled');
   });
 
   it('win32: maps schtasks failure (task not found) to disabled', async () => {
     const { exec } = fakeExec([new Error('ERROR: The system cannot find the file specified.')]);
-    const scheduler = createScheduler(baseDeps('win32', exec, fakeFs()));
+    const scheduler = createScheduler(baseDeps('win32', exec, fakeFs()), WINDOWS_TASK_NAME);
     await expect(scheduler.query()).resolves.toBe('disabled');
   });
 });
@@ -328,7 +328,7 @@ describe('unregister', () => {
   it('darwin: boots the job out and removes the plist, returning true', async () => {
     const { exec, calls } = fakeExec([OK]);
     const fs = fakeFs([PLIST_PATH]);
-    const scheduler = createScheduler(baseDeps('darwin', exec, fs));
+    const scheduler = createScheduler(baseDeps('darwin', exec, fs), LAUNCHD_LABEL);
 
     const removed = await scheduler.unregister();
 
@@ -340,7 +340,7 @@ describe('unregister', () => {
   it('darwin: removes a plist that is not loaded and still reports it removed', async () => {
     const { exec } = fakeExec([FAIL]);
     const fs = fakeFs([PLIST_PATH]);
-    const scheduler = createScheduler(baseDeps('darwin', exec, fs));
+    const scheduler = createScheduler(baseDeps('darwin', exec, fs), LAUNCHD_LABEL);
 
     await expect(scheduler.unregister()).resolves.toBe(true);
     expect(fs.removed).toContain(PLIST_PATH);
@@ -348,7 +348,7 @@ describe('unregister', () => {
 
   it('darwin: returns false and tolerates absence when nothing was registered', async () => {
     const { exec } = fakeExec([new Error('not found')]);
-    const scheduler = createScheduler(baseDeps('darwin', exec, fakeFs()));
+    const scheduler = createScheduler(baseDeps('darwin', exec, fakeFs()), LAUNCHD_LABEL);
 
     await expect(scheduler.unregister()).resolves.toBe(false);
   });
@@ -356,7 +356,7 @@ describe('unregister', () => {
   it('linux: disables a timer that is already disabled, removes both units and reloads systemd', async () => {
     const { exec, calls } = fakeExec([OK, OK]);
     const fs = fakeFs([SERVICE_PATH, TIMER_PATH]);
-    const scheduler = createScheduler(baseDeps('linux', exec, fs));
+    const scheduler = createScheduler(baseDeps('linux', exec, fs), SYSTEMD_UNIT_NAME);
 
     const removed = await scheduler.unregister();
 
@@ -370,14 +370,14 @@ describe('unregister', () => {
 
   it('linux: returns false when no unit exists', async () => {
     const { exec } = fakeExec([FAIL]);
-    const scheduler = createScheduler(baseDeps('linux', exec, fakeFs()));
+    const scheduler = createScheduler(baseDeps('linux', exec, fakeFs()), SYSTEMD_UNIT_NAME);
 
     await expect(scheduler.unregister()).resolves.toBe(false);
   });
 
   it('win32: deletes a task disabled outside the CLI and reports it removed', async () => {
     const { exec, calls } = fakeExec([OK]);
-    const scheduler = createScheduler(baseDeps('win32', exec, fakeFs()));
+    const scheduler = createScheduler(baseDeps('win32', exec, fakeFs()), WINDOWS_TASK_NAME);
 
     const removed = await scheduler.unregister();
 
@@ -387,7 +387,7 @@ describe('unregister', () => {
 
   it('win32: returns false when no task exists', async () => {
     const { exec } = fakeExec([FAIL]);
-    const scheduler = createScheduler(baseDeps('win32', exec, fakeFs()));
+    const scheduler = createScheduler(baseDeps('win32', exec, fakeFs()), WINDOWS_TASK_NAME);
 
     await expect(scheduler.unregister()).resolves.toBe(false);
   });

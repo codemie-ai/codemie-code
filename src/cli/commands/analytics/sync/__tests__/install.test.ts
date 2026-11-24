@@ -5,6 +5,7 @@ import { getCodemiePath } from '@/utils/paths.js';
 
 import { runInstall } from '../install.js';
 import type { InstallDeps } from '../install.js';
+import { defaultSchedulerName } from '../scheduler/index.js';
 import type { RegisterResult, Scheduler } from '../scheduler/index.js';
 import { gitHint } from '../targets/git-client.js';
 import type { InstallOptions } from '../types.js';
@@ -47,7 +48,7 @@ function makeDeps(overrides: Partial<InstallDeps> & { scheduler?: Scheduler } = 
   const removeWorkingCopy = vi.fn(async () => {});
 
   const deps: InstallDeps = {
-    scheduler,
+    schedulerFor: () => scheduler,
     writeSettings,
     deleteSettings,
     readSettingsRaw: async () => null,
@@ -55,6 +56,7 @@ function makeDeps(overrides: Partial<InstallDeps> & { scheduler?: Scheduler } = 
     resolveIdentity: async () => 'dev@example.com',
     isTTY: false,
     promptEmail,
+    promptTaskName: async () => '',
     saveUserEmail,
     collectorDirExists: () => false,
     resolveJobCommand: async () => ({
@@ -173,7 +175,7 @@ describe('runInstall', () => {
     expect(register).toHaveBeenLastCalledWith(expect.anything(), '05:30');
     const output = printed.join('\n');
     expect(output).toContain('Install failed: schtasks /Create failed: access denied');
-    expect(output).toContain('previous settings and daily job (05:30 local) were restored');
+    expect(output).toContain(`previous settings and daily job (${defaultSchedulerName(process.platform)} at 05:30 local) were restored`);
   });
 
   it('says delivery is stopped when the previous job cannot be registered again', async () => {
@@ -192,7 +194,7 @@ describe('runInstall', () => {
 
     expect(code).toBe(1);
     expect(restoreSettingsRaw).toHaveBeenCalledTimes(1);
-    expect(printed.join('\n')).toContain('Daily delivery is stopped on this machine until install succeeds.');
+    expect(printed.join('\n')).toContain('Daily delivery may be stopped on this machine until install succeeds.');
   });
 
   it('restores the previous settings and also the job when writing the new settings fails', async () => {

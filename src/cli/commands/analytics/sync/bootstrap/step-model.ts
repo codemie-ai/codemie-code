@@ -40,7 +40,7 @@ export interface StepDescriptor {
 }
 
 /**
- * All 10 bootstrap steps in order.
+ * All 11 bootstrap steps in order.
  *
  * First 5 are webhook-only (target, channel, folder, timezone, flow, trigger-url),
  * next is git-only (git-repo), remaining are always-shown (external, lookback, developers).
@@ -89,6 +89,11 @@ export const ALL_STEPS: StepDescriptor[] = [
   {
     id: 'lookback',
     title: 'Lookback',
+    targets: 'always',
+  },
+  {
+    id: 'task-name',
+    title: 'Scheduler task name',
     targets: 'always',
   },
   {

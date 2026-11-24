@@ -199,6 +199,10 @@ function createSyncInstallCommand(): Command {
     .option('--at <HH:MM>', 'Daily run time, 24-hour local time (default: 03:00)')
     .option('--lookback-days <n>', 'Session window looked back on each run, 1-30 (default: 7)')
     .option('--include-external <policy>', 'Native agent sessions CodeMie did not launch: windows, always, or never (default: never)')
+    .option(
+      '--task-name <suffix>',
+      'Scheduler task name suffix (1-32 chars: letters, digits, ".", "_", "-"), appended to the default name: launchd "com.epam.codemie.analytics-sync.<suffix>", systemd "codemie-analytics-sync-<suffix>", Windows "CodeMie Analytics Sync - <suffix>"'
+    )
     .action(async (options: InstallOptions) => {
       const { runInstall, createRealInstallDeps } = await import('./sync/install.js');
       process.exitCode = await runInstall(options, createRealInstallDeps());

@@ -179,6 +179,34 @@ codemie analytics sync install --webhook-b64 <value> --at 09:30 --lookback-days 
 Install always takes the full set of options: anything you leave out goes back to its
 default (`--at 03:00`, the CLI's lookback, `--include-external never`).
 
+### Name the scheduled job
+
+By default the job uses the fixed name shown in [Platform notes](#platform-notes). Add an optional
+suffix with `--task-name`:
+
+```bash
+codemie analytics sync install --webhook-b64 <value> --task-name team-a
+```
+
+In a terminal, install asks for the suffix when you don't pass the flag; press Enter to keep
+the default name. Without a terminal and without the flag, install uses the default and never
+prompts.
+
+The tool adds a fixed prefix, so a custom job can't collide with a task you own:
+
+| OS | Default | With suffix `X` |
+| --- | --- | --- |
+| macOS | `com.epam.codemie.analytics-sync` | `com.epam.codemie.analytics-sync.X` |
+| Linux | `codemie-analytics-sync` | `codemie-analytics-sync-X` |
+| Windows | `CodeMie Analytics Sync` | `CodeMie Analytics Sync - X` |
+
+The suffix is 1 to 32 characters from letters, digits, `.`, `_` and `-`, and must not start
+with `.` or `-`. A custom suffix is saved as `taskName` in `analytics-sync.json`; a default
+install writes nothing. Reinstalling under a new suffix replaces the old job (and the
+default-name job), so one job remains. `sync uninstall` and `sync status` resolve the name from the saved
+settings; if the settings file can't be read, they report that instead of guessing a name.
+`sync status` prints the resolved name on an `OS job name` line.
+
 ### See what it is doing
 
 ```bash
@@ -245,6 +273,11 @@ launchctl kickstart "gui/$(id -u)/com.epam.codemie.analytics-sync"   # macOS
 systemctl --user start codemie-analytics-sync.service                # Linux
 schtasks /Run /TN "CodeMie Analytics Sync"                           # Windows
 ```
+
+These use the default names. If you installed with `--task-name`, use the resolved name
+instead (see `OS job name` in `codemie analytics sync status`), for example
+`com.epam.codemie.analytics-sync.team-a`, `codemie-analytics-sync-team-a.service` or
+`"CodeMie Analytics Sync - team-a"`.
 
 **Logged `ok`, but the file never appeared?** The webhook answers `202 Accepted` when the
 flow _starts_, not when it has saved anything. A failure after that shows only in the flow's
@@ -351,6 +384,9 @@ The job records the **absolute** paths to `node` and to the CLI's real entry scr
 schedulers don't run with your interactive `PATH`. On Windows it never goes through a `.cmd`
 shim.
 
+The names above are the defaults; see [Name the scheduled job](#name-the-scheduled-job) for
+custom suffixes.
+
 **External sessions are left out by default, on every platform.** "External" means an agent
 session CodeMie did not launch, e.g. running `claude` directly. `always` includes them on every
 machine; `windows` includes them on Windows machines only.
@@ -414,7 +450,7 @@ only configuration. Every path below is under the CodeMie home, `~/.codemie` by 
 
 | Path | Written by | Holds |
 | --- | --- | --- |
-| `analytics-sync.json` | `sync install` | webhook URL, git target, run time, lookback (when fixed), policy (mode 600) |
+| `analytics-sync.json` | `sync install` | webhook URL, git target, run time, lookback (when fixed), policy, `taskName` (custom scheduler suffix only) (mode 600) |
 | `analytics-last-sent` | each successful webhook delivery | the time of the last confirmed send |
 | `analytics-last-sent-git` | each successful git delivery | the same, for the git target |
 | `analytics-sync-repo/` | each git delivery | a shallow working copy of the team repository |

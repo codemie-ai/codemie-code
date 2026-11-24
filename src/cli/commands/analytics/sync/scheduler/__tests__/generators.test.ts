@@ -14,7 +14,7 @@ const CMD: JobCommand = {
 };
 
 describe('launchdPlist', () => {
-  const plist = launchdPlist(CMD, '07:05', '/Users/dev/.codemie/logs/analytics-sync.log');
+  const plist = launchdPlist(CMD, '07:05', '/Users/dev/.codemie/logs/analytics-sync.log', 'com.epam.codemie.analytics-sync');
 
   it('contains the launchd label', () => {
     expect(plist).toContain('<string>com.epam.codemie.analytics-sync</string>');

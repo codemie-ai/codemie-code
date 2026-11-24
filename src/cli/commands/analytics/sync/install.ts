@@ -38,7 +38,15 @@ import {
 import { lookbackText, webhookHost } from './format.js';
 import { EMAIL_REGEX, realIdentityDeps, resolveSyncIdentity } from './identity.js';
 import { errorMessage, redactSecrets } from './redact.js';
-import { createRealSchedulerDeps, createScheduler, resolveJobCommand } from './scheduler/index.js';
+import {
+  createRealSchedulerDeps,
+  createScheduler,
+  defaultSchedulerName,
+  ownedNames,
+  resolveJobCommand,
+  resolveSchedulerName,
+  validateSchedulerSuffix
+} from './scheduler/index.js';
 import type { JobCommand, RegisterResult, Scheduler } from './scheduler/index.js';
 import { createGitRunner, gitHint } from './targets/git-client.js';
 import { GitTarget, gitWorkingCopyPath } from './targets/git-target.js';
@@ -47,7 +55,8 @@ import type { GitSettings, InstallOptions, SyncSettings } from './types.js';
 /** Every side effect `runInstall` needs, injected so tests run without a real scheduler, fs
  * or terminal. `createRealInstallDeps()` below wires the real ones. */
 export interface InstallDeps {
-  scheduler: Scheduler;
+  /** A scheduler for one job name (see `./scheduler/index.ts`). */
+  schedulerFor(name: string): Scheduler;
   writeSettings(settings: SyncSettings): Promise<void>;
   deleteSettings(): Promise<boolean>;
   /** The current settings file as stored, or `null` when there is none. */
@@ -60,6 +69,10 @@ export interface InstallDeps {
   isTTY: boolean;
   /** Only called when `isTTY` is true and `resolveIdentity()` throws. */
   promptEmail(): Promise<string>;
+  /** Only called when `isTTY` is true and no `--task-name` was given. `prefixHint` is the full
+   * name up to the suffix, `defaultName` the name an empty answer keeps. Returns the raw
+   * answer; empty means the default. */
+  promptTaskName(prefixHint: string, defaultName: string): Promise<string>;
   saveUserEmail(email: string): Promise<void>;
   /** Whether the standalone collector's clone is still present (`~/.codemie/codemie-onboarding`). */
   collectorDirExists(): boolean;
@@ -153,7 +166,7 @@ function printGitFailure(deps: InstallDeps, err: unknown): void {
 async function prepareSettings(opts: InstallOptions, deps: InstallDeps): Promise<SyncSettings | null> {
   try {
     const settings = validateInstallOptions(opts);
-    await deps.scheduler.preflight();
+    await deps.schedulerFor(defaultSchedulerName(process.platform)).preflight();
     return settings;
   } catch (err) {
     printFailure(deps, err);
@@ -202,18 +215,43 @@ async function testGitTarget(deps: InstallDeps, settings: SyncSettings, email: s
   }
 }
 
-/** What `install` is about to replace: the settings file as stored and whether a job ran. */
+/** An owned job that was enabled before install: its name and the run time it had. */
+interface PreviousJob {
+  name: string;
+  at: string;
+}
+
+/** What `install` is about to replace: the settings file as stored and the owned jobs that ran. */
 interface PreviousInstall {
   settingsRaw: string | null;
-  jobEnabled: boolean;
-  /** The previous run time, or the default when the old file names none (or is unreadable). */
-  at: string;
+  jobs: PreviousJob[];
+  /** Every owned name that was queried — the only names install may unregister. */
+  names: string[];
+}
+
+/** The saved suffix in the stored settings, or `undefined` when absent, invalid or unreadable
+ * (then only the default name is owned, so no path is built from a bad value). */
+function previousTaskName(settingsRaw: string | null): string | undefined {
+  try {
+    const taskName = (JSON.parse(settingsRaw ?? '{}') as { taskName?: unknown }).taskName;
+    return typeof taskName === 'string' ? validateSchedulerSuffix(taskName) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function snapshotPreviousInstall(deps: InstallDeps): Promise<PreviousInstall> {
   const settingsRaw = await deps.readSettingsRaw().catch(() => null);
-  const jobEnabled = (await deps.scheduler.query().catch(() => 'disabled')) === 'enabled';
-  return { settingsRaw, jobEnabled, at: previousRunTime(settingsRaw) };
+  const at = previousRunTime(settingsRaw);
+  const names = ownedNames({ taskName: previousTaskName(settingsRaw) }, process.platform);
+  const jobs: PreviousJob[] = [];
+  for (const name of names) {
+    const state = await deps.schedulerFor(name).query().catch(() => 'disabled');
+    if (state === 'enabled') {
+      jobs.push({ name, at });
+    }
+  }
+  return { settingsRaw, jobs, names };
 }
 
 function previousRunTime(settingsRaw: string | null): string {
@@ -226,13 +264,19 @@ function previousRunTime(settingsRaw: string | null): string {
 }
 
 /**
- * After a failed replace, puts back what was there before it — the settings file as stored,
- * and a daily job when one was enabled — and tells the developer which state the machine is
- * in. The job is re-registered as the CLI's own, from the restored settings: a standalone
- * collector's settings are collector-compatible, so its daily delivery carries on.
+ * After a failed replace, unregisters the new name, puts back the settings file as stored,
+ * and re-registers every job that was enabled before — each under its own name, with its own
+ * schedule — then tells the developer which state the machine is in. The jobs are registered
+ * as the CLI's own, from the restored settings: a standalone collector's settings are
+ * collector-compatible, so its daily delivery carries on.
  */
-async function restorePreviousInstall(deps: InstallDeps, previous: PreviousInstall, cmd: JobCommand): Promise<void> {
-  await deps.scheduler.unregister().catch(() => undefined);
+async function restorePreviousInstall(
+  deps: InstallDeps,
+  previous: PreviousInstall,
+  cmd: JobCommand,
+  newName: string
+): Promise<void> {
+  await deps.schedulerFor(newName).unregister().catch(() => undefined);
 
   if (previous.settingsRaw === null) {
     await deps.deleteSettings().catch(() => undefined);
@@ -246,7 +290,7 @@ async function restorePreviousInstall(deps: InstallDeps, previous: PreviousInsta
     }
   }
 
-  if (!previous.jobEnabled) {
+  if (previous.jobs.length === 0) {
     deps.print(
       previous.settingsRaw === null
         ? 'Nothing was installed.'
@@ -255,19 +299,32 @@ async function restorePreviousInstall(deps: InstallDeps, previous: PreviousInsta
     return;
   }
 
-  try {
-    await deps.scheduler.register(cmd, previous.at);
-    deps.print(`Your previous settings and daily job (${previous.at} local) were restored; delivery continues as before.`);
-  } catch (err) {
-    deps.print(`Your previous settings were restored, but the daily job could not be registered again: ${errorMessage(err)}`);
-    deps.print('Daily delivery is stopped on this machine until install succeeds.');
+  let failed = false;
+  for (const job of previous.jobs) {
+    try {
+      await deps.schedulerFor(job.name).register(cmd, job.at);
+    } catch (err) {
+      failed = true;
+      deps.print(`Your previous daily job "${job.name}" could not be registered again: ${errorMessage(err)}`);
+    }
+  }
+
+  if (failed) {
+    deps.print('Your previous settings were restored. Daily delivery may be stopped on this machine until install succeeds.');
+  } else {
+    deps.print(
+      `Your previous settings and daily job${previous.jobs.length > 1 ? 's' : ''} ` +
+        `(${previous.jobs.map((job) => `${job.name} at ${job.at} local`).join(', ')}) were restored; delivery continues as before.`
+    );
   }
 }
 
 /**
- * Replaces the OS job and settings with `settings`. On any failure after the old job was
- * removed, restores the previous settings and job ({@link restorePreviousInstall}), so a
- * failed install never silently stops a delivery that used to work.
+ * Replaces the OS job and settings with `settings`: unregisters every owned job found, writes
+ * the settings, registers the resolved name. On any failure after an old job was removed,
+ * restores the previous settings and jobs ({@link restorePreviousInstall}), so a failed
+ * install never silently stops a delivery that used to work. Only names from `ownedNames` are
+ * ever queried or touched.
  */
 async function replaceJob(deps: InstallDeps, settings: SyncSettings): Promise<RegisterResult | null> {
   let cmd: JobCommand;
@@ -279,21 +336,48 @@ async function replaceJob(deps: InstallDeps, settings: SyncSettings): Promise<Re
     return null;
   }
 
+  const newName = resolveSchedulerName(settings, process.platform);
   const previous = await snapshotPreviousInstall(deps);
   try {
-    await deps.scheduler.unregister();
+    for (const name of previous.names) {
+      await deps.schedulerFor(name).unregister();
+    }
     await deps.writeSettings(settings);
-    return await deps.scheduler.register(cmd, settings.at);
+    return await deps.schedulerFor(newName).register(cmd, settings.at);
   } catch (err) {
     printFailure(deps, err);
-    await restorePreviousInstall(deps, previous, cmd);
+    await restorePreviousInstall(deps, previous, cmd, newName);
     return null;
   }
 }
 
+/** The suffix to install with: `--task-name` (already in `settings`), else on a terminal the
+ * prompt's answer (empty keeps the default), else the default. Throws `SyncConfigError` on an
+ * invalid answer. */
+async function resolveTaskName(opts: InstallOptions, settings: SyncSettings, deps: InstallDeps): Promise<SyncSettings> {
+  if (opts.taskName !== undefined || !deps.isTTY) {
+    return settings;
+  }
+
+  const prefixHint = resolveSchedulerName({ taskName: '' }, process.platform);
+  const answer = (await deps.promptTaskName(prefixHint, defaultSchedulerName(process.platform))).trim();
+  if (answer === '') {
+    return settings;
+  }
+  return { ...settings, taskName: validateSchedulerSuffix(answer) };
+}
+
 export async function runInstall(opts: InstallOptions, deps: InstallDeps): Promise<number> {
-  const settings = await prepareSettings(opts, deps);
-  if (settings === null) {
+  const validated = await prepareSettings(opts, deps);
+  if (validated === null) {
+    return 1;
+  }
+
+  let settings: SyncSettings;
+  try {
+    settings = await resolveTaskName(opts, validated, deps);
+  } catch (err) {
+    printFailure(deps, err);
     return 1;
   }
 
@@ -322,7 +406,7 @@ export async function runInstall(opts: InstallOptions, deps: InstallDeps): Promi
  * check and job command, and `console.log`. */
 export function createRealInstallDeps(): InstallDeps {
   return {
-    scheduler: createScheduler(createRealSchedulerDeps()),
+    schedulerFor: (name: string) => createScheduler(createRealSchedulerDeps(), name),
     writeSettings: (settings: SyncSettings) => writeSyncSettings(settings),
     deleteSettings: () => deleteSyncSettings(),
     readSettingsRaw: () => readSyncSettingsRaw(),
@@ -340,6 +424,28 @@ export function createRealInstallDeps(): InstallDeps {
         }
       ]);
       return email.trim();
+    },
+    promptTaskName: async (prefixHint: string, defaultName: string): Promise<string> => {
+      const inquirer = (await import('inquirer')).default;
+      const { taskName } = await inquirer.prompt<{ taskName: string }>([
+        {
+          type: 'input',
+          name: 'taskName',
+          message:
+            `Name suffix for the scheduler task (full name will be \`${prefixHint}<suffix>\`, ` +
+            `Enter for default \`${defaultName}\`):`,
+          validate: (value: string) => {
+            if (value.trim() === '') return true;
+            try {
+              validateSchedulerSuffix(value.trim());
+              return true;
+            } catch (err) {
+              return errorMessage(err);
+            }
+          }
+        }
+      ]);
+      return taskName.trim();
     },
     saveUserEmail: (email: string) => ConfigLoader.saveUserEmail(email),
     collectorDirExists: () => existsSync(getCodemiePath('codemie-onboarding')),

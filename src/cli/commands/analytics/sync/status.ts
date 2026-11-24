@@ -28,7 +28,8 @@ import { lookbackText, webhookHost } from './format.js';
 import { readMarker } from './marker.js';
 import { errorMessage, redactSecrets } from './redact.js';
 import type { TargetId } from './run-sync.js';
-import { createRealSchedulerDeps, createScheduler } from './scheduler/index.js';
+import { createRealSchedulerDeps, createScheduler, resolveSchedulerName } from './scheduler/index.js';
+import type { JobState, Scheduler } from './scheduler/index.js';
 import { gitMarkerPath } from './targets/git-target.js';
 import type { SyncSettings } from './types.js';
 
@@ -38,7 +39,8 @@ export interface StatusDeps {
   /** Throws on an unreadable/invalid settings file; `null` means "not installed" (no
    * settings file at all). */
   loadSettings(): Promise<SyncSettings | null>;
-  query(): Promise<'enabled' | 'disabled'>;
+  /** A scheduler bound to the given OS job name (the resolved one). */
+  schedulerFor(name: string): Scheduler;
   /** The run log's full contents, or `null` when the file does not exist (or cannot be
    * read) — status never fails over a missing/unreadable log; it just reports "never". */
   readLog(): Promise<string | null>;
@@ -179,11 +181,13 @@ export async function runStatus(deps: StatusDeps): Promise<number> {
     return 0;
   }
 
-  const enabled = await deps.query();
+  const jobName = resolveSchedulerName(settings, process.platform);
+  const enabled: JobState = await deps.schedulerFor(jobName).query();
   const now = deps.now();
   const log = await deps.readLog();
 
   deps.print(`Analytics sync: ${enabled}`);
+  deps.print(`  OS job name:           ${jobName}`);
   if (enabled === 'disabled') {
     deps.print('  The OS job is missing or disabled outside the CLI. Run install again (the command your team lead shared):');
     deps.print('  codemie analytics sync install --webhook-b64 <value> | --webhook <url> | --git-repo <url>');
@@ -225,11 +229,9 @@ async function readSyncLog(): Promise<string | null> {
 /** Real dependencies for `runStatus`: the real settings store, scheduler query, run log read
  * and marker read, and `console.log`. */
 export function createRealStatusDeps(): StatusDeps {
-  const scheduler = createScheduler(createRealSchedulerDeps());
-
   return {
     loadSettings: () => loadSyncSettings(),
-    query: () => scheduler.query(),
+    schedulerFor: (name: string) => createScheduler(createRealSchedulerDeps(), name),
     readLog: readSyncLog,
     readMarker: (target: TargetId, now: Date) => readMarker(now, target === 'git' ? gitMarkerPath() : undefined),
     now: () => new Date(),

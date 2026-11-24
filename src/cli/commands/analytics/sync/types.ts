@@ -32,6 +32,8 @@ export interface SyncSettings {
   includeExternal: IncludeExternalPolicy;
   at: string;
   lookbackDays?: number;
+  /** Optional scheduler task-name suffix. */
+  taskName?: string;
 }
 
 /** Raw flags accepted by `codemie analytics sync install`. */
@@ -46,6 +48,8 @@ export interface InstallOptions {
   at?: string;
   lookbackDays?: string;
   includeExternal?: string;
+  /** `--task-name`: optional scheduler task-name suffix. */
+  taskName?: string;
 }
 
 export type SyncStatus = 'ok' | 'skip' | 'fail';

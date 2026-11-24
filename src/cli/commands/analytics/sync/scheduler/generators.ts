@@ -9,12 +9,35 @@
 
 import { realpath } from 'fs/promises';
 
+import { SyncConfigError } from '@/utils/errors.js';
+
 /** launchd job label, shared with the standalone collector so install replaces its job. */
 export const LAUNCHD_LABEL = 'com.epam.codemie.analytics-sync';
 /** systemd user unit base name (service + timer share it), collector-compatible. */
 export const SYSTEMD_UNIT_NAME = 'codemie-analytics-sync';
 /** Windows Task Scheduler task name, collector-compatible. */
 export const WINDOWS_TASK_NAME = 'CodeMie Analytics Sync';
+
+const SUFFIX_MAX_LENGTH = 32;
+const SUFFIX_ALLOWED = /^[A-Za-z0-9._-]+$/;
+
+/**
+ * Validates an optional scheduler task-name suffix and returns it unchanged. Throws
+ * `SyncConfigError` naming the broken rule: 1-32 characters, only `[A-Za-z0-9._-]`, and not
+ * starting with `.` or `-`.
+ */
+export function validateSchedulerSuffix(suffix: string): string {
+  if (suffix.length < 1 || suffix.length > SUFFIX_MAX_LENGTH) {
+    throw new SyncConfigError(`Scheduler task name suffix must be 1-${SUFFIX_MAX_LENGTH} characters long.`);
+  }
+  if (!SUFFIX_ALLOWED.test(suffix)) {
+    throw new SyncConfigError('Scheduler task name suffix may only contain letters, digits, ".", "_" and "-".');
+  }
+  if (suffix.startsWith('.') || suffix.startsWith('-')) {
+    throw new SyncConfigError('Scheduler task name suffix must not start with "." or "-".');
+  }
+  return suffix;
+}
 
 /** The job command: absolute node binary, absolute CLI entry script, and its argv. */
 export interface JobCommand {
@@ -92,7 +115,7 @@ function windowsQuote(value: string, always = false): string {
  * pointed at `logPath` — a launchd-only log, never the run log: `run` already appends its
  * own outcome line there, so sharing it would write every line twice.
  */
-export function launchdPlist(cmd: JobCommand, at: string, logPath: string): string {
+export function launchdPlist(cmd: JobCommand, at: string, logPath: string, label: string): string {
   const { hour, minute } = parseAt(at);
   const args = programArguments(cmd)
     .map((value) => `        ${plistString(value)}`)
@@ -103,7 +126,7 @@ export function launchdPlist(cmd: JobCommand, at: string, logPath: string): stri
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>${LAUNCHD_LABEL}</string>
+    <string>${plistString(label)}</string>
     <key>ProgramArguments</key>
     <array>
 ${args}

@@ -15,6 +15,12 @@ import { SyncConfigError } from '@/utils/errors.js';
 import { DEFAULT_LOOKBACK_DAYS, validateIncludeExternal, validateLookbackDays } from '../config-store.js';
 import { buildInstallCommand } from '../install-command.js';
 import { errorMessage } from '../redact.js';
+import {
+  LAUNCHD_LABEL,
+  SYSTEMD_UNIT_NAME,
+  WINDOWS_TASK_NAME,
+  validateSchedulerSuffix
+} from '../scheduler/generators.js';
 import { validateTriggerUrl } from '../trigger-url.js';
 import type { IncludeExternalPolicy } from '../types.js';
 import { askGitDetails, testGitCheck } from './git-step.js';
@@ -244,6 +250,35 @@ async function step7Lookback(deps: BootstrapDeps, state: BootstrapState, save: S
 }
 
 /**
+ * The "Scheduler task name" step: an optional suffix for the scheduler job each developer's
+ * `sync install` registers. Empty means the default name (saved as `''`, the flag omitted).
+ * Bootstrap installs nothing and never asks for a per-platform name: the one suffix is
+ * prefixed per platform when a developer runs the printed command.
+ */
+async function stepTaskName(deps: BootstrapDeps, state: BootstrapState, save: SaveBootstrapState): Promise<BootstrapState> {
+  deps.err('');
+  deps.err(stepHeading(stepsFor(state.targets), 'task-name'));
+
+  deps.err('Developers can give their scheduler job a custom name suffix; the tool adds a fixed prefix per platform:');
+  deps.err(`  macOS:   ${LAUNCHD_LABEL}.<suffix>`);
+  deps.err(`  Linux:   ${SYSTEMD_UNIT_NAME}-<suffix>`);
+  deps.err(`  Windows: ${WINDOWS_TASK_NAME} - <suffix>`);
+  deps.err('Leave it empty to keep the default name.');
+
+  const taskName = await askValidated(
+    deps,
+    'Name suffix for the scheduler task (empty for default)',
+    (raw) => {
+      const trimmed = raw.trim();
+      return trimmed === '' ? '' : validateSchedulerSuffix(trimmed);
+    },
+    state.taskName !== undefined && state.taskName !== '' ? state.taskName : undefined
+  );
+  await save({ taskName });
+  return { ...state, taskName };
+}
+
+/**
  * The "Developers" step: the one line that goes to `deps.out` in the whole guided wizard —
  * the install command built from `state` via {@link toInstallCommandOptions} (which already
  * carries `--git-repo`/`--git-branch`/`--git-path` when the git target is included) —
@@ -294,6 +329,10 @@ export async function runStepsFiveThroughEight(
   }
   if (runs('lookback')) {
     current = await step7Lookback(deps, current, save);
+  }
+
+  if (runs('task-name')) {
+    current = await stepTaskName(deps, current, save);
   }
 
   await step8Developers(deps, current);

@@ -27,7 +27,34 @@ import {
   type JobCommand
 } from './generators.js';
 
-export { resolveJobCommand } from './generators.js';
+export { resolveJobCommand, validateSchedulerSuffix } from './generators.js';
+
+/** Settings shape the name resolver needs (a subset of `SyncSettings`). */
+export interface SchedulerNameSettings {
+  taskName?: string;
+}
+
+/** The default scheduler job name for a platform: launchd label, systemd unit base name, or Windows task name. */
+export function defaultSchedulerName(platform: NodeJS.Platform): string {
+  if (platform === 'darwin') return LAUNCHD_LABEL;
+  if (platform === 'win32') return WINDOWS_TASK_NAME;
+  return SYSTEMD_UNIT_NAME;
+}
+
+/** Scheduler job name for the saved settings: the default, or default plus the saved suffix
+ * (`.X` launchd, `-X` systemd, ` - X` Windows). */
+export function resolveSchedulerName(settings: SchedulerNameSettings, platform: NodeJS.Platform): string {
+  const base = defaultSchedulerName(platform);
+  if (settings.taskName === undefined) return base;
+  if (platform === 'darwin') return `${base}.${settings.taskName}`;
+  if (platform === 'win32') return `${base} - ${settings.taskName}`;
+  return `${base}-${settings.taskName}`;
+}
+
+/** Names this installation owns on the platform: the saved name plus the default, de-duplicated. */
+export function ownedNames(settings: SchedulerNameSettings, platform: NodeJS.Platform): string[] {
+  return [...new Set([resolveSchedulerName(settings, platform), defaultSchedulerName(platform)])];
+}
 export type { JobCommand } from './generators.js';
 
 /** The minimal async fs surface the scheduler needs — a builder's choice, kept small so
@@ -69,28 +96,28 @@ export interface Scheduler {
 
 const SUPPORTED_PLATFORMS: readonly NodeJS.Platform[] = ['darwin', 'linux', 'win32'];
 
-function darwinDomainTarget(deps: SchedulerDeps): string {
-  return `gui/${deps.uid()}/${LAUNCHD_LABEL}`;
+function darwinDomainTarget(deps: SchedulerDeps, name: string): string {
+  return `gui/${deps.uid()}/${name}`;
 }
 
-function darwinPlistPath(deps: SchedulerDeps): string {
-  return join(deps.homedir(), 'Library', 'LaunchAgents', `${LAUNCHD_LABEL}.plist`);
+function darwinPlistPath(deps: SchedulerDeps, name: string): string {
+  return join(deps.homedir(), 'Library', 'LaunchAgents', `${name}.plist`);
 }
 
 function linuxUnitDir(deps: SchedulerDeps): string {
   return join(deps.homedir(), '.config', 'systemd', 'user');
 }
 
-function linuxServicePath(deps: SchedulerDeps): string {
-  return join(linuxUnitDir(deps), `${SYSTEMD_UNIT_NAME}.service`);
+function linuxServicePath(deps: SchedulerDeps, name: string): string {
+  return join(linuxUnitDir(deps), `${name}.service`);
 }
 
-function linuxTimerUnit(): string {
-  return `${SYSTEMD_UNIT_NAME}.timer`;
+function linuxTimerUnit(name: string): string {
+  return `${name}.timer`;
 }
 
-function linuxTimerPath(deps: SchedulerDeps): string {
-  return join(linuxUnitDir(deps), linuxTimerUnit());
+function linuxTimerPath(deps: SchedulerDeps, name: string): string {
+  return join(linuxUnitDir(deps), linuxTimerUnit(name));
 }
 
 /** Temp file schtasks reads the task XML from. Not injected: it is write-then-read within
@@ -157,16 +184,16 @@ async function preflight(deps: SchedulerDeps): Promise<void> {
  * immediate bootstrap of the same label can fail with "5: Input/output error". */
 const BOOTSTRAP_RETRY_DELAY_MS = 1000;
 
-async function registerDarwin(deps: SchedulerDeps, cmd: JobCommand, at: string): Promise<RegisterResult> {
-  const plistPath = darwinPlistPath(deps);
+async function registerDarwin(deps: SchedulerDeps, name: string, cmd: JobCommand, at: string): Promise<RegisterResult> {
+  const plistPath = darwinPlistPath(deps, name);
   // launchd opens StandardOutPath itself and fails silently when its directory is missing.
   const launchdLogPath = getCodemiePath('logs', 'analytics-sync.launchd.log');
   await deps.fs.mkdir(dirname(launchdLogPath), { recursive: true });
   await deps.fs.mkdir(dirname(plistPath), { recursive: true });
-  await deps.fs.writeFile(plistPath, launchdPlist(cmd, at, launchdLogPath), { encoding: 'utf-8' });
+  await deps.fs.writeFile(plistPath, launchdPlist(cmd, at, launchdLogPath, name), { encoding: 'utf-8' });
 
   // Tolerates "not loaded" (and any other failure) — a prior job may not exist.
-  await deps.exec('launchctl', ['bootout', darwinDomainTarget(deps)]).catch(() => undefined);
+  await deps.exec('launchctl', ['bootout', darwinDomainTarget(deps, name)]).catch(() => undefined);
 
   const bootstrapArgs = ['bootstrap', `gui/${deps.uid()}`, plistPath];
   let bootstrap = await deps.exec('launchctl', bootstrapArgs);
@@ -191,11 +218,11 @@ async function enableLinger(deps: SchedulerDeps): Promise<RegisterResult> {
   }
 }
 
-async function registerLinux(deps: SchedulerDeps, cmd: JobCommand, at: string): Promise<RegisterResult> {
+async function registerLinux(deps: SchedulerDeps, name: string, cmd: JobCommand, at: string): Promise<RegisterResult> {
   await deps.fs.mkdir(linuxUnitDir(deps), { recursive: true });
   const { service, timer } = systemdUnits(cmd, at);
-  await deps.fs.writeFile(linuxServicePath(deps), service, { encoding: 'utf-8' });
-  await deps.fs.writeFile(linuxTimerPath(deps), timer, { encoding: 'utf-8' });
+  await deps.fs.writeFile(linuxServicePath(deps, name), service, { encoding: 'utf-8' });
+  await deps.fs.writeFile(linuxTimerPath(deps, name), timer, { encoding: 'utf-8' });
 
   const daemonReload = await deps.exec('systemctl', ['--user', 'daemon-reload']);
   if (daemonReload.code !== 0) {
@@ -203,7 +230,7 @@ async function registerLinux(deps: SchedulerDeps, cmd: JobCommand, at: string): 
     throw new SyncSchedulerRegisterError(`systemctl --user daemon-reload failed: ${output}`, output);
   }
 
-  const enableNow = await deps.exec('systemctl', ['--user', 'enable', '--now', linuxTimerUnit()]);
+  const enableNow = await deps.exec('systemctl', ['--user', 'enable', '--now', linuxTimerUnit(name)]);
   if (enableNow.code !== 0) {
     const output = commandOutput(enableNow);
     throw new SyncSchedulerRegisterError(`systemctl --user enable --now failed: ${output}`, output);
@@ -212,16 +239,16 @@ async function registerLinux(deps: SchedulerDeps, cmd: JobCommand, at: string): 
   return enableLinger(deps);
 }
 
-async function registerWindows(deps: SchedulerDeps, cmd: JobCommand, at: string): Promise<RegisterResult> {
+async function registerWindows(deps: SchedulerDeps, name: string, cmd: JobCommand, at: string): Promise<RegisterResult> {
   const xmlPath = windowsTaskXmlPath();
   const xml = taskSchedulerXml(cmd, at);
   const withBom = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(xml, 'utf16le')]);
   await deps.fs.writeFile(xmlPath, withBom);
 
   // Tolerates the task not existing yet.
-  await deps.exec('schtasks', ['/Delete', '/F', '/TN', WINDOWS_TASK_NAME]).catch(() => undefined);
+  await deps.exec('schtasks', ['/Delete', '/F', '/TN', name]).catch(() => undefined);
 
-  const create = await deps.exec('schtasks', ['/Create', '/XML', xmlPath, '/TN', WINDOWS_TASK_NAME, '/F']);
+  const create = await deps.exec('schtasks', ['/Create', '/XML', xmlPath, '/TN', name, '/F']);
   if (create.code !== 0) {
     const output = commandOutput(create);
     throw new SyncSchedulerRegisterError(`schtasks /Create failed: ${output}`, output);
@@ -230,35 +257,35 @@ async function registerWindows(deps: SchedulerDeps, cmd: JobCommand, at: string)
   return {};
 }
 
-async function register(deps: SchedulerDeps, cmd: JobCommand, at: string): Promise<RegisterResult> {
+async function register(deps: SchedulerDeps, name: string, cmd: JobCommand, at: string): Promise<RegisterResult> {
   switch (deps.platform) {
     case 'darwin':
-      return registerDarwin(deps, cmd, at);
+      return registerDarwin(deps, name, cmd, at);
     case 'linux':
-      return registerLinux(deps, cmd, at);
+      return registerLinux(deps, name, cmd, at);
     case 'win32':
-      return registerWindows(deps, cmd, at);
+      return registerWindows(deps, name, cmd, at);
     default:
       throw unsupported(deps.platform);
   }
 }
 
-async function queryDarwin(deps: SchedulerDeps): Promise<JobState> {
-  return (await succeeded(deps, 'launchctl', ['print', darwinDomainTarget(deps)])) ? 'enabled' : 'disabled';
+async function queryDarwin(deps: SchedulerDeps, name: string): Promise<JobState> {
+  return (await succeeded(deps, 'launchctl', ['print', darwinDomainTarget(deps, name)])) ? 'enabled' : 'disabled';
 }
 
-async function queryLinux(deps: SchedulerDeps): Promise<JobState> {
+async function queryLinux(deps: SchedulerDeps, name: string): Promise<JobState> {
   try {
-    const result = await deps.exec('systemctl', ['--user', 'is-enabled', linuxTimerUnit()]);
+    const result = await deps.exec('systemctl', ['--user', 'is-enabled', linuxTimerUnit(name)]);
     return result.stdout.trim() === 'enabled' ? 'enabled' : 'disabled';
   } catch {
     return 'disabled';
   }
 }
 
-async function queryWindows(deps: SchedulerDeps): Promise<JobState> {
+async function queryWindows(deps: SchedulerDeps, name: string): Promise<JobState> {
   try {
-    const result = await deps.exec('schtasks', ['/Query', '/TN', WINDOWS_TASK_NAME, '/FO', 'LIST', '/V']);
+    const result = await deps.exec('schtasks', ['/Query', '/TN', name, '/FO', 'LIST', '/V']);
     if (result.code !== 0) {
       return 'disabled';
     }
@@ -268,62 +295,62 @@ async function queryWindows(deps: SchedulerDeps): Promise<JobState> {
   }
 }
 
-async function query(deps: SchedulerDeps): Promise<JobState> {
+async function query(deps: SchedulerDeps, name: string): Promise<JobState> {
   switch (deps.platform) {
     case 'darwin':
-      return queryDarwin(deps);
+      return queryDarwin(deps, name);
     case 'linux':
-      return queryLinux(deps);
+      return queryLinux(deps, name);
     case 'win32':
-      return queryWindows(deps);
+      return queryWindows(deps, name);
     default:
       return 'disabled';
   }
 }
 
-async function unregisterDarwin(deps: SchedulerDeps): Promise<boolean> {
-  const bootedOut = await succeeded(deps, 'launchctl', ['bootout', darwinDomainTarget(deps)]);
-  const plistRemoved = await removeFile(deps, darwinPlistPath(deps));
+async function unregisterDarwin(deps: SchedulerDeps, name: string): Promise<boolean> {
+  const bootedOut = await succeeded(deps, 'launchctl', ['bootout', darwinDomainTarget(deps, name)]);
+  const plistRemoved = await removeFile(deps, darwinPlistPath(deps, name));
   return bootedOut || plistRemoved;
 }
 
-async function unregisterLinux(deps: SchedulerDeps): Promise<boolean> {
+async function unregisterLinux(deps: SchedulerDeps, name: string): Promise<boolean> {
   // Disable whatever state the timer is in (enabled, or disabled outside the CLI).
-  const disabled = await succeeded(deps, 'systemctl', ['--user', 'disable', '--now', linuxTimerUnit()]);
-  const serviceRemoved = await removeFile(deps, linuxServicePath(deps));
-  const timerRemoved = await removeFile(deps, linuxTimerPath(deps));
+  const disabled = await succeeded(deps, 'systemctl', ['--user', 'disable', '--now', linuxTimerUnit(name)]);
+  const serviceRemoved = await removeFile(deps, linuxServicePath(deps, name));
+  const timerRemoved = await removeFile(deps, linuxTimerPath(deps, name));
   if (serviceRemoved || timerRemoved) {
     await succeeded(deps, 'systemctl', ['--user', 'daemon-reload']);
   }
   return disabled || serviceRemoved || timerRemoved;
 }
 
-async function unregisterWindows(deps: SchedulerDeps): Promise<boolean> {
+async function unregisterWindows(deps: SchedulerDeps, name: string): Promise<boolean> {
   // Deletes the task whether it is enabled or was disabled outside the CLI.
-  return succeeded(deps, 'schtasks', ['/Delete', '/F', '/TN', WINDOWS_TASK_NAME]);
+  return succeeded(deps, 'schtasks', ['/Delete', '/F', '/TN', name]);
 }
 
 /** Remove the job regardless of its enabled state; `true` when anything was actually present
  * (a loaded/registered job or its files), `false` when there was nothing to remove. */
-async function unregister(deps: SchedulerDeps): Promise<boolean> {
+async function unregister(deps: SchedulerDeps, name: string): Promise<boolean> {
   switch (deps.platform) {
     case 'darwin':
-      return unregisterDarwin(deps);
+      return unregisterDarwin(deps, name);
     case 'linux':
-      return unregisterLinux(deps);
+      return unregisterLinux(deps, name);
     case 'win32':
-      return unregisterWindows(deps);
+      return unregisterWindows(deps, name);
     default:
       return false;
   }
 }
 
-export function createScheduler(deps: SchedulerDeps): Scheduler {
+export function createScheduler(deps: SchedulerDeps, name: string): Scheduler {
   return {
     preflight: () => preflight(deps),
-    register: (cmd: JobCommand, at: string) => register(deps, cmd, at),
-    unregister: () => unregister(deps),
-    query: () => query(deps)
+    register: (cmd: JobCommand, at: string) => register(deps, name, cmd, at),
+    unregister: () => unregister(deps, name),
+    query: () => query(deps, name)
   };
 }
 
