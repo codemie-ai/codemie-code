@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { resolve, dirname, basename, join } from 'path';
 import { pathToFileURL } from 'url';
 import {
-  matchBudgetRow,
+  selectBudgetRow,
   formatBudgetSegment,
   extractBasicInfo,
   formatDuration,
@@ -23,35 +23,47 @@ const YELLOW = '\x1b[0;33m';
 const GREEN = '\x1b[0;32m';
 const RED = '\x1b[0;31m';
 
-describe('matchBudgetRow', () => {
-  const rows = [
-    { project_name: 'nikita_levyankov@epam.com (cli)', current_spending: 500.26, total: 100.05, budget_reset_at: '2026-07-13T00:00:18.663000Z' },
-    { project_name: 'nikita_levyankov@epam.com', current_spending: 6.05, total: 5.04, budget_reset_at: '2026-07-17T09:30:34.278000Z' },
-    { project_name: 'nikita_levyankov@epam.com (premium)', current_spending: 24.93, total: 83.11, budget_reset_at: '2026-07-18T16:55:53.270000Z' },
-  ];
+describe('selectBudgetRow', () => {
+  const projectRow = { project_name: 'my-project (cli)', current_spending: 5, total: 4,
+    budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 120, is_default: false, is_shared_limit: false };
+  const personalRow = { project_name: 'user@epam.com (cli)', current_spending: 1.78, total: 1.19,
+    budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 150, is_default: true, is_shared_limit: false };
+  const sharedRow = { project_name: 'shared-proj (cli)', current_spending: 13, total: 11,
+    budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 200, is_default: false, is_shared_limit: true };
+  const rows = [projectRow, personalRow, sharedRow];
 
-  it('matches only the "(cli)" suffixed row for the given email', () => {
-    const row = matchBudgetRow(rows, 'nikita_levyankov@epam.com');
-    expect(row).toEqual(rows[0]);
+  it('AC1: selects the project row when project matches', () => {
+    expect(selectBudgetRow(rows, 'my-project', 'user@epam.com')).toBe(projectRow);
   });
 
-  it('returns null when no row matches the email', () => {
-    expect(matchBudgetRow(rows, 'someone-else@epam.com')).toBeNull();
+  it('AC1: matches case-insensitively', () => {
+    expect(selectBudgetRow(rows, 'MY-PROJECT', 'user@epam.com')).toBe(projectRow);
   });
 
-  it('returns null when rows is not an array', () => {
-    expect(matchBudgetRow(undefined, 'x@y.com')).toBeNull();
-    expect(matchBudgetRow(null, 'x@y.com')).toBeNull();
+  it('AC2: does not return the personal row when a project row exists', () => {
+    expect(selectBudgetRow(rows, 'my-project', 'user@epam.com')).not.toBe(personalRow);
   });
 
-  it('returns null when userEmail is falsy', () => {
-    expect(matchBudgetRow(rows, '')).toBeNull();
-    expect(matchBudgetRow(rows, undefined)).toBeNull();
+  it('AC4: no project → is_default row returned', () => {
+    expect(selectBudgetRow(rows, null, 'user@epam.com')).toBe(personalRow);
+    expect(selectBudgetRow(rows, undefined, 'user@epam.com')).toBe(personalRow);
   });
 
-  it('matches regardless of email casing or surrounding whitespace', () => {
-    expect(matchBudgetRow(rows, 'Nikita_Levyankov@EPAM.com')).toEqual(rows[0]);
-    expect(matchBudgetRow(rows, '  nikita_levyankov@epam.com  ')).toEqual(rows[0]);
+  it('AC4a: project with no CLI row → is_default fallback', () => {
+    expect(selectBudgetRow(rows, 'unknown-project', 'user@epam.com')).toBe(personalRow);
+  });
+
+  it('AC7: no matching rows at all → undefined', () => {
+    expect(selectBudgetRow([], 'my-project', 'user@epam.com')).toBeUndefined();
+  });
+
+  it('is_default absent safety net: match by email pattern when no is_default field', () => {
+    const noDefaultRows = [{ ...personalRow, is_default: undefined }];
+    expect(selectBudgetRow(noDefaultRows, null, 'user@epam.com')).toBeDefined();
+  });
+
+  it('AC5: shared-limit row selected when project matches', () => {
+    expect(selectBudgetRow(rows, 'shared-proj', 'user@epam.com')).toBe(sharedRow);
   });
 });
 

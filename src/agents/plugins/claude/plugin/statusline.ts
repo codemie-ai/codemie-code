@@ -80,6 +80,43 @@ export async function getAuthHeaders(codeMieUrl) {
 
 // --- Pure functions (unit-testable, no filesystem/network access) ---
 
+interface BudgetRow {
+  project_name: string;
+  current_spending: number;
+  total: number;
+  budget_reset_at: string;
+  budget_limit: number;
+  is_default?: boolean;
+  is_shared_limit?: boolean;
+}
+
+export function selectBudgetRow(rows: BudgetRow[], project: string | null | undefined, userEmail: string): BudgetRow | undefined {
+  if (!Array.isArray(rows)) return undefined;
+
+  // When a project is selected, show the budget that CodeMie charges against —
+  // the project's own CLI allocation, not the user's personal one.
+  if (project) {
+    const target = `${project.trim().toLowerCase()} (cli)`;
+    const projectRow = rows.find(r => r.project_name?.trim().toLowerCase() === target);
+    if (projectRow) return projectRow;
+  }
+
+  // No project is selected, or the selected project has no CLI budget — show
+  // whatever CodeMie would charge by default. The backend marks this row with
+  // is_default: true so we don't have to know the user's email format.
+  const defaultRow = rows.find(r => r.is_default === true && r.project_name?.trim().toLowerCase().endsWith(' (cli)'));
+  if (defaultRow) return defaultRow;
+
+  // Guard against backend API changes where is_default stops being returned —
+  // the email-keyed row is always the personal CLI budget.
+  if (userEmail) {
+    const emailTarget = `${userEmail.trim().toLowerCase()} (cli)`;
+    return rows.find(r => r.project_name?.trim().toLowerCase() === emailTarget);
+  }
+
+  return undefined;
+}
+
 export function matchBudgetRow(rows, userEmail) {
   if (!Array.isArray(rows) || !userEmail) return null;
   const target = `${userEmail.trim().toLowerCase()} (cli)`;
@@ -787,7 +824,7 @@ export async function resolveBudget({
     if (!contentType.includes('json')) return { budget: null, budgetError: null };
 
     const json = await res.json() as { data?: { rows?: unknown[] } };
-    const row = matchBudgetRow(json?.data?.rows, userEmail);
+    const row = selectBudgetRow(json?.data?.rows as BudgetRow[], null, userEmail);
     if (!row) throw new Error('budget row not found');
 
     const budget = formatBudgetSegment(row);
