@@ -102,8 +102,8 @@ suite('bash completion (real bash)', () => {
     expect(complete(['tool', 'list', '--out', 'al'])).toEqual(['alpha.txt']);
   });
 
-  it('offers nothing after a free-form value option', () => {
-    expect(complete(['tool', 'list', '--name', ''])).toEqual([]);
+  it('falls back to file completion after a valued option without choices', () => {
+    expect(complete(['tool', 'list', '--name', 'al'])).toEqual(['alpha.txt']);
   });
 
   it('optional-value options do not consume the next word', () => {

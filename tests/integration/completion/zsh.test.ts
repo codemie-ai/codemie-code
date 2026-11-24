@@ -101,8 +101,8 @@ suite('zsh completion (real zsh)', () => {
     expect(await complete('tool list --out al')).toEqual(['alpha.txt']);
   });
 
-  it('offers nothing after a free-form value option', async () => {
-    expect(await complete('tool list --name ')).toEqual([]);
+  it('falls back to file completion after a valued option without choices', async () => {
+    expect(await complete('tool list --name al')).toEqual(['alpha.txt']);
   });
 
   it('optional-value options do not consume the next word', async () => {
