@@ -1,6 +1,6 @@
 /**
- * Turns the inner transcript of every Claude Desktop Cowork session into Claude Code plugin events in the proxy's
- * OTLP spool, from where the existing tick and forwarder send them to CLI Analytics.
+ * Turns the inner transcript of every Claude Desktop Cowork session the proxy daemon served (or already collects)
+ * into Claude Code plugin events in the proxy's OTLP spool, from where the existing tick and forwarder send them to CLI Analytics.
  *
  * The usage, subagent usage and summary events come from the Claude Code transcript orchestrator, called as the hook
  * path calls it; the session, prompt, tool and subagent events come from {@link buildCoworkEvents}. A session is
@@ -30,6 +30,9 @@ import { findSubagentFiles, readForkedSkillMarker, readSubagentMeta } from '@/ag
 import { readNewLines } from '@/agents/plugins/claude-code-otlp/transcript/transcript-reader.js';
 import { hooksOnlyForwardAllowed } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-config.js';
 import { appendSpool } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-io.js';
+import { withSessionLock } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/session-lock.js';
+import { readStatusState } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/session-status.js';
+import { publishProducerAttribution } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/producer-attribution.js';
 import { discoverClaudeDesktopSessions } from '@/telemetry/clients/claude-desktop/claude-desktop.discovery.js';
 import { getClaudeDesktopLocalSessionsRoot } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
 import type { LocalTelemetryDiscoveredSession } from '@/telemetry/runtime/types.js';
@@ -40,6 +43,8 @@ import { logger } from '@/utils/logger.js';
 import { isPathWithinDirectory } from '@/utils/paths.js';
 import { detectGitBranch, detectGitRemoteRepo, resolveRepositoryName } from '@/utils/processes.js';
 import { coworkCursorPath, emptyCoworkCursor, loadCoworkCursor, saveCoworkCursor, type CoworkCursor } from './cowork-cursor.js';
+import { coworkFundingSource, loadCoworkAttribution, saveCoworkAttribution, type CoworkAttribution } from './cowork-attribution.js';
+import { coworkServedMarkPath, forgetCoworkServedMark, listCoworkServedMarks } from './cowork-served-mark.js';
 import { buildCoworkEvents, stampCoworkEvent, type CoworkEnvelope, type CoworkSubagentInput } from './cowork-events.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -87,6 +92,11 @@ export class CoworkEventProducer {
   private readonly previousRun = new Map<string, string>();
   /** Per session, the fingerprints of its last completed processing in this process and that cursor's line and end times. */
   private readonly processed = new Map<string, { key: string; lastLineAt: string; lastEndedAt: string }>();
+  /**
+   * Per session, the fingerprints at which a run while Desktop is not connected left it unread. Keyed by the session's
+   * files alone: this producer is the only writer of a cursor, so a cursor does not change while they stay the same.
+   */
+  private readonly leftWhileNotConnected = new Map<string, string>();
   /** The last failure warned about per session: the same failure again is not repeated at every run. */
   private readonly lastFailure = new Map<string, string>();
   private readonly otelWarned = new Set<string>();
@@ -97,9 +107,27 @@ export class CoworkEventProducer {
     this.discover = options.discover ?? discoverClaudeDesktopSessions;
   }
 
-  /** One pass over the known Cowork sessions. Never throws: a failure is logged and retried at the next run. */
-  async run(now: number): Promise<void> {
+  /**
+   * One pass over the known Cowork sessions. The session list is refreshed and the served marks pruned before the
+   * preferences and forwarding gates, so a closed gate stops the intake alone. Never throws: a failure is logged and
+   * retried at the next run. A run while Desktop is not connected (`connected` false) takes only a session whose cursor
+   * holds a last line with no end sent for it, reads it to its end, the lines written since the cursor included, and
+   * then sends its end and final summary; it takes no other session.
+   */
+  async run(now: number, connected = true): Promise<void> {
     try {
+      if (this.refreshedAt === undefined || now - this.refreshedAt >= this.options.inactivityTimeoutMs) {
+        const { sessions, listed } = await this.listSessions(now);
+        await this.pruneServedMarks(now, listed);
+        this.sessions = sessions;
+        this.refreshedAt = now;
+        // What is remembered about a session goes with it once it left the list.
+        for (const remembered of [this.previousRun, this.processed, this.leftWhileNotConnected, this.lastFailure, this.otelWarned]) {
+          for (const id of [...remembered.keys()]) {
+            if (!listed.has(id)) remembered.delete(id);
+          }
+        }
+      }
       const preferences = await readClaudeAnalyticsPreferences();
       if (preferences.kind === 'corrupt') {
         if (!this.corruptPreferencesWarned) {
@@ -117,22 +145,11 @@ export class CoworkEventProducer {
         }
         return;
       }
-      if (this.refreshedAt === undefined || now - this.refreshedAt >= this.options.inactivityTimeoutMs) {
-        const { sessions, listed } = await this.listSessions(now);
-        this.sessions = sessions;
-        this.refreshedAt = now;
-        // What is remembered about a session goes with it once it left the list.
-        for (const remembered of [this.previousRun, this.processed, this.lastFailure, this.otelWarned]) {
-          for (const id of [...remembered.keys()]) {
-            if (!listed.has(id)) remembered.delete(id);
-          }
-        }
-      }
       for (const session of this.sessions) {
         const progress: Progress = { step: 'exclusion' };
         try {
           if (await isProjectExcluded(session.discovered.workingDirectory, preferences.value.excludedProjects)) continue;
-          await this.runSession(session, now, progress);
+          await this.runSession(session, now, connected, progress);
           this.lastFailure.delete(session.cliSessionId);
         } catch (error) {
           this.warnFailure(session.cliSessionId, progress.step, error);
@@ -140,6 +157,23 @@ export class CoworkEventProducer {
       }
     } catch (error) {
       logger.warn('[cowork-producer] Run failed; retried at the next run', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Deletes the served mark of every session discovery did not list whose mark is older than the window it read: such a
+   * session can no longer be taken. A failure is logged and the run goes on.
+   */
+  private async pruneServedMarks(now: number, listed: Set<string>): Promise<void> {
+    try {
+      const windowStart = now - desktopAnalyticsBackfillDays() * DAY_MS;
+      for (const mark of await listCoworkServedMarks()) {
+        if (!listed.has(mark.cliSessionId) && mark.mtimeMs < windowStart) await forgetCoworkServedMark(mark.cliSessionId);
+      }
+    } catch (error) {
+      logger.warn('[cowork-producer] Served marks not pruned; retried at the next refresh', {
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -154,7 +188,8 @@ export class CoworkEventProducer {
 
   /**
    * The Cowork sessions of the window that have an inner transcript, metadata and transcript both under the local-agent
-   * sessions root, minus those Desktop exports OTel for itself;
+   * sessions root and a served mark or a cursor (a file that exists counts, readable or not), minus those Desktop
+   * exports OTel for itself;
    * `listed` — the id of every session discovered in the window, kept or not.
    */
   private async listSessions(now: number): Promise<{ sessions: CoworkSession[]; listed: Set<string> }> {
@@ -166,6 +201,8 @@ export class CoworkEventProducer {
       listed.add(cliSessionId);
       if (!isPathWithinDirectory(root, discovered.metadataPath)) continue;
       if (basename(discovered.transcriptPath) !== 'audit.jsonl' || !isSafeSessionId(cliSessionId)) continue;
+      // Served by this daemon, or already being collected: a session whose requests went elsewhere is not sent.
+      if (!existsSync(coworkServedMarkPath(cliSessionId)) && !existsSync(coworkCursorPath(cliSessionId))) continue;
       const projectsDir = join(dirname(discovered.transcriptPath), '.claude', 'projects', 'session');
       const innerTranscript = join(projectsDir, `${cliSessionId}.jsonl`);
       if (!existsSync(innerTranscript)) continue;
@@ -191,7 +228,7 @@ export class CoworkEventProducer {
     return true;
   }
 
-  private async runSession(session: CoworkSession, now: number, progress: Progress): Promise<void> {
+  private async runSession(session: CoworkSession, now: number, connected: boolean, progress: Progress): Promise<void> {
     progress.step = 'fingerprint';
     const fingerprints = await this.fingerprint(session);
     const key = JSON.stringify(fingerprints);
@@ -206,8 +243,23 @@ export class CoworkEventProducer {
       return;
     }
 
+    if (!connected && this.leftWhileNotConnected.get(session.cliSessionId) === key) return;
+    if (connected) this.leftWhileNotConnected.delete(session.cliSessionId);
+
     progress.step = 'cursor';
     let cursor = await loadCoworkCursor(session.cliSessionId);
+    // Upgrade pending delivery without replaying transcript bytes, including sessions already ended by an older producer.
+    if (cursor) {
+      const attribution = await loadCoworkAttribution(session.cliSessionId);
+      if (attribution) await this.publishAttribution(session.cliSessionId, attribution.project);
+    }
+    // While Desktop is not connected only a session being collected is read. One with no readable cursor is not; one
+    // whose end is sent is not read again: a cursor is kept after the end, so the session could be continued through
+    // another gateway long afterwards.
+    if (!connected && (!cursor || cursor.lastEndedAt === cursor.events.lastLineAt)) {
+      this.leftWhileNotConnected.set(session.cliSessionId, key);
+      return;
+    }
     if (!cursor || JSON.stringify(cursor.fingerprints) !== key) {
       cursor = await this.process(session, cursor, now, fingerprints, false, progress);
     }
@@ -280,7 +332,9 @@ export class CoworkEventProducer {
     next.fingerprints = fingerprints;
 
     progress.step = 'context';
-    const envelope = await this.envelope(discovered, cliSessionId, next);
+    const { project: pinned } = await this.pinAttribution(discovered, cliSessionId);
+    await this.publishAttribution(cliSessionId, pinned);
+    const envelope = await this.envelope(discovered, cliSessionId, next, pinned);
     const project = envelope.project ? [envelope.project] : undefined;
     if (end) {
       progress.step = 'session-end-pass';
@@ -306,12 +360,47 @@ export class CoworkEventProducer {
     return next;
   }
 
-  private async envelope(discovered: LocalTelemetryDiscoveredSession, cliSessionId: string, cursor: CoworkCursor): Promise<CoworkEnvelope> {
-    const workingDirectory = discovered.workingDirectory;
+  /**
+   * The session's project, fixed at its first processing (before any of its events is appended) from the working
+   * directory and profile known then, and kept for the whole session. A session the spool already bound to a project
+   * (collected before the pin existed) keeps that project: it is what the backend has already received.
+   */
+  private async pinAttribution(discovered: LocalTelemetryDiscoveredSession, cliSessionId: string): Promise<CoworkAttribution> {
+    const known = await loadCoworkAttribution(cliSessionId);
+    if (known?.project) return known;
+    const found = await withSessionLock(cliSessionId, () => readStatusState(cliSessionId));
+    if (found.kind === 'unreadable') throw new AnalyticsSourceError('Session status is unreadable; retrying without pinning');
+    const bound = found.kind === 'ok' ? found.status.project : undefined;
+    // A lookup failure (not an answer) propagates before anything is appended or pinned: the session is resolved again at
+    // its next processing, so a transient failure never fixes an unknown origin for good.
+    const { project, projectSource } = await this.resolveProject(discovered.workingDirectory);
+    const pin: CoworkAttribution = bound && bound.toLowerCase() !== project.toLowerCase()
+      ? { project: bound, projectSource: 'none' }
+      : { project: bound ?? project, projectSource };
+    return saveCoworkAttribution(cliSessionId, pin);
+  }
+
+  /** Only the producer interprets its routing proof; shared forwarding consumes the resulting spool metadata. */
+  private async publishAttribution(cliSessionId: string, project: string): Promise<void> {
+    const projectSource = await coworkFundingSource(cliSessionId, project);
+    if (projectSource) await publishProducerAttribution(cliSessionId, { project, projectSource, routedViaCodemie: true });
+  }
+
+  /** The existing working-directory, config and profile-fallback rules, plus where the project came from. */
+  private async resolveProject(workingDirectory: string): Promise<CoworkAttribution> {
     const profile = this.options.profile;
-    const [project, repository, repoRemote, branch, cliVersion] = await Promise.all([
-      ConfigLoader.load(workingDirectory, profile ? { name: profile } : undefined)
-        .then((config) => config.codeMieProject ?? ''),
+    const config = await ConfigLoader.load(workingDirectory, profile ? { name: profile } : undefined);
+    const project = config.codeMieProject ?? '';
+    if (!project) throw new AnalyticsSourceError('Session project is unresolved; retrying before pinning or appending');
+    // A failing lookup propagates: the caller retries it rather than pinning a guessed or unknown source for good.
+    const { projectOrigin } = await ConfigLoader.resolveProfileIdentity(workingDirectory, config.name);
+    // The project may sit on the selected profile record itself, outside any workspace.
+    return { project, projectSource: projectOrigin === 'none' ? 'profile' : projectOrigin };
+  }
+
+  private async envelope(discovered: LocalTelemetryDiscoveredSession, cliSessionId: string, cursor: CoworkCursor, project: string): Promise<CoworkEnvelope> {
+    const workingDirectory = discovered.workingDirectory;
+    const [repository, repoRemote, branch, cliVersion] = await Promise.all([
       resolveRepositoryName(workingDirectory),
       detectGitRemoteRepo(workingDirectory),
       detectGitBranch(workingDirectory),
@@ -324,7 +413,6 @@ export class CoworkEventProducer {
       repoRemote,
       ...(branch && { branch }),
       cliVersion: cliVersion ?? '',
-      title: discovered.title,
       entrypoint: cursor.events.entrypoint,
       clientVersion: cursor.events.clientVersion,
     };

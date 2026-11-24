@@ -181,3 +181,17 @@ export async function acquirePidLock(path: string, options: PidLockOptions): Pro
     await sleepUnlessAborted(Math.min(PID_LOCK_POLL_MS, remaining), options.signal);
   }
 }
+
+/**
+ * Runs `fn` while holding the pid lock at `path` (wait mode, default budget), releasing it afterwards; throws
+ * `onBusy()` when the lock stays held. Serializes a read-modify-write of one file across CodeMie processes.
+ */
+export async function withPidLock<T>(path: string, fn: () => Promise<T>, onBusy: () => Error): Promise<T> {
+  const lock = await acquirePidLock(path, { mode: 'wait' });
+  if (!lock) throw onBusy();
+  try {
+    return await fn();
+  } finally {
+    await lock.release();
+  }
+}

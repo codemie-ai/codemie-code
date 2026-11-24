@@ -488,6 +488,25 @@ describe('npm utility', () => {
       expect(result).toBeNull();
     });
 
+    it('rejects a timed-out lookup and resolves null on a non-zero exit with throwIfUnanswered', async () => {
+      const { getCommandPath } = await import('../processes.js');
+
+      execSpy.mockRejectedValue(new Error('Command timed out after 3000ms'));
+      await expect(getCommandPath('claude', 3000, { throwIfUnanswered: true }))
+        .rejects.toThrow('Command timed out after 3000ms');
+
+      execSpy.mockResolvedValue({ code: 1, stdout: '', stderr: '' });
+      expect(await getCommandPath('claude', 3000, { throwIfUnanswered: true })).toBeNull();
+    });
+
+    it('resolves null on a timed-out lookup without throwIfUnanswered', async () => {
+      execSpy.mockRejectedValue(new Error('Command timed out after 3000ms'));
+
+      const { getCommandPath } = await import('../processes.js');
+
+      expect(await getCommandPath('claude', 3000)).toBeNull();
+    });
+
     it('should filter out empty lines', async () => {
       // Output with empty lines (shouldn't happen but handle gracefully)
       execSpy.mockResolvedValue({

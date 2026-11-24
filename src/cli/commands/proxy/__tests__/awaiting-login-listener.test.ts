@@ -71,8 +71,11 @@ describe('awaiting-login listener', () => {
 
       const anonymous = await fetch(`${url}/anything`, { headers: { Origin: 'https://evil.example' } });
       const wrong = await fetch(`${url}/v1/messages`, { method: 'POST', headers: { Authorization: 'Bearer nope' }, body: '{}' });
+      const unknownClient = await fetch(`${url}/v1/messages`, {
+        method: 'POST', headers: { Authorization: `Bearer ${KEY}.unknown` }, body: '{}',
+      });
 
-      for (const res of [anonymous, wrong]) {
+      for (const res of [anonymous, wrong, unknownClient]) {
         expect(res.status).toBe(401);
         expect(await res.json()).toEqual({
           type: 'error',
@@ -89,6 +92,22 @@ describe('awaiting-login listener', () => {
       const res = await fetch(`${url}/v1/messages`, { method: 'POST', headers: { Authorization: `Bearer ${KEY}` }, body: '{}' });
 
       expect(onSignInRequest).toHaveBeenCalledTimes(1);
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({
+        type: 'error',
+        error: { type: 'authentication_error', message: 'A browser sign-in window has been opened.' },
+      });
+    });
+
+    it('starts the sign-in for a request with a named key and answers with its text', async () => {
+      const onSignInRequest = vi.fn().mockResolvedValue('A browser sign-in window has been opened.');
+      const { url } = await start({ gatewayKey: KEY, onSignInRequest });
+
+      const res = await fetch(`${url}/v1/responses`, {
+        method: 'POST', headers: { Authorization: `Bearer ${KEY}.codex-desktop` }, body: '{}',
+      });
+
+      expect(onSignInRequest).toHaveBeenCalled();
       expect(res.status).toBe(401);
       expect(await res.json()).toEqual({
         type: 'error',

@@ -1,0 +1,158 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.final",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "The owner accepted the final round's approve and asked to push the branch and create the PR."
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "The owner accepted the final round's approve and asked to push the branch and create the PR."
+    }
+  ],
+  "reviewed_head": "7b1d7a794bbb6b3ce11ea80550d519f9380ac721",
+  "rounds": [
+    "final"
+  ],
+  "rationale": "All four lenses and the standards audit ran; 0 findings, 0 deferred, 0 advisory, 8 candidates dismissed after reading the code (see code-review-dismissed.local.md): the doc/code mismatch is a misread, and reading an unended session to its end while not connected is the author's stated choice. The live Desktop scenario stays pending-stage-7.",
+  "confidence": "high",
+  "check_confidence": null,
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 0,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "While Desktop is not connected, a Cowork session already being collected (with a cursor) is read until it ends and gets agent.session.end and the final summary ",
+      "status": "pass",
+      "notes": "DesktopTelemetryRuntime.ts:158 startIfIdle(now, false) on the not-connected path; CoworkEventProducer.ts runSession reads the cursor and runs endDue/process(end); covered by CoworkEventProducer.test.t"
+    },
+    {
+      "kind": "story-ac",
+      "item": "While not connected no new session is picked up (served-mark-only session is not read)",
+      "status": "pass",
+      "notes": "CoworkEventProducer.ts runSession: !connected && !cursor -> return; test 'reads neither a session with a served mark alone ...' asserts no spool/cursor for CLI_2"
+    },
+    {
+      "kind": "story-ac",
+      "item": "Not-connected poll still discovers nothing in the session pipeline, does not list the session store and re-delivers nothing (AC5 of EPMCDME-17328)",
+      "status": "pass",
+      "notes": "only the startIfIdle line is added before finalizeInactive/return; DesktopTelemetryRuntime.test.ts asserts discoverSessions, reconcileRecords and indexSessionsByExternalId not called"
+    },
+    {
+      "kind": "story-ac",
+      "item": "Usage of a Cowork task that goes on after disconnect (no Desktop restart) is collected",
+      "status": "pass",
+      "notes": "not-connected run processes new lines while the cursor holds no end; test 'reads the lines a session with no end wrote after its cursor, then ends it'"
+    },
+    {
+      "kind": "story-ac",
+      "item": "Narrowing: a session whose end is already sent is not read again while not connected",
+      "status": "pass",
+      "notes": "CoworkEventProducer.ts runSession: cursor.lastEndedAt === cursor.events.lastLineAt -> left; test asserts cursor file unchanged and no new spool lines"
+    },
+    {
+      "kind": "story-ac",
+      "item": "A cursor without a line and an unparsable cursor are not read while not connected; a connected run afterwards reads them",
+      "status": "pass",
+      "notes": "same guard (null cursor / empty lastLineAt equals empty lastEndedAt); it.each edge cases in CoworkEventProducer.test.ts; connected re-read covered by the served-mark/grew test"
+    },
+    {
+      "kind": "story-ac",
+      "item": "Log line 'Claude Desktop not connected; collection paused' and proxy status line unchanged",
+      "status": "pass",
+      "notes": "diff touches neither the log nor proxy status code"
+    },
+    {
+      "kind": "story-ac",
+      "item": "Unit test DesktopTelemetryRuntime: second not-connected poll starts a not-connected run; fresh daemon reading not connected does so from its first poll; after r",
+      "status": "pass",
+      "notes": "DesktopTelemetryRuntime.test.ts hunks @@ -2311 and @@ -2384 assert run calls with false/true"
+    },
+    {
+      "kind": "story-ac",
+      "item": "Unit test CoworkEventProducer: not-connected run ends a session with no end (new lines first) and reads none of the excluded kinds",
+      "status": "pass",
+      "notes": "new describe 'CoworkEventProducer while Desktop is not connected' in CoworkEventProducer.test.ts"
+    },
+    {
+      "kind": "story-ac",
+      "item": "Integration case: connected, session collected, Desktop config no longer points at the daemon, timeout passes -> spool holds agent.session.end and final summary",
+      "status": "pass",
+      "notes": "DesktopTelemetryRuntime.cowork.test.ts new case with the real ClaudeDesktopTelemetryAdapter and producer; no sender file in the diff"
+    },
+    {
+      "kind": "spec",
+      "item": "CoworkRunner/producer accept a connected flag passed through from the poll",
+      "status": "pass",
+      "notes": "CoworkRunner.startIfIdle(now, connected = true) -> producer.run(now, connected); run(now, connected = true) -> runSession(..., connected, ...)"
+    },
+    {
+      "kind": "spec",
+      "item": "A session a not-connected run leaves is remembered by its files' fingerprint so its cursor is not re-read (no repeated 'Unparsable cursor' warning) until the fi",
+      "status": "pass",
+      "notes": "leftWhileNotConnected map set/checked in runSession, cleared on connected runs and on list refresh; test 'reads no cursor of a session it left again until the session's files change'"
+    },
+    {
+      "kind": "spec",
+      "item": "A daemon stopped while Desktop is not connected starts no run",
+      "status": "pass",
+      "notes": "DesktopTelemetryRuntime.ts:158 guarded by !this.stopped; test 'edge: stop() while not connected starts no Cowork run'"
+    },
+    {
+      "kind": "spec",
+      "item": "docs/COMMANDS.md and docs/ARCHITECTURE-PROXY.md describe what happens to a Cowork session while Desktop is not connected",
+      "status": "pass",
+      "notes": "both docs hunks added; proxy-daemon.ts comment updated too"
+    },
+    {
+      "kind": "spec",
+      "item": "No change in what the backend receives; events are those a connected daemon already sends",
+      "status": "pass",
+      "notes": "no change to event builders or forwarder; same process()/stampCoworkEvent path"
+    },
+    {
+      "kind": "spec",
+      "item": "Real daemon + Claude Desktop scenario (connect, collect, disconnect, end and final summary on CLI Analytics tab)",
+      "status": "pending-stage-7",
+      "notes": "PR states not run manually; code path is implemented and unit-covered, only live execution evidence remains"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "2 subjects in range (test(analytics), fix(analytics)) use allowed types and the allowed analytics scope, are imperative, and stay under the 100-char subject limit"
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "changed source (CoworkEventProducer.ts, CoworkRunner.ts, DesktopTelemetryRuntime.ts, proxy-daemon.ts) keeps explicit return types on changed methods (run, startIfIdle, runSession), camelCase naming, logger rather than console, JSDoc updated on changed public methods, no commented-out code; files stay under 500 lines; tests follow the *.test.ts convention"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "no attribution header, credential, or log-sanitization surface touched; new not-connected path only gates reads of sessions already passing the existing isPathWithinDirectory/isSafeSessionId checks; logs carry session id and error message only"
+    }
+  ],
+  "final_round": {
+    "decision": "approve",
+    "rationale": "All four lenses and the standards audit ran; 0 findings, 0 deferred, 0 advisory, 8 candidates dismissed after reading the code (see code-review-dismissed.local.md): the doc/code mismatch is a misread, and reading an unended session to its end while not connected is the author's stated choice. The live Desktop scenario stays pending-stage-7.",
+    "confidence": "high",
+    "risk_flags": []
+  }
+}

@@ -4,7 +4,7 @@
  * shell's PATH lacks the codemie bin dir. See EPMCDME-14035.
  */
 import { existsSync, realpathSync } from 'fs';
-import { extname } from 'path';
+import { basename, dirname, extname, resolve } from 'path';
 import { getCommandPath } from './processes.js';
 
 // Shell-special chars that force the command path to be quoted; mirrors BaseAgentAdapter.
@@ -18,6 +18,17 @@ const NEEDS_QUOTING = /[ \t,;=()&|<>^%[\]{}]/;
 // stderr (surfacing in agents as "Failed with non-blocking status code: No
 // stderr output").
 const SHADOWING_PACKAGE_SEGMENT = '/@codemieai/codemie-opencode/';
+
+// Extensions npm gives a bin entry: the sh shim has none, Windows adds .cmd/.ps1, and the
+// script itself is .js.
+const BIN_EXTENSION = String.raw`(\.(cmd|ps1|exe|[cm]?js))?`;
+const ABSOLUTE_PATH = /^([a-zA-Z]:)?[\\/]/;
+const CODEMIE_CLI_NAME = new RegExp(`^codemie${BIN_EXTENSION}$`, 'i');
+// This package's other bin entries (package.json `bin`): `codemie-<agent>[-acp]`,
+// `codemie-mcp-proxy`, and the scripts behind `codemie-code` and the proxy daemon.
+const AGENT_WRAPPER_NAME = new RegExp(`^(codemie-[a-z0-9-]+|agent-executor|proxy-daemon)${BIN_EXTENSION}$`, 'i');
+// The subcommands codemie installs as hooks.
+const CODEMIE_HOOK_SUBCOMMAND = /^\s+(hook|sound)(\s|$)/;
 
 /**
  * Detect whether a `codemie` command path actually resolves to the bundled agent
@@ -37,6 +48,14 @@ export function isShadowedCodemieShim(commandPath: string): boolean {
   );
 }
 
+function fileName(p: string): string {
+  return basename(toForwardSlash(p));
+}
+
+function isCodemieCliName(p: string): boolean {
+  return CODEMIE_CLI_NAME.test(fileName(p));
+}
+
 function quoteIfNeeded(p: string): string {
   return NEEDS_QUOTING.test(p) && !p.startsWith('"') ? `"${p}"` : p;
 }
@@ -52,7 +71,8 @@ function toForwardSlash(p: string): string {
   return p.replace(/\\/g, '/');
 }
 
-// Prefer the PATH-resolved shim, then the running entry (argv[1]), then bare `codemie`.
+// Prefer the PATH-resolved shim, then the CLI entry next to the running script (argv[1]),
+// then bare `codemie`.
 // Never throws — it runs in launch-critical hook paths, so errors degrade to the next fallback.
 // A PATH shim that resolves to the bundled agent binary (dev checkouts where
 // node_modules/.bin precedes the global bin dir) is rejected: hooks would run the
@@ -73,23 +93,66 @@ async function resolveBinary(): Promise<string> {
     // fall through
   }
 
-  const argv1 = process.argv[1];
-  if (argv1) {
-    // A Windows .js argv[1] is not directly invocable as a hook command — bash
-    // needs a `node` prefix; both tokens use forward slashes and are quoted to
-    // survive spaces in paths like "C:/Program Files/...".
-    if (process.platform === 'win32' && /\.[cm]?js$/i.test(argv1)) {
-      return `${alwaysQuote(toForwardSlash(process.execPath))} ${alwaysQuote(toForwardSlash(argv1))}`;
-    }
-    return quoteIfNeeded(toForwardSlash(argv1));
-  }
+  const entry = process.argv[1] ? findCliEntry(process.argv[1]) : null;
+  return entry ? renderCliEntry(entry) : 'codemie';
+}
 
-  return 'codemie';
+// argv[1] is the running script. Under `codemie` it is the CLI itself; under an agent
+// wrapper (`codemie-claude`, `agent-executor.js`, …) it is not, and a hook pointed at
+// it relaunches the agent: Claude's SessionStart hook then starts another Claude,
+// forever. For a wrapper, use the CLI entry npm installs beside it, or none.
+function findCliEntry(argv1: string): string | null {
+  if (isCodemieCliName(argv1)) return argv1;
+  const dir = dirname(argv1);
+  const siblings = [process.platform === 'win32' ? 'codemie.cmd' : 'codemie', 'codemie.js'];
+  return (
+    siblings
+      .map((name) => resolve(dir, name))
+      .find((candidate) => existsSync(candidate) && !isShadowedCodemieShim(candidate)) ?? null
+  );
+}
+
+// A Windows .js entry is not directly invocable as a hook command — bash needs a
+// `node` prefix; both tokens use forward slashes and are quoted to survive spaces
+// in paths like "C:/Program Files/...".
+function renderCliEntry(entry: string): string {
+  if (process.platform === 'win32' && /\.[cm]?js$/i.test(entry)) {
+    return `${alwaysQuote(toForwardSlash(process.execPath))} ${alwaysQuote(toForwardSlash(entry))}`;
+  }
+  return quoteIfNeeded(toForwardSlash(entry));
+}
+
+/**
+ * The head of a hook command in the shapes resolveBinary emits — `path`, `"path"`, or `"node" "script.js"`, each
+ * optionally after `& ` — as its unquoted paths, with the head as written and the rest of the command; null when
+ * the command has no head.
+ */
+export function parseHookCommandHead(command: string): { head: string; paths: string[]; rest: string } | null {
+  const match = /^(?:& )?("[^"]*"(?: "[^"]*\.[cm]?js")?|\S+)([\s\S]*)$/.exec(command);
+  if (!match) return null;
+  const [, head, rest] = match;
+  const paths = (head.match(/"[^"]*"|\S+/g) ?? []).map((t) => t.replace(/^"|"$/g, ''));
+  return { head, paths, rest };
+}
+
+/** An absolute path to a `codemie` shim, `codemie.cmd` / `.ps1` / `.exe`, or a `codemie.js` script. */
+export function isAbsoluteCodemiePath(path: string): boolean {
+  return ABSOLUTE_PATH.test(path) && isCodemieCliName(path);
+}
+
+/**
+ * An absolute path to one of this package's agent wrappers (`codemie-claude`, `codemie-gemini`,
+ * `agent-executor.js`, …) in any of the shapes npm installs. Older resolvers baked these into hook
+ * commands in place of the CLI. EPMCDME-14035.
+ */
+export function isAbsoluteAgentWrapperPath(path: string): boolean {
+  return ABSOLUTE_PATH.test(path) && AGENT_WRAPPER_NAME.test(fileName(path));
 }
 
 // Rewrite a leading `codemie` token to `binary`; other commands pass through.
 // Also rewrites absolute paths baked in by older resolvers that point at the
-// bundled agent shim or a file that is gone, so already-installed hooks get repaired.
+// bundled agent shim, a file that is gone, or an agent wrapper running a codemie
+// subcommand, so already-installed hooks get repaired.
 // `powershell` adds the call operator `& ` to quoted paths: hooks marked `"shell": "powershell"`
 // (see rewriteHooksCommandTree) parse a leading quoted string as a plain string and never run it.
 // Parses what resolveBinary emits: `path`, `"path"`, or `"node" "script.js"`.
@@ -98,15 +161,17 @@ export function resolveHookCommand(command: string, binary: string, powershell =
   if (command === 'codemie') return render(binary);
   if (command.startsWith('codemie ')) return render(binary) + command.slice('codemie'.length);
 
-  const match = /^(?:& )?("[^"]*"(?: "[^"]*\.[cm]?js")?|\S+)([\s\S]*)$/.exec(command);
-  if (!match) return command;
-  const [, head, rest] = match;
-  const paths = (head.match(/"[^"]*"|\S+/g) ?? []).map((t) => t.replace(/^"|"$/g, ''));
+  const parsed = parseHookCommandHead(command);
+  if (!parsed) return command;
+  const { head, paths, rest } = parsed;
   const last = paths[paths.length - 1];
-  const isCodemiePath = /^([a-zA-Z]:)?[\\/]/.test(last) && /[\\/]codemie(\.(cmd|ps1|exe|[cm]?js))?$/i.test(last);
+  const isCodemiePath = isAbsoluteCodemiePath(last);
+  // A codemie subcommand run through an agent wrapper relaunches the agent (see findCliEntry).
+  const runsThroughWrapper = isAbsoluteAgentWrapperPath(last) && CODEMIE_HOOK_SUBCOMMAND.test(rest);
   // Shadowed shim, or a codemie path whose file is gone (e.g. an old npm-prefix install):
   // re-resolve instead of keeping a command that can only fail. EPMCDME-15907.
-  if (paths.some(isShadowedCodemieShim) || (isCodemiePath && !paths.every((p) => existsSync(p)))) {
+  const isStale = paths.some(isShadowedCodemieShim) || (isCodemiePath && !paths.every((p) => existsSync(p)));
+  if (runsThroughWrapper || isStale) {
     return render(binary) + rest;
   }
   // Same file, but the hook shell changed (Git Bash installed/removed): fix the `& ` prefix.

@@ -219,6 +219,11 @@ describe('processSessionTick (project gate)', () => {
       hooks: Buffer.byteLength(hooks), logs: 3, metrics: 0, traces: 0, logsJson: 0, metricsJson: 0, tracesJson: 0,
     });
     expect(status?.waitTicks).toBe(0);
+    expect(status?.lastLoss).toMatchObject({
+      reason: 'project_conflict_discard',
+      stream: 'hooks',
+      bytes: Buffer.byteLength(hooks) + 3,
+    });
     await expectNothingSent();
   });
 
@@ -262,6 +267,9 @@ describe('processSessionTick (project gate)', () => {
   it('does not rewrite the status of an already discarded conflicted session', async () => {
     const hooks = hookLine('A') + hookLine('B');
     await tickWith({ [`${SESSION}.hooks.ndjson`]: hooks });
+    const { readStatus } = await import('../session-status.js');
+    const lossBefore = (await readStatus(SESSION))?.lastLoss;
+    expect(lossBefore?.reason).toBe('project_conflict_discard');
     const before = await stat(join(state.root, `${SESSION}.status`));
     await new Promise((resolve) => setTimeout(resolve, 20));
 
@@ -270,6 +278,7 @@ describe('processSessionTick (project gate)', () => {
 
     const after = await stat(join(state.root, `${SESSION}.status`));
     expect(after.mtimeMs).toBe(before.mtimeMs);
+    expect((await readStatus(SESSION))?.lastLoss).toEqual(lossBefore); // a zero-byte repeat leaves it alone
   });
 
   describe('hooks seal', () => {

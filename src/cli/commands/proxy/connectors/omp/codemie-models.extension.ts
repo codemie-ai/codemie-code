@@ -17,6 +17,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { CODEMIE_DAEMON, INVALID_GATEWAY_KEY_MESSAGE } from '@/providers/plugins/sso/proxy/proxy-clients.js';
 import type { LlmModel } from '@/providers/plugins/sso/sso.http-client.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { getCodemieHome } from '@/utils/paths.js';
@@ -36,6 +37,7 @@ interface OmpExtensionApi {
 
 interface DaemonConnection {
   url: string;
+  /** The daemon's gateway key with oh-my-pi's client name appended: `<key>.codemie-daemon`. */
   gatewayKey: string;
   /** Profile project the daemon was started with; narrows the catalog to that project's models. */
   project?: string;
@@ -49,16 +51,20 @@ const CATALOG_TIMEOUT_MS = 10_000;
 // openai and anthropic discovery run back to back; one catalog request serves both.
 const ROSTER_REUSE_MS = 5_000;
 
+function namedKey(gatewayKey: string): string {
+  return `${gatewayKey}.${CODEMIE_DAEMON}`;
+}
+
 function readDaemonConnection(): DaemonConnection {
   try {
     const state = JSON.parse(readFileSync(join(getCodemieHome(), 'proxy-daemon.json'), 'utf-8')) as Partial<DaemonConnection>;
     return {
       url: typeof state.url === 'string' && state.url ? state.url : DEFAULT_DAEMON_URL,
-      gatewayKey: typeof state.gatewayKey === 'string' && state.gatewayKey ? state.gatewayKey : DEFAULT_GATEWAY_KEY,
+      gatewayKey: namedKey(typeof state.gatewayKey === 'string' && state.gatewayKey ? state.gatewayKey : DEFAULT_GATEWAY_KEY),
       ...(typeof state.project === 'string' && state.project ? { project: state.project } : {}),
     };
   } catch {
-    return { url: DEFAULT_DAEMON_URL, gatewayKey: DEFAULT_GATEWAY_KEY };
+    return { url: DEFAULT_DAEMON_URL, gatewayKey: namedKey(DEFAULT_GATEWAY_KEY) };
   }
 }
 
@@ -78,6 +84,10 @@ async function fetchRoster({ url, gatewayKey, project }: DaemonConnection): Prom
       `CodeMie proxy is not reachable at ${url} (${error instanceof Error ? error.message : String(error)}). ` +
       'Run `codemie proxy connect --omp` (or `codemie proxy start`).'
     );
+  }
+  // The daemon's gateway key check answers 401 "Invalid API key": a key the running proxy does not accept.
+  if (response.status === 401 && (await response.text()).includes(INVALID_GATEWAY_KEY_MESSAGE)) {
+    throw new ConfigurationError('The running CodeMie proxy refuses this key — run `codemie proxy connect --omp`.');
   }
   if (response.status === 401 || response.status === 403) {
     throw new ConfigurationError('CodeMie SSO session expired or invalid. Run `codemie profile login`, then `omp models refresh`.');

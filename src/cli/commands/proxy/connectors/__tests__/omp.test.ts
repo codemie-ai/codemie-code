@@ -1,4 +1,5 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { lstat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -62,16 +63,16 @@ describe('omp extension installer', () => {
     expect(readFileSync(path, 'utf-8')).toBe(BUNDLE);
   });
 
-  it('preserves a foreign extension unless force is requested', async () => {
+  it('preserves a foreign extension unless --overwrite is requested', async () => {
     vi.stubEnv('PI_CODING_AGENT_DIR', agentDir);
     const path = join(agentDir, 'extensions', 'codemie-models.js');
     mkdirSync(join(agentDir, 'extensions'), { recursive: true });
     const foreign = 'export default () => "user extension";\n';
     writeFileSync(path, foreign);
     await expect(writeOmpExtension()).rejects.toBeInstanceOf(ConfigurationError);
-    await expect(writeOmpExtension()).rejects.toThrow(/--force/);
+    await expect(writeOmpExtension()).rejects.toThrow(/--overwrite/);
     expect(readFileSync(path, 'utf-8')).toBe(foreign);
-    expect(await writeOmpExtension({ force: true })).toEqual({ path, changed: true });
+    expect(await writeOmpExtension({ overwrite: true })).toEqual({ path, changed: true });
     expect(readFileSync(path, 'utf-8')).toBe(BUNDLE);
   });
 
@@ -86,5 +87,47 @@ describe('omp extension installer', () => {
     writeFileSync(path, 'a foreign extension');
     await expect(removeOmpExtension()).rejects.toThrow(ConfigurationError);
     expect(readFileSync(path, 'utf-8')).toBe('a foreign extension');
+  });
+
+  describe('an extension path that is a symbolic link', () => {
+    let path: string;
+    let target: string;
+
+    beforeEach(() => {
+      vi.stubEnv('PI_CODING_AGENT_DIR', agentDir);
+      path = join(agentDir, 'extensions', 'codemie-models.js');
+      target = join(agentDir, 'dotfiles', 'codemie-models.js');
+      mkdirSync(join(agentDir, 'extensions'), { recursive: true });
+      mkdirSync(join(agentDir, 'dotfiles'), { recursive: true });
+      symlinkSync(target, path);
+    });
+
+    it.skipIf(process.platform === 'win32')('removes the CodeMie bundle the link points to and the link', async () => {
+      writeFileSync(target, '// codemie-managed: previous\nold bundle');
+      await writeOmpExtension();
+      expect(readFileSync(target, 'utf-8')).toBe(BUNDLE);
+      expect(lstatSync(path).isSymbolicLink()).toBe(true);
+
+      expect(await removeOmpExtension()).toEqual({ path, removed: true });
+
+      expect(existsSync(target)).toBe(false);
+      await expect(lstat(path)).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await removeOmpExtension()).toEqual({ path, removed: false });
+    });
+
+    it.skipIf(process.platform === 'win32')('leaves a foreign target and the link in place', async () => {
+      writeFileSync(target, 'a foreign extension');
+
+      await expect(removeOmpExtension()).rejects.toThrow('was not installed by CodeMie');
+
+      expect(readFileSync(target, 'utf-8')).toBe('a foreign extension');
+      expect(lstatSync(path).isSymbolicLink()).toBe(true);
+    });
+
+    it.skipIf(process.platform === 'win32')('is a no-op on a link to nothing, the link kept', async () => {
+      expect(await removeOmpExtension()).toEqual({ path, removed: false });
+
+      expect(lstatSync(path).isSymbolicLink()).toBe(true);
+    });
   });
 });

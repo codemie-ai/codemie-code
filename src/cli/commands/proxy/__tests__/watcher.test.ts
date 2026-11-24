@@ -83,6 +83,31 @@ describe('ProxyWatcher', () => {
     expect(cb.onGiveUp.mock.calls[0][0]).toContain('did not recover after 3 restart attempts');
   });
 
+  it('keeps checking after it gave up on restarts, restarts nothing more, and reports the next passing check healthy', async () => {
+    mockedHealth.mockResolvedValue(UPSTREAM_DOWN);
+    const cb = makeCallbacks();
+    const watcher = new ProxyWatcher(
+      { port: 4001, gatewayKey: 'k', intervalMs: 1000, maxRestartAttempts: 3 },
+      cb
+    );
+
+    watcher.start();
+    for (let i = 0; i < 30; i++) {
+      await vi.advanceTimersByTimeAsync(1000);
+    }
+    expect(cb.onGiveUp).toHaveBeenCalled();
+    cb.restart.mockClear();
+
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(cb.restart).not.toHaveBeenCalled();
+
+    mockedHealth.mockResolvedValue(HEALTHY);
+    await vi.advanceTimersByTimeAsync(1000);
+    watcher.stop();
+
+    expect(cb.onHealthy).toHaveBeenCalled();
+  });
+
   it('records an unauthorized failure once, never restarts, and keeps watching for a later sign-in', async () => {
     mockedHealth.mockResolvedValue(UNAUTHORIZED);
     const onUnauthorized = vi.fn().mockResolvedValue(undefined);

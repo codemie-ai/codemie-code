@@ -2,7 +2,17 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, parse } from 'node:path';
-import { connectFolder, consentHolds, coveringEntries, consentStorePath, disconnectFolder, resolveConsent } from '../consent-store.js';
+import {
+  connectAllFolders,
+  connectFolder,
+  consentHolds,
+  coveringEntries,
+  consentStorePath,
+  disconnectAllFolders,
+  disconnectFolder,
+  listConsents,
+  resolveConsent,
+} from '../consent-store.js';
 
 let home: string;
 let work: string;
@@ -124,5 +134,141 @@ describe('consent-store', () => {
     expect(await coveringEntries({ ...scope, owner_hash: 'p'.repeat(64) }, sub)).toEqual([]);
     expect(await disconnectFolder(scope, work)).toBe(1);
     expect(await coveringEntries(scope, sub)).toEqual([]);
+  });
+  it('lists only the signed-in owner and backend entries, and keeps an unreadable store apart from none', async () => {
+    await connectFolder(scope, work);
+    await connectFolder({ ...scope, owner_hash: 'p'.repeat(64) }, join(work, 'sub'));
+    await connectFolder({ ...scope, api_identity: 'https://other.example.com' }, join(work, 'sub', 'deep'));
+    const owner = { owner_hash: scope.owner_hash, api_identity: scope.api_identity };
+
+    const listed = await listConsents(owner);
+    expect(listed.kind === 'ok' ? listed.entries.map((e) => e.project) : listed).toEqual(['Proj-A']);
+    expect(listed.kind === 'ok' && listed.entries[0].owner_hash).toBe(scope.owner_hash);
+
+    writeFileSync(consentStorePath(), '{ not json');
+    expect(await listConsents(owner)).toEqual({ kind: 'unreadable' });
+  });
+});
+
+describe('consent-store: all-folders entry', () => {
+  const owner = { owner_hash: scope.owner_hash, api_identity: scope.api_identity };
+  type Raw = { version: number; entries: Array<Record<string, unknown>> };
+  const readRaw = (): Raw => JSON.parse(readFileSync(consentStorePath(), 'utf-8')) as Raw;
+
+  it('covers two unrelated folders and any project of the same owner and backend', async () => {
+    const other = join(home, 'elsewhere');
+    mkdirSync(other);
+    await connectAllFolders(owner);
+    const a = await resolveConsent(scope, work);
+    const b = await resolveConsent({ ...scope, project: 'Another-Project' }, other);
+    expect(a).toBeTruthy();
+    expect(b).toBe(a);
+    expect(await resolveConsent({ ...scope, owner_hash: 'p'.repeat(64) }, work)).toBeUndefined();
+    expect(await resolveConsent({ ...scope, api_identity: 'https://other.example.com' }, work)).toBeUndefined();
+    expect(await resolveConsent({ ...scope, project: ' ' }, work)).toBeUndefined();
+  });
+
+  it('does not cover a project whose name is not Latin-1, and still covers a Latin-1 one', async () => {
+    await connectAllFolders(owner);
+    expect(await resolveConsent({ ...scope, project: 'Проект' }, work)).toBeUndefined();
+    expect(await resolveConsent({ ...scope, project: 'Projekt-é' }, work)).toBeTruthy();
+  });
+
+  it('a frozen reference keeps holding in another cwd', async () => {
+    await connectAllFolders(owner);
+    const ref = (await resolveConsent(scope, work))!;
+    expect(await consentHolds(ref, scope, join(home, 'moved'))).toBe(true);
+    expect(await consentHolds(ref, scope)).toBe(true);
+    expect(await disconnectAllFolders(owner)).toBe(1);
+    expect(await consentHolds(ref, scope, work)).toBe(false);
+  });
+
+  it('a folder-bound match wins over the all-folders entry', async () => {
+    await connectAllFolders(owner);
+    const allRef = (await resolveConsent(scope, work))!;
+    await connectFolder(scope, work);
+    const folderRef = await resolveConsent(scope, join(work, 'sub'));
+    expect(folderRef).toBeTruthy();
+    expect(folderRef).not.toBe(allRef);
+    expect(await resolveConsent(scope, join(home, 'unrelated'))).toBe(allRef);
+  });
+
+  it('is idempotent: a repeated connect keeps the reference', async () => {
+    await connectAllFolders(owner);
+    const first = (await resolveConsent(scope, work))!;
+    await connectAllFolders(owner);
+    expect(await resolveConsent(scope, work)).toBe(first);
+    expect(readRaw().entries).toHaveLength(1);
+  });
+
+  it('disconnectFolder never removes it, disconnectAllFolders removes only it', async () => {
+    await connectAllFolders(owner);
+    await connectFolder(scope, work);
+    expect(await disconnectFolder(owner, work)).toBe(1);
+    expect(readRaw().entries.map((e) => e.all_folders)).toEqual([true]);
+    await connectFolder(scope, work);
+    expect(await disconnectAllFolders(owner)).toBe(1);
+    expect(readRaw().entries.every((e) => e.all_folders !== true)).toBe(true);
+    expect(readRaw().entries).toHaveLength(1);
+    expect(await disconnectAllFolders(owner)).toBe(0);
+  });
+
+  it('is listed and covers any folder in coveringEntries', async () => {
+    await connectAllFolders(owner);
+    const listed = await listConsents(owner);
+    expect(listed.kind === 'ok' ? listed.entries.map((e) => e.all_folders) : listed).toEqual([true]);
+    const covering = await coveringEntries(owner, join(home, 'anywhere'));
+    expect(covering.map((e) => e.all_folders)).toEqual([true]);
+    expect(await coveringEntries({ ...owner, owner_hash: 'p'.repeat(64) }, work)).toEqual([]);
+  });
+
+  it('an all_folders entry without both sentinels makes the store unreadable', async () => {
+    await connectAllFolders(owner);
+    const raw = readRaw();
+    raw.entries[0].folder = '/some/folder';
+    writeFileSync(consentStorePath(), JSON.stringify(raw));
+    expect(await resolveConsent(scope, work)).toBeUndefined();
+  });
+
+  it('refuses to overwrite an unreadable store', async () => {
+    mkdirSync(dirname(consentStorePath()), { recursive: true });
+    writeFileSync(consentStorePath(), '{ not json');
+    await expect(connectAllFolders(owner)).rejects.toThrow(/unreadable/);
+  });
+
+  it('compat (a): an older build still loads the store, never matches the entry, and keeps it', async () => {
+    await connectAllFolders(owner);
+    const raw = readRaw();
+    // Verbatim copy of the previous validEntry and project match.
+    const oldValid = (v: unknown): boolean => {
+      if (!v || typeof v !== 'object') return false;
+      const e = v as Record<string, unknown>;
+      if (typeof e.id !== 'string' || !/^[0-9a-f]{16}$/.test(e.id)) return false;
+      return ['owner_hash', 'api_identity', 'project', 'folder'].every((k) => typeof e[k] === 'string' && (e[k] as string).length > 0);
+    };
+    expect(raw.version).toBe(1);
+    expect(raw.entries.every(oldValid)).toBe(true);
+    const oldMatches = (e: Record<string, unknown>, s: typeof scope): boolean =>
+      e.owner_hash === s.owner_hash && e.api_identity === s.api_identity && String(e.project).trim().toLowerCase() === s.project.trim().toLowerCase();
+    expect(raw.entries.some((e) => oldMatches(e, scope))).toBe(false);
+    // An old-style connect (folder entry written beside it) keeps the all-folders entry, extra field included.
+    await connectFolder(scope, work);
+    expect(readRaw().entries.filter((e) => e.all_folders === true)).toHaveLength(1);
+  });
+
+  it('compat (b): a store written by an older build loads and behaves unchanged', async () => {
+    const canonical = await connectFolder(scope, work);
+    // The oldest shape: no connected_at, no all_folders.
+    writeFileSync(
+      consentStorePath(),
+      JSON.stringify({
+        version: 1,
+        entries: [{ owner_hash: scope.owner_hash, api_identity: scope.api_identity, project: scope.project, folder: canonical, id: '0123456789abcdef' }],
+      })
+    );
+    expect(await resolveConsent(scope, join(work, 'sub'))).toBeTruthy();
+    expect(await resolveConsent(scope, join(home, 'elsewhere'))).toBeUndefined();
+    expect(await disconnectFolder(owner, work)).toBe(1);
+    expect(await disconnectAllFolders(owner)).toBe(0);
   });
 });

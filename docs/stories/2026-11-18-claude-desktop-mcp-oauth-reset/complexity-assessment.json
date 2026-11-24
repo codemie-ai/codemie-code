@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "task": "Add a `codemie proxy reset-mcp-auth --claude-desktop` command that removes the `custom3pMcpOAuth` key from Claude Desktop's Claude-3p `config.json` on Linux, macOS and Windows, preserving all other settings and never printing or logging token values.",
+  "generated": "2026-11-18T12:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 15,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "technical_risk",
+      "reason": "Closest pattern is removeDesktopConfig (connectors/desktop.ts) behind `proxy disconnect --claude-desktop`: resolve getClaudeDesktopBaseDir, read JSON, strip keys, keep unrelated keys, ConfigurationError 'file was not changed', restart notice. It covers structure and error handling but not the new aspect: this is the first CodeMie code to modify a Desktop-owned, credential-bearing file outside configLibrary/ (<Claude-3p>/config.json). Secret handling is a divergence, so the base M is bumped to L. Open items: the effect of deleting custom3pMcpOAuth is unverified Desktop behaviour, macOS and Windows file layouts are unobserved, no Desktop-running detection exists, and a running Desktop may rewrite the file. Parse-error messages must not echo file content. Nearest calibration example (bundled EPMCDME-10203, M, total 15) agrees on band; its technical risk is S because it follows an established endpoint pattern with no secret-bearing data, which is the difference here."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M to L: credential-bearing Desktop-owned file with no existing secret-handling precedent in the closest pattern (auto-bump for security-sensitive divergence; the 'never print or log tokens' requirement is the same signal, counted once)"
+  ],
+  "split_recommendation": null
+}

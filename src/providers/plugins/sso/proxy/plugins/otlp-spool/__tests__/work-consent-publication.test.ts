@@ -1,6 +1,6 @@
 /**
  * EPMCDME-17142: native Claude publishes a Personal session, or an Unknown one with confirmed subscription funding, only
- * under explicit connect-folder consent. Real stampEvidence, consent store, record store, tick and forwarder over a temp
+ * under explicit consent grant. Real stampEvidence, consent store, record store, tick and forwarder over a temp
  * CODEMIE_HOME; only the network (fetch), the daemon state, credentials and config/git lookups are faked. The assertion is
  * on the analytics POSTs the real forwarder makes (policy GETs are allowed), never on a UI.
  * @group unit
@@ -149,7 +149,7 @@ describe('Personal and Unknown+subscription sessions need explicit work consent 
     expect(reason).toBe('work_consent_required');
     const { stopNoticeText } = await import('@/agents/plugins/claude-code-otlp/claude-code-otlp.notice.js');
     const notice = stopNoticeText(reason!);
-    expect(notice).toContain('codemie proxy analytics connect-folder');
+    expect(notice).toContain('codemie proxy analytics consent grant');
     expect(notice).toContain('start a new session');
     expect(notice).not.toMatch(/retry|backend/i);
     await drain(m, 's1');
@@ -176,6 +176,34 @@ describe('Personal and Unknown+subscription sessions need explicit work consent 
     expect((await m.st.readStatus('s1'))!.cursors.hooks).toBe(hooksSize('s1'));
   });
 
+  it('an all-folders consent authorizes a session in an unrelated folder, with the same header and the session\'s own project', async () => {
+    const m = await load();
+    const unrelated = join(home, 'unrelated');
+    mkdirSync(unrelated);
+    await m.consent.connectAllFolders({ owner_hash: identity(m).owner_hash, api_identity: identity(m).api_identity });
+    expect(
+      await m.stamp.stampEvidence(
+        { cwd: unrelated, sessionId: 's1' },
+        { organization: 'Gmail Personal', routing: { routed: false, routing_proof: 'proven' }, funding_route: 'subscription', collection_generation: 0 }
+      )
+    ).toMatchObject({ ok: true, record: { consent_ref: expect.any(String) } });
+    await hook(m, 's1');
+    await drain(m, 's1');
+
+    expect(posts().length).toBeGreaterThan(0);
+    expect(posts()[0].headers).toMatchObject({
+      'X-CodeMie-Work-Consent': 'explicit-folder',
+      'X-CodeMie-Project': 'proj-orig',
+      'X-CodeMie-Subscription-Type': 'personal',
+    });
+
+    const sent = posts().length;
+    await hook(m, 's1');
+    await m.consent.disconnectAllFolders({ owner_hash: identity(m).owner_hash, api_identity: identity(m).api_identity });
+    await drain(m, 's1');
+    expect(posts().length).toBe(sent);
+  });
+
   it('a corporate session, and an Unknown one without a subscription claim, are unchanged (no consent needed)', async () => {
     const m = await load();
     await stamp(m, 'corp', 'Corp', 'subscription');
@@ -188,7 +216,7 @@ describe('Personal and Unknown+subscription sessions need explicit work consent 
     expect(posts().length).toBe(3);
   });
 
-  it('old queued boundary: a record without a funding claim that is Personal stays local, and a later connect-folder never grants it', async () => {
+  it('old queued boundary: a record without a funding claim that is Personal stays local, and a later consent grant never grants it', async () => {
     const m = await load();
     await stamp(m, 's1', 'Gmail Personal', undefined);
     await hook(m, 's1'); // queued under the old record shape

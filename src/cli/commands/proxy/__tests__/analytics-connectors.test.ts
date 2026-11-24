@@ -3,9 +3,17 @@
  * @group unit
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 vi.mock('../connectors/claude-code-otlp.js', () => ({
   hasClaudeCodeOtlpHooks: vi.fn(),
+}));
+
+vi.mock('../connectors/claude-code-otlp-scope.js', () => ({
+  readClaudeCodeOtlpScope: vi.fn(),
+  addClaudeCodeOtlpProject: vi.fn(),
 }));
 
 vi.mock('../connectors/desktop.js', () => ({
@@ -110,6 +118,27 @@ describe('hasActiveAnalyticsConnector', () => {
   it('is true when only Claude Desktop is connected to a local gateway', async () => {
     vi.mocked(readDesktopGateway).mockResolvedValue({ port: 4001 });
     await expect(hasActiveAnalyticsConnector()).resolves.toBe(true);
+  });
+
+  it('is true when only Claude Desktop is connected, with a key Desktop has sealed', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'analytics-connectors-desktop-'));
+    try {
+      const lib = join(baseDir, 'configLibrary');
+      await mkdir(lib, { recursive: true });
+      await writeFile(join(lib, '_meta.json'), JSON.stringify({ appliedId: 'a' }));
+      await writeFile(join(lib, 'a.json'), JSON.stringify({
+        inferenceProvider: 'gateway',
+        inferenceGatewayBaseUrl: 'http://127.0.0.1:4001',
+        inferenceGatewayApiKey: '__sealed__:v1:QUJD',
+      }));
+      const actual = await vi.importActual<typeof import('../connectors/desktop.js')>('../connectors/desktop.js');
+      vi.mocked(readDesktopGateway).mockImplementation(() =>
+        actual.readDesktopGateway(baseDir, join(baseDir, 'no-state.json')));
+
+      await expect(hasActiveAnalyticsConnector()).resolves.toBe(true);
+    } finally {
+      await rm(baseDir, { recursive: true, force: true });
+    }
   });
 
   it('is false when no connector is connected', async () => {

@@ -1,6 +1,9 @@
+import { randomUUID } from 'crypto';
 import { stat } from 'fs/promises';
 import { hostOf } from '@/agents/core/session/send-path.js';
 import type { Session } from '@/agents/core/session/types.js';
+import type { DesktopTelemetryRuntimeConfig, LocalTelemetryDiscoveredSession } from '@/telemetry/runtime/types.js';
+import { restoreCompletedFiles } from '@/telemetry/runtime/completed-files.js';
 import { logger } from '@/utils/logger.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { detectGitBranch, detectGitRemoteRepo, processStartedAt } from '@/utils/processes.js';
@@ -92,4 +95,86 @@ export function detectAttribution(workingDirectory: string, profile: string | un
       .then(c => c.codeMieProject ?? undefined)
       .catch(() => undefined)
   ]);
+}
+
+/** A new record of a discovered session, owned by this daemon. */
+export function buildNewSession(
+  config: DesktopTelemetryRuntimeConfig,
+  credentialsUrl: string,
+  discovered: LocalTelemetryDiscoveredSession,
+  [gitBranch, repository, project]: Attribution,
+  baselineCutoffMs: number | undefined
+): Session {
+  return {
+    sessionId: randomUUID(),
+    agentName: config.clientType,
+    provider: config.provider,
+    codemieUrl: credentialsUrl,
+    startTime: baselineCutoffMs ?? discovered.createdAt,
+    workingDirectory: discovered.workingDirectory,
+    gitBranch: gitBranch || undefined,
+    repository: repository || undefined,
+    project: project || undefined,
+    status: 'active',
+    activeDurationMs: 0,
+    ...daemonOwner(),
+    correlation: {
+      status: 'matched',
+      agentSessionId: discovered.agentSessionId,
+      agentSessionFile: discovered.transcriptPath,
+      retryCount: 0
+    },
+    runtimeCheckpoint: {
+      externalSessionId: discovered.externalSessionId,
+      transcriptPath: discovered.transcriptPath,
+      lastDiscoveredAt: Date.now(),
+      lastSeenActivityAt: discovered.updatedAt,
+      ...(baselineCutoffMs !== undefined && { baselineCutoffMs })
+    }
+  };
+}
+
+export async function followFolder(config: DesktopTelemetryRuntimeConfig, existing: Session, workingDirectory: string): Promise<void> {
+  if (workingDirectory === existing.workingDirectory) return;
+  // ponytail: the start metric and the deltas sent before the switch keep the previous folder's attribution
+  const [gitBranch, repository, project] = await detectAttribution(workingDirectory, config.profile);
+  logger.info('[desktop-telemetry] Session switched folder', {
+    sessionId: existing.sessionId, from: existing.workingDirectory, to: workingDirectory, gitBranch, repository, project
+  });
+  existing.workingDirectory = workingDirectory;
+  existing.gitBranch = gitBranch || undefined;
+  existing.repository = repository || undefined;
+  existing.project = project || undefined;
+}
+
+/** Moves a `completed` record's set back to its live names and clears its end and delivery state. */
+export async function reopenCompleted(existing: Session, discovered: LocalTelemetryDiscoveredSession): Promise<void> {
+  logger.info('[desktop-telemetry] Reopening completed session — activity resumed', {
+    sessionId: existing.sessionId,
+    externalSessionId: discovered.externalSessionId,
+  });
+  await restoreCompletedFiles(existing.sessionId);
+  // An ownerless completed record is either a pre-upgrade one, whose daemon sent its end metric without recording it,
+  // or a legacy one closed locally with nothing sent — either way its earlier stretch is not reported again
+  const endMetricLeft = existing.ownerPid === undefined
+    || existing.endMetricSentAt !== undefined
+    || existing.endMetricSkipped !== undefined;
+  existing.status = 'active';
+  delete existing.endTime;
+  delete existing.reason;
+  delete existing.endMetricSentAt;
+  delete existing.endMetricSkipped;
+  delete existing.deliveryAttempts;
+  delete existing.localFinalizeFailures;
+  delete existing.deliveryAttemptedAt;
+  delete existing.droppedAt;
+  delete existing.droppedReason;
+  delete existing.deliveryFailingSince;
+  delete existing.deliveryRealAttempts;
+  // ponytail: the stretch start lags its first activity by up to one poll interval (and the reopen lock wait), and when
+  // the previous stretch's end metric never left, the next end metric covers that stretch, the gap and the new one;
+  // delivering the pending end metric at the reopen would make it exact
+  if (endMetricLeft) {
+    existing.stretchStartTime = discovered.updatedAt;
+  }
 }

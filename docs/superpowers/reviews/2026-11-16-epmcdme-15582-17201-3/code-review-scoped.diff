@@ -1,0 +1,368 @@
+diff --git a/docs/ARCHITECTURE-OTLP-PLUGIN.md b/docs/ARCHITECTURE-OTLP-PLUGIN.md
+index d6d834e0..dc25c3c0 100644
+--- a/docs/ARCHITECTURE-OTLP-PLUGIN.md
++++ b/docs/ARCHITECTURE-OTLP-PLUGIN.md
+@@ -238,7 +238,7 @@ reclaimed and would stall for the full `PID_LOCK_WAIT_BUDGET_MS` — the bug an
+ its note below |
+ | `transcript/subagent-usage.ts` | `findSubagentFiles` — discovers every subagent transcript for a session; `buildSubagentUsageEvent` ranks the top-level `model` by `api_calls`, skipping the `<synthetic>` API-error placeholder (`isSyntheticModel` in `transcript/synthetic-model.ts`) — the same rule `agent.session.summary`'s `primary_model` uses |
+ | `transcript/fork-skill.ts` | `resolveForkSkills` — names a forked skill when Claude Code wrote no `.forked-skill.marker.json` (desktop app), by exact ids only: a `Skill` `tool_use` whose result `agentId` (or the fork's `.meta.json` `toolUseId`) is the fork; or a plain user line `/name` whose `promptId` is that of exactly one subagent that no tool call started. The backend keeps `max()` of `scope_kind`/`scope_name` per request, so a scope sent wrong cannot be corrected: a subagent that could still prove to be a fork (a `Skill` call without result, or a slash candidate beside an `Agent`/`Task`/`Skill` call without result; calls inside subagent transcripts count; or a metadata-less subagent whose `promptId` the main transcript does not contain yet — the desktop app flushes a prompt's lines after `SubagentStop` and the immediate `Stop` — or whose own file has no line yet) is `pending` (so is every marker-less child while the main transcript is missing or empty), its `SubagentStop` sends no usage (`deferredAgentIds` plus the file facts `deferredSubagentFiles`, so a nonstandard or late-appearing path from `agent_transcript_path` is still found), the next `Stop`/`StopFailure`/`PreCompact` sends it once resolved, a later resolved `SubagentStop` settles it: every resolved subagent stays registered as `settled` with its path, type, positive skill evidence and `promptId`, because no summary or offset proves a subagent file complete (it can be created or flushed after `SubagentStop`); later `Stop`/`StopFailure`/`PreCompact`/`SessionEnd` passes send only bytes appended since (one `stat` per file, no sidecar reads, no resolution, no re-read of unchanged files), and a settled ordinary agent is never re-classified (its file is still read for the parent-call evidence of an unsettled sibling); `settled` means a known scope, not complete correlation metadata: a `promptId` the file did not show yet is probed again (head only, once the file changed) until found or five complete lines lack it, and a repeated `SubagentStop` with temporarily missing evidence never overwrites a registered skill/settled entry; a subagent left an agent only because the session ended (`unproven`) is not settled; an entry without `settled` (older state, or a pending one) is resolved in full; the session summary's `commands` and the usage events resolve from one snapshot over the same candidates; a `.meta.json` `toolUseId` proves an ordinary agent only once the call it names is seen), and `SessionEnd` ends any still unproven one as an agent (there is no age or Stop-count fallback: an undecidable one stays pending until then, and is lost if `SessionEnd` never fires). the evidence read from every subagent transcript (a parent may hold the call of a child) goes through `transcript/evidence-index.ts`, an advisory per-session cache file (`analytics/state/<session>.evidence.json`, written atomically without a lock) of the `Agent`/`Task`/`Skill` calls and results found in complete lines up to an offset: an entry is accepted only for the same file (device, inode, creation time), not shrunk (size >= the recorded size, and an unchanged size needs an unchanged mtime), with the same start prompt, valid shape/bounds and matching head/tail sample hashes — an append-only contract: the samples are a tripwire, not proof that the middle of a grown file is unchanged (a same-inode in-place rewrite followed by growth is not detected); a file that changed while being read is not indexed; calls of other tools are kept as seen ids and results are kept unless their call is known to be another tool's, so cache and full read join evidence the same way; otherwise (truncated, replaced, missing, malformed cache, start prompt not final yet) it is a plain full read, a trailing partial line is read per pass and never indexed, and absence is never cached; `findSubagentFiles` applies it (`skillName`, description `/name`, `pending`); the session summary lists a plain `/name` line in `commands` only for a prompt whose fork is confirmed |
+-| `transcript/session-signals.ts` | Pure `agent.session.summary` signal extractors (edit-diff lines, turns, compactions, client versions, title). It holds the one rule of a user turn: `isGenuineUserTurn` (a user line that is not `isMeta`, `isSidechain` or `isCompactSummary` and carries text) and `isSelfWrittenUserText` (the lines Claude Code writes itself: an interrupt, the output of a local or `!` command, the `!` command). `countTurns` counts a genuine user turn whose text is neither self-written nor an automatic prompt (`<task-notification>`, `<agent-message`); the Cowork event producer uses the same two tests to pick the transcript lines it sends as `agent.prompt.submit`. `collectCompactions()` turns each `compact_boundary` system line into a `Compaction` (`pre_tokens`/`post_tokens`/`dropped_tokens`/`duration_ms`). `openPostCompactPass` is the only caller that treats its result as a record-worthy signal (`agent.session.compact.done`); `buildFullAccumulator`'s own call (full-file, every `Stop`/`SessionEnd`) feeds only `agent.session.summary`'s aggregate stats, never a record of its own. `PreCompact`'s own event (`agent.session.compact`) never carries compaction numbers: `PreCompact` fires *before* compaction runs, so the boundary line doesn't exist in the transcript yet |
++| `transcript/session-signals.ts` | Pure `agent.session.summary` signal extractors (edit-diff lines, turns, compactions, client versions, title). It holds the one rule of a user turn: `isGenuineUserTurn` (a user line that is not `isMeta`, `isSidechain` or `isCompactSummary` and carries text) and `isSelfWrittenUserText` (the lines Claude Code writes itself: an interrupt, the output of a local or `!` command, the `!` command). `countTurns` counts a genuine user turn whose text is neither self-written nor an automatic prompt (`<task-notification>`, `<agent-message`) nor a genuine command wrapper (via `claude-named-invocations.ts`'s `wrappedCommandName`) naming a command in `LOCAL_ONLY_COMMANDS` (`/context`, `/usage`, `/cost`, `/exit`, `/quit`, `/clear`, `/resume`, `/model` — commands with no model call behind them); this is the client-side analogue of the backend analytics rollup's `SENTINEL_EXACT` list, with no shared source of truth across the two repos, so a newly added local-only command needs adding in both places. The Cowork event producer uses the same two tests to pick the transcript lines it sends as `agent.prompt.submit`. `collectCompactions()` turns each `compact_boundary` system line into a `Compaction` (`pre_tokens`/`post_tokens`/`dropped_tokens`/`duration_ms`). `openPostCompactPass` is the only caller that treats its result as a record-worthy signal (`agent.session.compact.done`); `buildFullAccumulator`'s own call (full-file, every `Stop`/`SessionEnd`) feeds only `agent.session.summary`'s aggregate stats, never a record of its own. `PreCompact`'s own event (`agent.session.compact`) never carries compaction numbers: `PreCompact` fires *before* compaction runs, so the boundary line doesn't exist in the transcript yet |
+ | `src/cli/commands/proxy/connectors/claude-code-otlp.ts` | Wires Claude Code's `.claude/settings.json` hooks to `codemie hook --agent claude-code-otlp` |
+ 
+ Claude Code fires 16 hook events (`HOOK_EVENTS` in that connector). `evaluate()` branches on `SessionStart` (adds the opt-in `os`, `timezone`, `git_email`, `codemie_cli_email`, `os_user`, `git_head_start` and `model` fields to `agent.session.start`, opens `openSessionStartPass`, and emits a second record, `agent.session.env`, built by `buildSessionEnvEvent()` from the pass's merged snapshot; repeated `SessionStart` fires use the first persisted `git_head_start`, matching the start SHA retained for `agent.git.snapshot`), `UserPromptSubmit` (auth gate), `UserPromptExpansion` (emits `agent.skill.dispatch` only for `slash_command` expansions, from an explicit allowlist: `session_id`, `prompt_id`, `hook_event_name`, `expansion_type`, `command_name`, `command_source`, and derived `skill_name`; `mcp_prompt` expansions are ignored; `command_args` and `prompt` are never forwarded), `PreToolUse`/`PostToolUse` (tool-specific enrichment via `tool-fields.ts`: `file_path` for `Edit`/`Write`/`MultiEdit`/`NotebookEdit`, `subagent_type`/`description` for `Agent`/`Task` (`description` is capped at 300 characters), `skill_name` for `Skill`; `PostToolUse` additionally stamps `lines_added`/`lines_removed` from the tool result's own diff (`Edit`/`MultiEdit`/`Write` only — other tools omit them) and `fork_agent_id` for `Skill` and `Agent` from the uncut result's `agentId` (`Task` is never stamped), not resolvable pre-execution), `Stop`/`PreCompact`/`StopFailure`/`SessionEnd` (transcript parse, each also passing `envCheckInput(hookInput)` into its own `openMainTranscriptPass`/`openSessionEndPass` call so the sibling `agent.session.env` re-check folds into that same pass's lock and appends a new snapshot record when it changed; `SessionEnd` additionally emits a second record, `agent.git.snapshot`, built by `buildGitSnapshotEvent()` from `openSessionEndPass`'s `gitHeadStart`/`sessionStartedAt`, `resolveGitHeadFields(ctx, 'end')`, `resolveIdentityCandidateFields().git_email`, and `resolveGitCommitFields()` — commits whose author email exactly matches that git email since `sessionStartedAt`, metadata only), `PostCompact` (its own `openPostCompactPass`, detailed below — never forwards the native hook event itself, only the derived `agent.session.compact.done` record when one is found), `SubagentStop` (subagent-scoped transcript parse via `openSubagentPass`, plus stamping `resolveSubagentStopFields`'s resolvable fields onto the forwarded `agent.subagent.stop` event itself — unknown values are omitted, never defaulted — and the same folded-in `agent.session.env` re-check — skipped for Claude Code's own internal "is it done yet?" check-ins, which carry no `agent_type`), and `PostModelSwitch`/`ConfigChange` (never forwarded themselves — each does a full `agent.session.env` re-resolve via the standalone `openSessionEnvCheckPass`'s `full` path and emits only the derived snapshot, if anything changed; `ConfigChange` additionally skips entirely for `source: 'skills'`, a skill-*content* edit that's never env-relevant); everything else falls through to the raw passthrough.
+diff --git a/src/agents/plugins/claude-code-otlp/transcript/__tests__/orchestrator.test.ts b/src/agents/plugins/claude-code-otlp/transcript/__tests__/orchestrator.test.ts
+index dc9bfdfa..7cad2559 100644
+--- a/src/agents/plugins/claude-code-otlp/transcript/__tests__/orchestrator.test.ts
++++ b/src/agents/plugins/claude-code-otlp/transcript/__tests__/orchestrator.test.ts
+@@ -830,6 +830,17 @@ describe('openMainTranscriptPass — summary transcript signals', () => {
+     expect(summary.turns).toBe(2);
+   });
+ 
++  it('excludes local-only commands like /context and /usage from turns, but still counts model-calling commands', async () => {
++    const summary = await runFinalSummary('session-local-only-commands', [
++      userLine('hello'),
++      userLine(commandText('context')),
++      userLine(commandText('usage')),
++      userLine(commandText('compact')),
++    ]);
++
++    expect(summary.turns).toBe(2); // 'hello' + '/compact'; /context and /usage are local-only
++  });
++
+   it('leaves lines_* null when the transcript has no applied edit result', async () => {
+     const summary = await runFinalSummary('session-no-edits', [
+       userLine('hello'),
+diff --git a/src/agents/plugins/claude-code-otlp/transcript/__tests__/session-signals.test.ts b/src/agents/plugins/claude-code-otlp/transcript/__tests__/session-signals.test.ts
+index e0f790fe..32de72eb 100644
+--- a/src/agents/plugins/claude-code-otlp/transcript/__tests__/session-signals.test.ts
++++ b/src/agents/plugins/claude-code-otlp/transcript/__tests__/session-signals.test.ts
+@@ -198,6 +198,37 @@ describe('countTurns', () => {
+       ])
+     ).toBe(4);
+   });
++
++  it('excludes known local-only commands (no model call) from turns, EPMCDME-15582 regression', () => {
++    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
++    const wrapped = (name: string) =>
++      `<command-name>/${name}</command-name>\n<command-message>${name}</command-message>`;
++    expect(
++      countTurns([
++        user('typed prompt'),
++        user(wrapped('context')),
++        user(wrapped('usage')),
++        user(wrapped('cost')),
++        user(wrapped('exit')),
++        user(wrapped('quit')),
++        user(wrapped('clear')),
++        user(wrapped('resume')),
++        user(wrapped('model')),
++        user(wrapped('compact')), // calls the model, must still count
++        user(wrapped('init')), // calls the model, must still count
++      ])
++    ).toBe(3); // typed prompt + /compact + /init
++  });
++
++  it('does not exclude a bare mention of a local-only command name lacking the genuine command-message wrapper (CR-002)', () => {
++    const user = (content: unknown): SignalLine => ({ type: 'user', message: { content } });
++    expect(
++      countTurns([
++        user('typed prompt'),
++        user('<command-name>/model</command-name>'), // no <command-message> sibling: not a genuine invocation
++      ])
++    ).toBe(2);
++  });
+ });
+ 
+ describe('collectCompactions', () => {
+diff --git a/src/agents/plugins/claude-code-otlp/transcript/session-signals.ts b/src/agents/plugins/claude-code-otlp/transcript/session-signals.ts
+index fff50782..84a56a53 100644
+--- a/src/agents/plugins/claude-code-otlp/transcript/session-signals.ts
++++ b/src/agents/plugins/claude-code-otlp/transcript/session-signals.ts
+@@ -1,4 +1,5 @@
+ import { countContentLines } from '@/utils/file-operations.js';
++import { wrappedCommandName } from '../../claude/session/claude-named-invocations.js';
+ 
+ /**
+  * Transcript signals for `agent.session.summary`, plus `buildCompactionDoneEvent` for
+@@ -123,6 +124,22 @@ const SELF_WRITTEN_PREFIXES = [
+ /** Starts of an auto prompt: Claude Code injects it when a background task finishes or a message arrives. */
+ const AUTO_PROMPT_PREFIXES = ['<task-notification>', '<agent-message'];
+ 
++/**
++ * Commands Claude Code runs locally with no model call behind them — the client-side analogue of
++ * the backend analytics rollup's `SENTINEL_EXACT` list, excluded from Turns. There is no shared
++ * source of truth between the two repos: a newly added local-only command must be added to both.
++ */
++export const LOCAL_ONLY_COMMANDS: ReadonlySet<string> = new Set([
++  'context',
++  'usage',
++  'cost',
++  'exit',
++  'quit',
++  'clear',
++  'resume',
++  'model',
++]);
++
+ function startsWithAny(text: string, prefixes: readonly string[]): boolean {
+   const start = text.trimStart();
+   return prefixes.some((prefix) => start.startsWith(prefix));
+@@ -171,6 +188,7 @@ export function countTurns(lines: readonly SignalLine[]): number {
+     if (!isGenuineUserTurn(line)) continue;
+     const text = userLineText(line);
+     if (isSelfWrittenUserText(text) || startsWithAny(text, AUTO_PROMPT_PREFIXES)) continue;
++    if (LOCAL_ONLY_COMMANDS.has(wrappedCommandName(text))) continue;
+     turns += 1;
+   }
+   return turns;
+diff --git a/src/agents/plugins/claude/session/__tests__/claude-named-invocations.test.ts b/src/agents/plugins/claude/session/__tests__/claude-named-invocations.test.ts
+index 4bcebfaa..456fc47d 100644
+--- a/src/agents/plugins/claude/session/__tests__/claude-named-invocations.test.ts
++++ b/src/agents/plugins/claude/session/__tests__/claude-named-invocations.test.ts
+@@ -23,6 +23,21 @@ function userStringContent(text: string) {
+   return { message: { role: 'user', content: text } };
+ }
+ 
++/** A bookkeeping line Claude Code writes between a command and the model's real reply. */
++function metaLine() {
++  return { isMeta: true, message: { role: 'user', content: '<local-command-caveat>Caveat</local-command-caveat>' } };
++}
++
++/** The tool_result passback for a prior tool_use call — not a new user-authored turn. */
++function toolResult(toolUseId = 't1') {
++  return { message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId }] } };
++}
++
++/** A system line (e.g. a compact_boundary) that carries no `message` field at all. */
++function systemLine() {
++  return { type: 'system', subtype: 'compact_boundary' };
++}
++
+ describe('extractNamedInvocations', () => {
+   it('extracts skill names from Skill tool_use blocks', () => {
+     const out = extractNamedInvocations([
+@@ -126,6 +141,90 @@ describe('extractOrderedNamedInvocations', () => {
+     expect(out.commandInvocations).toEqual({ plan: 2, commit: 1 });
+   });
+ 
++  it('counts a skill-backed slash command once, as a skill, not also as a command (EPMCDME-17201)', () => {
++    const out = extractOrderedNamedInvocations([
++      userStringContent(commandWrapper('codemie-humanizer')),
++      toolUse('Skill', { skill: 'codemie-humanizer' }),
++    ]);
++    expect(out.skillInvocations).toEqual({ 'codemie-humanizer': 1 });
++    expect(out.commandInvocations).toEqual({});
++    expect(out.commandsInOrder).toEqual([]);
++  });
++
++  it('still counts a command as a command when no Skill call follows it', () => {
++    const out = extractOrderedNamedInvocations([
++      userStringContent(commandWrapper('plan')),
++      userText('a plain follow-up prompt, no skill'),
++    ]);
++    expect(out.commandInvocations).toEqual({ plan: 1 });
++    expect(out.skillInvocations).toEqual({});
++  });
++
++  it('still counts a command as a command when the next message is a Skill call for a different name', () => {
++    const out = extractOrderedNamedInvocations([
++      userStringContent(commandWrapper('plan')),
++      toolUse('Skill', { skill: 'unrelated-skill' }),
++    ]);
++    expect(out.commandInvocations).toEqual({ plan: 1 });
++    expect(out.skillInvocations).toEqual({ 'unrelated-skill': 1 });
++  });
++
++  it('counts a skill-backed command once even when a meta/bookkeeping line sits between it and the Skill call (CR-001)', () => {
++    const out = extractOrderedNamedInvocations([
++      userStringContent(commandWrapper('codemie-humanizer')),
++      metaLine(),
++      toolUse('Skill', { skill: 'codemie-humanizer' }),
++    ]);
++    expect(out.skillInvocations).toEqual({ 'codemie-humanizer': 1 });
++    expect(out.commandInvocations).toEqual({});
++    expect(out.commandsInOrder).toEqual([]);
++  });
++
++  it('counts a skill-backed command once even when the model calls another tool first, before the Skill call (CR-001)', () => {
++    const out = extractOrderedNamedInvocations([
++      userStringContent(commandWrapper('codemie-humanizer')),
++      toolUse('Read', { file_path: '/a.md' }),
++      toolResult(),
++      toolUse('Skill', { skill: 'codemie-humanizer' }),
++    ]);
++    expect(out.skillInvocations).toEqual({ 'codemie-humanizer': 1 });
++    expect(out.commandInvocations).toEqual({});
++    expect(out.commandsInOrder).toEqual([]);
++  });
++
++  it('still counts a command as a command when a prep tool call is followed by a plain reply, no Skill call', () => {
++    const out = extractOrderedNamedInvocations([
++      userStringContent(commandWrapper('plan')),
++      toolUse('Read', { file_path: '/a.md' }),
++      toolResult(),
++      { message: { role: 'assistant', content: [{ type: 'text', text: 'Done, no skill needed.' }] } },
++    ]);
++    expect(out.commandInvocations).toEqual({ plan: 1 });
++    expect(out.skillInvocations).toEqual({});
++  });
++
++  it('does not attribute a Skill call to an earlier command once a genuine new user prompt intervenes', () => {
++    const out = extractOrderedNamedInvocations([
++      userStringContent(commandWrapper('plan')),
++      { message: { role: 'assistant', content: [{ type: 'text', text: 'Here is the plan.' }] } },
++      userText('thanks, now run the humanizer skill'),
++      toolUse('Skill', { skill: 'codemie-humanizer' }),
++    ]);
++    expect(out.commandInvocations).toEqual({ plan: 1 });
++    expect(out.skillInvocations).toEqual({ 'codemie-humanizer': 1 });
++  });
++
++  it('counts a skill-backed command once even when a system line with no message field (e.g. compact_boundary) sits between it and the Skill call (CR-001)', () => {
++    const out = extractOrderedNamedInvocations([
++      userStringContent(commandWrapper('codemie-humanizer')),
++      systemLine(),
++      toolUse('Skill', { skill: 'codemie-humanizer' }),
++    ]);
++    expect(out.skillInvocations).toEqual({ 'codemie-humanizer': 1 });
++    expect(out.commandInvocations).toEqual({});
++    expect(out.commandsInOrder).toEqual([]);
++  });
++
+   it('returns an empty list when there are no genuine commands', () => {
+     const out = extractOrderedNamedInvocations([
+       userText('docs mention <command-name>/plan</command-name> only'),
+diff --git a/src/agents/plugins/claude/session/claude-named-invocations.ts b/src/agents/plugins/claude/session/claude-named-invocations.ts
+index ddc15ff6..a86a38f9 100644
+--- a/src/agents/plugins/claude/session/claude-named-invocations.ts
++++ b/src/agents/plugins/claude/session/claude-named-invocations.ts
+@@ -37,6 +37,7 @@ interface RawBlock {
+ interface RawMessage {
+   promptId?: unknown;
+   isMeta?: unknown;
++  isSidechain?: unknown;
+   message?: { role?: string; content?: unknown };
+ }
+ 
+@@ -65,6 +66,18 @@ function bump(map: Record<string, number>, key: string): void {
+   map[key] = (map[key] || 0) + 1;
+ }
+ 
++/**
++ * The single command name (leading slash stripped) in a genuine CLI wrapper within `text`, or
++ * `''` when `text` carries no `<command-name>` tag with its required `<command-message>` sibling.
++ * Same genuine-wrapper rule as `scanCommands`; only the first match is returned.
++ */
++export function wrappedCommandName(text: string): string {
++  if (!text.includes('<command-message>')) return '';
++  COMMAND_TAG.lastIndex = 0;
++  const match = COMMAND_TAG.exec(text);
++  return match ? match[1].replace(/^\//, '').trim() : '';
++}
++
+ /**
+  * Extract skill / agent / command name counts from a flat list of Claude messages.
+  * Safe against missing or malformed fields — anything that isn't a recognized shape is skipped.
+@@ -88,25 +101,74 @@ export function extractOrderedNamedInvocations(
+   const commandInvocations: Record<string, number> = {};
+   const commandsInOrder: string[] = [];
+ 
+-  // Count slash commands from a text payload, but only when it carries the CLI's
+-  // `<command-message>` sibling — that distinguishes a real invocation from prose that
+-  // merely quotes `<command-name>` (e.g. docs, specs, this very file).
+-  const scanCommands = (text: string): void => {
++  // The command names in a text payload, but only when it carries the CLI's `<command-message>`
++  // sibling — that distinguishes a real invocation from prose that merely quotes `<command-name>`
++  // (e.g. docs, specs, this very file). Pure: callers decide what to do with the names.
++  const matchCommandNames = (text: string): string[] => {
+     if (!text.includes('<command-message>')) {
+-      return;
++      return [];
+     }
++    const names: string[] = [];
+     COMMAND_TAG.lastIndex = 0;
+     let match: RegExpExecArray | null;
+     while ((match = COMMAND_TAG.exec(text)) !== null) {
+       const cmd = match[1].replace(/^\//, '').trim();
+-      if (cmd) {
+-        bump(commandInvocations, cmd);
+-        commandsInOrder.push(cmd);
++      if (cmd) names.push(cmd);
++    }
++    return names;
++  };
++
++  // A user-role message that is purely the mechanical tool_result passback for a prior tool_use
++  // — not a new user-authored turn, so it must not end the `nextSkillName` scan below.
++  const isToolResultOnlyMessage = (msg: RawMessage): boolean => {
++    if (msg?.message?.role !== 'user') return false;
++    const content = msg.message.content;
++    if (!Array.isArray(content) || content.length === 0) return false;
++    return (content as RawBlock[]).every((item) => item?.type === 'tool_result');
++  };
++
++  // The skill a slash command dispatched to, when the model resolves the same turn (skipping any
++  // isMeta/isSidechain bookkeeping lines, and any prep tool_use/tool_result round-trips the skill's
++  // own instructions triggered first) by calling the matching `Skill` tool — the seam EPMCDME-17201
++  // covers: such a command is counted once, as the skill, not also as a command. The scan stops the
++  // moment a genuine new user-authored message appears (not a tool_result passback): anything after
++  // that boundary belongs to a different turn and must never be attributed back to this command.
++  const nextSkillName = (fromIndex: number): string => {
++    for (let j = fromIndex; j < messages.length; j++) {
++      const msg = messages[j] as RawMessage;
++      if (msg?.isMeta || msg?.isSidechain) continue;
++      const role = msg?.message?.role;
++      // A line with no message field at all (e.g. a `compact_boundary` system line) is bookkeeping,
++      // not a turn boundary — skip it exactly like isMeta/isSidechain rather than bailing.
++      if (role == null) continue;
++      if (role === 'user') {
++        if (isToolResultOnlyMessage(msg)) continue;
++        return '';
++      }
++      if (role !== 'assistant') return '';
++      const content = msg.message?.content;
++      if (!Array.isArray(content)) return '';
++      for (const item of content as RawBlock[]) {
++        if (item?.type === 'tool_use' && item.name === 'Skill' && typeof item.input?.skill === 'string') {
++          const skill = item.input.skill.trim();
++          if (skill) return skill;
++        }
+       }
++      // No Skill call in this assistant message — it may have called a different tool first
++      // (e.g. Read/Bash); keep scanning for the Skill call the round-trip leads to.
+     }
++    return '';
++  };
++
++  const recordCommand = (cmd: string, fromIndex: number): void => {
++    const skillAhead = nextSkillName(fromIndex);
++    if (skillAhead && skillAhead.replace(/^\//, '') === cmd) return;
++    bump(commandInvocations, cmd);
++    commandsInOrder.push(cmd);
+   };
+ 
+-  for (const raw of messages) {
++  for (let i = 0; i < messages.length; i++) {
++    const raw = messages[i];
+     const msg = raw as RawMessage;
+     const content = msg?.message?.content;
+     const isUser = msg?.message?.role === 'user';
+@@ -123,7 +185,7 @@ export function extractOrderedNamedInvocations(
+ 
+     // Real slash commands arrive as plain string content (the CLI shape).
+     if (typeof content === 'string') {
+-      if (isUser) scanCommands(content);
++      if (isUser) for (const cmd of matchCommandNames(content)) recordCommand(cmd, i + 1);
+       continue;
+     }
+     if (!Array.isArray(content)) {
+@@ -143,7 +205,7 @@ export function extractOrderedNamedInvocations(
+           if (subtype) bump(agentInvocations, subtype);
+         }
+       } else if (isUser && item?.type === 'text' && typeof item.text === 'string') {
+-        scanCommands(item.text);
++        for (const cmd of matchCommandNames(item.text)) recordCommand(cmd, i + 1);
+       }
+     }
+   }

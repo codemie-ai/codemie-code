@@ -1,4 +1,3 @@
-import chalk from 'chalk';
 import { getAnalyticsPlatformSource, getPlatformUrl, getStoredAnalyticsCredentials } from '@/providers/core/codemie-auth-helpers.js';
 import { withVerifiedOwner } from '@/providers/core/credential-owner.js';
 import { ORG_ENCODING_V1 } from '@/agents/core/evidence/org-encoding.js';
@@ -9,7 +8,6 @@ import { advertisesContract, getPolicyState, type PolicyState } from '@/provider
 import type { AnalyticsHealthReply } from '@/providers/plugins/sso/proxy/plugins/types.js';
 import { logger } from '@/utils/logger.js';
 import type { DaemonState } from './daemon-manager.js';
-import { formatReportRows, type ReportRow } from './analytics-report.js';
 
 export type DeliveryReason =
   | 'credentials_expired'
@@ -24,6 +22,10 @@ export interface DeliveryHealth {
   reason?: DeliveryReason;
   /** Unsent bytes across all sessions; absent when the spool could not be read, which is not the same as none. */
   pendingBytes?: number;
+  /** The part of `pendingBytes` held in sessions that are not sent for now; absent when none, or when `pendingBytes` is. */
+  heldBytes?: number;
+  /** `heldBytes` split by hold reason; absent when nothing is held. */
+  heldByReason?: Record<string, number>;
   /** The spool could not be read completely and no failure was found in what was read, so delivery cannot be judged. */
   incomplete?: true;
   /** When the next send is due and why the last one failed; set only when `reason` is `send_failed`. */
@@ -46,12 +48,12 @@ export interface DeliveryHealth {
  * docstring) — a session still pending from a profile the user has since switched away from is
  * judged by the wrong capability until it drains or is lost to retention.
  */
-export const DELIVERY_REASONS: Record<DeliveryReason, { label: string; run?: string }> = {
-  credentials_expired: { label: 'CodeMie sign-in has expired', run: 'codemie profile login' },
-  auth_rejected: { label: 'CodeMie asked you to sign in again', run: 'codemie profile login' },
+export const DELIVERY_REASONS: Record<DeliveryReason, { label: string; command?: string }> = {
+  credentials_expired: { label: 'CodeMie sign-in has expired', command: 'codemie profile login' },
+  auth_rejected: { label: 'CodeMie asked you to sign in again', command: 'codemie profile login' },
   identity_mismatch: {
     label: "analytics destination doesn't match your signed-in account — affects all sessions on this computer",
-    run: 'codemie proxy restart',
+    command: 'codemie proxy restart',
   },
   send_failed: { label: 'last send to CodeMie failed, retrying' },
   classification_unreachable: { label: 'waiting for CodeMie to respond' },
@@ -116,25 +118,28 @@ export async function collectDeliveryHealth(
 
     const reason: DeliveryReason | undefined =
       reply?.credentials === 'stale' ? 'credentials_expired'
-      : marker ? 'auth_rejected'
-      : spool.mismatchHeld ? 'identity_mismatch'
-      : spool.sendFailure ? 'send_failed'
-      // Capability is a single resolved value, so at most one of the capability branches ever applies.
-      // `evidence` means the backend answered with a usable policy but one that still does not advertise
-      // the negotiated publication contract — a stalled session under it is just as stuck as under
-      // `legacy`, it just means "answered, but still missing the capability" rather than "never answered".
-      // A contract stall clears once the contract is advertised, so an advertising backend stays quiet; an
-      // organization-encoding stall does not, so it is judged by the encodings the last policy advertised,
-      // which stay readable after the policy expires: an expired cache is an outage, not a missing encoding.
-      : spool.classificationStalled && policyState?.capability === 'unknown' ? 'classification_unreachable'
-      : spool.classificationStalled && policyState?.capability === 'legacy' ? 'classification_unsupported'
-      : spool.classificationStalled && policyState?.capability === 'evidence' && !advertisesContract(policyState) ? 'classification_unsupported'
-      : spool.organizationEncodingStalled && policyState?.capability === 'evidence' && !policyState.organizationEncodings?.includes(ORG_ENCODING_V1)
-        ? 'classification_unsupported'
-      : undefined;
+        : marker ? 'auth_rejected'
+          : spool.mismatchHeld ? 'identity_mismatch'
+            : spool.sendFailure ? 'send_failed'
+              // Capability is a single resolved value, so at most one of the capability branches ever applies.
+              // `evidence` means the backend answered with a usable policy but one that still does not advertise
+              // the negotiated publication contract — a stalled session under it is just as stuck as under
+              // `legacy`, it just means "answered, but still missing the capability" rather than "never answered".
+              // A contract stall clears once the contract is advertised, so an advertising backend stays quiet; an
+              // organization-encoding stall does not, so it is judged by the encodings the last policy advertised,
+              // which stay readable after the policy expires: an expired cache is an outage, not a missing encoding.
+              : spool.classificationStalled && policyState?.capability === 'unknown' ? 'classification_unreachable'
+                : spool.classificationStalled && policyState?.capability === 'legacy' ? 'classification_unsupported'
+                  : spool.classificationStalled && policyState?.capability === 'evidence' && !advertisesContract(policyState) ? 'classification_unsupported'
+                    : spool.organizationEncodingStalled && policyState?.capability === 'evidence' && !policyState.organizationEncodings?.includes(ORG_ENCODING_V1)
+                      ? 'classification_unsupported'
+                      : undefined;
 
     const drop = spool.latestDrop ? { latestDrop: spool.latestDrop } : {};
-    const pending = spool.incomplete ? {} : { pendingBytes: spool.pendingBytes };
+    const pending = spool.incomplete ? {} : {
+      pendingBytes: spool.pendingBytes, ...(spool.heldBytes ? { heldBytes: spool.heldBytes } : {}),
+      ...(spool.heldBytes && spool.heldByReason ? { heldByReason: spool.heldByReason } : {}),
+    };
     if (reason) {
       const failure = reason === 'send_failed' && spool.sendFailure ? { sendFailure: spool.sendFailure } : {};
       return { status: 'unhealthy', reason, ...pending, ...failure, ...drop };
@@ -149,93 +154,7 @@ export async function collectDeliveryHealth(
   }
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-
-/** An ISO time; a time read from a status file outside the date range is printed as stored, not thrown on. */
-function formatTime(ms: number): string {
-  const at = new Date(ms);
-  return Number.isNaN(at.getTime()) ? String(ms) : at.toISOString();
-}
-
-/** The `Last dropped:` row of the newest recorded drop, with the remedy of a session without a project. */
-export function describeDrop(drop: LatestDrop | undefined): ReportRow | undefined {
-  if (!drop) return undefined;
-  const where = drop.stream ? `${drop.stream}, ` : '';
-  return {
-    message: `Last dropped: ${drop.reason} (${where}${formatTime(drop.at)})`,
-    ...(drop.reason === 'no_project'
-      ? { hint: 'Run: set a CodeMie project for the folder (codemie setup) — sessions without a project are not sent' }
-      : {}),
-  };
-}
-
-/** The drop as indented lines for `proxy status`: the message, then the remedy when there is one. */
-export function formatDropLines(drop: LatestDrop | undefined): string[] {
-  const row = describeDrop(drop);
-  return row ? [`  ${row.message}`, ...(row.hint ? [`  ${row.hint}`] : [])] : [];
-}
-
-/** The `Delivery:` row; only the status text is colored: green when healthy, yellow otherwise. */
-function deliveryRow(health: DeliveryHealth): ReportRow {
-  if (health.status === 'healthy') {
-    return { message: `Delivery: ${chalk.green('healthy')}` };
-  }
-  if (health.status === 'unhealthy') {
-    const entry = health.reason ? DELIVERY_REASONS[health.reason] : undefined;
-    return {
-      message: `Delivery: ${chalk.yellow(`unhealthy${entry ? ` (${entry.label})` : ''}`)}`,
-      ...(entry?.run ? { hint: `Run: ${entry.run}` } : {}),
-    };
-  }
-  return { message: `Delivery: ${chalk.yellow(`unknown (${unknownHint(health)})`)}` };
-}
-
 /** Why delivery cannot be judged: an unreadable spool is not fixed by a restart, a missing health reply is. */
 export function unknownHint(health: DeliveryHealth): string {
   return health.incomplete ? 'local analytics data could not be read' : 'restart the proxy to enable all checks';
-}
-
-/** An amount that could not be read is `unknown`, never `none`. */
-function unsentDataMessage(pendingBytes: number | undefined): string {
-  if (pendingBytes === undefined) return 'Unsent data: unknown';
-  return pendingBytes > 0
-    ? `Unsent data: ${formatBytes(pendingBytes)} (all sessions on this machine)`
-    : 'Unsent data: none';
-}
-
-/** The error code of a failed send; no HTTP response at all reads as the backend being unreachable. */
-function describeError(detail: string): string {
-  return detail === 'request_error' ? 'backend unreachable' : detail;
-}
-
-/**
- * The rows above the connector section of `proxy analytics status`, with no heading: Delivery and Unsent
- * data as separate rows, the next retry and error code of a failing send, and the newest drop. `null`
- * means the proxy is not running, so there is nothing else to show.
- */
-export function formatDeliveryLines(health: DeliveryHealth | null): string[] {
-  if (!health) {
-    return formatReportRows([{ message: `Delivery: ${chalk.yellow('proxy not running')}` }]);
-  }
-
-  const rows: ReportRow[] = [
-    deliveryRow(health),
-    { message: unsentDataMessage(health.pendingBytes) },
-  ];
-  if (health.sendFailure) {
-    rows.push({ message: `Next retry: ${formatTime(health.sendFailure.nextAt)}` });
-    if (health.sendFailure.detail) {
-      rows.push({ message: `Error: ${describeError(health.sendFailure.detail)}` });
-    }
-  }
-  const drop = describeDrop(health.latestDrop);
-  if (drop) {
-    rows.push(drop);
-  }
-  return formatReportRows(rows);
 }

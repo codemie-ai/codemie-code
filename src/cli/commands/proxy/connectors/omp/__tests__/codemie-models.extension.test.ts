@@ -46,10 +46,10 @@ describe('codemie-models extension', () => {
   it('registers each wire with its own daemon URL and authentication mode', () => {
     register();
     expect(providers.get('codemie')).toMatchObject({
-      baseUrl: 'http://127.0.0.1:4555/v1', api: 'openai-completions', apiKey: 'gk-test',
+      baseUrl: 'http://127.0.0.1:4555/v1', api: 'openai-completions', apiKey: 'gk-test.codemie-daemon',
     });
     expect(providers.get('codemie-claude')).toMatchObject({
-      baseUrl: 'http://127.0.0.1:4555', api: 'anthropic-messages', apiKey: 'gk-test', authHeader: true,
+      baseUrl: 'http://127.0.0.1:4555', api: 'anthropic-messages', apiKey: 'gk-test.codemie-daemon', authHeader: true,
     });
   });
 
@@ -75,11 +75,12 @@ describe('codemie-models extension', () => {
   it('uses daemon defaults when the state file is missing', async () => {
     rmSync(join(home, 'proxy-daemon.json'));
     register();
-    expect(providers.get('codemie')).toMatchObject({ baseUrl: 'http://127.0.0.1:4001/v1', apiKey: 'codemie-proxy' });
+    expect(providers.get('codemie')).toMatchObject({ baseUrl: 'http://127.0.0.1:4001/v1', apiKey: 'codemie-proxy.codemie-daemon' });
+    expect(providers.get('codemie-claude')).toMatchObject({ apiKey: 'codemie-proxy.codemie-daemon' });
     vi.mocked(fetch).mockResolvedValue(response([]));
     await providers.get('codemie')!.fetchDynamicModels('codemie-proxy');
     expect(fetch).toHaveBeenCalledWith(new URL('http://127.0.0.1:4001/v1/llm_models?include_all=true'), expect.objectContaining({
-      headers: { Authorization: 'Bearer codemie-proxy' },
+      headers: { Authorization: 'Bearer codemie-proxy.codemie-daemon' },
     }));
   });
 
@@ -89,7 +90,7 @@ describe('codemie-models extension', () => {
     vi.mocked(fetch).mockResolvedValue(response([]));
     await providers.get('codemie')!.fetchDynamicModels('codemie-proxy');
     expect(fetch).toHaveBeenCalledWith(new URL('http://127.0.0.1:4001/v1/llm_models?include_all=true'), expect.objectContaining({
-      headers: { Authorization: 'Bearer codemie-proxy' },
+      headers: { Authorization: 'Bearer codemie-proxy.codemie-daemon' },
     }));
   });
 
@@ -99,7 +100,7 @@ describe('codemie-models extension', () => {
     vi.mocked(fetch).mockResolvedValue(response([]));
     await providers.get('codemie')!.fetchDynamicModels(undefined);
     expect(fetch).toHaveBeenCalledWith(new URL('http://127.0.0.1:4555/v1/llm_models?include_all=true'), expect.objectContaining({
-      headers: { Authorization: 'Bearer gk-test' },
+      headers: { Authorization: 'Bearer gk-test.codemie-daemon' },
     }));
   });
 
@@ -111,7 +112,7 @@ describe('codemie-models extension', () => {
     vi.mocked(fetch).mockResolvedValue(response([]));
     await providers.get('codemie')!.fetchDynamicModels(undefined);
     expect(fetch).toHaveBeenCalledWith(new URL('http://127.0.0.1:4555/v1/llm_models?include_all=true'), expect.objectContaining({
-      headers: { Authorization: 'Bearer gk-test' },
+      headers: { Authorization: 'Bearer gk-test.codemie-daemon' },
     }));
   });
 
@@ -133,6 +134,21 @@ describe('codemie-models extension', () => {
   it.each([401, 403])('reports expired login for HTTP %s', async status => {
     register();
     vi.mocked(fetch).mockResolvedValue(response([], status));
+    await expect(providers.get('codemie')!.fetchDynamicModels(undefined)).rejects.toThrow(/codemie profile login/);
+  });
+
+  it('tells a key the running proxy refuses from an expired login', async () => {
+    register();
+    vi.mocked(fetch).mockResolvedValue(response({
+      type: 'error', error: { type: 'authentication_error', message: 'Invalid API key' },
+    }, 401));
+    const refused = providers.get('codemie')!.fetchDynamicModels(undefined);
+    await expect(refused).rejects.toThrow('The running CodeMie proxy refuses this key — run `codemie proxy connect --omp`.');
+  });
+
+  it('keeps the sign-in text for a 403 whose body says Invalid API key', async () => {
+    register();
+    vi.mocked(fetch).mockResolvedValue(response({ error: { message: 'Invalid API key' } }, 403));
     await expect(providers.get('codemie')!.fetchDynamicModels(undefined)).rejects.toThrow(/codemie profile login/);
   });
 

@@ -85,6 +85,45 @@ describe('buildAnalyticsConfirmationMessage — Global (default)', () => {
   });
 });
 
+describe('buildAnalyticsConfirmationMessage — routed clients', () => {
+  it('names the routed client and says it leaves the Claude login', () => {
+    const message = stripAnsi(
+      buildAnalyticsConfirmationMessage(options({ kind: 'absent' }, { routedClients: ['Claude Desktop'] })),
+    );
+
+    expect(message).toContain('Claude Desktop will be routed through the proxy');
+    expect(message).toContain('not your Claude login');
+  });
+
+  it('names two routed clients with "and"', () => {
+    const lines = plainLines(
+      buildAnalyticsConfirmationMessage(
+        options({ kind: 'absent' }, { routedClients: ['VS Code Claude Code extension', 'Claude Desktop'] }),
+      ),
+    );
+
+    expect(lines.slice(2).join(' ')).toContain('VS Code Claude Code extension and Claude Desktop will be routed');
+  });
+
+  it.each([[undefined], [[]]])('adds nothing for routedClients %j', (routedClients) => {
+    const message = stripAnsi(
+      buildAnalyticsConfirmationMessage(options({ kind: 'absent' }, { routedClients })),
+    );
+
+    expect(message).not.toContain('not your Claude login');
+    expect(message).not.toContain('routed');
+  });
+
+  it('puts the note after the unreadable-allowlist note', () => {
+    const lines = plainLines(
+      buildAnalyticsConfirmationMessage(options({ kind: 'invalid' }, { routedClients: ['Claude Desktop'] })),
+    );
+
+    expect(lines.indexOf(INVALID_NOTE)).toBeGreaterThan(-1);
+    expect(lines.findIndex((l) => l.includes('will be routed'))).toBeGreaterThan(lines.indexOf(INVALID_NOTE));
+  });
+});
+
 describe('buildAnalyticsConfirmationMessage — Project scope (explicit opt-in)', () => {
   it.each(ALLOWLISTS)('adds the analytics repository name for %s', (_label, allowlist) => {
     const lines = plainLines(buildAnalyticsConfirmationMessage(options(allowlist, { repositoryName: 'owner/repo' })));
@@ -238,5 +277,97 @@ describe('promptAnalyticsConfirmation', () => {
     promptMock.mockRejectedValue(new Error('boom'));
 
     await expect(promptAnalyticsConfirmation(options({ kind: 'absent' }))).rejects.toThrow('boom');
+  });
+
+  describe('work-consent question', () => {
+    const answers = (...values: boolean[]): void => {
+      for (const enable of values) promptMock.mockResolvedValueOnce({ enable });
+    };
+
+    it.each([
+      ['project', "Include analytics from personal Claude subscriptions in this repository?"],
+      ['user', "Include analytics from personal Claude subscriptions in any repository?"],
+    ] as const)('asks the unchanged main question first, then a Confirm / Decline list for %s scope, Confirm preselected', async (scope, text) => {
+      answers(true, true);
+
+      await promptAnalyticsConfirmation(options({ kind: 'absent' }, { workConsentQuestion: { scope } }));
+
+      expect(promptMock).toHaveBeenCalledTimes(2);
+      expect(promptMock.mock.calls[0][0][0]).toMatchObject({
+        type: 'list',
+        message: 'Enable Claude Code analytics?',
+        choices: [
+          { name: 'Confirm', value: true },
+          { name: 'Decline', value: false },
+        ],
+      });
+      expect(promptMock.mock.calls[1][0][0]).toMatchObject({
+        type: 'list',
+        message: text,
+        default: true,
+        choices: [
+          { name: 'Confirm', value: true },
+          { name: 'Decline', value: false },
+        ],
+      });
+    });
+
+    it('prints the header once, before the first question', async () => {
+      const order: string[] = [];
+      logSpy.mockImplementation(() => { order.push('log'); });
+      promptMock.mockImplementation(async () => { order.push('prompt'); return { enable: true }; });
+
+      await promptAnalyticsConfirmation(options({ kind: 'absent' }, { workConsentQuestion: { scope: 'user' } }));
+
+      expect(order).toEqual(['log', 'prompt', 'prompt']);
+    });
+
+    it.each([
+      ['main Confirm then consent Confirm', [true, true], 'enable-with-consent'],
+      ['main Confirm then consent Decline', [true, false], 'enable'],
+    ] as const)('%s resolves %s', async (_name, replies, expected) => {
+      answers(...replies);
+
+      await expect(
+        promptAnalyticsConfirmation(options({ kind: 'absent' }, { workConsentQuestion: { scope: 'project' } })),
+      ).resolves.toBe(expected);
+    });
+
+    it('a declined main question cancels without asking the consent question', async () => {
+      answers(false);
+
+      await expect(
+        promptAnalyticsConfirmation(options({ kind: 'absent' }, { workConsentQuestion: { scope: 'project' } })),
+      ).resolves.toBe('cancel');
+      expect(promptMock).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['ExitPromptError', 'AbortPromptError'])('a closed main question (%s) cancels without asking the consent question', async (name) => {
+      const error = new Error('closed');
+      error.name = name;
+      promptMock.mockRejectedValueOnce(error);
+
+      await expect(
+        promptAnalyticsConfirmation(options({ kind: 'absent' }, { workConsentQuestion: { scope: 'user' } })),
+      ).resolves.toBe('cancel');
+      expect(promptMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('a closed consent question cancels', async () => {
+      const error = new Error('closed');
+      error.name = 'ExitPromptError';
+      promptMock.mockResolvedValueOnce({ enable: true }).mockRejectedValueOnce(error);
+
+      await expect(
+        promptAnalyticsConfirmation(options({ kind: 'absent' }, { workConsentQuestion: { scope: 'user' } })),
+      ).resolves.toBe('cancel');
+    });
+
+    it('without workConsentQuestion only the main question is asked (unchanged)', async () => {
+      answers(true);
+
+      await expect(promptAnalyticsConfirmation(options({ kind: 'absent' }))).resolves.toBe('enable');
+      expect(promptMock).toHaveBeenCalledTimes(1);
+    });
   });
 });

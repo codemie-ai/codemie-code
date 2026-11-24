@@ -90,13 +90,12 @@ describe('DesktopModelsPlugin', () => {
     fetchCodeMieLlmModels.mockReset();
   });
 
-  it('runs right after the gateway key check (priority 8, after 7)', () => {
-    expect(plugin.priority).toBe(8);
+  it('runs right after the client attribution (priority 9, after 8)', () => {
+    expect(plugin.priority).toBe(9);
   });
 
-  it('is disabled for every client but Claude Desktop', async () => {
-    await expect(plugin.createInterceptor(makePluginContext({ clientType: 'codemie-daemon' })))
-      .rejects.toThrow('Plugin disabled');
+  it('declares exactly Claude Desktop and the VS Code Claude Code extension', () => {
+    expect(plugin.clients).toEqual(['claude-desktop', 'vscode-claude-code']);
   });
 
   it('leaves every other request to the normal pipeline', async () => {

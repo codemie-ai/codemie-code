@@ -1,0 +1,382 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "8/8 prior findings resolved, no new findings."
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "Fix all 8 blocking findings (CR-001..CR-008) in one fix-up round."
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "8/8 prior findings resolved, no new findings."
+    }
+  ],
+  "reviewed_head": "381e1f92a838a31f7f3a4a20a5e251d63eb87863",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "All 8 prior blocking findings (CR-001..CR-008, all kind code, all in changed_files) were read at current source and are resolved; no defer findings were re-checked and no new findings were discovered. Business and standards rows are carried forward from the prior verdict unchanged.",
+  "confidence": "high",
+  "check_confidence": "high",
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 8,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/agents/core/AgentCLI.ts",
+      "line": 338,
+      "title": "codemie-claude --silent still prompts and rewrites settings",
+      "problem": "canPrompt is computed as canPromptForProject({ task }) && adapter.name !== 'claude-acp'. canPromptForProject only checks --task, CODEMIE_NO_PROMPTS and TTY, and options.silent is never consulted, so `codemie-claude --silent` at a TTY with Bedrock set in Claude settings shows the prompt and can back up and rewrite files. The spec defines canPrompt as canPromptForProject plus ACP and --silent, and AC3 lists --silent among stops that leave files byte-identical. The gate's own doc comment lists --silent as a cause of canPrompt=false.",
+      "impact": "A user or wrapper that passed --silent expecting no interaction gets an interactive prompt that can consent to rewriting shared Claude settings, contradicting AC3 and the spec's single can-we-prompt rule.",
+      "recommendation": "canPrompt: canPromptForProject({ task: options.task }) && !options.silent && !options.printConfig && this.adapter.name !== 'claude-acp'",
+      "status": "resolved",
+      "check_notes": "AgentCLI.ts:338-342 canPrompt now also requires !options.silent and !options.printConfig; test covers silent and plain TTY run",
+      "fix": {
+        "change": "AgentCLI canPrompt now also requires !options.silent and !options.printConfig",
+        "test": "AgentCLI-bedrock-gate.test.ts: passes canPrompt=false for --silent at a terminal, and true for a plain interactive run"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude-code-otlp/event-fields/claude-settings-env.ts",
+      "line": 76,
+      "title": "Default managed-settings.d derivation never asserted",
+      "problem": "managedDropInDirs(platform) and the resolver's derive-from-managedFiles fallback are never asserted by any test: every drop-in test injects tmp dirs explicitly, and the only default-path test asserts Array.isArray on the result. A typo or broken derivation would leave real managed drop-ins unread without any test failing. The current production derivation is correct (win32 paths use forward slashes, so posix.dirname is sound).",
+      "impact": "A regression in the default drop-in directory would make a managed policy enabling Bedrock via managed-settings.d invisible to the gate, so Claude traffic could bypass the gateway while the user believes the switch worked.",
+      "recommendation": "Export managedDropInDirs and assert per platform (linux /etc/claude-code/managed-settings.d, darwin /Library/Application Support/ClaudeCode/managed-settings.d, win32 C:/Program Files/ClaudeCode/managed-settings.d and C:/ProgramData/ClaudeCode/managed-settings.d); add a resolver test passing managedFiles without managedDropInDirs that yields a conflict-managed verdict from a drop-in.",
+      "status": "resolved",
+      "check_notes": "managedDropInDirs exported and asserted for linux, darwin, win32; resolver test covers derivation from managedFiles with no drop-in dirs given",
+      "fix": {
+        "change": "managedDropInDirs exported; resolver fallback derivation covered",
+        "test": "claude-settings-env.test.ts: derives the default managed-settings.d directories per platform; resolver.test.ts: derives the drop-in directory beside each managed file"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/cloud-provider-conflict/prompt.ts",
+      "line": 163,
+      "title": "Connect guidance omits two residual bypasses",
+      "problem": "The spec requires connect guidance to state three residual bypasses: a Bedrock project elsewhere is not seen, Desktop managed policy on macOS/Windows is not detected, and --settings is not read. connectSentence() states only the first, and only inside stopGuidance, so a connect run that switches and proceeds states none of them.",
+      "impact": "Users of proxy connect are told the switch is complete without learning about the cases where Bedrock can still bypass the gateway.",
+      "recommendation": "State all three residual bypasses in connect guidance and surface them on connect runs that switch and proceed, not only in stopGuidance.",
+      "status": "resolved",
+      "check_notes": "connectSentence now states all three residual bypasses and promptLines includes them for connect flows, so switch-and-proceed runs show them; tests added",
+      "fix": {
+        "change": "connectSentence states all three residual bypasses and the switch prompt of connect flows includes them",
+        "test": "prompt.test.ts: states all three residual bypasses for connect flows only; states the residual bypasses in the switch prompt of a connect run"
+      }
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/cloud-provider-conflict/provider.ts",
+      "line": 29,
+      "title": "Bedrock model-id pattern misses jp./au./us-gov. and gov/cn ARNs",
+      "problem": "BEDROCK_MODEL_ID only recognises us./eu./apac./global. prefixes and arn:aws:bedrock:. Cross-region profiles such as jp.anthropic., au.anthropic., us-gov.anthropic. and ARNs under arn:aws-us-gov / arn:aws-cn are not matched, so isModelId returns false for them and stripClaudeJson/stripVscode leave those model keys in place after the switch.",
+      "impact": "After a switch the gateway receives a Bedrock model id it cannot serve and the session fails; AC5 (no Bedrock-ID model key remains in any editable layer) is not met for these regions.",
+      "recommendation": "const BEDROCK_MODEL_ID = /^(?:(?:[a-z]{2,3}(?:-gov)?|apac|global)\\.anthropic\\.|anthropic\\.claude-|arn:aws[a-z-]*:bedrock:)/i;",
+      "status": "resolved",
+      "check_notes": "BEDROCK_MODEL_ID accepts jp./au./us-gov. style prefixes and any arn:aws*:bedrock partition; provider tests extended",
+      "fix": {
+        "change": "BEDROCK_MODEL_ID accepts any 2-3 letter (and -gov) region prefix and aws-us-gov / aws-cn ARNs",
+        "test": "provider.test.ts: isModelId matches jp./au./us-gov. ids and gov/cn ARNs"
+      }
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/cloud-provider-conflict/resolver.ts",
+      "line": 280,
+      "title": "resolveProviderConflict exceeds 50-line limit",
+      "problem": "code-quality.md Code Structure Guidelines say functions stay under 50 lines and Best Practices list 100+ line functions as a Don't; resolveProviderConflict (lines 280-392) is about 112 lines and mixes input defaulting, parallel reads, managed-chain assembly, per-flow chain construction, warning collection and verdict computation.",
+      "impact": "A documented code-quality rule is broken in newly added code, which the standards review treats as blocking for the workflow.",
+      "recommendation": "Split into helpers, for example readAllSources, buildManagedChain, buildChainsForFlow and computeVerdict, so each stays under 50 lines.",
+      "status": "resolved",
+      "check_notes": "resolveProviderConflict split into readAllSources, buildManagedChain, buildClaudeChain, buildChains, collectWarnings, computeVerdict; each well under 50 lines",
+      "fix": {
+        "change": "resolveProviderConflict split into readAllSources, buildManagedChain, buildClaudeChain, buildChains, collectWarnings, computeVerdict",
+        "test": "existing resolver.test.ts suite (behaviour unchanged)"
+      }
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/cloud-provider-conflict/switcher.ts",
+      "line": 76,
+      "title": "SwitchBlockedError prints raw layer path unsanitized",
+      "problem": "SwitchBlockedError interpolates resolution.unknownReason into its message. That reason is built in resolver.ts with the raw layer.path and is printed by the AgentCLI and connect catch paths without sanitizeDisplayText. The resolver's malformed-file logger.warn also logs the raw path. The spec requires printed paths and key names to go through sanitizeDisplayText.",
+      "impact": "A crafted project path containing terminal control characters could reach the user's terminal in the changed-while-running case; the spec's display-sanitization requirement is only partly met.",
+      "recommendation": "Pass the detail through sanitizeDisplayText inside SwitchBlockedError (or sanitize unknownReason at the source in resolver.ts) and sanitize the path in the malformed-file warning.",
+      "status": "resolved",
+      "check_notes": "SwitchBlockedError, resolver unknown reasons and malformed warning all pass through sanitizeDisplayText; tests assert no control characters",
+      "fix": {
+        "change": "resolver unknownReason and malformed warning sanitize paths and key names at the source; SwitchBlockedError sanitizes its detail",
+        "test": "resolver.test.ts: neutralises control characters in the unknown reason and the malformed warning; switcher.test.ts: neutralises control characters in the detail of a blocked switch"
+      }
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/cloud-provider-conflict/switcher.ts",
+      "line": 369,
+      "title": "applySwitch exceeds 50-line limit",
+      "problem": "code-quality.md requires functions under 50 lines; applySwitch (lines 369-427) is about 59 lines covering re-resolve, target collection, backup, the per-file write loop and restore reporting.",
+      "impact": "A documented code-quality rule is broken in newly added code.",
+      "recommendation": "Extract the write-and-restore loop (for example writeTargets) and the backup step into helpers so applySwitch drops under 50 lines.",
+      "status": "resolved",
+      "check_notes": "backupTargets and writeTargets extracted; applySwitch now orchestrates in about 35 lines",
+      "fix": {
+        "change": "applySwitch extracted backupTargets and writeTargets helpers",
+        "test": "existing switcher.test.ts suite (behaviour unchanged)"
+      }
+    },
+    {
+      "id": "CR-008",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/install.ts",
+      "line": 300,
+      "title": "install claude does not reprint backup folder on later failure",
+      "problem": "applyBedrockConsent discards result.backupDir, so when agent.install, installVersion or additionalInstallation fails after the switch, the catch block only calls spinner.fail and rethrows. The spec requires a later failure in the same flow to print the backup folder again; AgentCLI.ts and connect-orchestrator.ts do.",
+      "impact": "A user whose install fails after their Claude settings were stripped is not told where the backup is, which the spec treats as the recovery path.",
+      "recommendation": "Keep result.backupDir from applyBedrockConsent and print `Backup of your Claude settings: <dir>` in the install failure paths before rethrowing.",
+      "status": "resolved",
+      "check_notes": "install.ts keeps settingsBackupDir and prints it on additionalInstallation and install-path failures, once per path; tests added",
+      "fix": {
+        "change": "install keeps result.backupDir and prints 'Backup of your Claude settings: <dir>' on install and additionalInstallation failures",
+        "test": "install.bedrock-gate.test.ts: prints the backup folder when the install fails after a switch; when additionalInstallation fails; prints none when nothing was switched"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "Detection: effective CLAUDE_CODE_USE_BEDROCK; managed > local > project > user > env; unknown/malformed handling",
+      "status": "pass",
+      "notes": "resolver.ts decide()/settingsLayer()/desktopLayer(); precedence, unknown and malformed cases covered"
+    },
+    {
+      "kind": "spec",
+      "item": "Absent versus cannot tell for managed readers (plist, registry, drop-ins)",
+      "status": "pass",
+      "notes": "readManagedPlist/readRegistryHive; exec() resolves on non-zero exit"
+    },
+    {
+      "kind": "spec",
+      "item": "Sources checked per flow (agent/install, connect-desktop, connect-vscode, connect-otlp-only)",
+      "status": "pass",
+      "notes": "resolver.ts agentFlow gating; connect-orchestrator supplies desktop/vscode paths only"
+    },
+    {
+      "kind": "spec",
+      "item": "Managed Bedrock is not editable: explained, exit 1, no change, no prompt",
+      "status": "pass",
+      "notes": "gate.ts stop 'managed' before any prompt"
+    },
+    {
+      "kind": "spec",
+      "item": "Shared prompt content, two choices, Ctrl-C = cancel via prompt-scoped SIGINT listener",
+      "status": "pass",
+      "notes": "prompt.ts promptLines()/askSwitchOrCancel()"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-interactive: ACP, --task, non-TTY, CODEMIE_NO_PROMPTS, connect --silent, scripted install never prompt; canPrompt includes --silent",
+      "status": "partial",
+      "notes": "AgentCLI.ts:338 omits options.silent; codemie-claude --silent at a TTY still prompts (CR-001)"
+    },
+    {
+      "kind": "spec",
+      "item": "Cancel: no file touched, exit 1, guidance; connect cancel aborts the command",
+      "status": "pass",
+      "notes": "gate.ts stop 'cancel'; connect throws ConfigurationError before daemon start"
+    },
+    {
+      "kind": "spec",
+      "item": "Switch apply: backup with manifest, verified copies, atomic write, restore on failure",
+      "status": "pass",
+      "notes": "switcher.ts applySwitch/writeBackup/writeFileAtomicDefault/restoreWritten"
+    },
+    {
+      "kind": "spec",
+      "item": "Desktop: removal of every inferenceBedrock* key in connect writer; gateway provider in one rewrite",
+      "status": "pass",
+      "notes": "desktop.ts writeDesktopConfig"
+    },
+    {
+      "kind": "spec",
+      "item": "Every switch prints backup folder, undo sentence, credentials note, managed-policy note",
+      "status": "pass",
+      "notes": "switcher.ts report()"
+    },
+    {
+      "kind": "spec",
+      "item": "A later failure in the same flow prints the backup folder again",
+      "status": "partial",
+      "notes": "AgentCLI and connect do; install.ts keeps no backupDir (CR-008)"
+    },
+    {
+      "kind": "spec",
+      "item": "Keys removed: flag-scoped keys from flag layers; Bedrock model keys from every editable layer",
+      "status": "partial",
+      "notes": "descriptor lists match spec, but model-id regex misses jp./au./us-gov. and gov/cn ARNs (CR-004)"
+    },
+    {
+      "kind": "spec",
+      "item": "Shell env: codemie-claude drops inherited CLAUDE_CODE_USE_BEDROCK; other flows only warn",
+      "status": "pass",
+      "notes": "gate.ts dropInheritedBedrockFlag"
+    },
+    {
+      "kind": "spec",
+      "item": "Skips: bedrock profile provider; install claude with no profile",
+      "status": "pass",
+      "notes": "gate.ts early inert return; install.ts loadActiveProfile"
+    },
+    {
+      "kind": "spec",
+      "item": "Placement in AgentCLI.handleRun, install.ts and connect-orchestrator.ts",
+      "status": "pass",
+      "notes": "detect before auth/first prompt, apply before first write"
+    },
+    {
+      "kind": "spec",
+      "item": "Module design: descriptor, resolver, switcher, prompt, gate; injectable deps; timeouts",
+      "status": "pass",
+      "notes": "cloud-provider-conflict/*; MANAGED_QUERY_TIMEOUT_MS=2500"
+    },
+    {
+      "kind": "spec",
+      "item": "Printed paths and key names go through sanitizeDisplayText",
+      "status": "partial",
+      "notes": "SwitchBlockedError and resolver malformed warning print raw paths (CR-006)"
+    },
+    {
+      "kind": "spec",
+      "item": "Residual bypasses stated in connect guidance",
+      "status": "partial",
+      "notes": "only the project-elsewhere sentence is present (CR-003)"
+    },
+    {
+      "kind": "spec",
+      "item": "AC1: each flow detects active Bedrock before any write",
+      "status": "pass",
+      "notes": "gate wired in all three flows"
+    },
+    {
+      "kind": "spec",
+      "item": "AC2: message states Bedrock and gateway cannot both be active",
+      "status": "pass",
+      "notes": "prompt.ts promptLines()"
+    },
+    {
+      "kind": "spec",
+      "item": "AC3: cancel/non-interactive/ACP/--silent/managed/unknown stops leave files byte-identical, exit 1 with guidance",
+      "status": "partial",
+      "notes": "agent flow --silent does not stop (CR-001)"
+    },
+    {
+      "kind": "spec",
+      "item": "AC4: switch creates backup folder with verified copies and manifest before first modification",
+      "status": "pass",
+      "notes": "writeBackup before strip loop"
+    },
+    {
+      "kind": "spec",
+      "item": "AC5: no listed Bedrock key remains in any editable layer after a switch",
+      "status": "partial",
+      "notes": "Bedrock-ID model keys with jp./au./us-gov. prefixes survive (CR-004)"
+    },
+    {
+      "kind": "spec",
+      "item": "AC6: after a switch the flow proceeds; routing confirms gateway",
+      "status": "pass",
+      "notes": "gate.test.ts routedViaCodemie before/after"
+    },
+    {
+      "kind": "spec",
+      "item": "AC7: unreadable/unknown/failed managed read/managed Bedrock stops with value-free diagnostics",
+      "status": "pass",
+      "notes": "resolver.ts decide() reasons name file and key only"
+    },
+    {
+      "kind": "spec",
+      "item": "AC8: unrelated keys and non-Bedrock model values survive; JSONC preserved",
+      "status": "pass",
+      "notes": "jsonc-parser Editor"
+    },
+    {
+      "kind": "spec",
+      "item": "AC9: Desktop switch ends with gateway and no inferenceBedrock* keys; VS Code leaves no entry",
+      "status": "pass",
+      "notes": "desktop.ts and stripVscode"
+    },
+    {
+      "kind": "spec",
+      "item": "AC10: automated tests cover the listed scenarios",
+      "status": "pass",
+      "notes": "suites present; execution is Stage 7 evidence; default drop-in dir derivation unasserted (CR-002)"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "10 subjects in range all match <type>(<scope>): <subject> with type fix and scopes agents, cli, proxy (all in the allowed scope list); every subject is well under 100 chars and imperative"
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "Naming, .js import extensions, explicit export return types, no any, no require and new-file sizes conform. Function-length guideline broken: resolveProviderConflict ~112 lines, applySwitch ~59 lines."
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "No concrete security issue found. Backup folder 0700 and files 0600; values never reach output or manifest; user-visible paths sanitized; atomic writes with recheck and restore; plutil/reg run via shared exec helper with argument arrays and timeout."
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "All four lenses and standards ran; 8 blocking findings (1 critical: codemie-claude --silent still prompts despite the spec's canPrompt rule). 0 deferred; 23 candidates dismissed as noise (e.g. win32 managed drop-in path concern disproved because the paths use forward slashes, Editor sort order protected by push order, desktop key removal is spec-designed).",
+    "confidence": "high",
+    "risk_flags": []
+  }
+}

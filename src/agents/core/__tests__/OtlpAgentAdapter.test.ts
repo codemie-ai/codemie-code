@@ -1,11 +1,37 @@
 import { evidenceDir } from '../evidence/record-store.js';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
 import { createHash } from 'node:crypto';
 import { format } from 'node:util';
 import { mkdirSync, mkdtempSync, rmSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AnalyticsSourceError } from '@/utils/errors.js';
+
+// The real daemon-manager resolves its state file at load and the real cold start writes Claude Code's settings:
+// both land under a home of this file's own.
+const isolatedHome = await vi.hoisted(async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'otlp-adapter-home-'));
+  const saved = {
+    HOME: process.env['HOME'],
+    USERPROFILE: process.env['USERPROFILE'],
+    CODEMIE_HOME: process.env['CODEMIE_HOME'],
+  };
+  process.env['HOME'] = dir;
+  process.env['USERPROFILE'] = dir;
+  process.env['CODEMIE_HOME'] = path.join(dir, '.codemie');
+  fs.mkdirSync(process.env['CODEMIE_HOME'], { recursive: true });
+  return { dir, saved };
+});
+afterAll(() => {
+  for (const [key, value] of Object.entries(isolatedHome.saved)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  rmSync(isolatedHome.dir, { recursive: true, force: true });
+});
 
 const detectGitBranchMock = vi.fn();
 const detectGitRemoteRepoMock = vi.fn();
@@ -13,10 +39,10 @@ const getRawGitOriginMock = vi.fn();
 const resolveProjectOriginMock = vi.fn();
 
 vi.mock('@/utils/processes.js', async () => ({
+  ...(await vi.importActual<typeof import('@/utils/processes.js')>('@/utils/processes.js')),
   detectGitBranch: detectGitBranchMock,
   detectGitRemoteRepo: detectGitRemoteRepoMock,
   getRawGitOrigin: getRawGitOriginMock,
-  repoKeyFromRemote: (await vi.importActual<typeof import('@/utils/processes.js')>('@/utils/processes.js')).repoKeyFromRemote,
 }));
 const resolveHookCredentialsMock = vi.fn();
 const resolveIdentityMock = vi.fn();
@@ -64,14 +90,16 @@ const spawnDaemonMock = vi.fn();
 const readConnectionRecordMock = vi.fn();
 const writeConnectionRecordMock = vi.fn();
 const seedConnectionRecordMock = vi.fn();
-vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({
+const stopDaemonMock = vi.fn();
+vi.mock('@/cli/commands/proxy/daemon-manager.js', async () => ({
+  ...(await vi.importActual<typeof import('@/cli/commands/proxy/daemon-manager.js')>('@/cli/commands/proxy/daemon-manager.js')),
   readState: readStateMock,
   readConnectionRecord: readConnectionRecordMock,
   writeConnectionRecord: writeConnectionRecordMock,
   seedConnectionRecord: seedConnectionRecordMock,
   checkStatus: checkStatusMock,
   spawnDaemon: spawnDaemonMock,
-  stopDaemon: vi.fn(),
+  stopDaemon: stopDaemonMock,
 }));
 
 const { OtlpAgentAdapter } = await import('../OtlpAgentAdapter.js');
@@ -84,10 +112,11 @@ interface FakeInput {
   sessionId?: string;
   payload: Record<string, unknown>[];
   block?: boolean;
+  hook_event_name?: string;
 }
 
 class FakeAdapter extends OtlpAgentAdapter<FakeInput> {
-  readonly name = 'fake';
+  readonly name: string = 'fake';
   tracked = true;
   enforced = false;
   untrackedCalls: FakeInput[] = [];
@@ -189,6 +218,10 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
     vi.restoreAllMocks();
   });
 
+  it('runs under the isolated home', () => {
+    expect(homedir()).toBe(isolatedHome.dir);
+  });
+
   it('gates on isTracked before ensureOtlpProxy and forwards nothing for untracked projects', async () => {
     adapter.tracked = false;
     await run();
@@ -213,10 +246,70 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
     await expect(adapter.processOtlpEvent('not json', deps)).rejects.toThrow();
   });
 
-  it('ensures the proxy before forwarding', async () => {
-    await run();
-    expect(ensureOtlpProxy).toHaveBeenCalledWith('fake');
+  it.each([
+    ['UserPromptSubmit', 'UserPromptSubmit'],
+    ['PostToolUse', 'PostToolUse'],
+    ['no hook_event_name', undefined],
+  ])('ensures the proxy before forwarding, passing the event of a %s input', async (_name, event) => {
+    await run(event === undefined ? {} : { hook_event_name: event });
+    expect(ensureOtlpProxy).toHaveBeenCalledWith('fake', event);
     expect(ensureOtlpProxy.mock.invocationCallOrder[0]).toBeLessThan(forwardToSpool.mock.invocationCallOrder[0]);
+  });
+
+  describe('the hook event reaches the cold start over a live daemon of an older CLI', () => {
+    const OLDER_LIVE = {
+      pid: process.pid,
+      port: 52401,
+      url: 'http://127.0.0.1:52401',
+      startedAt: new Date().toISOString(),
+      profile: 'p-old',
+      gatewayKey: 'k-old',
+      targetUrl: 'https://old.example.com',
+      provider: 'ai-run-sso',
+      project: 'proj-old',
+    };
+    class ClaudeCodeAdapter extends FakeAdapter {
+      override readonly name = 'claude-code-otlp';
+    }
+    const runReal = async (event: string) => {
+      const { ensureOtlpProxy: realEnsureOtlpProxy } = await import('@/cli/commands/proxy/otlp-cold-start.js');
+      await adapter.processOtlpEvent(
+        JSON.stringify({ cwd: '/repo', payload: [{ a: 1 }], hook_event_name: event }),
+        { ensureOtlpProxy: realEnsureOtlpProxy, forwardOtlpEventsToSpool: forwardToSpool }
+      );
+    };
+
+    beforeEach(() => {
+      readStateMock.mockResolvedValue({ ...OLDER_LIVE });
+      readConnectionRecordMock.mockResolvedValue(null);
+      loadGlobalConfigProfileMock.mockResolvedValue({ name: 'default' });
+      spawnDaemonMock.mockResolvedValue({ ...OLDER_LIVE, version: '9.9.9' });
+    });
+
+    it.each(['UserPromptSubmit', 'PostCompact'])('claude-code-otlp adopts it as it is on %s', async (event) => {
+      const { logger } = await import('@/utils/logger.js');
+      adapter = new ClaudeCodeAdapter();
+      await runReal(event);
+      expect(stopDaemonMock).not.toHaveBeenCalled();
+      expect(spawnDaemonMock).not.toHaveBeenCalled();
+      expect(seedConnectionRecordMock).toHaveBeenCalledWith(
+        expect.objectContaining({ pid: process.pid, project: 'proj-old' })
+      );
+      expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining('ensureOtlpProxy failed'));
+    });
+
+    it('another agent replaces it on UserPromptSubmit', async () => {
+      await runReal('UserPromptSubmit');
+      expect(stopDaemonMock).toHaveBeenCalledTimes(1);
+      expect(spawnDaemonMock.mock.calls[0][0]).toMatchObject({ project: 'proj-old', profile: 'p-old' });
+    });
+
+    it('replaces it from its own state on PostToolUse', async () => {
+      await runReal('PostToolUse');
+      expect(stopDaemonMock).toHaveBeenCalledTimes(1);
+      expect(spawnDaemonMock).toHaveBeenCalledTimes(1);
+      expect(spawnDaemonMock.mock.calls[0][0]).toMatchObject({ project: 'proj-old', profile: 'p-old', port: 52401 });
+    });
   });
 
   it('swallows an ensureOtlpProxy failure, logs it, and still forwards the event', async () => {

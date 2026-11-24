@@ -33,14 +33,14 @@ describe('formatReportSection', () => {
 
   it('puts a hint on its own line at 6 spaces, and no line when there is none', () => {
     const lines = formatReportSection('Claude', [
-      { message: 'Hooks: not installed', hint: 'Run: codemie proxy connect --claude-code-otlp' },
+      { message: 'Hooks: not installed', hint: 'Not connected — run: codemie proxy connect --claude-code-otlp' },
       { message: 'Scope: not-configured' },
     ]);
 
     expect(plain(lines)).toEqual([
       'Claude:',
       '  Hooks: not installed',
-      '      Run: codemie proxy connect --claude-code-otlp',
+      '      Not connected — run: codemie proxy connect --claude-code-otlp',
       '  Scope: not-configured',
     ]);
   });
@@ -59,7 +59,7 @@ describe('formatReportSection', () => {
 
   it('uses no icons or glyphs', () => {
     const text = plain(
-      formatReportSection('Claude', [{ message: 'Hooks: not installed', hint: 'Run: y' }], 'footer')
+      formatReportSection('Claude', [{ message: 'Hooks: not installed', hint: 'x — run: y' }], 'footer')
     ).join('\n');
 
     for (const glyph of ['✓', '○', '⚠', '✗']) {
@@ -71,11 +71,11 @@ describe('formatReportSection', () => {
 describe('formatReportRows', () => {
   it('prints rows flush left with no heading, items 2 and hints 4 spaces further in', () => {
     const lines = formatReportRows([
-      { message: 'Delivery: unhealthy (x)', hint: 'Run: y' },
+      { message: 'Delivery: unhealthy (x)', hint: 'x — run: y' },
       { message: 'Tracked:', items: ['owner/repo'] },
     ]);
 
-    expect(plain(lines)).toEqual(['Delivery: unhealthy (x)', '    Run: y', 'Tracked:', '  owner/repo']);
+    expect(plain(lines)).toEqual(['Delivery: unhealthy (x)', '    x — run: y', 'Tracked:', '  owner/repo']);
   });
 
   it('keeps a row white around text that carries its own color', () => {

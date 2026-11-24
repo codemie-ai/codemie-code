@@ -13,6 +13,7 @@ import { SSOTemplate } from './sso.template.js';
 import { SSOModelProxy } from './sso.models.js';
 import { effectiveExpiresAt } from './sso.expiry.js';
 import { getPlatformUrl, getStoredPlatformCredentials } from '../../core/codemie-auth-helpers.js';
+import { renderHint } from '@/utils/hint.js';
 
 /**
  * Health check implementation for SSO provider
@@ -46,7 +47,7 @@ export class SSOHealthCheck extends BaseHealthCheck {
       details.push({
         status: 'error',
         message: 'CodeMie URL not configured',
-        hint: 'Run: codemie setup'
+        hint: renderHint({ reason: 'Not configured', command: 'codemie setup' })
       });
       return {
         provider: 'ai-run-sso',
@@ -67,7 +68,7 @@ export class SSOHealthCheck extends BaseHealthCheck {
       details.push({
         status: 'error',
         message: 'SSO credentials not found',
-        hint: 'Run: codemie profile login'
+        hint: renderHint({ reason: 'Not signed in', command: 'codemie profile login' })
       });
       return {
         provider: 'ai-run-sso',
@@ -90,7 +91,7 @@ export class SSOHealthCheck extends BaseHealthCheck {
       details.push({
         status: 'error',
         message: 'SSO session expired',
-        hint: 'Run: codemie profile login'
+        hint: renderHint({ reason: 'Not signed in', command: 'codemie profile login' })
       });
       return {
         provider: 'ai-run-sso',

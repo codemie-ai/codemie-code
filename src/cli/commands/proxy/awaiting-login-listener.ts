@@ -8,11 +8,13 @@
  * check (an authenticated call) reports `unauthorized`.
  *
  * With `gatewayKey` set it answers like the full proxy's gateway-key plugin: a request
- * without `Authorization: Bearer <gatewayKey>` gets 401 "Invalid API key". Only a request
- * that carries the key triggers `onSignInRequest`, so a local process or web page that
- * does not know the key cannot make the CLI open a browser sign-in.
+ * without `Authorization: Bearer <gatewayKey>`, alone or with a known client name appended,
+ * gets 401 "Invalid API key". Only a request that carries an accepted key triggers
+ * `onSignInRequest`, so a local process or web page that does not know the key cannot make
+ * the CLI open a browser sign-in.
  */
 import { createServer, type Server } from 'node:http';
+import { clientOfGatewayKey, INVALID_GATEWAY_KEY_MESSAGE } from '../../../providers/plugins/sso/proxy/proxy-clients.js';
 
 export interface AwaitingLoginListener {
   port: number;
@@ -29,7 +31,7 @@ export interface AwaitingLoginOptions {
   pinnedPort?: boolean;
   /** Shown to the client verbatim (e.g. "... Please run: codemie profile login --url ..."). */
   message: string;
-  /** Gateway key clients must present as `Authorization: Bearer <key>`; unset leaves requests unchecked. */
+  /** Gateway key clients must present as `Authorization: Bearer <key>` or `Bearer <key>.<client>`; unset leaves requests unchecked. */
   gatewayKey?: string;
   /**
    * Called for an authenticated API request (the key matched). Starts the browser sign-in and
@@ -91,8 +93,8 @@ export async function startAwaitingLoginListener(opts: AwaitingLoginOptions): Pr
     const sendError = (message: string): void => {
       res.end(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message } }));
     };
-    if (opts.gatewayKey && req.headers.authorization !== `Bearer ${opts.gatewayKey}`) {
-      sendError('Invalid API key');
+    if (opts.gatewayKey && !clientOfGatewayKey(req.headers.authorization, opts.gatewayKey)) {
+      sendError(INVALID_GATEWAY_KEY_MESSAGE);
       return;
     }
     // Background analytics ingestion (hooks, OTLP) is not a user prompt: the full proxy takes it

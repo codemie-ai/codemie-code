@@ -156,7 +156,7 @@ describe('analytics-status', () => {
       expect(await render(base)).toEqual([
         'Claude:',
         '  Hooks: installed',
-        '  Scope: user',
+        '  Scope: all projects (user scope)',
         '  Collection: enabled',
         '  Excluded: none',
         '',
@@ -180,7 +180,7 @@ describe('analytics-status', () => {
       expect(lines).toEqual([
         'Claude:',
         '  Hooks: installed',
-        '  Scope: project',
+        '  Scope: selected projects (project scope)',
         '  Tracked:',
         '    codemie-ai/codemie-code',
         '    unused/name',
@@ -204,6 +204,11 @@ describe('analytics-status', () => {
       expect(lines).toContain('    work/legacy-app');
     });
 
+    it('reads an invalid tracked-project list as unreadable, never the raw enum', async () => {
+      const lines = await render({ ...base, scope: 'invalid' });
+      expect(lines).toContain('  Scope: unreadable (invalid tracked-project list)');
+    });
+
     it('reads an empty Tracked list as none under project scope', async () => {
       expect(await render({ ...base, scope: 'project' })).toContain('  Tracked: none');
     });
@@ -218,7 +223,7 @@ describe('analytics-status', () => {
 
     it('has no Run line when nothing needs fixing and no icons', async () => {
       const out = (await render(base)).join('\n');
-      expect(out).not.toContain('Run:');
+      expect(out).not.toContain('run:');
       for (const glyph of ['✓', '○', '⚠', '✗']) {
         expect(out).not.toContain(glyph);
       }
@@ -230,10 +235,10 @@ describe('analytics-status', () => {
       expect(lines.slice(0, 4)).toEqual([
         'Claude:',
         '  Hooks: not installed',
-        '      Run: codemie proxy connect --claude-code-otlp',
-        '  Scope: not-configured',
+        '      Not connected — run: codemie proxy connect --claude-otlp',
+        '  Scope: not set up',
       ]);
-      expect(lines.join('\n').match(/Run:/g)).toHaveLength(1);
+      expect(lines.join('\n').match(/run:/g)).toHaveLength(1);
     });
 
     it('reports a corrupt preferences file as a row with its hint, only when corrupt', async () => {
@@ -246,7 +251,7 @@ describe('analytics-status', () => {
         '  Preferences file is corrupt — collection is stopped',
         '      Fix or delete /x/claude-analytics.json.',
       ]);
-      expect(lines.join('\n')).not.toContain('Run:');
+      expect(lines.join('\n')).not.toContain('run:');
     });
   });
 
@@ -271,7 +276,7 @@ describe('analytics-status', () => {
       expect(await render(base)).toEqual([
         'Copilot CLI:',
         '  Connected: yes',
-        '  Scope: user',
+        '  Scope: all projects (user scope)',
         '  Collection: enabled',
         '  Excluded: none',
         '',
@@ -291,8 +296,8 @@ describe('analytics-status', () => {
       expect(lines).toEqual([
         'Copilot CLI:',
         '  Connected: no',
-        '      Run: codemie proxy connect --copilot-cli-otlp',
-        '  Scope: not-connected',
+        '      Not connected — run: codemie proxy connect --copilot-otlp',
+        '  Scope: not set up',
         '  Collection: disabled',
         '  Excluded: none',
         '',
@@ -312,6 +317,11 @@ describe('analytics-status', () => {
 
       expect(lines).toContain('  Preferences file is corrupt — collection is stopped');
       expect(lines).toContain('      Fix or delete /x/copilot-analytics.json.');
+    });
+
+    it('reads corrupt connector settings as unreadable, never the raw enum', async () => {
+      const lines = await render({ ...base, connected: false, scope: 'corrupt' });
+      expect(lines).toContain('  Scope: unreadable (connector settings are corrupt)');
     });
   });
 });

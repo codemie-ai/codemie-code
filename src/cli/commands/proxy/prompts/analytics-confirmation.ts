@@ -1,9 +1,12 @@
 import chalk from 'chalk';
 import inquirer from 'inquirer';
-import type { AllowlistState } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
+import type { AllowlistScope, AllowlistState } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 
-/** `enable` applies the analytics configuration; `cancel` covers Decline and a closed prompt. */
-export type AnalyticsConfirmationResult = 'enable' | 'cancel';
+/**
+ * `enable` applies the analytics configuration; `enable-with-consent` does too and the user also confirmed the
+ * work-consent question; `cancel` covers Decline and a closed prompt.
+ */
+export type AnalyticsConfirmationResult = 'enable' | 'enable-with-consent' | 'cancel';
 
 /** Inputs that determine the wording of the analytics confirmation prompt. */
 export interface AnalyticsConfirmationOptions {
@@ -15,6 +18,16 @@ export interface AnalyticsConfirmationOptions {
   allowlist: AllowlistState;
   /** Analytics project name of the current project; set only for project scope, where it is shown. */
   repositoryName?: string;
+  /**
+   * Labels of the Claude clients this run routes through the proxy; a note names them. Nothing is added when empty
+   * or absent.
+   */
+  routedClients?: string[];
+  /**
+   * When set, a Confirm / Decline question about including personal Claude subscriptions comes after the main question
+   * is confirmed; the wording follows the scope. It names no repository or project.
+   */
+  workConsentQuestion?: { scope: AllowlistScope };
 }
 
 const INVALID_ALLOWLIST_NOTE = 'The project list in Claude Code settings cannot be read and will be replaced.';
@@ -22,30 +35,81 @@ const INVALID_ALLOWLIST_NOTE = 'The project list in Claude Code settings cannot 
 /**
  * Show the analytics confirmation and wait for the user's decision. The details
  * are printed first, then the same inquirer list used by `codemie setup` asks
- * Confirm / Decline. A closed prompt resolves to `cancel` so the caller leaves the
- * allowlist and daemon untouched. Callers must gate on an interactive terminal.
+ * Confirm / Decline, followed by the work-consent Confirm / Decline question when `workConsentQuestion` is set.
+ * A closed prompt resolves to `cancel` so the caller leaves the allowlist and daemon untouched. Callers must gate
+ * on an interactive terminal.
  */
 export async function promptAnalyticsConfirmation(
   options: AnalyticsConfirmationOptions,
 ): Promise<AnalyticsConfirmationResult> {
   console.log(buildAnalyticsConfirmationMessage(options));
+  if (!(await promptConfirmDecline('Enable Claude Code analytics?'))) return 'cancel';
+  if (!options.workConsentQuestion) return 'enable';
+  const answer = await askConfirm(workConsentQuestionText(options.workConsentQuestion.scope));
+  if (answer === undefined) return 'cancel';
+  return answer ? 'enable-with-consent' : 'enable';
+}
 
+function workConsentQuestionText(scope: AllowlistScope): string {
+  const where = scope === 'project' ? 'this repository' : 'any repository';
+  return `Include analytics from personal Claude subscriptions in ${where}?`;
+}
+
+/** `confirm` drops the project list; `cancel` covers Decline and a closed prompt. */
+export type ScopeDropConfirmationResult = 'confirm' | 'cancel';
+
+/** Inputs of {@link promptScopeDropConfirmation}. */
+export interface ScopeDropConfirmationOptions {
+  /** Connector label, e.g. `Claude Code analytics`. */
+  label: string;
+  /** The tracked projects a user-scope connect drops. */
+  paths: string[];
+}
+
+/**
+ * Lists the projects a user-scope connect drops from a connector's project list and asks
+ * Confirm / Decline with the same inquirer list as {@link promptAnalyticsConfirmation}.
+ * A closed prompt resolves to `cancel`. Callers must gate on an interactive terminal.
+ */
+export async function promptScopeDropConfirmation(
+  options: ScopeDropConfirmationOptions,
+): Promise<ScopeDropConfirmationResult> {
+  console.log([...buildScopeDropLines(options), ''].join('\n'));
+  return (await promptConfirmDecline(`Drop the tracked project list of ${options.label}?`)) ? 'confirm' : 'cancel';
+}
+
+/** The lines naming the projects a user-scope connect drops (pure; also printed in place of the prompt for `--yes`). */
+export function buildScopeDropLines(options: ScopeDropConfirmationOptions): string[] {
+  return [
+    chalk.yellow(`${options.label} tracks only these projects; connecting in user scope tracks every project and drops the list:`),
+    ...options.paths.map((path) => `  - ${path}`),
+  ];
+}
+
+/** The Confirm / Decline list; a closed prompt (Ctrl+C) counts as Decline. */
+async function promptConfirmDecline(message: string): Promise<boolean> {
+  return (await askConfirm(message)) === true;
+}
+
+/** A Confirm (preselected) / Decline list: the answer, or `undefined` when the prompt was closed (Ctrl+C). */
+async function askConfirm(message: string): Promise<boolean | undefined> {
   try {
     const { enable } = await inquirer.prompt<{ enable: boolean }>([
       {
         type: 'list',
         name: 'enable',
-        message: 'Enable Claude Code analytics?',
+        message,
+        default: true,
         choices: [
           { name: 'Confirm', value: true },
           { name: 'Decline', value: false },
         ],
       },
     ]);
-    return enable ? 'enable' : 'cancel';
+    return enable;
   } catch (error) {
     if (error instanceof Error && (error.name === 'ExitPromptError' || error.name === 'AbortPromptError')) {
-      return 'cancel';
+      return undefined;
     }
     throw error;
   }
@@ -65,9 +129,21 @@ export function buildAnalyticsConfirmationMessage(options: AnalyticsConfirmation
   if (options.allowlist.kind === 'invalid') {
     lines.push('', ...wrapText(INVALID_ALLOWLIST_NOTE, getWrapWidth()));
   }
+  if (options.routedClients && options.routedClients.length > 0) {
+    lines.push('', ...wrapText(routedClientsNote(options.routedClients), getWrapWidth()));
+  }
   lines.push('');
 
   return lines.join('\n');
+}
+
+/** `A`, `A and B`, `A, B and C`. */
+function joinLabels(labels: string[]): string {
+  return labels.length <= 1 ? (labels[0] ?? '') : `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
+}
+
+function routedClientsNote(clients: string[]): string {
+  return `${joinLabels(clients)} will be routed through the proxy, not your Claude login.`;
 }
 
 /** The `CodeMie URL:` line (only when configured) and the `Repository:` line (project scope only), shown below `Using profile:`. */

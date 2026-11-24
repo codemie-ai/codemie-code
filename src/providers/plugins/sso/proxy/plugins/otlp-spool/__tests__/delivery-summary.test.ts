@@ -80,13 +80,72 @@ describe('summarizeSpoolDelivery', () => {
     expect((await summarizeSpoolDelivery()).sendFailure).toEqual({ nextAt: 2000, detail: 'http_503' });
   });
 
-  it('reports the earliest retry across streams and sessions, with the detail of that same record', async () => {
+  it('reports the earliest retry across streams and sessions that are not held, with the detail of that same record', async () => {
+    const now = Date.now();
     await session('late', { hooks: 100, logs: 100 }, (s) => {
-      s.delivery = { hooks: failure(0, 100, 9000, 'http_500'), logs: failure(0, 100, 5000, 'http_502') };
+      s.delivery = { hooks: failure(0, 100, now + 9000, 'http_500'), logs: failure(0, 100, now + 5000, 'http_502') };
     });
-    await session('early', { hooks: 100 }, (s) => { s.delivery = { hooks: failure(0, 100, 3000, 'request_error') }; });
-    await session('unreachable-late', { hooks: 100 }, (s) => { s.delivery = { hooks: failure(0, 100, 7000) }; });
-    expect((await summarizeSpoolDelivery()).sendFailure).toEqual({ nextAt: 3000, detail: 'request_error' });
+    await session('early', { hooks: 100 }, (s) => { s.delivery = { hooks: failure(0, 100, now + 3000, 'request_error') }; });
+    await session('unreachable-late', { hooks: 100 }, (s) => { s.delivery = { hooks: failure(0, 100, now + 7000) }; });
+    // A held session is never retried, so its record (a retry time long past) must not set the retry time.
+    await session('held-earlier', { hooks: 100 }, (s) => {
+      s.holds = { session: { reason: 'publication_stopped', since: 1 } };
+      s.delivery = { hooks: failure(0, 100, now - 16 * 3_600_000, 'request_error') };
+    });
+    expect((await summarizeSpoolDelivery()).sendFailure).toEqual({ nextAt: now + 3000, detail: 'request_error' });
+  });
+
+  it('reports no failure for a session held as a whole, but still counts its unsent bytes', async () => {
+    await session('stopped', { hooks: 100, logs: 20 }, (s) => {
+      s.holds = { session: { reason: 'publication_stopped', since: 1 } };
+      s.delivery = { hooks: failure(0, 100, 1000, 'request_error') };
+    });
+    expect(await summarizeSpoolDelivery()).toEqual({ pendingBytes: 120, heldBytes: 120, heldByReason: { publication_stopped: 120 }, mismatchHeld: false, classificationStalled: false, organizationEncodingStalled: false });
+  });
+
+  it('counts the bytes of sessions held as a whole, across sessions, as held', async () => {
+    await session('stopped', { hooks: 100, logs: 20 }, (s) => { s.holds = { session: { reason: 'publication_stopped', since: 1 } }; });
+    await session('consent', { hooks: 30 }, (s) => { s.holds = { session: { reason: 'work_consent_required', since: 1 } }; });
+    await session('healthy', { hooks: 500 });
+    const summary = await summarizeSpoolDelivery();
+    expect(summary.pendingBytes).toBe(650);
+    expect(summary.heldBytes).toBe(150);
+  });
+
+  it('sums the held bytes per reason across sessions; heldBytes keeps its meaning (the total)', async () => {
+    await session('consent-a', { hooks: 30 }, (s) => { s.holds = { session: { reason: 'work_consent_required', since: 1 } }; });
+    await session('consent-b', { hooks: 20, logs: 5 }, (s) => { s.holds = { session: { reason: 'work_consent_required', since: 1 } }; });
+    await session('stopped', { hooks: 100 }, (s) => { s.holds = { session: { reason: 'publication_stopped', since: 1 } }; });
+    await session('healthy', { hooks: 500 });
+    const summary = await summarizeSpoolDelivery();
+    expect(summary.heldByReason).toEqual({ work_consent_required: 55, publication_stopped: 100 });
+    expect(summary.heldBytes).toBe(155);
+  });
+
+  it('does not count a hold the status names on its own, or the short wait of a new session, as held', async () => {
+    for (const reason of ['analytics_endpoint_mismatch', 'publication_contract_unavailable', 'organization_encoding_unsupported', 'stamp_pending'] as const) {
+      await session(reason, { hooks: 10 }, (s) => { s.holds = { session: { reason, since: 1 } }; });
+    }
+    const summary = await summarizeSpoolDelivery();
+    expect(summary.pendingBytes).toBe(40);
+    expect(summary).not.toHaveProperty('heldBytes');
+    expect(summary).not.toHaveProperty('heldByReason');
+  });
+
+  it('does not count a session held on a single stream, nor a held session with nothing pending', async () => {
+    await session('stream-held', { hooks: 100, logs: 20 }, (s) => { s.holds = { logs: { reason: 'otlp_unparseable', since: 1 } }; });
+    await session('drained', { hooks: 10 }, (s) => { s.cursors.hooks = 10; s.holds = { session: { reason: 'publication_stopped', since: 1 } }; });
+    const summary = await summarizeSpoolDelivery();
+    expect(summary).not.toHaveProperty('heldBytes');
+    expect(summary).not.toHaveProperty('heldByReason');
+  });
+
+  it('keeps the failure of a stream that is held on its own, because that stream is still retried', async () => {
+    await session('stream-held', { hooks: 100, logs: 20 }, (s) => {
+      s.holds = { logs: { reason: 'otlp_unparseable', since: 1 } };
+      s.delivery = { hooks: failure(0, 100, 1000, 'http_503') };
+    });
+    expect((await summarizeSpoolDelivery()).sendFailure).toEqual({ nextAt: 1000, detail: 'http_503' });
   });
 
   it('omits the detail when the earliest failure record has none', async () => {
@@ -169,15 +228,18 @@ describe('summarizeSpoolDelivery', () => {
     expect((await summarizeSpoolDelivery()).classificationStalled).toBe(false);
   });
 
-  it('reports the newest drop across sessions: a local no_project loss after a backend discard', async () => {
-    await session('discarded', {}, (s) => {
-      s.lastDiscard = { reason: 'cli_analytics_disabled', stream: 'hooks', bytes: 10, at: 1_000 };
-    });
-    await session('no-project', {}, (s) => {
-      s.lastLoss = { reason: 'no_project', at: 2_000, bytes: 200, stream: 'hooks' };
-    });
-    expect((await summarizeSpoolDelivery()).latestDrop).toEqual({ reason: 'no_project', stream: 'hooks', at: 2_000, local: true });
-  });
+  it.each(['no_project', 'project_conflict_discard'] as const)(
+    'reports the newest drop across sessions: a local %s loss after a backend discard',
+    async (reason) => {
+      await session('discarded', {}, (s) => {
+        s.lastDiscard = { reason: 'cli_analytics_disabled', stream: 'hooks', bytes: 10, at: 1_000 };
+      });
+      await session('local-loss', {}, (s) => {
+        s.lastLoss = { reason, at: 2_000, bytes: 200, stream: 'hooks' };
+      });
+      expect((await summarizeSpoolDelivery()).latestDrop).toEqual({ reason, stream: 'hooks', at: 2_000, local: true });
+    }
+  );
 
   it('reports a retention-bound loss newer than every discard, without a stream', async () => {
     await session('mixed', {}, (s) => {

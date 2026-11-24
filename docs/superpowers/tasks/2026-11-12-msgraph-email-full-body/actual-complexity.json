@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated": "2026-11-12T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 1, "label": "XS" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 8,
+  "size": "XS",
+  "band_range": "6-9",
+  "files_changed": 2,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "technical_risk", "reason": "Small change to the email read output in the msgraph skill script, with an existing pattern; the only added risk is that the output is printed in full." },
+    { "dimension": "file_change_estimate", "reason": "2 files changed (msgraph.js and one integration test), 100 insertions and 1 deletion, mostly test code." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
