@@ -37,6 +37,11 @@ describe('getInvocationContext', () => {
     expect(ctx.silent).toBe(false);
   });
 
+  it('flags completion when root options precede it', () => {
+    expect(getInvocationContext({ argv: ['node', 'codemie', '--debug', 'completion', 'bash'] }).completion).toBe(true);
+    expect(getInvocationContext({ argv: ['node', 'codemie', '--task', 'completion', 'completion', 'bash'] }).completion).toBe(true);
+  });
+
   it('does not flag completion when it is not the command', () => {
     expect(getInvocationContext({ argv: ['node', 'codemie', 'list', 'completion'] }).completion).toBe(false);
   });

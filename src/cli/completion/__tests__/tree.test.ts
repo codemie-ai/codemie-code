@@ -11,6 +11,7 @@ function sample(): Command {
   list.addOption(new Option('--secret', 'Secret').hideHelp());
   list.option('--out <path>', 'Output file');
   list.option('--cfg [file]', 'Config file');
+  list.option('--target <thing>', 'Some value');
   const hiddenCmd = root.command('internal');
   markHidden(hiddenCmd);
   const a = root.command('a');
@@ -49,6 +50,7 @@ describe('buildModel', () => {
     expect(get('--format')).toMatchObject({ takesValue: 'required', valueKind: 'value' });
     expect(get('--out')).toMatchObject({ takesValue: 'required', valueKind: 'path' });
     expect(get('--cfg')).toMatchObject({ takesValue: 'optional', valueKind: 'path' });
+    expect(get('--target')).toMatchObject({ takesValue: 'required', valueKind: 'path' });
   });
 
   it('adds -h/--help on every node and an implicit help sub', () => {

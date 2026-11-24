@@ -84,6 +84,7 @@ complete -c tool -n 'test (__tool_state) = \\'1\\'' -l 'out' -d 'Output file'
 complete -c tool -n 'test (__tool_state) = \\'1:--out\\'' -F
 complete -c tool -n 'test (__tool_state) = \\'1\\'' -l 'cfg' -d 'Config file'
 complete -c tool -n 'test (__tool_state) = \\'1\\'' -l 'name' -d 'Free-form value'
+complete -c tool -n 'test (__tool_state) = \\'1:--name\\'' -F
 complete -c tool -n 'test (__tool_state) = \\'1\\'' -l 'help' -s 'h' -d 'display help for command'
 complete -c tool -n 'test (__tool_state) = \\'1\\'' -l 'version' -s 'V' -d 'output the version number'
 complete -c tool -n 'test (__tool_state) = \\'1\\'' -l 'task' -d 'Run a task'

@@ -8,7 +8,7 @@ Startup work (migrations, update check, what's-new) is skipped for `codemie comp
 
 - Commands and subcommands at every level. Hidden commands and options are never offered.
 - Options, including the root options (`--task`, `-V`, `--version`). The CLI accepts root options after a subcommand (for example `codemie list --version`), so completion offers them at every node.
-- Option values: the declared choices when an option has them, file paths only for path-valued options, and nothing otherwise.
+- Option values: the declared choices when an option has them, file paths for every other valued option.
 - bash and zsh offer commands and options at every position. fish offers options only once the typed word starts with `-`.
 - Alias handling exists in the generator but is forward-looking: the CLI has no real command aliases today.
 
@@ -31,7 +31,7 @@ codemie completion bash > ~/.local/share/bash-completion/completions/codemie.tmp
         ~/.local/share/bash-completion/completions/codemie
 ```
 
-Open a new shell afterwards. To try it out in the current shell only:
+Open a new shell afterwards. Verify: type `codemie <Tab>`; the top-level commands (for example `list`, `install`, `doctor`) should be offered. To try it out in the current shell only:
 
 ```bash
 source <(codemie completion bash)
@@ -54,6 +54,8 @@ fpath=(~/.zsh/completions $fpath)
 autoload -Uz compinit && compinit
 ```
 
+Verify: open a new shell and type `codemie <Tab>`; the top-level commands should appear.
+
 The script also works when sourced directly (`source <(codemie completion zsh)`, after `compinit`). If completion does not appear after an update, remove `~/.zcompdump*` and start a new shell.
 
 ## Fish
@@ -64,7 +66,7 @@ codemie completion fish > ~/.config/fish/completions/codemie.fish.tmp
 and mv ~/.config/fish/completions/codemie.fish.tmp ~/.config/fish/completions/codemie.fish
 ```
 
-Fish loads the file on the next shell start.
+Fish loads the file on the next shell start. Verify: type `codemie <Tab>` (and `codemie --<Tab>` for options); the top-level commands should be listed.
 
 ## WSL
 

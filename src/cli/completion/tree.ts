@@ -32,13 +32,14 @@ export interface NodeModel {
   subs: NodeModel[];
 }
 
-const PATH_PLACEHOLDER = /[<[](path|file|dir)[>\]]/i;
+/** `--task` takes free text (index.ts bypasses commander for it), so its value completes nothing. */
+const NO_COMPLETION_OPTION = '--task';
 
 function modelOption(opt: Option): OptionModel {
   const takesValue = opt.required ? 'required' : opt.optional ? 'optional' : 'none';
   const choices = opt.argChoices ? [...opt.argChoices] : [];
   const valueKind: ValueKind =
-    takesValue === 'none' ? 'none' : PATH_PLACEHOLDER.test(opt.flags) ? 'path' : 'value';
+    takesValue === 'none' ? 'none' : choices.length > 0 || opt.long === NO_COMPLETION_OPTION ? 'value' : 'path';
   return {
     long: opt.long,
     short: opt.short,

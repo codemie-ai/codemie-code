@@ -14,6 +14,19 @@ export interface InvocationContext {
   silent: boolean;
 }
 
+/** Root options that consume the next word as their value. */
+const VALUED_ROOT_OPTIONS = new Set(['--task']);
+
+/** First non-option word, skipping root options (and the value of valued ones) given before the command. */
+function firstCommandWord(args: string[]): string | undefined {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (!a.startsWith('-')) return a;
+    if (VALUED_ROOT_OPTIONS.has(a)) i++;
+  }
+  return undefined;
+}
+
 /**
  * Single source of truth for how this process was invoked.
  * Commands pass their parsed `opts.json`; the bin wrapper passes argv only.
@@ -25,6 +38,6 @@ export function getInvocationContext(
   const hook = argv[2] === 'hook' || argv[2] === 'sound';
   const scheduled = isScheduledSyncRun(argv);
   const json = options.json === true || isMachineOutputInvocation(argv.slice(2));
-  const completion = argv[2] === 'completion';
+  const completion = firstCommandWord(argv.slice(2)) === 'completion';
   return { hook, scheduled, json, completion, silent: hook || scheduled };
 }

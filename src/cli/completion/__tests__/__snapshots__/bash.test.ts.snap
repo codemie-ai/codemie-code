@@ -18,7 +18,7 @@ _tool() {
 text
 two words';;
         '1:--out') kind=f;;
-        '1:--name') kind=n;;
+        '1:--name') kind=f;;
         '1:--task') kind=n;;
         '2:--task') kind=n;;
         '3:--task') kind=n;;
