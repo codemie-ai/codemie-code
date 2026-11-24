@@ -83,6 +83,7 @@ vi.mock('../connectors/desktop.js', async (importOriginal) => ({
   writeDesktopConfig: vi.fn(),
   describeManagedSettingsOverride: vi.fn().mockReturnValue(null),
   getDesktopBaseDir: vi.fn().mockReturnValue('/mock/desktop/base'),
+  getDesktopConfigPath: vi.fn(async () => '/mock/desktop/base/configLibrary/applied.json'),
   mapCanonicalToDesktop: vi.fn().mockReturnValue([]),
   summarizeManagedOauthShapes: vi.fn().mockReturnValue({ oauthConfigured: 0, oauthFlagged: 0, noAuth: 0 }),
   readDesktopGateway: vi.fn().mockResolvedValue(null),
@@ -129,6 +130,12 @@ vi.mock('../../../../cli/commands/skills/setup/sync-plugin.js', () => ({
 // guard for --claude-code-otlp; vitest has no TTY, so pretend there is one.
 vi.mock('@/utils/interactive.js', () => ({
   isNonInteractiveEnvironment: vi.fn().mockReturnValue(false),
+  canPromptForProject: vi.fn().mockReturnValue(true),
+}));
+// The Claude adapter's provider settings check has its own tests; here its gate finds no conflict and never reads real settings.
+vi.mock('@/agents/plugins/claude/cloud-provider-conflict/gate.js', () => ({
+  detectAndAsk: vi.fn(async () => ({ kind: 'proceed', token: { plan: null, deps: {} } })),
+  applyConsented: vi.fn(async () => ({ backupDir: null, files: [], changed: [] })),
 }));
 
 /**
@@ -1936,6 +1943,33 @@ describe('proxy status', () => {
       await arrangeDesktop(4001, { desktopConnectedSince: '2026-11-16T10:00:00.000Z' });
 
       expect((await diagnose()).payload.desktop).toEqual({ connected: true, collecting: true });
+    });
+
+    async function writeAnalyticsPreferences(content: string): Promise<void> {
+      await writeFile(join(clientHome, 'claude-analytics.json'), content);
+    }
+
+    it('gives not collecting, with the enable command, once analytics were disabled', async () => {
+      await arrangeDesktop(4001, { desktopConnectedSince: '2026-11-16T10:00:00.000Z' });
+      await writeAnalyticsPreferences(JSON.stringify({ enabled: false }));
+
+      expect((await diagnose()).payload.desktop).toEqual({
+        connected: true,
+        collecting: false,
+        analyticsDisabled: true,
+        reason: 'analytics are disabled',
+        remedy: 'run: codemie proxy analytics enable --claude-otlp',
+      });
+    });
+
+    it('gives not collecting, naming the file, while the analytics preferences file is unreadable', async () => {
+      await arrangeDesktop(4001, { desktopConnectedSince: '2026-11-16T10:00:00.000Z' });
+      await writeAnalyticsPreferences('{not json');
+
+      const desktop = (await diagnose()).payload.desktop as { collecting: boolean; reason: string };
+
+      expect(desktop.collecting).toBe(false);
+      expect(desktop.reason).toContain('claude-analytics.json');
     });
 
     it('says Desktop is not connected yet while the daemon has not noticed it on its own port', async () => {
