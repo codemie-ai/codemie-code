@@ -130,7 +130,9 @@ async function disconnectWorkFolder(path: string | undefined, opts: ConnectorOpt
           renderHint(
             e.all_folders
               ? {
-                  reason: `${canonical} is still covered by the all-repositories authorization (any repository)`,
+                  reason: removed > 0
+                    ? `${canonical} is still covered by the all-repositories authorization: new sessions there keep publishing, sessions already running there stop`
+                    : `${canonical} is still covered by the all-repositories authorization (any repository)`,
                   command: 'codemie proxy analytics consent revoke --all'
                 }
               : {

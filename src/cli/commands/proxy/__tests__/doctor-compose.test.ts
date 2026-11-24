@@ -533,9 +533,14 @@ describe('composeProxyDoctor', () => {
       expect(await unsent()).toEqual(['Unsent data: 16.26 KB (all sessions on this machine)']);
     });
 
-    it('keeps the one line when bytes are held for a reason the table does not know', async () => {
+    it('lists a reason the table does not know as On hold with its size and no Fix', async () => {
       collectDeliveryHealth.mockResolvedValue({ status: 'healthy', pendingBytes: 16650, heldBytes: 16650, heldByReason: { some_unlisted_reason: 16650 } });
-      expect(await unsent()).toEqual(['Unsent data: 16.26 KB (all sessions on this machine), 16.26 KB of it on hold']);
+      expect(await unsent()).toEqual([
+        [
+          'Unsent data: 16.26 KB (all sessions on this machine), 16.26 KB of it on hold',
+          '      On hold: some unlisted reason (16.26 KB)',
+        ].join('\n'),
+      ]);
     });
 
     it('adds an On hold / Fix block for one reason', async () => {

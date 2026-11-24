@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { dirname } from 'node:path';
 import { ConfigurationError } from '@/utils/errors.js';
 import { getCodemiePath } from '@/utils/paths.js';
+import { rawProjectHeader } from '@/utils/header-value.js';
 import { canonicalizePath, comparable, isPathInside } from '@/agents/core/project-allowlist.js';
 import { acquirePidLock } from '@/utils/pid-lock.js';
 import { atomicReplace } from './record-store.js';
@@ -118,7 +119,11 @@ export async function lookupConsent(scope: ConsentScope, cwd: string): Promise<C
     const store = await load();
     if (store.kind !== 'ok') return { kind: 'unknown' };
     const canonicalCwd = await canonicalizePath(cwd);
-    const covering = store.entries.filter((e) => scopeMatches(e, scope) && coversFolder(e, canonicalCwd));
+    // The all-folders entry never covers a project whose name cannot travel as a raw header: a frozen reference there
+    // would stop the session at send time, and a folder grant for such a project is refused too.
+    const covering = store.entries.filter(
+      (e) => scopeMatches(e, scope) && coversFolder(e, canonicalCwd) && (e.all_folders !== true || rawProjectHeader(scope.project) !== undefined)
+    );
     // A folder-bound entry wins over the all-folders one.
     const entry = covering.find((e) => e.all_folders !== true) ?? covering[0];
     if (!entry) return { kind: 'none' };

@@ -38,7 +38,7 @@ export interface HoldReasonEntry {
   fix: string;
 }
 
-/** Hold reasons with a remedy, keyed by the session hold reason; a held reason missing here adds no block. */
+/** Hold reasons with a remedy, keyed by the session hold reason; a held reason missing here is listed as `On hold` with its size and no `Fix`. */
 export const HOLD_REASONS: Record<string, HoldReasonEntry> = {
   work_consent_required: {
     text: 'personal Claude subscription sessions need work consent',
@@ -57,9 +57,14 @@ function unsentDataMessage(pendingBytes: number | undefined, heldBytes?: number,
   if (pendingBytes === undefined) return 'Unsent data: unknown';
   if (pendingBytes <= 0) return 'Unsent data: none';
   const held = heldBytes ? `, ${formatBytes(heldBytes)} of it on hold` : '';
-  const blocks = Object.entries(HOLD_REASONS)
-    .filter(([reason]) => (heldByReason?.[reason] ?? 0) > 0)
+  const heldReasons = Object.entries(heldByReason ?? {}).filter(([, bytes]) => bytes > 0);
+  const remedied = Object.entries(HOLD_REASONS)
+    .filter(([reason]) => heldReasons.some(([held]) => held === reason))
     .flatMap(([, entry]) => [`${HOLD_LINE_INDENT}On hold: ${entry.text}`, `${HOLD_LINE_INDENT}Fix: ${entry.fix}`]);
+  const unexplained = heldReasons
+    .filter(([reason]) => !(reason in HOLD_REASONS))
+    .map(([reason, bytes]) => `${HOLD_LINE_INDENT}On hold: ${reason.replace(/_/g, ' ')} (${formatBytes(bytes)})`);
+  const blocks = [...remedied, ...unexplained];
   return [`Unsent data: ${formatBytes(pendingBytes)} (all sessions on this machine)${held}`, ...blocks].join('\n');
 }
 

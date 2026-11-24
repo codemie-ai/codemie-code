@@ -246,6 +246,17 @@ describe('consent grant / revoke / list actions', () => {
       expect(said(out)).toContain('all-repositories');
     });
 
+    it('revoking a folder that has its own grant, under --all, says running sessions stop and new ones keep publishing', async () => {
+      await run(['consent', 'grant', work, '--project', 'Proj-A', '--yes']);
+      await run(['consent', 'grant', '--all', '--yes']);
+      out.mockClear();
+      await run(['consent', 'revoke', work]);
+      expect(await allEntries()).toHaveLength(1);
+      expect(said(out)).toContain('Disconnected');
+      expect(said(out)).toContain('new sessions there keep publishing, sessions already running there stop');
+      expect(said(out)).toContain('consent revoke --all');
+    });
+
     it('revoke --all with nothing to remove says so; with a path it is rejected', async () => {
       await run(['consent', 'revoke', '--all']);
       expect(said(out)).toContain('Nothing to change');

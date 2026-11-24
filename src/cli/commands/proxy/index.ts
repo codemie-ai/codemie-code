@@ -359,7 +359,7 @@ export function createProxyCommand(): Command {
     .addOption(deprecatedOption(CONNECT_SILENT_DEPRECATION, '--silent', 'Same as --yes'))
     .option(
       '--include-personal-subscriptions',
-      'With --claude-otlp: also send analytics from personal Claude subscriptions, for this repository (--scope project) or any repository (--scope user). Without it, connect asks.',
+      'With --claude-otlp: also send analytics from personal Claude subscriptions, for this repository (--scope project) or any repository (--scope user). Without it, an interactive connect asks (not with --yes).',
     )
     .action(async (opts: UnifiedConnectOptions) => {
       if (opts.force) deprecate(CONNECT_FORCE_DEPRECATION);

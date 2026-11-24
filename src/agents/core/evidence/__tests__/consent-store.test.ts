@@ -168,6 +168,12 @@ describe('consent-store: all-folders entry', () => {
     expect(await resolveConsent({ ...scope, project: ' ' }, work)).toBeUndefined();
   });
 
+  it('does not cover a project whose name is not Latin-1, and still covers a Latin-1 one', async () => {
+    await connectAllFolders(owner);
+    expect(await resolveConsent({ ...scope, project: 'Проект' }, work)).toBeUndefined();
+    expect(await resolveConsent({ ...scope, project: 'Projekt-é' }, work)).toBeTruthy();
+  });
+
   it('a frozen reference keeps holding in another cwd', async () => {
     await connectAllFolders(owner);
     const ref = (await resolveConsent(scope, work))!;
