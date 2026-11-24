@@ -57,12 +57,17 @@ function isSafeForPowerShell(dir: string): boolean {
   return !/['"‘-‟;%\u0000-\u001f\u007f]/.test(dir);
 }
 
-/** Copy-paste PowerShell command that edits the user PATH, or null when `dir` is not safe to quote. */
+/**
+ * Copy-paste PowerShell command that edits the user PATH, or null when `dir` is not safe to quote.
+ * Reads and writes the registry value directly: `SetEnvironmentVariable` would expand `%VAR%` entries
+ * and store PATH as REG_SZ (the form `clidiag.ps1` reports as a problem).
+ */
 function userPathCommand(dir: string, position: 'prepend' | 'append'): string | null {
   if (!isSafeForPowerShell(dir)) return null;
-  const current = "[Environment]::GetEnvironmentVariable('Path','User')";
-  const value = position === 'prepend' ? `'${dir};' + ${current}` : `${current} + ';${dir}'`;
-  return `[Environment]::SetEnvironmentVariable('Path', ${value}, 'User')`;
+  const open = "$k=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment',$true)";
+  const current = "$k.GetValue('Path','','DoNotExpandEnvironmentNames')";
+  const value = position === 'prepend' ? `'${dir};'+${current}` : `${current}+';${dir}'`;
+  return `${open}; $k.SetValue('Path',${value},'ExpandString')`;
 }
 
 /** Warning lines for an agent whose first PATH match is not the CodeMie-managed install. Never runs anything. */

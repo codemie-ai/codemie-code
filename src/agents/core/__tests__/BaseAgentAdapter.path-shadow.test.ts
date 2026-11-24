@@ -122,6 +122,11 @@ describe('BaseAgentAdapter.checkPathShadow', () => {
     expect(await new TestAdapter().checkPathShadow()).toEqual({ status: 'missing' });
   });
 
+  it('reports unknown when where.exe output was not decoded as UTF-8 (U+FFFD in a match)', async () => {
+    vi.mocked(getCommandMatches).mockResolvedValue({ status: 'answered', matches: ['C:\\Users\\J\uFFFDrgen\\bin\\pi.cmd', `${MANAGED}\\pi.cmd`] });
+    expect(await new TestAdapter().checkPathShadow()).toEqual({ status: 'unknown' });
+  });
+
   it('reports unknown when the lookup is unanswered', async () => {
     vi.mocked(getCommandMatches).mockResolvedValue({ status: 'unanswered' });
     expect(await new TestAdapter().checkPathShadow()).toEqual({ status: 'unknown' });

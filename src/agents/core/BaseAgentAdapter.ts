@@ -385,6 +385,9 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
       const matches = await this.getPathMatches();
       if (matches === null) return unknown;
+      // U+FFFD means where.exe output was not UTF-8 (OEM code page, non-ASCII profile): the folder
+      // cannot be compared reliably, so stay silent rather than warn about a healthy install.
+      if (matches.some((m) => m.includes('�'))) return unknown;
 
       // The classifier compares synchronously; resolve directory equality up front.
       const sameDir = new Map<string, boolean>();

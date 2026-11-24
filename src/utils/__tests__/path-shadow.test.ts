@@ -71,7 +71,9 @@ describe('shadow formatters', () => {
     expect(text).toContain(active);
     expect(text).toContain(mDir);
     expect(text).toContain(`Put "${mDir}" ahead of "C:${B}Other" on your PATH`);
-    expect(text).toContain("SetEnvironmentVariable('Path', '" + mDir + ";'");
+    expect(text).toContain("'" + mDir + ";'+$k.GetValue('Path','','DoNotExpandEnvironmentNames')");
+    expect(text).toContain("'ExpandString'");
+    expect(text).not.toContain('SetEnvironmentVariable');
     expect(text).toContain('open a new terminal');
     expect(text).toMatch(/remove or rename/i);
     expect(text).toMatch(/machine-wide PATH as administrator/);
@@ -80,7 +82,7 @@ describe('shadow formatters', () => {
   it('shadow warning omits the copy-paste command for unsafe directories', () => {
     for (const bad of [`C:${B}a;b`, `C:${B}100%${B}x`, `C:${B}it's`, `C:${B}q"x`, `C:${B}t\tab`, `C:${B}O’Brien`, `C:${B}q“x`]) {
       const text = formatShadowWarning({ ...shadowed, managedDir: bad }, 'win32').join('\n');
-      expect(text).not.toContain('SetEnvironmentVariable');
+      expect(text).not.toContain('OpenSubKey');
       expect(text).toContain('open a new terminal');
     }
   });
@@ -89,14 +91,16 @@ describe('shadow formatters', () => {
     const text = formatNotOnPathHint(missing, 'win32').join('\n');
     expect(text).toContain('not found on PATH');
     expect(text).toContain(mDir);
-    expect(text).toContain("SetEnvironmentVariable('Path'");
-    expect(text).toContain("+ ';" + mDir + "'");
+    expect(text).toContain("OpenSubKey('Environment',$true)");
+    expect(text).toContain("DoNotExpandEnvironmentNames')+';" + mDir + "'");
+    expect(text).toContain("'ExpandString'");
+    expect(text).not.toContain('SetEnvironmentVariable');
     expect(text).toContain('open a new terminal');
   });
 
   it('not-on-path hint has no command for unsafe directories', () => {
     const text = formatNotOnPathHint({ ...missing, managedDir: `C:${B}a;b` }, 'win32').join('\n');
-    expect(text).not.toContain('SetEnvironmentVariable');
+    expect(text).not.toContain('OpenSubKey');
     expect(text).toContain('not found on PATH');
   });
 
