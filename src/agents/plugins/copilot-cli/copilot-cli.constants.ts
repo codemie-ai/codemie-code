@@ -6,6 +6,15 @@
  */
 
 import { SESSION_UUID_PATTERN } from '../../core/session/next-record-start.js';
+import {
+  FLEET_INSTRUCTION_RE,
+  FLEET_LABEL_RE,
+  SLASH_INSTRUCTION_RE,
+  extractSlashCommand,
+  stripDesktopWrappers,
+} from '../../core/prompt-grammar.js';
+
+export { extractSlashCommand, stripDesktopWrappers };
 
 /** Internal agent key. Disambiguates the CLI from the VS Code / JetBrains extensions. */
 export const COPILOT_CLI_AGENT_NAME = 'copilot-cli';
@@ -27,49 +36,8 @@ export function resolveCopilotAgentKey(clientName?: string): string {
   return clientName === COPILOT_DESKTOP_CLIENT_NAME ? COPILOT_DESKTOP_AGENT_NAME : COPILOT_CLI_AGENT_NAME;
 }
 
-// The Copilot desktop (Tauri) app prefixes the user's message with internal context blocks
-// (<copilot_tauri_workspace>, <copilot_artifacts>, <current_datetime>, ...); they must not surface as the session
-// prompt/title. Every `copilot_*` tag is treated as a wrapper so new desktop-app blocks need no code change.
-// The app also appends blocks after the user's text (<system_notification> session-rename reminder,
-// <app_user_message_source_json>), which must not leak into the stored prompt either.
-// Only complete blocks at the very start/end are removed, so a user's own mention of these tags is kept.
-const DESKTOP_WRAPPER_TAGS = 'copilot_[a-z0-9_]+|current_datetime|branch_rename_request';
-const DESKTOP_TRAILER_TAGS = 'system_notification|app_[a-z0-9_]+';
-const DESKTOP_PREAMBLE_RE = new RegExp(
-  `^\\s*(?:<(${DESKTOP_WRAPPER_TAGS})\\b[^>]*>[\\s\\S]*?<\\/\\1>\\s*)+`,
-  'i'
-);
-// A trailing block may not contain another opening of its own tag, so a mid-text mention cannot swallow the user's text.
-const DESKTOP_TRAILER_RE = new RegExp(
-  `(?:<(${DESKTOP_TRAILER_TAGS})\\b[^>]*>(?:(?!<\\1\\b)[\\s\\S])*?<\\/\\1>\\s*)+$`,
-  'i'
-);
-
-/** Removes the desktop app's leading and trailing internal context blocks from a user prompt. */
-export function stripDesktopWrappers(text: string): string {
-  return text.replace(DESKTOP_PREAMBLE_RE, '').replace(DESKTOP_TRAILER_RE, '').trim();
-}
-
-// For slash commands (/review, /security-review, /fleet, ...) Copilot swaps the typed command for an internal
-// instruction ("The user has requested ... via the /review command. Use the task tool ...").
-// Command token: letter-led segments joined by `:` or `.`, so `/sdlc-factory:x` matches but `/v1.2` and `/1` do not.
-const SLASH_INSTRUCTION_RE = /^The user has (?:requested|invoked)\b[^\n]*?\bvia the (\/[A-Za-z][\w-]*(?:[:.][A-Za-z][\w-]*)*) command\b/i;
-const TYPED_SLASH_RE = /^(\/[A-Za-z][\w-]*(?:[:.][A-Za-z][\w-]*)*)(?=\s|$)/;
-
-const KNOWN_SLASH_COMMANDS: ReadonlySet<string> = new Set([
-  'agent', 'allow-all', 'clear', 'compact', 'context', 'cwd', 'delegate', 'diff', 'exit', 'feedback', 'fleet', 'help', 'init',
-  'login', 'logout', 'mcp', 'model', 'new', 'plan', 'quit', 'rename', 'research', 'resume', 'review', 'security-review', 'session', 'share',
-  'skills', 'terminal-setup', 'theme', 'usage', 'user',
-]);
-
-// /fleet is injected as "You are now in fleet mode. Dispatch sub-agents ..." with no "via the /x command" wording.
-const FLEET_INSTRUCTION_RE = /^You are now in fleet mode\b/i;
-
 // Copilot ends the fleet instruction with "User request: <typed text>"; its `content` is a display label ("Fleet deployed: ...").
 const FLEET_REQUEST_RE = /\n\s*User request:\s*([\s\S]*?)\s*$/i;
-
-// Fallback when only the label is available (the hook may not carry the transformed text).
-const FLEET_LABEL_RE = /^Fleet deployed:\s*([\s\S]*?)\s*$/;
 
 function fleetTitle(instruction: string): string {
   const request = (FLEET_REQUEST_RE.exec(instruction) ?? FLEET_LABEL_RE.exec(instruction))?.[1];
@@ -95,33 +63,6 @@ export function normalizeUserPrompt(text: string, transformed?: string): string 
 export function isSubagentPrompt(data: unknown): boolean {
   const source = typeof data === 'object' && data !== null ? (data as { source?: unknown }).source : undefined;
   return typeof source === 'string' && source.startsWith('agent-');
-}
-
-/** Slash command (without the leading `/`) behind a user message, from Copilot's instruction or the typed text. */
-export function extractSlashCommand(content?: string, transformedContent?: string): string | undefined {
-  const strippedContent = typeof content === 'string' ? stripDesktopWrappers(content) : undefined;
-  const strippedTransformed = typeof transformedContent === 'string' ? stripDesktopWrappers(transformedContent) : undefined;
-  // A typed token is a command only when Copilot actually rewrote the message into one of its own
-  // instructions (compared after preamble stripping, so a preamble added only on one side doesn't count),
-  // it is namespaced, or it is a known built-in; otherwise it is a path such as /tmp is full.
-  const rewritten =
-    strippedTransformed !== undefined &&
-    strippedContent !== undefined &&
-    strippedTransformed !== strippedContent &&
-    (FLEET_INSTRUCTION_RE.test(strippedTransformed) ||
-      FLEET_LABEL_RE.test(strippedTransformed) ||
-      SLASH_INSTRUCTION_RE.test(strippedTransformed));
-
-  for (const text of [strippedTransformed, strippedContent]) {
-    if (text === undefined) continue;
-    if (FLEET_INSTRUCTION_RE.test(text) || FLEET_LABEL_RE.test(text)) return 'fleet';
-    const instruction = SLASH_INSTRUCTION_RE.exec(text);
-    if (instruction) return instruction[1].slice(1);
-    const typed = TYPED_SLASH_RE.exec(text)?.[1];
-    if (!typed) continue;
-    if (rewritten || typed.includes(':') || KNOWN_SLASH_COMMANDS.has(typed.slice(1).toLowerCase())) return typed.slice(1);
-  }
-  return undefined;
 }
 
 /** User-facing short name used by install/uninstall surfaces. */

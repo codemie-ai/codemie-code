@@ -6,7 +6,8 @@
  * the future is redacted by default.
  */
 import { logger } from '@/utils/logger.js';
-import { TICKET_RE, extractTicketMentions } from './ticket-parser.js';
+import { TICKET_RE, extractTicketMentions, findMrRefs, findTicketRefs } from './ticket-parser.js';
+import { autoPromptMarker, resolveCommandFields } from './prompt-grammar.js';
 
 export interface KeepList {
   readonly keep: ReadonlySet<string>;
@@ -39,6 +40,52 @@ export function reduceBranch(branch: string | undefined): string | undefined {
     }
   }
   return keys.length > 0 ? keys.join(' ') : placeholder('branch');
+}
+
+/** Longest reduced prompt, in characters. */
+const MAX_REDUCED_PROMPT = 200;
+
+export interface ReducePromptOptions {
+  /** Command name (no slash) the adapter already derived; when omitted it is parsed from the prompt. */
+  commandName?: string;
+  /** Auto-prompt marker the adapter already derived; when omitted it is detected in the prompt. */
+  autoMarker?: string;
+}
+
+/**
+ * The only parts of a raw prompt analytics keeps: the auto marker alone, or the command name plus
+ * the ticket and MR refs found in the whole prompt, or the refs alone, or `REDACTED:PROMPT`.
+ * Runs on the raw text so a ref past any later length cut survives; output is at most 200 characters.
+ */
+export function reducePrompt(raw: string, opts: ReducePromptOptions = {}): string {
+  const marker = opts.autoMarker || autoPromptMarker(raw);
+  if (marker) {
+    return marker.slice(0, MAX_REDUCED_PROMPT);
+  }
+  const command = opts.commandName ?? resolveCommandFields(raw).command_name;
+  const parts: string[] = command ? [`/${command}`] : [];
+  const seen = new Set<string>();
+  for (const ref of [...findTicketRefs(raw), ...findMrRefs(raw)]) {
+    const key = ref.toUpperCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      parts.push(ref);
+    }
+  }
+  const kept: string[] = [];
+  let length = 0;
+  for (const part of parts) {
+    const next = length + (kept.length > 0 ? 1 : 0) + part.length;
+    if (next > MAX_REDUCED_PROMPT) {
+      break;
+    }
+    kept.push(part);
+    length = next;
+  }
+  if (kept.length === 0 && parts.length > 0) {
+    return parts[0].slice(0, MAX_REDUCED_PROMPT);
+  }
+  return kept.length > 0 ? kept.join(' ') : placeholder('prompt');
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

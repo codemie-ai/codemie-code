@@ -332,3 +332,71 @@ export function parsePromptFields(prompt: string): PromptFields {
     prompt_length: prompt.length,
   };
 }
+
+/** Upper bound on refs returned by `findTicketRefs` / `findMrRefs`. */
+const MAX_REFS = 20;
+
+/** `#24`, `org/repo#24`, `AB#123`: digits only after the `#`, so `#fff` and `# Plan` never match. */
+const HASH_REF_RE = /(?<![A-Za-z0-9_/.&#-])(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|[A-Za-z]+)?#\d+(?![A-Za-z0-9_])/g;
+
+/** `!456`, a GitLab merge request. */
+const BANG_REF_RE = /(?<![A-Za-z0-9_!])!\d+(?![A-Za-z0-9_])/g;
+
+/** `/pull/24` (GitHub) and `/merge_requests/24` (GitLab) inside a URL; the number is kept. */
+const MR_URL_RE = /\/(?:pull|merge_requests)\/(\d+)(?![A-Za-z0-9_])/g;
+
+/**
+ * Ticket refs as written in raw text: Jira-style keys that pass the `extractTicketMentions` filters,
+ * then `#24`, `org/repo#24` and `AB#123`. De-duplicated case-insensitively, first spelling wins,
+ * capped. Linear in the length of `raw`.
+ */
+export function findTicketRefs(raw: string): string[] {
+  if (!raw) {
+    return [];
+  }
+  const refs = new Map<string, string>();
+  const accepted = new Set(extractTicketMentions(raw, MAX_REFS));
+  if (accepted.size > 0) {
+    for (const match of raw.matchAll(new RegExp(TICKET_RE.source, TICKET_RE.flags))) {
+      const key = match[0].toUpperCase();
+      if (accepted.has(key) && !refs.has(key)) {
+        refs.set(key, match[0]);
+      }
+    }
+  }
+  for (const match of raw.matchAll(HASH_REF_RE)) {
+    const key = match[0].toUpperCase();
+    if (!refs.has(key)) {
+      refs.set(key, match[0]);
+    }
+  }
+  return [...refs.values()].slice(0, MAX_REFS);
+}
+
+/**
+ * Merge or pull request refs in raw text: `!456`, `#456`, and the number of a GitHub `/pull/N` or
+ * GitLab `/merge_requests/N` URL (`N`). De-duplicated, first spelling wins, capped.
+ */
+export function findMrRefs(raw: string): string[] {
+  if (!raw) {
+    return [];
+  }
+  const refs = new Map<string, string>();
+  const add = (ref: string): void => {
+    if (!refs.has(ref)) {
+      refs.set(ref, ref);
+    }
+  };
+  for (const match of raw.matchAll(BANG_REF_RE)) {
+    add(match[0]);
+  }
+  for (const match of raw.matchAll(HASH_REF_RE)) {
+    if (match[0].startsWith('#')) {
+      add(match[0]);
+    }
+  }
+  for (const match of raw.matchAll(MR_URL_RE)) {
+    add(match[1]);
+  }
+  return [...refs.values()].slice(0, MAX_REFS);
+}

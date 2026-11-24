@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractTicketMarker, extractTicketMentions, parsePromptFields } from '../ticket-parser.js';
+import { extractTicketMarker, extractTicketMentions, findMrRefs, findTicketRefs, parsePromptFields } from '../ticket-parser.js';
 
 describe('ticket-parser', () => {
   describe('extractTicketMentions', () => {
@@ -232,5 +232,29 @@ describe('ticket-parser', () => {
     it('returns empty values for an empty prompt', () => {
       expect(parsePromptFields('')).toEqual({ story_marker: '', ticket_mentions: [], prompt_length: 0 });
     });
+  });
+});
+
+describe('findTicketRefs', () => {
+  it.each([
+    ['fix epmcdme-123 and EPMCDME-9', ['epmcdme-123', 'EPMCDME-9']],
+    ['see #24 and org/repo#25 and AB#123', ['#24', 'org/repo#25', 'AB#123']],
+    ['#fff # Plan v1.2.3 run /usr/bin/node', []],
+    ['gpt-4o-mini-2024-07-18', []],
+    ['https://example.com/page#12', []],
+    ['', []],
+  ])('finds refs in %j', (raw, expected) => {
+    expect(findTicketRefs(raw)).toEqual(expected);
+  });
+});
+
+describe('findMrRefs', () => {
+  it.each([
+    ['review !456 and #7', ['!456', '#7']],
+    ['https://github.com/o/r/pull/24', ['24']],
+    ['https://gitlab.com/g/p/-/merge_requests/88', ['88']],
+    ['hello !x ! 5 a!5', []],
+  ])('finds refs in %j', (raw, expected) => {
+    expect(findMrRefs(raw)).toEqual(expected);
   });
 });
