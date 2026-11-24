@@ -83,12 +83,13 @@ describe.skipIf(!existsSync(DAEMON_DIST))('Claude Code analytics on an oauth2-pr
     }
   }
 
-  function heldEvents(home: string): string[] {
-    const dir = join(home, 'analytics', 'state', 'owner-pending');
+  /** Names of the files held for the login. Walked by hand: recursive readdir needs a later Node 20. */
+  function heldEvents(home: string, dir = join(home, 'analytics', 'state', 'owner-pending')): string[] {
     if (!existsSync(dir)) return [];
-    return readdirSync(dir, { recursive: true, withFileTypes: true })
-      .filter((entry) => entry.isFile())
-      .map((entry) => entry.name);
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      if (entry.isDirectory()) return heldEvents(home, join(dir, entry.name));
+      return entry.isFile() ? [entry.name] : [];
+    });
   }
 
   function expectOwnedSession(events: HookEvent[]): void {

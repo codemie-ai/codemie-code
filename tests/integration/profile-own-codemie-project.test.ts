@@ -159,8 +159,10 @@ describe.skipIf(!existsSync(DAEMON_DIST))('per-profile CodeMie identity of globa
 
   describe('an upgrade gives the last saved project to no profile (EPMCDME-16519)', () => {
     // The bug of EPMCDME-16519: the upgrade wrote the last saved project into every global profile.
-    it('leaves profiles saved before per-profile projects without a project, each on the shared fallback', async () => {
-      // An install from before per-profile projects: the migration that repairs the first fix has not run.
+    it('on an install that never ran the first fix, migration 010 and `codemie profile` give no profile the last saved project', async () => {
+      // An install from before per-profile projects that never ran #701: migration 010 is the only one pending, and it
+      // must leave these profiles alone. Every other migration is recorded as applied when the home is warmed, so this
+      // test does not exercise them: a new migration that copied the shared project would not be caught here.
       const home = createCliHome(homes, { dropMigrations: [CLEAR_CLONES_MIGRATION_ID] });
       writeGlobalConfig(
         home,

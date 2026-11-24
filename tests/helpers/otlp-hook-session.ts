@@ -20,6 +20,9 @@ export const SECURITY_DIST = join(REPO_ROOT, 'dist', 'utils', 'security.js');
 export const DAEMON_DIST = join(REPO_ROOT, 'dist', 'bin', 'proxy-daemon.js');
 export const EVENT_HOOKS_PATH = '/v1/analytics/cli-analytics/event-hooks';
 const RUN_TIMEOUT_MS = 30_000;
+// Synchronous setup children block the test's event loop, so its own timeout cannot fire while they run:
+// each is killed after this long, inside the `cli` project's 30s default.
+const SETUP_TIMEOUT_MS = 20_000;
 
 export interface RecordedRequest {
   method: string;
@@ -60,10 +63,11 @@ export interface GlobalProfile {
 export type HookEvent = Record<string, unknown>;
 
 function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((done) => {
+  return new Promise((done, fail) => {
     let body = '';
     req.on('data', (chunk) => (body += chunk));
     req.on('end', () => done(body));
+    req.on('error', fail);
   });
 }
 
@@ -79,18 +83,26 @@ export async function startServer(
 ): Promise<MockServer> {
   const requests: RecordedRequest[] = [];
   const server = createServer(async (req, res) => {
-    const body = await readBody(req);
-    const path = req.url ?? '';
-    requests.push({
-      method: req.method ?? '',
-      path,
-      cookie: req.headers.cookie,
-      project: req.headers['x-codemie-project'] as string | undefined,
-      body,
-    });
-    const reply = handle(path, req, body);
-    res.writeHead(reply.status, { 'content-type': 'application/json', ...reply.headers });
-    res.end(JSON.stringify(reply.body ?? {}));
+    try {
+      const body = await readBody(req);
+      const path = req.url ?? '';
+      requests.push({
+        method: req.method ?? '',
+        path,
+        cookie: req.headers.cookie,
+        project: req.headers['x-codemie-project'] as string | undefined,
+        body,
+      });
+      const reply = handle(path, req, body);
+      res.writeHead(reply.status, { 'content-type': 'application/json', ...reply.headers });
+      res.end(JSON.stringify(reply.body ?? {}));
+    } catch (error) {
+      // A broken request or handler answers 500 at once, rather than leaving the CLI waiting until the test times out.
+      if (!res.headersSent && !res.destroyed) {
+        res.writeHead(500, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: `mock server: ${error instanceof Error ? error.message : String(error)}` }));
+      }
+    }
   });
   const url = await new Promise<string>((done) => {
     server.listen(0, '127.0.0.1', () => done(`http://127.0.0.1:${(server.address() as { port: number }).port}`));
@@ -99,7 +111,8 @@ export async function startServer(
 }
 
 /**
- * The CodeMie API: `/v1/user` as configured, a classification policy the CLI can publish under, 200 otherwise.
+ * The CodeMie API: `/v1/user` as configured, a classification policy the CLI can publish under, one Claude
+ * model, 200 otherwise.
  * Loopback URLs are used as the API base as-is (no `/code-assistant-api` suffix).
  */
 export async function startMockBackend(user: CodeMieUser): Promise<MockBackend> {
@@ -129,6 +142,13 @@ export async function startMockBackend(user: CodeMieUser): Promise<MockBackend> 
     }
     if (path.startsWith('/v1/analytics/cli-analytics/classification-policy')) {
       return { status: 200, body: { organizations: [], version: 'v1', publication_contracts: ['1'] } };
+    }
+    if (path.startsWith('/v1/llm_models')) {
+      // One Claude model, so `proxy connect --claude-otlp` can configure Claude Desktop against the project.
+      return {
+        status: 200,
+        body: [{ base_name: 'claude-sonnet-4-5', deployment_name: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5', enabled: true, provider: 'anthropic' }],
+      };
     }
     return { status: 200 };
   });
@@ -164,6 +184,11 @@ export function waitForDeliveredSession(backend: MockServer, timeoutMs: number, 
   );
 }
 
+/** `--import` of a module in `home`, for NODE_OPTIONS. */
+export function importFlag(home: string, file: string): string {
+  return `--import=${pathToFileURL(join(home, file)).href}`;
+}
+
 /** Environment of a CLI child process confined to `home`, with keytar blocked and fast delivery ticks. */
 export function hookEnv(home: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
@@ -184,7 +209,7 @@ export function hookEnv(home: string): NodeJS.ProcessEnv {
   env.CODEMIE_AGENT = 'claude';
   env.CODEMIE_SESSION_ID = 'codemie-session-under-test';
   // Keep the credential store off the OS keychain: the file store in this home only.
-  env.NODE_OPTIONS = `--import=${pathToFileURL(join(home, 'no-keytar-register.mjs')).href}`;
+  env.NODE_OPTIONS = importFlag(home, 'no-keytar-register.mjs');
   // Deliver every 3 s; hooks-only sessions are sent on each tick instead of waiting for OTel data.
   env.OTLP_SEND_INTERVAL_MINUTES = '0.05';
   env.OTLP_SEND_MAX_ATTEMPTS = '0';
@@ -218,14 +243,29 @@ export function createCliHome(
     'utf-8'
   );
   writeFileSync(join(home, 'transcript.jsonl'), '', 'utf-8');
+  // Checked for updates just now: without it the first run of an outdated build silently runs
+  // `npm install -g @codemieai/code@latest` on the machine running the tests.
+  writeFileSync(join(home, '.last-update-check'), String(Date.now()), 'utf-8');
 
-  const first = spawnSync(process.execPath, [BIN, 'version'], { cwd: home, env: hookEnv(home), encoding: 'utf-8' });
+  const first = spawnSync(process.execPath, [BIN, 'version'], {
+    cwd: home,
+    env: hookEnv(home),
+    encoding: 'utf-8',
+    timeout: SETUP_TIMEOUT_MS,
+    killSignal: 'SIGKILL',
+  });
   const ledgerPath = join(home, 'migrations.json');
   if (first.status !== 0 || !existsSync(ledgerPath)) {
-    throw new Error(`setup: codemie version did not write a migration ledger\n${first.stderr}`);
+    const cause = first.error ? `${first.error.message}\n` : '';
+    throw new Error(`setup: codemie version did not write a migration ledger\n${cause}${first.stderr}`);
   }
   const ledger = JSON.parse(readFileSync(ledgerPath, 'utf-8')) as { migrations: Array<{ id: string }> };
   const drop = new Set(options.dropMigrations ?? []);
+  const unknown = [...drop].filter((id) => !ledger.migrations.some((m) => m.id === id));
+  if (unknown.length > 0) {
+    // A renamed or removed migration: dropping nothing would let the test pass without the migration running.
+    throw new Error(`setup: no migration ${unknown.join(', ')} in the ledger to drop`);
+  }
   ledger.migrations = [
     ...ledger.migrations.filter((m) => !drop.has(m.id)),
     ...(options.addMigrations ?? []).map((id) => ({ id, appliedAt: new Date().toISOString(), success: true })),
@@ -284,7 +324,7 @@ await CredentialStore.getInstance().storeSSOCredentials(
   ${JSON.stringify(apiUrl)}
 );`,
     ],
-    { env: hookEnv(home), stdio: 'pipe' }
+    { env: hookEnv(home), stdio: 'pipe', timeout: SETUP_TIMEOUT_MS, killSignal: 'SIGKILL' }
   );
 }
 
@@ -294,18 +334,29 @@ export interface CliRun {
   stderr: string;
 }
 
+export interface CliRunOptions {
+  /** The child is killed, and the promise rejected, after this long. */
+  timeoutMs?: number;
+  /** Added to (and overriding) the hook environment. */
+  env?: NodeJS.ProcessEnv;
+  /** Working directory of the CLI process; `home` when absent. */
+  cwd?: string;
+}
+
 /** Runs the built CLI in `home` with the hook environment. */
-export function runCli(home: string, args: string[], input = ''): Promise<CliRun> {
+export function runCli(home: string, args: string[], input = '', options: CliRunOptions = {}): Promise<CliRun> {
+  const timeoutMs = options.timeoutMs ?? RUN_TIMEOUT_MS;
   return new Promise((done, fail) => {
-    const child = spawn(process.execPath, [BIN, ...args], { cwd: home, env: hookEnv(home), windowsHide: true });
+    const env = { ...hookEnv(home), ...options.env };
+    const child = spawn(process.execPath, [BIN, ...args], { cwd: options.cwd ?? home, env, windowsHide: true });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk) => (stdout += chunk));
     child.stderr.on('data', (chunk) => (stderr += chunk));
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
-      fail(new Error(`codemie ${args.join(' ')} did not exit within ${RUN_TIMEOUT_MS}ms\nstderr: ${stderr}`));
-    }, RUN_TIMEOUT_MS);
+      fail(new Error(`codemie ${args.join(' ')} did not exit within ${timeoutMs}ms\nstderr: ${stderr}`));
+    }, timeoutMs);
     child.on('error', fail);
     child.on('close', (code) => {
       clearTimeout(timer);
@@ -316,24 +367,24 @@ export function runCli(home: string, args: string[], input = ''): Promise<CliRun
 }
 
 /** One Claude Code hook event for `sessionId`, as Claude Code writes it to the hook's stdin. */
-export function runHook(home: string, sessionId: string, event: HookEvent): Promise<CliRun> {
+export function runHook(home: string, sessionId: string, event: HookEvent, options: CliRunOptions = {}): Promise<CliRun> {
   const input = JSON.stringify({
     session_id: sessionId,
     transcript_path: join(home, 'transcript.jsonl'),
     cwd: home,
     ...event,
   });
-  return runCli(home, ['hook', '--agent', 'claude-code-otlp'], input);
+  return runCli(home, ['hook', '--agent', 'claude-code-otlp'], input, options);
 }
 
 /** A session start and one typed prompt. Each hook must exit 0 silently. */
-export async function runHookSession(home: string, sessionId: string): Promise<CliRun[]> {
+export async function runHookSession(home: string, sessionId: string, options: CliRunOptions = {}): Promise<CliRun[]> {
   const runs: CliRun[] = [];
   for (const event of [
     { hook_event_name: 'SessionStart', source: 'startup' },
     { hook_event_name: 'UserPromptSubmit', prompt: 'Reply with OK.' },
   ]) {
-    runs.push(await runHook(home, sessionId, event));
+    runs.push(await runHook(home, sessionId, event, options));
   }
   return runs;
 }
