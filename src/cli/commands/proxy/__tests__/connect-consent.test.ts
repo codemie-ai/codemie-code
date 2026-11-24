@@ -84,7 +84,7 @@ describe('recordConnectConsent', () => {
     expect(result.error).toContain('Sign in');
     const lines = printed();
     expect(lines[0]).toMatch(/^ {2}Could not enable analytics from personal Claude subscriptions: .*Sign in/);
-    expect(lines[1]).toBe(`Run: codemie proxy analytics ${command}`);
+    expect(lines[1]).toBe(`  the consent was not recorded — run: codemie proxy analytics ${command}`);
     expect(await entries()).toEqual([]);
   });
 

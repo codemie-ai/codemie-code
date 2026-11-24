@@ -7,6 +7,7 @@ import chalk from 'chalk';
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
+import { renderHint } from '@/utils/hint.js';
 import { resolveProjectRoot } from '@/utils/project-root.js';
 import { currentEvidenceIdentity } from '@/agents/core/evidence/hook-identity.js';
 import { connectAllFolders, connectFolder } from '@/agents/core/evidence/consent-store.js';
@@ -45,7 +46,7 @@ export async function recordConnectConsent(scope: AllowlistScope): Promise<Targe
     const message = error instanceof Error ? error.message : String(error);
     logger.warn('[proxy] Failed to record work consent', ...sanitizeLogArgs({ error: message }));
     console.log(chalk.yellow(`  Could not enable analytics from personal Claude subscriptions: ${message}`));
-    console.log(`Run: ${grantCommand(scope)}`);
+    console.log(`  ${renderHint({ reason: 'the consent was not recorded', command: grantCommand(scope) })}`);
     return { label: WORK_CONSENT_LABEL, ok: false, error: message };
   }
 }
