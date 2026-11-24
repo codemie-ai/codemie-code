@@ -10,6 +10,7 @@
  * abstract bases without any real HTTP.
  */
 
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import { BaseHealthCheck } from '../base/BaseHealthCheck.js';
@@ -421,6 +422,13 @@ describe('defaultAgentHooks', () => {
       const equals = ['--plugin-dir=/plugins/here', 'chat'];
       expect(claudeHooks.enrichArgs!(spaced, {} as AgentConfig)).toBe(spaced);
       expect(claudeHooks.enrichArgs!(equals, {} as AgentConfig)).toBe(equals);
+    });
+
+    it('keeps the explicitly selected CodeMie source plugin instead of injecting the installed copy', () => {
+      process.env.CODEMIE_CLAUDE_EXTENSION_DIR = '/plugins/here';
+      const sourcePlugin = fileURLToPath(new URL('../../../agents/plugins/claude/plugin/', import.meta.url));
+      const args = ['--plugin-dir', '/other', '--plugin-dir', sourcePlugin, 'chat'];
+      expect(claudeHooks.enrichArgs!(args, {} as AgentConfig)).toBe(args);
     });
 
     it('ignores --plugin-dir text after the -- boundary', () => {

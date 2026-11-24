@@ -6,7 +6,8 @@
  * than duplicating the logic.
  */
 
-import { resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import type { AgentConfig } from '@/agents/core/types.js';
 import type { ProviderTemplate } from '@/providers/core/types.js';
 
@@ -16,9 +17,19 @@ interface WithExtensionInstaller {
   };
 }
 
+function isCodeMiePlugin(directory: string): boolean {
+  try {
+    const manifest = JSON.parse(readFileSync(join(directory, '.claude-plugin', 'plugin.json'), 'utf8'));
+    return manifest?.name === 'codemie';
+  } catch {
+    // Leave validation of user plugins to Claude and still load the installed extension.
+    return false;
+  }
+}
+
 /**
- * Prepend the CodeMie extension as a `--plugin-dir` unless the user already passed that
- * exact directory. Claude's `--plugin-dir` is repeatable, so user plugins must not suppress it.
+ * Prepend the installed extension unless the user explicitly selected a copy of the
+ * CodeMie plugin, such as the source checkout used for plugin development.
  * Scanning stops at `--` (everything after is positional prompt text).
  */
 export function withExtensionPluginDir(args: string[], pluginDir: string | undefined): string[] {
@@ -31,7 +42,7 @@ export function withExtensionPluginDir(args: string[], pluginDir: string | undef
     const value = arg === '--plugin-dir' ? scoped[i + 1]
       : arg.startsWith('--plugin-dir=') ? arg.slice('--plugin-dir='.length)
       : undefined;
-    return value !== undefined && resolve(value) === target;
+    return Boolean(value && (resolve(value) === target || isCodeMiePlugin(value)));
   });
 
   return alreadyPassed ? args : ['--plugin-dir', pluginDir, ...args];
