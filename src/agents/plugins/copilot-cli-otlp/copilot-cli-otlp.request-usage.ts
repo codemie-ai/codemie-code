@@ -66,6 +66,8 @@ interface UsageRecordData {
 
 interface UsageRecordUsage extends CopilotUsageBuckets {
   agentId?: string;
+  /** Copilot ≥ 1.0.115 omits `apiCallId`; `accounting.usageId` is the same id `assistant.message.apiCallId` carries. */
+  accounting?: { usageId?: string };
   model?: string;
   apiCallId?: string;
   finishReason?: string;
@@ -219,12 +221,13 @@ export function buildUsageRows(
         sawUsageRecordEvent = true;
         const data = (event.data ?? {}) as UsageRecordData & UsageRecordUsage;
         const usage: UsageRecordUsage = data.usage ?? data;
-        if (!usage.apiCallId || !usage.model) break;
+        const apiCallId = usage.apiCallId || usage.accounting?.usageId;
+        if (!apiCallId || !usage.model) break;
         segmentHasRecords[segment] = true;
         const scope = usage.initiator === 'sub-agent' ? 'agent' : 'main';
         records.push({
           segment,
-          row: toRow(sessionId, usage.apiCallId, usage.model, toBackendTokens(usage), {
+          row: toRow(sessionId, apiCallId, usage.model, toBackendTokens(usage), {
             timestamp,
             stopReason: usage.finishReason ?? 'end_turn',
             scope,
