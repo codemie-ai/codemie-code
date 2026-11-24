@@ -1,0 +1,50 @@
+{
+  "decision": "request-changes",
+  "rationale": "Two tasks reviewed via blind, edge-case, and acceptance lenses on the full diff. Both EPMCDME-15582's four story ACs and the plan's explicit requirements are implemented and match the Jira regression scenario's intent. One decision_needed finding (CR-001): the edge-case and blind lenses independently flagged that the EPMCDME-17201 fix's one-message lookahead (`nextMessageSkillName(messages[i+1])`) checks only the literal next array element, with no skip over intervening isMeta/isSidechain lines; this codebase's own conversation-splitter logic (claude.conversations-processor.ts) treats such interposed lines as a known, recurring phenomenon in real transcripts, so there is a real (not merely theoretical) chance the dedup silently fails to fire on some real sessions shaped differently from the synthetic test fixtures, which never include an interposed line. One patch finding (CR-002): Task 1's plan explicitly promised (Review Focus) a test proving a <command-name> tag without its <command-message> sibling is not treated as a genuine wrapper 'in either fix'; the pre-existing matchCommandNames gate is covered by an untouched prior test, but the new wrappedCommandName/countTurns path has no such test, even though inspection shows the guard is implemented correctly. 8 other concerns raised by the lenses were triaged out: LOCAL_ONLY_COMMANDS cross-repo drift is an explicit, user-approved, documented design tradeoff (mirrors the already-shipped backend precedent); wrappedCommandName's first-match-only behavior and recordCommand's one-command-per-message assumption are consistent with this codebase's own documented invariant that a genuine wrapper is exactly one command per user turn, making multi-command lines effectively unreachable; case-sensitivity mismatch between a command name and its dispatched skill name is unlikely since both derive from the same slug; the turns-metric historical-inconsistency concern is the expected, intended effect of fixing a counting bug (same situation as the already-shipped backend fix) and is explicitly out of scope per the plan's Global Constraints; the '/model nuance' concern directly contradicts the ticket's own acceptance criterion #3; the missing combined end-to-end regression test and the missing 'plain prompt unaffected by unrelated Skill call' test are both nice-to-haves not required by the plan's Review Focus (the latter is structurally guaranteed since matchCommandNames returns [] for non-wrapper text, so recordCommand is never invoked on it).",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [
+    {"kind": "story-ac", "item": "Turns excludes non-conversational local slash commands", "status": "pass", "notes": "LOCAL_ONLY_COMMANDS set + countTurns check in session-signals.ts; covered by new tests in session-signals.test.ts and orchestrator.test.ts."},
+    {"kind": "story-ac", "item": "/exit does not increment Turns", "status": "pass", "notes": "'exit' is in LOCAL_ONLY_COMMANDS."},
+    {"kind": "story-ac", "item": "/model does not increment Turns", "status": "pass", "notes": "'model' is in LOCAL_ONLY_COMMANDS."},
+    {"kind": "story-ac", "item": "One real user prompt results in TURNS = 1", "status": "pass", "notes": "Plain typed prompts are unaffected: wrappedCommandName returns '' absent a genuine <command-message> wrapper, so the new exclusion never fires on a plain prompt."},
+    {"kind": "spec", "item": "Regression scenario (1 prompt + /context + 2 skill-commands + /compact + /cost(/usage) + /init ~= 5 turns, not 7)", "status": "partial", "notes": "Both underlying mechanisms are implemented and individually tested, but no single test reproduces the exact mixed scenario end-to-end to confirm the combined total; not required by the plan's Review Focus, so not blocking."},
+    {"kind": "spec", "item": "EPMCDME-17201: skill-backed slash command counted once, as a skill, not also as a command", "status": "pass", "notes": "recordCommand()/nextMessageSkillName() in claude-named-invocations.ts; new test confirms commandInvocations is empty and skillInvocations has the entry for the direct-adjacency case. See CR-001 for a gap in this mechanism's robustness against non-adjacent transcript shapes."},
+    {"kind": "spec", "item": "LOCAL_ONLY_COMMANDS starts with exactly: context, usage, cost, exit, quit, clear, resume, model", "status": "pass", "notes": "Set literal matches exactly."},
+    {"kind": "spec", "item": "Do not reuse isLocalCommandTurn() for the turns fix", "status": "pass", "notes": "New wrappedCommandName() helper used instead; isLocalCommandTurn is untouched."},
+    {"kind": "spec", "item": "Preserve pure/no-I/O convention", "status": "pass", "notes": "All new functions (wrappedCommandName, matchCommandNames, nextMessageSkillName, recordCommand) are pure, no I/O introduced."},
+    {"kind": "spec", "item": "Do not touch forkedSlashPromptIds branch", "status": "pass", "notes": "Diff does not reference or modify that branch."},
+    {"kind": "spec", "item": "Review focus: <command-name> without <command-message> sibling must not be a genuine wrapper, in either fix", "status": "partial", "notes": "Correctly implemented in both wrappedCommandName and matchCommandNames (both gate on the sibling), but no test exercises this through the new wrappedCommandName/countTurns path. See CR-002."},
+    {"kind": "spec", "item": "Review focus: a plain typed prompt must never match the denylist or the skill-dedup lookahead", "status": "pass", "notes": "Structurally guaranteed: matchCommandNames returns [] for text with no genuine wrapper, so recordCommand/wrappedCommandName-driven exclusion never fires on plain text."},
+    {"kind": "spec", "item": "Review focus: a non-denylisted command (/compact, /init, /commit) must still count as a turn exactly as today", "status": "pass", "notes": "Asserted directly in both new tests (session-signals.test.ts and orchestrator.test.ts)."},
+    {"kind": "spec", "item": "Review focus: command immediately followed by Skill tool_use for a DIFFERENT skill must count as both command AND that skill", "status": "pass", "notes": "Covered by the new 'different name' test in claude-named-invocations.test.ts."},
+    {"kind": "spec", "item": "countTurns() must still skip isMeta/isSidechain/isCompactSummary/tool_result-only lines and existing prefix exclusions", "status": "pass", "notes": "Pre-existing checks are untouched; the new exclusion is a strict addition after them."}
+  ],
+  "standards_review": [
+    {"standard": "git-workflow (commit format)", "status": "pass", "notes": "Both commits follow Conventional Commits (fix(agents): ...) and passed the repo's commitlint pre-commit hook."},
+    {"standard": "code-quality (TS style, no any, explicit types)", "status": "pass", "notes": "New exports (wrappedCommandName, LOCAL_ONLY_COMMANDS) and internal helpers use explicit types; no `any` introduced; tsc --noEmit passed in the pre-commit hook for both commits."},
+    {"standard": "security", "status": "pass", "notes": "No secrets, injection, or unsafe file/process handling; gitleaks scan passed in both pre-commit runs. Pure in-memory string/regex logic only."}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "triage": "decision_needed",
+      "severity": "major",
+      "file": "src/agents/plugins/claude/session/claude-named-invocations.ts",
+      "location": "lines 120-142 (nextMessageSkillName, recordCommand)",
+      "problem": "The EPMCDME-17201 dedup only checks `messages[i + 1]` (the literal next array element) for the matching Skill tool_use call. It does not skip over an intervening isMeta/isSidechain 'user'-typed line, which this codebase's own conversation-splitter logic (claude.conversations-processor.ts) treats as a known, recurring transcript phenomenon.",
+      "impact": "In a real session where such a line interposes between a skill-backed slash command and the assistant's actual Skill tool_use reply, the lookahead finds no match and the command is still double-counted as both a command and a skill — silently reproducing the exact EPMCDME-17201 bug this change is meant to fix, in a shape the new unit tests (which never include an interposed line) cannot catch.",
+      "recommendation": "Either confirm (from real transcript samples or Claude Code's documented behavior) that no line can ever interpose between a skill-dispatching command and its Skill tool_use reply, and record that as an explicit invariant/comment, or widen the lookahead to skip forward past non-substantive lines (isMeta/isSidechain) to the next genuine assistant/user line before giving up."
+    },
+    {
+      "id": "CR-002",
+      "triage": "patch",
+      "severity": "major",
+      "file": "src/agents/plugins/claude-code-otlp/transcript/__tests__/session-signals.test.ts",
+      "location": "countTurns describe block",
+      "problem": "Task 1's plan (Review Focus) explicitly requires a test proving a <command-name> tag lacking the <command-message> sibling is not treated as a genuine wrapper 'in either fix'. The pre-existing matchCommandNames gate (unchanged by this diff) is covered by a prior test, but the new wrappedCommandName/countTurns path has no dedicated test for this case.",
+      "impact": "No regression safety net if a future change accidentally makes wrappedCommandName match on a bare <command-name> mention (e.g. documentation/prose containing the literal text '/model'), which would wrongly exclude that line from Turns.",
+      "recommendation": "Add a countTurns test asserting a user line containing `<command-name>/model</command-name>` with no `<command-message>` sibling still counts as a turn (proves the sibling-gate, not just the denylist membership, is exercised on the new path)."
+    }
+  ]
+}

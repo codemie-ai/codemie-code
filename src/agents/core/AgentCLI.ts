@@ -3,7 +3,8 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import chalk from 'chalk';
 import type { AgentAdapter, ResumeOwnershipResult } from './types.js';
-import { SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY } from './session/types.js';
+import { runProviderSettingsCheck, type ProviderSettingsSwitch } from './provider-settings-check.js';
+import { CONTINUE_SESSION_ENV_KEY, RESUME_SESSION_ENV_KEY, SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY } from './session/types.js';
 import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config.js';
 import { ensureApiBase, DEFAULT_CODEMIE_BASE_URL } from '../../providers/core/codemie-auth-helpers.js';
 import { AuthMethod, ProviderName } from '../../providers/core/types.js';
@@ -30,6 +31,7 @@ import { CopilotCliPluginMetadata } from '../plugins/copilot-cli/index.js';
 import { getAgentInstallCommand, getAgentLauncherCommand } from './agent-aliases.js';
 import { createAssistantsSetupCommand } from '../../cli/commands/assistants/setup/index.js';
 import { createSkillsSetupCommand } from '../../cli/commands/skills/setup/index.js';
+import { createClaudeModelsCommand } from '../../cli/commands/claude-models.js';
 import type { TargetAgent } from '../../cli/commands/shared/agent-targets.js';
 
 /**
@@ -64,6 +66,16 @@ export class AgentCLI {
   }
 
   /**
+   * Silent flag definition. Agents whose native CLI already uses `-s`
+   * (codex: --sandbox <mode>, gemini: --sandbox) keep only the long form
+   * so `-s` is forwarded to the agent untouched.
+   */
+  private getSilentFlags(): string {
+    const agentsWithNativeShortS = ['codex', 'gemini'];
+    return agentsWithNativeShortS.includes(this.adapter.name) ? '--silent' : '-s, --silent';
+  }
+
+  /**
    * Setup commander program
    */
   private setupProgram(): void {
@@ -75,7 +87,7 @@ export class AgentCLI {
     this.program
       .name(programName)
       .description(`CodeMie ${this.adapter.displayName} - ${this.adapter.description}`)
-      .option('-s, --silent', 'Enable silent mode')
+      .option(this.getSilentFlags(), 'Enable silent mode')
       .option('--status', 'Enable status bar (shows model, context usage, git branch, and cost)')
       .option('--profile <name>', 'Use specific provider profile')
       .option('--provider <provider>', 'Override provider (ai-run-sso, litellm, ollama)')
@@ -121,6 +133,12 @@ export class AgentCLI {
       this.program.addCommand(setupCommand);
     }
 
+    // Non-Claude models a profile offers alongside Claude ones (Claude Code /model picker and
+    // Claude Desktop). Claude Code has no `models` subcommand of its own, so nothing is shadowed.
+    if (this.adapter.name === ClaudePluginMetadata.name && !this.adapter.ownedSubcommands?.includes('models')) {
+      this.program.addCommand(createClaudeModelsCommand());
+    }
+
     // Add init command for frameworks, but only when the agent binary doesn't
     // already own an 'init' subcommand (avoids shadowing the binary's native command).
     if (!this.adapter.ownedSubcommands?.includes('init')) {
@@ -163,6 +181,8 @@ export class AgentCLI {
    * Handle main run action
    */
   private async handleRun(args: string[], options: Record<string, unknown>): Promise<void> {
+    // Settings switch agreed during this launch; its backup folder is repeated if a later step fails
+    let settingsSwitch: ProviderSettingsSwitch | null = null;
     try {
       // Check if agent is installed
       if (!(await this.adapter.isInstalled())) {
@@ -208,7 +228,11 @@ export class AgentCLI {
       }
 
       // Load configuration with CLI overrides
-      const config = await ConfigLoader.load(process.cwd(), {
+      // Every managed agent reads config from the nearest `.codemie` up from the cwd (the project it
+      // exports is what its session records carry); `.env` and the agent itself stay in process.cwd().
+      const { findNearestConfigDir } = await import('./event-fields/identity-fields.js');
+      const configDir = await findNearestConfigDir(process.cwd());
+      const config = await ConfigLoader.load(configDir, {
         name: options.profile as string | undefined,  // Profile selection
         provider: options.provider as string | undefined,
         model: options.model as string | undefined,
@@ -216,7 +240,7 @@ export class AgentCLI {
         baseUrl: options.baseUrl as string | undefined,
         timeout: options.timeout as number | undefined,
         reasoningEffort: options.reasoningEffort as import('./types.js').CanonicalReasoningEffort | undefined,
-      });
+      }, process.cwd());
 
       // JWT token from CLI overrides everything
       if (options.jwtToken) {
@@ -225,7 +249,7 @@ export class AgentCLI {
 
         const hasNoConfig = !options.provider
           && !(await ConfigLoader.hasGlobalConfig())
-          && !(await ConfigLoader.hasLocalConfig(process.cwd()));
+          && !(await ConfigLoader.hasLocalConfig(configDir));
 
         if (hasNoConfig) {
           config.provider = ProviderName.BEARER_AUTH;
@@ -297,6 +321,15 @@ export class AgentCLI {
         process.exit(1);
       }
 
+      // Agents whose own settings can select a cloud provider (Claude: Bedrock) check them before auth, so a
+      // cancel never starts a sign-in; the agreed switch is applied only once the launch is ready to run.
+      const { canPromptForProject } = await import('../../utils/interactive.js');
+      settingsSwitch = await runProviderSettingsCheck(
+        this.adapter,
+        { flow: 'launch', canPrompt: canPromptForProject({ task: options.task }) && !options.silent, profile: config },
+        'exit'
+      );
+
       // NEW: Auth validation via provider plugin
       // Skip when --jwt-token is explicitly provided: it overrides any configured provider auth
       try {
@@ -320,6 +353,18 @@ export class AgentCLI {
         console.log(chalk.red('\n✗ Authentication check failed\n'));
         process.exit(1);
       }
+
+      // Per-profile CodeMie project (EPMCDME-15411): a global profile without a project
+      // of its own is asked once in a terminal; otherwise it warns once and continues
+      // with the shared project. Runs after authentication, before the environment export.
+      const { resolveLaunchIdentity, finalizeLaunchIdentity } = await import('./launch-identity.js');
+      const { resolveJwtToken } = await import('../../providers/plugins/jwt/jwt.utils.js');
+      const launchIdentity = await resolveLaunchIdentity(config, {
+        workingDir: configDir,
+        canPrompt: canPromptForProject({ task: options.task }),
+        surface: 'agent',
+        jwtToken: (options.jwtToken as string | undefined) ?? resolveJwtToken(config),
+      });
 
       // Analytics auth validation for providers where CodeMie auth is analytics-only
       // (e.g. anthropic-subscription, moonshot-subscription). ai-run-sso already
@@ -361,6 +406,8 @@ export class AgentCLI {
         process.exit(1);
       }
 
+      await settingsSwitch.apply();
+
       const providerEnv = ConfigLoader.exportProviderEnvVars(config);
 
       // Mark an explicit --model CLI flag so plugin-level auto-heal logic (e.g.
@@ -381,6 +428,9 @@ export class AgentCLI {
 
       // Pass config info for welcome message display
       providerEnv.CODEMIE_PROFILE_NAME = config.name || 'default';
+      // Binding state next to the profile name; clears inherited identity for own/none
+      // and writes the one unowned warning (stderr) when no prompt was possible.
+      finalizeLaunchIdentity(launchIdentity, providerEnv);
       providerEnv.CODEMIE_CLI_VERSION = this.version;
 
       // Record where the model came from. Plugin-side model resolution (e.g. the Claude
@@ -426,11 +476,14 @@ export class AgentCLI {
         }
       }
 
+      // Strip only control characters before using the value in output.
+      // Native resume commands may accept non-UUID identifiers (slugs, ticket IDs, etc.),
+      // so we must not validate the format here.
+      const resumeId = ((options.resume as string | undefined) ?? nativeResumeId ?? '').replace(/\p{Cc}/gu, '');
+      providerEnv[RESUME_SESSION_ENV_KEY] = resumeId;
+      providerEnv[CONTINUE_SESSION_ENV_KEY] = this.adapter.continuesNativeSession?.(args) ? '1' : '';
+
       if (options.resume || nativeResumeId) {
-        // Strip only control characters before using the value in output.
-        // Native resume commands may accept non-UUID identifiers (slugs, ticket IDs, etc.),
-        // so we must not validate the format here.
-        const resumeId = ((options.resume as string | undefined) ?? nativeResumeId ?? '').replace(/\p{Cc}/gu, '');
         const resolveResumeOwnership = this.adapter.resolveResumeOwnership?.bind(this.adapter);
 
         if (resolveResumeOwnership && resumeId) {
@@ -478,6 +531,16 @@ export class AgentCLI {
             appendAuditEvent('resume_external_confirmed', auditData);
             logger.info(`[AgentCLI] External resume confirmed for agent ${this.adapter.name}; session will not be synced`);
           }
+
+          // The user may have passed an id the agent does not know (e.g. a CodeMie session id
+          // shown by analytics). Hand the agent the native id the resolver mapped it to.
+          // Only the `--resume` option is rewritten; a native positional resume stays as typed.
+          const resolvedNativeId = ownership?.nativeResumeId?.replace(/\p{Cc}/gu, '');
+          if (options.resume && resolvedNativeId && resolvedNativeId !== resumeId) {
+            logger.info(`[AgentCLI] Resuming session ${resumeId} as native ${this.adapter.name} session ${resolvedNativeId}`);
+            options.resume = resolvedNativeId;
+            providerEnv[RESUME_SESSION_ENV_KEY] = resolvedNativeId;
+          }
         }
       }
 
@@ -497,6 +560,7 @@ export class AgentCLI {
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error(chalk.red(`\n✗ Failed to run ${this.adapter.displayName}\n`));
       console.error(chalk.white(errorMessage));
+      settingsSwitch?.printBackupNote();
       console.error('');
 
       // Log detailed error for debugging

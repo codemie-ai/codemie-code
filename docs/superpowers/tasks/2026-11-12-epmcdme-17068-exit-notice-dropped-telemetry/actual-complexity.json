@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "generated": "2026-11-13T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 23,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 46,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Spans agent-core session reconciliation (SessionStore, delivery-budget, exit-notice, stale-session-reconciliation), CLI hook delivery, SSO sync processors (conversations, metrics) and the Desktop telemetry delivery path, with new abstractions (delivery budget, exit notice)." },
+    { "dimension": "technical_risk", "reason": "Changes retry and drop semantics for telemetry delivery (24h and 3 real attempts budget, final attempt before dropping, per-line cap reconciliation); no exact precedent, and wrong behavior risks silent data loss or false delivery reports." },
+    { "dimension": "file_change_estimate", "reason": "46 files changed (about 2400 insertions) per diffstat, including roughly 16 test files and 3 docs; raw count maps to XXL." },
+    { "dimension": "affected_layers", "reason": "Touches CLI commands, session persistence (SessionStore, payload queue), service/processor logic, the SSO API client with bounded requests, and Desktop runtime; no DB schema migration." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk at L: retry-policy and data-drop semantics changed across delivery paths"
+  ],
+  "split_recommendation": null
+}

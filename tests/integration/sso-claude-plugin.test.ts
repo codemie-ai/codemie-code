@@ -29,8 +29,14 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
   const testTempDir = join(tmpdir(), 'codemie-test-claude-plugin');
   const pluginTargetDir = join(testTempDir, 'claude-plugin');
   let installer: ClaudePluginInstaller;
+  const inheritedEnv = ['CODEMIE_MODEL', 'CODEMIE_CLAUDE_MODEL_PICKER_SETTINGS'] as const;
+  let savedEnv: Record<string, string | undefined>;
 
   beforeEach(() => {
+    // Both inject extra claude args (--model / --settings) when set by an enclosing CodeMie session.
+    savedEnv = Object.fromEntries(inheritedEnv.map(key => [key, process.env[key]]));
+    for (const key of inheritedEnv) delete process.env[key];
+
     // Clean up temp directory before each test
     if (existsSync(testTempDir)) {
       rmSync(testTempDir, { recursive: true, force: true });
@@ -55,6 +61,10 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
     }
 
     delete process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
+    for (const key of inheritedEnv) {
+      if (savedEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = savedEnv[key];
+    }
 
     // Restore spies
     vi.restoreAllMocks();
@@ -151,22 +161,24 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
       expect(enrichedArgs[3]).toBe('task');
     });
 
-    it('should skip injection if --plugin-dir already specified', async () => {
-      // Set env
+    it('should keep a user --plugin-dir and still pass the extension once', async () => {
       process.env.CODEMIE_CLAUDE_EXTENSION_DIR = pluginTargetDir;
 
       const claudeHooks = SSOTemplate.agentHooks?.['claude'];
 
-      // Execute enrichArgs hook with existing --plugin-dir
       const args = ['--plugin-dir', '/custom/path', 'test', 'task'];
       const enrichedArgs = claudeHooks!.enrichArgs!(args, {} as any);
 
-      // Verify args unchanged
-      expect(enrichedArgs).toEqual(args);
+      expect(enrichedArgs).toEqual(['--plugin-dir', pluginTargetDir, ...args]);
+    });
 
-      // Verify no duplicate --plugin-dir
-      const pluginDirCount = enrichedArgs.filter(arg => arg === '--plugin-dir').length;
-      expect(pluginDirCount).toBe(1);
+    it('should not duplicate the extension if the user already passed it', async () => {
+      process.env.CODEMIE_CLAUDE_EXTENSION_DIR = pluginTargetDir;
+
+      const claudeHooks = SSOTemplate.agentHooks?.['claude'];
+
+      const args = ['--plugin-dir', pluginTargetDir, 'test', 'task'];
+      expect(claudeHooks!.enrichArgs!(args, {} as any)).toEqual(args);
     });
 
     it('should skip injection if env not set', async () => {

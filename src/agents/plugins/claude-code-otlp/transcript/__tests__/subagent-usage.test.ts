@@ -8,7 +8,7 @@
  *   <tmpDir>/<sessionId>/subagents/agent-<id>.meta.json   — sidecar (toolUseId/agentType/spawnDepth/description)
  *
  * Three subagents are used throughout:
- *   - "a1": sidecar OMITS spawnDepth (top-level subagent — spawn_depth must default to 0),
+ *   - "a1": sidecar OMITS spawnDepth (top-level subagent — spawn_depth is omitted, never sent as 0),
  *     two usage-bearing transcript lines (exercises summing across >1 request).
  *   - "a2": sidecar INCLUDES spawnDepth: 2 (nested subagent — pass-through), one usage line.
  *   - "a3": sidecar includes toolUseId/agentType/description, one usage line.
@@ -21,12 +21,15 @@ import { join } from 'node:path';
 import {
   findSubagentFiles,
   readSubagentMeta,
+  readForkedSkillMarker,
+  subagentFilePath,
   buildUsageTotals,
   buildSubagentUsageEvent,
   type SubagentFile,
 } from '../subagent-usage.js';
 import { parseUsageLine, buildUsageRequestEvent } from '../usage-request.js';
 import type { OpenUsageRequest } from '../parse-state.js';
+import { isPathWithinDirectory } from '@/utils/paths.js';
 
 let tmpDir: string | undefined;
 
@@ -185,6 +188,74 @@ describe('readSubagentMeta', () => {
     const meta = await readSubagentMeta('C:/nonexistent/agent-ghost.jsonl');
     expect(meta).toEqual({});
   });
+
+  it("does not treat a regular named agent's .meta.json `name` as a skill signal (EPMCDME-15968 regression: `name` is the Agent tool's addressing field, set for any named agent, forked skill or not)", async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'codemie-subagent-meta-'));
+    const jsonlPath = join(tmpDir, 'agent-x2.jsonl');
+    await writeFile(jsonlPath, '');
+    await writeFile(
+      join(tmpDir, 'agent-x2.meta.json'),
+      JSON.stringify({ agentType: 'fork', name: 'repo-scout', spawnDepth: 1, description: 'Deep repo analysis' })
+    );
+
+    const meta = await readSubagentMeta(jsonlPath);
+
+    expect(meta).not.toHaveProperty('name');
+  });
+});
+
+describe('readForkedSkillMarker', () => {
+  it('reads skillName from a real forked-skill marker sidecar ({"forkedSkill":true,"skillName":"<name>"})', async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'codemie-subagent-meta-'));
+    const jsonlPath = join(tmpDir, 'agent-x3.jsonl');
+    await writeFile(jsonlPath, '');
+    await writeFile(
+      join(tmpDir, 'agent-x3.forked-skill.marker.json'),
+      JSON.stringify({ forkedSkill: true, skillName: 'code-review' })
+    );
+
+    const marker = await readForkedSkillMarker(jsonlPath);
+
+    expect(marker).toEqual({ skillName: 'code-review' });
+  });
+
+  it('resolves to {} when the marker sidecar is missing — the common case, a regular agent dispatch', async () => {
+    const marker = await readForkedSkillMarker('C:/nonexistent/agent-ghost.jsonl');
+    expect(marker).toEqual({});
+  });
+
+  it('resolves to {} when forkedSkill is not true, even if skillName is present', async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'codemie-subagent-meta-'));
+    const jsonlPath = join(tmpDir, 'agent-x4.jsonl');
+    await writeFile(jsonlPath, '');
+    await writeFile(
+      join(tmpDir, 'agent-x4.forked-skill.marker.json'),
+      JSON.stringify({ forkedSkill: false, skillName: 'code-review' })
+    );
+
+    const marker = await readForkedSkillMarker(jsonlPath);
+
+    expect(marker).toEqual({});
+  });
+});
+
+describe('subagentFilePath', () => {
+  it('builds <parentDir>/<sessionId>/subagents/agent-<agentId>.jsonl from a main transcript path and agentId', () => {
+    const mainTranscriptPath = join('proj-dir', 'session-1.jsonl');
+
+    const path = subagentFilePath(mainTranscriptPath, 'a123');
+
+    expect(path).toBe(join('proj-dir', 'session-1', 'subagents', 'agent-a123.jsonl'));
+  });
+
+  it('never resolves outside the subagents directory for a crafted agentId (CR-002 regression)', () => {
+    const mainTranscriptPath = join('proj-dir', 'session-1.jsonl');
+    const subagentsDir = join('proj-dir', 'session-1', 'subagents');
+
+    const path = subagentFilePath(mainTranscriptPath, '../../../etc/passwd');
+
+    expect(isPathWithinDirectory(subagentsDir, path)).toBe(true);
+  });
 });
 
 describe('buildUsageTotals', () => {
@@ -231,6 +302,18 @@ describe('buildUsageTotals', () => {
     expect(totals).toHaveLength(1);
     expect(totals[0]).toMatchObject({ thinking_tokens: 10 });
   });
+
+  it('keeps thinking_tokens null when every request in the group has none, rather than summing to 0', () => {
+    const reqs: OpenUsageRequest[] = [
+      usageRequest({ model: 'claude-opus-5-5', outputTokens: 100, thinkingTokens: null }),
+      usageRequest({ model: 'claude-opus-5-5', outputTokens: 50, thinkingTokens: null }),
+    ];
+
+    const totals = buildUsageTotals(reqs);
+
+    expect(totals).toHaveLength(1);
+    expect(totals[0]).toMatchObject({ output_tokens: 150, thinking_tokens: null });
+  });
 });
 
 describe('buildSubagentUsageEvent', () => {
@@ -262,8 +345,6 @@ describe('buildSubagentUsageEvent', () => {
       tool_use_id: 'tool-a1',
       agent_type: '',
       description: '',
-      workflow_run: '',
-      spawn_depth: 0,
       worktree: '',
       started_at: '2026-10-01T00:00:00.000Z',
       ended_at: '2026-10-01T00:05:00.000Z',
@@ -282,13 +363,13 @@ describe('buildSubagentUsageEvent', () => {
           model: 'm', model_raw: 'm-raw', speed: 'standard', inference_geo: '', service_tier: 'standard',
           scope_kind: 'agent', scope_name: '',
           input_tokens: 110, cache_creation_5m_tokens: 5, cache_creation_1h_tokens: 2, cache_read_tokens: 4,
-          output_tokens: 55, thinking_tokens: 0, web_search_requests: 1, web_fetch_requests: 2, api_calls: 2,
+          output_tokens: 55, output_tokens_partial: false, thinking_tokens: 0, web_search_requests: 1, web_fetch_requests: 2, api_calls: 2,
         },
       ],
     });
   });
 
-  it('passes a present spawn_depth through verbatim instead of defaulting to 0, and sources description from the sidecar-derived file field', () => {
+  it('passes a present spawn_depth through verbatim, and sources description from the sidecar-derived file field', () => {
     const file: SubagentFile = { agentId: 'a2', filePath: '/tmp/agent-a2.jsonl', spawnDepth: 2, description: 'Review the diff' };
 
     const event = buildSubagentUsageEvent('session-1', file, [], {}, {}, 0, {}, '', '', 0);
@@ -299,38 +380,53 @@ describe('buildSubagentUsageEvent', () => {
     expect(event.usage).toEqual([]);
   });
 
-  it('never fabricates agent_type/description/workflow_run — always empty string when absent; worktree also defaults to empty when the caller has no cwd', () => {
+  it('omits spawn_depth when absent — an unknown value is never fabricated or defaulted to 0; agent_type/description/worktree stay empty strings', () => {
     const file: SubagentFile = { agentId: 'a3', filePath: '/tmp/agent-a3.jsonl' };
 
     const event = buildSubagentUsageEvent('session-1', file, [], {}, {}, 0, {}, '', '', 0);
 
     expect(event.agent_type).toBe('');
     expect(event.description).toBe('');
-    expect(event.workflow_run).toBe('');
+    expect(event).not.toHaveProperty('spawn_depth');
     expect(event.worktree).toBe('');
   });
 
-  it('sources worktree from the caller-supplied cwd — the only field in agent.subagent.usage that is not sidecar-derived', () => {
+  it('sources worktree from the caller-supplied cwd — the only field in agent.subagent.usage that is not sidecar-derived — reduced to the repository identifier', () => {
     const file: SubagentFile = { agentId: 'a1', filePath: '/tmp/agent-a1.jsonl', cwd: '/repo/worktrees/feature' };
 
     const event = buildSubagentUsageEvent('session-1', file, [], {}, {}, 0, {}, '', '', 0);
 
-    expect(event.worktree).toBe('/repo/worktrees/feature');
-    // workflow_run has no known source regardless of cwd — still never fabricated.
-    expect(event.workflow_run).toBe('');
+    expect(event.worktree).toBe('worktrees/feature');
+    // The absolute cwd never leaves the hook process — only the extractRepository identifier does.
+    expect(event.worktree).not.toContain('/repo');
   });
 
-  it('picks the usage[] row with the most api_calls as the top-level model', () => {
+  it('picks the usage[] row with the most api_calls as the top-level model, ignoring the <synthetic> API-error placeholder', () => {
     const file: SubagentFile = { agentId: 'a1', filePath: '/tmp/agent-a1.jsonl' };
     const reqs: OpenUsageRequest[] = [
       usageRequest({ model: 'claude-haiku-4-5', requestId: 'r1' }),
       usageRequest({ model: 'claude-opus-5-5', requestId: 'r2' }),
       usageRequest({ model: 'claude-opus-5-5', requestId: 'r3' }),
+      // More api_calls than any real model — must still never win the ranking.
+      usageRequest({ model: '<synthetic>', requestId: 'r4' }),
+      usageRequest({ model: '<synthetic>', requestId: 'r5' }),
+      usageRequest({ model: '<synthetic>', requestId: 'r6' }),
     ];
 
     const event = buildSubagentUsageEvent('session-1', file, reqs, {}, {}, 0, {}, '', '', 0);
 
     expect(event.model).toBe('claude-opus-5-5');
+    // The placeholder rows stay in usage[] (they are real transcript rows) — only the ranking skips them.
+    expect((event.usage as Array<Record<string, unknown>>).some((row) => row.model === '<synthetic>')).toBe(true);
+  });
+
+  it('leaves the top-level model empty when every usage[] row is the <synthetic> placeholder', () => {
+    const file: SubagentFile = { agentId: 'a1', filePath: '/tmp/agent-a1.jsonl' };
+    const reqs: OpenUsageRequest[] = [usageRequest({ model: '<synthetic>', requestId: 'r1' })];
+
+    const event = buildSubagentUsageEvent('session-1', file, reqs, {}, {}, 0, {}, '', '', 0);
+
+    expect(event.model).toBe('');
   });
 });
 

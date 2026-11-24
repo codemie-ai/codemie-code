@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "generated": "2026-10-28T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 20,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 12,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Touches the shared security util (new maskSecretsInText/maskSecretsDeep in src/utils/security.ts), the shared OtlpAgentAdapter base (limitPayload masking, droppedFields hook, raw drop, effort flattening) used by every OTLP adapter, the claude-code-otlp plugin and tool-fields (isSensitiveFilePath Read skip), and the copilot-cli-otlp plugin and usage module. Core shared utilities plus multiple adapters affected, bumped from L to XL." },
+    { "dimension": "technical_risk", "reason": "Closest pattern is sanitizeValue/SENSITIVE_VALUE_PATTERNS in security.ts, but those are anchored whole-value matchers and do not cover secrets embedded in free text, so this is a divergence on a security-sensitive surface. New linear-time regex set (PEM, URL credentials, Authorization, JWT, Bearer, sk-, AWS, GitHub, GitLab, Slack, NAME=value) with ReDoS-bounded quantifiers on a hook hot path, 64 KB input cap and 32 depth cap. Missed or over-masked secrets cannot be recalled once sent to the analytics backend. Edge-case tables are covered by security.test.ts. Security red flag bumped from L to XL." },
+    { "dimension": "file_change_estimate", "reason": "12 files changed per diffstat (517 insertions, 58 deletions): 5 source, 6 test and 1 doc, across src/utils, src/agents/core, and two plugin directories. Falls in the XL band (11-15)." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L to XL: touches core shared utilities (security.ts, OtlpAgentAdapter) that affect multiple adapters",
+    "Technical Risk bumped from L to XL: security/compliance requirement (secret masking in forwarded telemetry), no exact precedent for embedded-secret masking in free text"
+  ],
+  "split_recommendation": null
+}

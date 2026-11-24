@@ -199,6 +199,7 @@ export interface VersionCompatibilityResult {
   compatible: boolean;              // true if installed version is compatible
   installedVersion: string | null;  // null if not installed
   supportedVersion: string;         // version from metadata
+  isSupported: boolean;             // true if installed needs no notice (see AgentMetadata.acceptsSupportedMajor)
   isNewer: boolean;                 // true if installed > supported (one-time notice)
   hasUpdate: boolean;               // true if newer supported version available (one-time notice)
   isBelowMinimum: boolean;          // true if installed < minimumSupportedVersion (blocks startup)
@@ -226,6 +227,13 @@ export interface AgentMetadata {
    * Special values: 'latest', 'stable' (channels)
    */
   supportedVersion?: string;
+
+  /**
+   * Treat every release on `supportedVersion`'s major line as supported (e.g.
+   * '1.5.2' accepts any 1.x.x), so neither the launch notice nor `codemie doctor`
+   * flags it. Default: only an exact match is supported.
+   */
+  acceptsSupportedMajor?: boolean;
 
   /**
    * Oldest version that still works with CodeMie. Versions below this are
@@ -327,8 +335,10 @@ export interface AgentMetadata {
   analyticsAdapter?: AgentAnalyticsAdapter;  // Optional analytics adapter
 
   /**
-   * True for agents CodeMie only reads analytics for and never installs, launches,
-   * or manages (e.g. GitHub Copilot CLI).
+   * True for agents CodeMie only reads analytics for and never installs, launches, or manages.
+   * The managed `copilot-cli` plugin does not qualify (it launches the `copilot` binary); the
+   * hooks-only `copilot-chat-otlp`/`copilot-cli-otlp` collectors are a separate `OtlpAgentAdapter`
+   * registration (see `AgentRegistry`'s `otlpAdapters` map) and are not read through this flag.
    *
    * Such an agent can never carry a CodeMie ownership marker, so the analytics
    * ownership gate must not apply to it — see `isAnalyticsOnlyAgent` in
@@ -565,9 +575,6 @@ export interface AgentMetricsConfig {
  * Controls how agents collect and process metrics
  */
 export interface MetricsConfig {
-  // Provider filter
-  enabled: (provider: string) => boolean;
-
   // Retry configuration
   retry: {
     attempts: number;
@@ -684,6 +691,8 @@ export interface BaseHookEvent {
   agent_id?: string;               // SubagentStop only: Sub-agent ID
   agent_transcript_path?: string;  // SubagentStop only: Path to agent's transcript
   stop_hook_active?: boolean;      // SubagentStop only: Whether stop hook is active
+  endTimeFromActivity?: boolean;   // SessionEnd only: end the session at its last recorded activity, not now
+  endTime?: number;                // SessionEnd only: the session's end (epoch ms), already resolved by the caller
 }
 
 // Forward declaration for extension installer
@@ -722,6 +731,11 @@ export interface ResumeOwnershipInput {
 export interface ResumeOwnershipResult {
   supported: boolean;
   owned?: boolean;
+  /**
+   * Native agent session id the resume id resolved to. When set and different from the
+   * id the user passed (e.g. a CodeMie session id), the CLI passes this id to the agent instead.
+   */
+  nativeResumeId?: string;
   fallbackResumeCommand?: string;
   auditData?: Record<string, unknown>;
 }
@@ -732,10 +746,62 @@ export enum AgentAdapterType {
 }
 
 export interface OtlpAdapterDeps {
-  ensureOtlpProxy: (agentName: string) => Promise<void>;
+  /** `event` — the hook input's `hook_event_name` as the client sent it, when it has one. */
+  ensureOtlpProxy: (agentName: string, event?: string) => Promise<void>;
   /** Sends one hook invocation's events as a single batch; true only for a 2xx response. */
-  forwardOtlpEventsToSpool: (events: Record<string, unknown>[], agentName: string) => Promise<boolean>;
+  forwardOtlpEventsToSpool: (
+    events: Record<string, unknown>[],
+    agentName: string,
+    /** `evidenceV: 1` marks the spooled records as stamped (envelope only, never the event body). */
+    opts?: { evidenceV?: 1; evidenceLoss?: { sessionId: string; reason: string; events: number } }
+  ) => Promise<boolean>;
 }
+
+/** The command a provider-settings check runs for (see `AgentAdapter.checkProviderSettings`). */
+export type ProviderSettingsCheckFlow = 'launch' | 'install' | 'connect';
+
+/** The part of a CodeMie profile a provider-settings check reads. */
+export interface ProviderSettingsProfile {
+  provider?: string;
+}
+
+/**
+ * The client files a `proxy connect` run is about to configure. Only the selected targets are set; the
+ * CLI supplies the paths because only its connectors know where each client keeps its settings.
+ */
+export interface ProviderSettingsConnectTargets {
+  /** Claude Desktop: the applied config file, and its managed settings file (null where the platform has none). */
+  desktop?: { configFile: string; managedFile: string | null };
+  /** VS Code `settings.json` files (stable and Insiders) of the editions that exist. */
+  vscodeSettingsFiles?: string[];
+  /** Claude Code analytics is connected. */
+  claudeCodeOtlp?: boolean;
+}
+
+export interface ProviderSettingsCheckInput {
+  flow: ProviderSettingsCheckFlow;
+  /** False when no question may be asked: no TTY, `CODEMIE_NO_PROMPTS`, `--task`, `--silent`. */
+  canPrompt: boolean;
+  /** The active profile; `null`/absent when there is none. */
+  profile?: ProviderSettingsProfile | null;
+  /** Required for `connect`, ignored otherwise. */
+  connect?: ProviderSettingsConnectTargets;
+}
+
+/** What applying an agreed settings switch did. */
+export interface ProviderSettingsSwitchResult {
+  /** Backup folder of the switched files, or null when nothing needed switching. */
+  backupDir: string | null;
+}
+
+/**
+ * Outcome of a provider-settings check. `proceed.apply` performs the switch the user agreed to and does
+ * nothing when there was nothing to switch, so callers always call it once their own steps are ready.
+ * `stop.guidance` is ready to print; the caller decides how to exit.
+ */
+export type ProviderSettingsCheckOutcome =
+  | { kind: 'proceed'; apply(): Promise<ProviderSettingsSwitchResult> }
+  | { kind: 'stop'; guidance: string };
 
 /**
  * Agent adapter interface - implemented by BaseAgentAdapter
@@ -772,6 +838,12 @@ export interface AgentAdapter {
    * this capability.
    */
   extractNativeResumeId?(args: string[]): string | undefined;
+
+  /**
+   * Whether the launch continues the agent's earlier session without naming it (e.g. `--continue`).
+   * Agents without such a form may omit this capability.
+   */
+  continuesNativeSession?(args: string[]): boolean;
 
   /**
    * Additional installation steps that run regardless of agent installation status
@@ -864,4 +936,16 @@ export interface AgentAdapter {
    * @returns Installation method: 'npm', 'native', or 'unknown'
    */
   getInstallationMethod?(): Promise<'npm' | 'native' | 'unknown'>;
+
+  /**
+   * Check the agent's own settings for a cloud-provider selection that would send its traffic around the
+   * CodeMie gateway, and ask the user whether to switch it off (optional). Called before a launch, before
+   * an install, and before `proxy connect` configures the agent's clients. Changes nothing until
+   * `apply()` of a `proceed` outcome is called. For `launch` it may also adjust `process.env`, which the
+   * agent's child environment is built from.
+   *
+   * @param input - The flow, whether a question may be asked, the active profile and, for connect, the targets
+   * @returns `proceed` with the switch to apply, or `stop` with guidance to print
+   */
+  checkProviderSettings?(input: ProviderSettingsCheckInput): Promise<ProviderSettingsCheckOutcome>;
 }

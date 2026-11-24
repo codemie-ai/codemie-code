@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated": "2026-10-02T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 13,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 5,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Touches tenant-catalog descriptor parsing, the vscode-models capability table/resolver, the vscode connector, and the LlmModel type in sso.http-client; pattern is clear and mirrors existing descriptor fields." },
+    { "dimension": "file_change_estimate", "reason": "5 files changed (4 source, 1 doc), 50 insertions and 7 deletions, no new files." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

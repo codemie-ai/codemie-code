@@ -1,0 +1,35 @@
+{
+  "sessionId": "aaaaaaaa-0000-4000-8000-000000000001",
+  "cwd": "<cwd>",
+  "codemieEventName": "preToolUse",
+  "toolCalls": [
+    {
+      "id": "call_0001",
+      "name": "view",
+      "args": {
+        "path": "<path>"
+      }
+    },
+    {
+      "id": "call_0002",
+      "name": "bash",
+      "args": "<args>"
+    },
+    {
+      "id": "call_0003",
+      "name": "edit",
+      "args": {
+        "path": "<path>",
+        "old_str": "<text>",
+        "new_str": "<text>"
+      }
+    },
+    {
+      "id": "call_0004",
+      "name": "grep",
+      "args": {
+        "pattern": "<text>"
+      }
+    }
+  ]
+}

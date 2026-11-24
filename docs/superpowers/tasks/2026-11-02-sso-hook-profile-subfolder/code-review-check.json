@@ -1,0 +1,94 @@
+{
+  "decision": "approve",
+  "rationale": "Both original blocking findings are resolved by the fix-up (commit d3ecf8c9, reviewed_head fc76cd7b..HEAD): CR-001 - the malformed-CODEMIE_PROFILE_CONFIG debug log is now a fixed string with a regression test shown RED against the old code and GREEN with the fix, and the doc comment is corrected; CR-002 - the vestigial ConfigLoader decoy and its unreliable not-called assertion were dropped (the post-gate identity path legitimately calls ConfigLoader.load) and all three plugin tests now pin resolveHookAuthProfile() being called with no arguments, the alternative the finding allowed. The fix-up is one log string, one comment and test-only edits; no new high-risk issue, so no confirmation pass was needed. business_review and standards_review are carried forward unchanged from code-review.final.",
+  "confidence": "high",
+  "risk_flags": [
+    "security"
+  ],
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "AC1: SSO validation uses the same profile as the active Claude Code session",
+      "status": "pass",
+      "notes": "resolveHookAuthProfile() prefers the launch profile in CODEMIE_PROFILE_CONFIG (exported at AgentCLI.ts:418); claude-code-otlp ensureProxyAuth now uses it; plugin test asserts the gate receives the session profile even when ConfigLoader.load would return Preview."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC2: Explicit --profile selection is preserved",
+      "status": "pass",
+      "notes": "CODEMIE_PROFILE_CONFIG is the resolved launch config with --profile already applied and wins over any config lookup; covered by the 'regardless of cwd' helper test."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC3: Moving between repository subdirectories does not change the authentication environment",
+      "status": "pass",
+      "notes": "Env path ignores cwd; no-env fallback walks up from CLAUDE_PROJECT_DIR or cwd to the nearest local .codemie; covered by nested-cwd and CLAUDE_PROJECT_DIR tests."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC4: Production sessions never open Preview SSO unexpectedly",
+      "status": "pass",
+      "notes": "Ticket repro (Production env profile, no local config in cwd, global Preview active) yields Production gate input in the helper test; same fix applied to copilot-cli-otlp and copilot-chat-otlp."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC5: Regression tests cover nested directories and different local/global profiles",
+      "status": "pass",
+      "notes": "hook-auth-profile.test.ts uses the real ConfigLoader with a global Preview profile and a repo-local Production profile; each plugin test adds a session-profile case."
+    },
+    {
+      "kind": "spec",
+      "item": "Fail-closed preserved: a ConfigLoader.load failure in the fallback propagates to the plugin catch",
+      "status": "pass",
+      "notes": "Helper does not catch; 'propagates ConfigLoader.load failures' test; Copilot 'disk full' tests now reject via the helper."
+    },
+    {
+      "kind": "spec",
+      "item": "CODEMIE_BASE_URL never read on the launch path; ssoUrl stays codeMieUrl || baseUrl; gate contract unchanged",
+      "status": "pass",
+      "notes": "Gate signatures and call shapes are unchanged; ssoUrl derivation matches in both paths."
+    },
+    {
+      "kind": "spec",
+      "item": "One shared helper used by all three ensureProxyAuth() copies; ConfigLoader untouched",
+      "status": "pass",
+      "notes": "All three plugins wired; unused ConfigLoader imports dropped; identity-fields.ts only gains an export."
+    },
+    {
+      "kind": "spec",
+      "item": "Plan test detail: plugin regression tests also assert ConfigLoader.load was not called",
+      "status": "partial",
+      "notes": "The three plugin tests assert the gate argument but never assert the ConfigLoader.load decoy was left unused, so the decoy is vestigial (raised as CR-002)."
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "Three commits use type fix, allowed scope agents, subjects under 100 chars, ticket key present."
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "ESM with .js imports, interface for shapes, explicit return types on exports, no any, lint and typecheck clean."
+    },
+    {
+      "kind": "security",
+      "status": "partial",
+      "notes": "No attribution headers touched; but the debug log of a raw JSON.parse error message for CODEMIE_PROFILE_CONFIG may echo part of a secret-bearing config (AGENTS.md: never log raw secrets; see CR-001)."
+    }
+  ],
+  "findings": [],
+  "finding_status": [
+    {
+      "id": "CR-001",
+      "status": "resolved",
+      "notes": "hook-auth-profile.ts catch logs a fixed string; new test 'does not log any part of a malformed CODEMIE_PROFILE_CONFIG' fails on the previous code (V8 quotes \"sk-secret-\"...) and passes now."
+    },
+    {
+      "id": "CR-002",
+      "status": "resolved",
+      "notes": "Decoy and not-called assertion removed in the claude-code-otlp, copilot-cli-otlp and copilot-chat-otlp tests; each now asserts resolveHookAuthProfile toHaveBeenCalledWith() in addition to the exact gate argument."
+    }
+  ]
+}

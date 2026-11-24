@@ -10,6 +10,7 @@
 import type { ProviderTemplate } from '../../core/types.js';
 import type { AgentConfig } from '../../../agents/core/types.js';
 import { registerProvider } from '../../core/decorators.js';
+import { withExtensionPluginDir } from '../../core/default-agent-hooks.js';
 import { ensureApiBase } from '../../core/codemie-auth-helpers.js';
 
 export const AnthropicSubscriptionTemplate = registerProvider<ProviderTemplate>({
@@ -30,6 +31,11 @@ export const AnthropicSubscriptionTemplate = registerProvider<ProviderTemplate>(
   capabilities: ['streaming', 'tools', 'function-calling', 'vision'],
   supportsModelInstallation: false,
   supportsStreaming: true,
+  customProperties: {
+    // Analytics project per global profile; may be kept off CodeMie (EPMCDME-15411)
+    carriesCodeMieProject: true,
+    canStayOffCodeMie: true
+  },
 
   agentHooks: {
     '*': {
@@ -94,13 +100,7 @@ export const AnthropicSubscriptionTemplate = registerProvider<ProviderTemplate>(
     },
     'claude': {
       enrichArgs(args: string[], _config: AgentConfig): string[] {
-        const pluginDir = process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
-
-        if (!pluginDir || args.some(arg => arg === '--plugin-dir')) {
-          return args;
-        }
-
-        return ['--plugin-dir', pluginDir, ...args];
+        return withExtensionPluginDir(args, process.env.CODEMIE_CLAUDE_EXTENSION_DIR);
       }
     }
   },

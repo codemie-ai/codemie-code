@@ -1,0 +1,82 @@
+{
+  "decision": "request-changes",
+  "rationale": "All four lenses and the standards audit ran; blocking: a Windows console-close crash (child.kill('SIGHUP') throws ENOSYS on win32), a decision_needed on the ticket's bounded-wait AC (SIGINT unbounded, Windows terminates instead of forwarding), a missing CODEMIE_EXIT_SIGNAL self-exit test, and the code-quality 500-line standard breached by the new signal subsystem; confidence low because a decision_needed remains. 1 deferred (pre-existing win32 process.once one-shot SIGINT/SIGTERM handlers) -> code-review-deferred.local.md. 15 lens candidates dismissed as handled, by-design, pre-existing-equivalent or below the emission floor.",
+  "confidence": "low",
+  "risk_flags": ["breaking-change"],
+  "business_review": [
+    {"kind": "story-ac", "item": "On SIGTERM/SIGINT/SIGHUP the wrapper forwards the signal to the agent, waits (bounded) for exit and SessionEnd, then stops the proxy", "status": "partial", "notes": "POSIX forwards all three and keeps the proxy; 10 s fallback only for SIGTERM/SIGHUP, SIGINT wait unbounded; win32 kills the child instead of forwarding (CR-003)"},
+    {"kind": "story-ac", "item": "Session is finalized (completed, endTime set) and the end metric is delivered or persisted for retry", "status": "pending-stage-7", "notes": "child-exit path runs grace -> endSessionAndCleanup -> proxy stop for every signal incl. after fallback; delivery is runtime evidence"},
+    {"kind": "story-ac", "item": "SIGTERM/SIGINT to the wrapper: SessionEnd hook completes with the proxy still running; end metric delivered (no fetch failed)", "status": "pending-stage-7", "notes": "cleanup-before-kill handler removed; ordering covered by signals test; live delivery is Stage 7 evidence"},
+    {"kind": "story-ac", "item": "SIGHUP to the wrapper: session is finalized with endTime and not left active", "status": "pass", "notes": "POSIX SIGHUP handler kept until exit path ends; EIO/EPIPE guard; win32 SIGHUP path crashes (CR-002)"},
+    {"kind": "story-ac", "item": "Proxy stop happens only after the child exits or after a bounded timeout", "status": "pass", "notes": "signal handlers never stop the proxy; proxy.stop only via endSessionAndCleanup in exit/error handlers"},
+    {"kind": "story-ac", "item": "Automated test covers signal -> child exit -> proxy stop ordering", "status": "pass", "notes": "BaseAgentAdapter.signals.test.ts asserts kill -> onSessionEnd -> proxyStop plus fallback/SIGHUP/win32 variants"},
+    {"kind": "spec", "item": "Root cause: signal handler must not run cleanup() (proxy stop) before child kill/exit", "status": "pass", "notes": "handleSignal with await cleanup() removed; installSignalHandlers dispatcher"},
+    {"kind": "spec", "item": "Root cause: register a SIGHUP handler", "status": "pass", "notes": "SIGHUP forwarded on POSIX; process.once('SIGHUP') on win32"},
+    {"kind": "spec", "item": "Root cause: bin/codemie.js rethrows EIO when the TTY is closed", "status": "pass", "notes": "entry-point error listeners replaced at run() start by onOutputStreamError ignoring EIO/EPIPE"},
+    {"kind": "spec", "item": "PR: forward signals to the agent's whole process tree (signalTree, pgrep -P, deepest first)", "status": "pass", "notes": "signalTree/listChildPids in src/utils/processes.ts; ESRCH skipped; pgrep timeout 1000 ms"},
+    {"kind": "spec", "item": "PR: SIGTERM/SIGHUP 10 s fallback kills the tree, exit path finalizes, wrapper exits 128 + signal; SIGINT arms nothing", "status": "pass", "notes": "signalFallbackTimer unref'd; finally process.exit(128 + signal); tests 143/129"},
+    {"kind": "spec", "item": "PR: after the agent exits SIGINT/SIGTERM take default action again; late SIGHUP ignored", "status": "pass", "notes": "removeInterruptHandlers at exit-handler start; childExited guard"},
+    {"kind": "spec", "item": "PR: stdout/stderr ignore EIO/EPIPE from run() start until process end; others re-thrown", "status": "pass", "notes": "ignoreClosedOutputStreams first in run(); output-streams test suite"},
+    {"kind": "spec", "item": "PR: Windows handler no longer stops proxy first; SIGHUP (console close) takes same path", "status": "pass", "notes": "ordering correct, but child.kill('SIGHUP') throws on win32 (CR-002)"},
+    {"kind": "spec", "item": "PR: conversations API client clears the per-attempt abort timer once request and body read settle", "status": "pass", "notes": "clearTimeout in finally around fetch + body read; getTimerCount()==0 test"},
+    {"kind": "spec", "item": "PR: OTLP plugin clears the 5 s shutdown-flush cap timer once flush settles", "status": "pass", "notes": "onProxyStop try/finally clearTimeout(flushTimeout)"},
+    {"kind": "spec", "item": "PR: child-exit handler runs in try/finally so handler removal and fallback exit survive a throw", "status": "pass", "notes": "finally removes handlers and exits 128+signal; afterRun-throws test"},
+    {"kind": "spec", "item": "PR: docs/ARCHITECTURE-PROXY.md section 9.2 updated", "status": "pass", "notes": "shutdown flow block added"},
+    {"kind": "spec", "item": "PR: npm run ci green and live manual scenarios", "status": "pending-stage-7", "notes": "execution evidence owned by Stage 7"}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "pass", "notes": "all 6 subjects in the range use <type>(<scope>): <subject> with allowed type fix and allowed scope agents, imperative mood, each under the 100-char subject-max-length"},
+    {"kind": "code-quality", "status": "partial", "notes": "new exports (signalTree, resetOutputStreamGuardForTests) carry explicit return types and JSDoc, imports use .js, constants are UPPER_SNAKE_CASE, no new console.log; but code-quality.md Code Structure Guidelines require files under 500 lines and this change adds ~200 lines of signal-handling code (SignalHandlers, ignoreClosedOutputStreams, installWin32SignalHandlers, installPosixSignalHandlers) to src/agents/core/BaseAgentAdapter.ts, now 1583 lines"},
+    {"kind": "security", "status": "pass", "notes": "no attribution header added/removed/rewritten (apiClient.ts change only moves the abort timer around the body read); no new secret logging; signalTree spawns pgrep via execFileSync with an argv array and a numeric pid, no shell; no user-input paths introduced"}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/BaseAgentAdapter.ts",
+      "line": 40,
+      "title": "Signal subsystem grows oversized BaseAgentAdapter",
+      "problem": "code-quality.md Code Structure Guidelines (files under 500 lines, one main export, single responsibility) are further breached by new code: the change adds a self-contained signal-forwarding and output-stream-guard subsystem (SIGNAL_FALLBACK_MS, SignalHandlers, onOutputStreamError, ignoreClosedOutputStreams, signalChildTree, installWin32/PosixSignalHandlers, lines 40-102 and 1020-1126) to a file now 1583 lines, plus a second, test-only export resetOutputStreamGuardForTests that mutates global process state from a production module.",
+      "impact": "The documented structure standard is breached by code this change introduces, not pre-existing code; the signal subsystem is a separable responsibility, and its test-only reset is callable from production code.",
+      "recommendation": "Move SIGNAL_FALLBACK_MS, the SignalHandlers interface, the output-stream guard (onOutputStreamError, ignoreClosedOutputStreams, resetOutputStreamGuardForTests), signalChildTree and the win32/POSIX handler installers into a sibling module (e.g. src/agents/core/signal-handlers.ts) and import them into BaseAgentAdapter, so the adapter keeps a single main export."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/agents/core/BaseAgentAdapter.ts",
+      "line": 1042,
+      "title": "Windows SIGHUP kill throws and crashes wrapper",
+      "problem": "installWin32SignalHandlers registers process.once('SIGHUP') (emitted by Node on console close) and its handler calls child.kill('SIGHUP'). On win32 libuv's process kill supports only SIGINT/SIGTERM/SIGKILL/SIGQUIT (and 0) and returns UV_ENOSYS for any other signal, and Node's ChildProcess.kill throws an ErrnoException on ENOSYS/EINVAL rather than emitting 'error'. The throw escapes a process signal listener with no try/catch.",
+      "impact": "On Windows console close the wrapper dies with an uncaught exception before the child is killed and before the exit path runs grace, session end and proxy stop, so the session is not finalized - the exact crash-on-terminal-close scenario this change exists to fix. The win32 SIGHUP test mocks child.kill, so CI cannot catch it. Basis: Node/libuv win32 kill semantics, not executed on Windows in this review.",
+      "recommendation": "In installWin32SignalHandlers never pass SIGHUP to child.kill: map it to a signal Windows supports (e.g. `child.kill(signal === 'SIGHUP' ? 'SIGTERM' : signal)`), and wrap the call in try/catch logging at debug so no throw escapes a process signal listener. Make the win32 test assert the signal actually passed to child.kill is one of SIGINT/SIGTERM/SIGKILL/SIGQUIT."
+    },
+    {
+      "id": "CR-003",
+      "kind": "decision",
+      "severity": "critical",
+      "triage": "decision_needed",
+      "file": "src/agents/core/BaseAgentAdapter.ts",
+      "line": 1095,
+      "title": "SIGINT unbounded wait and Windows terminate vs ticket",
+      "problem": "The ticket's Expected Result requires the wrapper to forward SIGTERM/SIGINT/SIGHUP to the agent and wait, bounded, for its exit and SessionEnd. forwardSignal returns before arming the fallback when signal === 'SIGINT', so an agent that ignores SIGINT is waited for indefinitely; on win32 installWin32SignalHandlers terminates the child outright with child.kill instead of forwarding, so the agent's own SessionEnd cannot run there. The PR's Scope (and the run's task statement) reinterpret the AC; the ticket text was not amended.",
+      "impact": "Shipping with a required story criterion only partially met: a wrapper whose agent ignores SIGINT never finishes, and Windows sessions rely solely on the wrapper's own finalization. Whether that is acceptable is a product decision the code cannot settle.",
+      "recommendation": "Get product/ticket-owner sign-off on the PR's Scope reinterpretation (SIGINT forwarded with no bounded wait; Windows terminates the agent rather than forwarding for its own SessionEnd) and record it on the ticket; if sign-off is refused, arm the 10 s fallback for SIGINT too and document the Windows limit against the AC."
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/__tests__/BaseAgentAdapter.signals.test.ts",
+      "line": 186,
+      "title": "Self-exit CODEMIE_EXIT_SIGNAL path untested",
+      "problem": "Regression gap: the rewritten `const exitSignal = fallbackSignal() ?? signal;` (BaseAgentAdapter.ts:971) is asserted only on fallback-fired paths (tests at :206, :226, :273). The test at :186, where the agent exits on its own after a forwarded SIGTERM (`child.emit('exit', null, 'SIGTERM')`), checks events, rejection and timer count but never exitSignals, so losing the `?? signal` branch would pass CI.",
+      "impact": "The consumer is Pi's session-end reason built from env.CODEMIE_EXIT_SIGNAL (src/agents/plugins/pi/pi.plugin.ts:463): a regression would silently stop reporting signal(SIGTERM) for agents that exit cleanly on a forwarded signal.",
+      "recommendation": "In the 'forwards SIGTERM before any cleanup, then ends the session and stops the proxy once' test, after the run rejects add `expect(exitSignals).toEqual(['SIGTERM'])`, so the `fallbackSignal() ?? signal` branch for an agent that exits on its own is pinned."
+    }
+  ]
+}

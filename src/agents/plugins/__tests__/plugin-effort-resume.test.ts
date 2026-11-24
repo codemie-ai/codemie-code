@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { transformFlags } from '../../core/flag-transform.js';
-import { applyReasoningEffort } from '../../core/reasoning-effort.js';
+import { applyReasoningEffort, clampToSupported } from '../../core/reasoning-effort.js';
 import { ClaudePluginMetadata } from '../claude/claude.plugin.js';
 import { CodexPluginMetadata } from '../codex/codex.plugin.js';
 import { OpenCodePluginMetadata } from '../opencode/opencode.plugin.js';
@@ -98,20 +98,18 @@ describe('codex plugin — enrichArgs resume handling', () => {
 // ── opencode ─────────────────────────────────────────────────────────────────
 
 describe('opencode plugin — reasoning effort', () => {
-  it('appends --variant high after enrichArgs produces run <task>', () => {
+  // OpenCode v2 has no effort flag: the level is a variant of the model selection, which the
+  // plugin's beforeRun writes (covered in opencode-session-lifecycle.test.ts).
+  it('adds no flag to run <task>', () => {
     const args = ['run', 'do the thing'];
-    const env: NodeJS.ProcessEnv = {};
     const { args: result } = applyReasoningEffort(
-      args, env, OpenCodePluginMetadata.reasoningEffort!, 'high', 'opencode'
+      args, {}, OpenCodePluginMetadata.reasoningEffort!, 'high', 'opencode'
     );
-    expect(result).toEqual(['run', 'do the thing', '--variant', 'high']);
+    expect(result).toEqual(args);
   });
 
-  it('passes max through unchanged for opencode (all levels supported)', () => {
-    const { args: result } = applyReasoningEffort(
-      ['run', 'task'], {}, OpenCodePluginMetadata.reasoningEffort!, 'max', 'opencode'
-    );
-    expect(result).toContain('max');
+  it('declares minimal…xhigh, so max is clamped to xhigh', () => {
+    expect(clampToSupported('max', OpenCodePluginMetadata.reasoningEffort!.supportedLevels)).toBe('xhigh');
   });
 });
 

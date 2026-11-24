@@ -15,6 +15,7 @@ import {
   computeSessionCost,
   isRoutingConfigured,
   lookupNominalLabel,
+  normalizeModelId,
 } from '../statusline.js';
 import { priceTable, resolvePrice, canonicalizeModelId } from '@/utils/pricing.js';
 
@@ -130,6 +131,27 @@ describe('lookupNominalLabel', () => {
   it('returns undefined when neither form is labelled', () => {
     expect(lookupNominalLabel(labels, 'claude-opus-5[1m]')).toBeUndefined();
     expect(lookupNominalLabel(labels, '')).toBeUndefined();
+  });
+});
+
+describe('normalizeModelId', () => {
+  it('strips a region-prefixed Bedrock id', () => {
+    expect(normalizeModelId('eu.anthropic.claude-haiku-4-5-20251001-v1:0')).toBe(
+      'claude-haiku-4-5-20251001',
+    );
+  });
+
+  it('strips a bare Bedrock on-demand id with no region prefix (EPMCDME-15316)', () => {
+    // Through ai-run-sso, the background/small model comes back with no region segment at
+    // all — without this, the live statusline's displayed name for a Haiku-only session kept
+    // the full `anthropic.claude-haiku-...-v1:0` id instead of the human-readable form.
+    expect(normalizeModelId('anthropic.claude-haiku-4-5-20251001-v1:0')).toBe(
+      'claude-haiku-4-5-20251001',
+    );
+  });
+
+  it('returns empty string for a falsy input', () => {
+    expect(normalizeModelId('')).toBe('');
   });
 });
 

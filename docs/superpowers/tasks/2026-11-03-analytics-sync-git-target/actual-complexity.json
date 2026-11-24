@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "generated": "2026-11-03T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 5, "label": "XL" }
+  },
+  "total": 26,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 26,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "New GitTarget delivery abstraction (targets/git-target.ts) plus a new prompt-free GitRunner (targets/git-client.ts), with coordinated changes to settings types, config-store validation, install/install-command, status, uninstall (working-copy removal), run-sync dispatch, marker, redact, the analytics CLI index and the shared src/utils/errors.ts (SyncGitError/GitFailureCause). Base L: many components, but all inside the one analytics-sync subsystem. The red flag for integration with a new external service (a team git remote) bumps it to XL." },
+    { "dimension": "technical_risk", "reason": "No prior git-target precedent. The closest pattern is webhook-target.ts, which covers neither git argument-injection guards (every positional after '--' or behind a fixed prefix), userinfo-credential redaction in git URLs, path-escape guarding of the slug folder, nor unattended prompt-free git (GIT_TERMINAL_PROMPT=0, ssh BatchMode, no hooks or signing). That security gap bumps M to L. Shallow-clone refresh/re-clone logic, a non-fast-forward rebase retry loop and stderr classification add to the novelty. The security red flag (credential redaction, injection-surface hardening, visible in the 'harden git sync target after code review' commit) then bumps it to XL." },
+    { "dimension": "file_change_estimate", "reason": "The diffstat reports 26 files changed (3040 insertions, 215 deletions), across src/cli/commands/analytics/, src/utils/, tests/integration/ and docs/. New files: targets/git-target.ts, targets/git-client.ts, install-command.ts and their tests plus the integration test. The 16+ band makes this XXL." },
+    { "dimension": "affected_layers", "reason": "Four layers change. CLI/API: the analytics sync install/status/uninstall flags. Service: run-sync dispatch and the GitTarget logic. Persistence: the analytics-sync.json GitSettings schema, a separate git last-sent marker and the on-disk working copy. External: the git remote over the network. Base L; the new-external-integration red flag bumps it to XL." },
+    { "dimension": "requirements_clarity", "reason": "The implemented contract is coherent: git-repo/branch/path flags, slug-folder isolation, no force-push and no stored token. A follow-up hardening commit after code review shows that edge cases (security and branch handling) were refined late, which scores M. This matches the local L calibration example profile-provider-decoupling (RC=M)." },
+    { "dimension": "overall", "reason": "Total 26 sits on the L/XL boundary (26 to 27), and Technical Risk and Component Scope are both at XL, so the borderline rule would lean higher. The score is kept at L because the work is one subsystem in one repo, adds no new packages, and is less spread out than the nearest project anchor, profile-provider-decoupling (L, 23, 6 areas across 4+ subsystems). The bundled XL anchor epmcdme-10303 (27) reached XL only through heavyweight new dependencies (Dependencies=XL); this change has none. Scores are not inflated to force a split (G1)." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L to XL: integration with a new external service (team git remote via plain git)",
+    "Affected Layers bumped from L to XL: integration with a new external service (team git remote)",
+    "Technical Risk bumped from M to L: closest pattern (webhook-target) does not cover git argument-injection, URL-credential redaction or path-escape guarding",
+    "Technical Risk bumped from L to XL: security requirements (credential redaction in errors/logs, injection-surface hardening, unattended prompt-free auth)"
+  ],
+  "split_recommendation": null
+}

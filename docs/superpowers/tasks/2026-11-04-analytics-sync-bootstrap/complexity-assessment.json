@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "task": "Add `codemie analytics sync bootstrap`: a lead-side 8-step resumable Power Automate setup wizard (Teams/SharePoint link parsing, Windows time zones, flow template fill and zip package, trigger URL validation with test send, include-external/lookback choices, cross-shell install command) plus a non-interactive `--webhook` mode.",
+  "generated": "2026-11-04T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 21,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Several new components inside the analytics sync subsystem: bootstrap runner with deps seam, 8-step resumable wizard with saved lead state, Teams channel link parser, SharePoint folder parser, Windows time-zone list, flow-template filler, dependency-free zip writer, cross-shell install-command quoting, plus CLI registration in createSyncCommand and reuse of shared sync helpers (sendWebhook, validateInstallOptions helpers made public, buildInstallCommand, redactSecrets). Many components but one subsystem, so L rather than XL." },
+    { "dimension": "technical_risk", "reason": "Closest pattern is the external collector (setup.js, links.js, zip.js, flow-template.js) plus in-repo runner/deps convention, so the port path is known. But the existing buildInstallCommand is POSIX-only quoting and does not cover the cmd/PowerShell injection surface (a trigger URL carries &, %2F, sig=); no in-repo util covers that, so the security-divergence auto-bump and sanitization floor of L apply. Also: sig validation absent in CLI, secret redaction across new outputs/state, state-file collision risk with collector's analytics-setup.json, asset shipping of JSON template has weak precedent." },
+    { "dimension": "file_change_estimate", "reason": "Roughly 7+ new source modules (bootstrap, wizard, links, timezones, flow-template, zip, lead state) plus 5 flow-template JSON assets, and modified files: analytics/index.ts, install-command.ts, config-store.ts, possibly webhook-target.ts, package.json files and/or scripts/copy-plugins.js, docs/COMMANDS.md, docs/ANALYTICS-REPORT.md, and pinned tests (install-command.test.ts, analytics-sync-cli.test.ts). New-file count exceeds the XL band; modified count sits near L, scored XL overall." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M to L: closest pattern (POSIX-only buildInstallCommand) does not cover the cmd/PowerShell quoting injection surface for the webhook URL; no reusable util exists (sanitization floor of L also satisfied). Secret-redaction requirement is covered by existing redactSecrets/webhookHost, so no further security bump applied."
+  ],
+  "split_recommendation": null
+}

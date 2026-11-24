@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "generated": "2026-11-07T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 14,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 4,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Three components: new active-cli module (PATH lookup, on-disk manifest read, stale verdict, warning formatter), reportUpdateResult wiring in cli-updater, and additive layout helpers in the shared npm-prefix util. Pattern follows existing utils conventions." },
+    { "dimension": "technical_risk", "reason": "No exact precedent for resolving the first codemie on PATH across win32 shims and POSIX symlinks. Mitigated: never spawns codemie, every path returns 'unknown' instead of throwing, the check is wrapped so it cannot affect the install result or exit code, and rollback is trivial. No injection or secret surface: the printed uninstall command is text only." },
+    { "dimension": "file_change_estimate", "reason": "4 files changed (3 modified, 1 new), about +311/-12 lines. Mapped by diffstat count 4 to M. All within src/utils plus one docs line." }
+  ],
+  "red_flags_applied": [
+    "Touches shared utility npm-prefix.ts (additive helpers only, existing behavior unchanged); Component Scope held at M because no existing callers changed"
+  ],
+  "split_recommendation": null
+}

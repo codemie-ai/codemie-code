@@ -1,0 +1,69 @@
+{
+  "task": "Fix Node.js OOM during Claude Code session analytics report generation by short-circuiting native session discovery to the requested sessionId before parsing, fixing the unbounded 3650-day discovery window, and preserving Pi /fork family folding under sessionId scoping",
+  "generated": "2026-10-26T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 3,
+      "label": "M",
+      "affected": "native-loader.ts (loadNativeSessions, windowDays, readPiTranscripts/foldPiForkFamilies)",
+      "layers": "Workflow (analytics native session discovery/synthesis, consumed by report generation and cost enrichment)"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": "None remaining in the final diff. A code review round found one follow-up defect (CR-001: the sessionId short-circuit broke Pi /fork family folding), which was identified and fixed in a second commit with a dedicated regression test."
+    },
+    "technical_risk": {
+      "score": 4,
+      "label": "L",
+      "risk_factors": "Fixes a production OOM crash on a performance-critical path (unbounded transcript parsing before filtering); the fix interacts with pre-existing Pi fork-folding logic and a prior defect in that interaction (CR-001) was only caught during code review, indicating the scoping change had non-obvious side effects on correctness.",
+      "mitigation": "Added targeted unit tests pinning the sessionId short-circuit (parses only the matching descriptor, still parses Pi descriptors for fork-fold correctness, zero-parse on no match, no-regression when sessionId absent), the windowDays(undefined vs fromDate) behavior, and a CR-001 regression test asserting the fork continuation still folds into the root when filter.sessionId scopes to the root."
+    },
+    "file_change_estimate": {
+      "score": 2,
+      "label": "S",
+      "modified_files": 3,
+      "modified_file_list": [
+        "src/cli/commands/analytics/native-loader.ts",
+        "src/cli/commands/analytics/__tests__/native-loader.test.ts",
+        "src/cli/commands/analytics/__tests__/native-loader-pi.test.ts"
+      ],
+      "new_files": 0,
+      "new_file_list": [],
+      "affected_dirs": [
+        "src/cli/commands/analytics",
+        "src/cli/commands/analytics/__tests__"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 1,
+      "label": "XS",
+      "layers_changed": [
+        "Workflow"
+      ],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 13,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 3,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "technical_risk", "reason": "Fix sits on the exact path that caused a production OOM; it also had a non-obvious interaction with existing Pi /fork fold logic that required a code-review-driven follow-up fix (CR-001), showing the scoping change was not risk-free despite being small." },
+    { "dimension": "component_scope", "reason": "native-loader.ts is a shared utility consumed by every native agent's session synthesis (claude, codex, copilot-cli, pi, gemini) and by downstream report generation and cost enrichment, so a change here has wider blast radius than its single-file footprint suggests." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M to L: 'Performance as primary concern' — the change directly addresses an OOM crash on a hot/critical parsing path",
+    "Component Scope bumped from S to M: 'Touches core shared utilities' — native-loader.ts backs session discovery for all native agents and is consumed by the report and cost-enrichment pipelines"
+  ],
+  "split_recommendation": null
+}

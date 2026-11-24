@@ -1,20 +1,24 @@
 import { join } from 'path';
-import type { AgentMetadata, AgentConfig } from '../../core/types.js';
+import type { AgentMetadata, AgentConfig, CanonicalReasoningEffort } from '../../core/types.js';
+import { clampToSupported, normalizeReasoningEffort } from '../../core/reasoning-effort.js';
 import { logger } from '../../../utils/logger.js';
 import { getModelConfig, getChatCompletionsModelConfigs, getResponsesApiModelConfigs } from './opencode-model-configs.js';
 import { fetchDynamicModelConfigs } from './opencode-dynamic-models.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
+import { flagValue, hasFlagBeforeSeparator } from '../../core/flag-transform.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
-import { commandExists } from '../../../utils/processes.js';
+import { commandExists, wrapperOwnerFromEnv } from '../../../utils/processes.js';
 import { OpenCodeSessionAdapter } from './opencode.session.js';
+import type { LocatedRun } from './opencode.run-session.js';
 import { getOpenCodeConfigDir, getOpenCodeDbPath, getOpenCodeDataDir } from './opencode.paths.js';
 import {
   startOpenCodeIncrementalSync,
   stopOpenCodeIncrementalSync,
 } from './opencode.incremental-sync.js';
-import { getHooksPluginFileUrl, cleanupHooksPlugin } from '../codemie-code-hooks/index.js';
+import { getHooksPluginDirUrl, cleanupHooksPluginDir } from '../codemie-code-hooks/index.js';
 import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
+import { sendPathApiUrl } from '../../core/session/send-path.js';
 import { toBedrockModelId } from '../../../providers/plugins/bedrock/bedrock.utils.js';
 import { MAX_ENV_SIZE, writeConfigToTempFile } from '../../core/temp-config.js';
 import { ensureSessionFile } from '../../core/session/ensure-session.js';
@@ -22,6 +26,60 @@ import { ensureSessionFile } from '../../core/session/ensure-session.js';
 const OPENCODE_SUBCOMMANDS = ['run', 'chat', 'config', 'init', 'help', 'version'];
 
 const OPENCODE_CLIENT_TYPE = 'codemie-opencode';
+
+/**
+ * Provider id that carries the Responses API models. Deliberately not OpenCode's built-in
+ * `openai`: that id merges OpenCode's own OpenAI catalog into the list (models the CodeMie
+ * backend does not serve, and OpenCode v2 ignores `whitelist`) and brings id-bound behaviour
+ * such as the websocket transport.
+ */
+const RESPONSES_API_PROVIDER_ID = 'codemie-openai';
+
+const CHAT_PROVIDER_ID = 'codemie-proxy';
+
+/**
+ * Reasoning variants OpenCode derives for each CodeMie provider block (its Responses and
+ * chat-completions protocols differ). Selecting a variant a model does not have fails the
+ * session with "Variant unavailable", so a requested level is clamped to this list.
+ */
+const VARIANTS_BY_PROVIDER: Record<string, CanonicalReasoningEffort[]> = {
+  [CHAT_PROVIDER_ID]: ['low', 'medium', 'high'],
+  [RESPONSES_API_PROVIDER_ID]: ['minimal', 'low', 'medium', 'high', 'xhigh'],
+};
+
+/**
+ * OpenCode v2 serves every client from one long-lived background service, which keeps the
+ * environment of whichever session started it: that session's proxy port, hooks and session
+ * id. A private server per run keeps each CodeMie session on its own configuration.
+ */
+function withPrivateServer(args: string[]): string[] {
+  const choosesServer = args.some(
+    (arg) => arg === '--standalone' || arg === '--server' || arg.startsWith('--server=')
+  );
+  return choosesServer ? args : [...args, '--standalone'];
+}
+
+/** Carries the `provider/model#variant` selection from beforeRun to enrichArgs. */
+const RUN_MODEL_ENV = 'CODEMIE_OPENCODE_RUN_MODEL';
+
+/** The OpenCode variant for the requested reasoning effort, if the provider block has variants. */
+function reasoningVariant(env: NodeJS.ProcessEnv, providerId: string): string | undefined {
+  const level = normalizeReasoningEffort(env.CODEMIE_REASONING_EFFORT ?? '');
+  const supported = VARIANTS_BY_PROVIDER[providerId];
+  return level && supported ? clampToSupported(level, supported) : undefined;
+}
+
+/** The CodeMie provider block that lists `modelId`, if any. */
+function proxyProviderOf(
+  modelId: string | undefined,
+  chatModels: Record<string, unknown>,
+  responsesApiModels: Record<string, unknown>,
+): string | undefined {
+  if (!modelId) return undefined;
+  if (modelId in responsesApiModels) return RESPONSES_API_PROVIDER_ID;
+  if (modelId in chatModels) return CHAT_PROVIDER_ID;
+  return undefined;
+}
 
 /**
  * Hooks the CodeMie CLI always registers with OpenCode, on top of anything the
@@ -90,12 +148,14 @@ function buildHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcess
     provider: env.CODEMIE_PROVIDER,
     apiBaseUrl: env.CODEMIE_BASE_URL,
     ssoUrl: env.CODEMIE_URL,
+    syncApiUrl: env.CODEMIE_SYNC_API_URL,
     env,
     version: env.CODEMIE_CLI_VERSION,
     profileName: env.CODEMIE_PROFILE_NAME,
     project: env.CODEMIE_PROJECT,
     model: env.CODEMIE_MODEL,
     clientType: env.CODEMIE_CLIENT_TYPE || OPENCODE_CLIENT_TYPE,
+    ...wrapperOwnerFromEnv(env),
   };
 }
 
@@ -125,7 +185,7 @@ export const OpenCodePluginMetadata: AgentMetadata = {
   // filterErrorTools does an exact match — the global default
   // ['Bash','Execute','Shell'] would silently never match here.
   metricsConfig: {
-    excludeErrorsFromTools: ['bash'],
+    excludeErrorsFromTools: ['bash', 'shell'],
   },
 
   // MCP servers live under a top-level `mcp` key. OpenCode accepts both the
@@ -176,12 +236,12 @@ export const OpenCodePluginMetadata: AgentMetadata = {
     },
   },
 
+  // OpenCode takes the level as a variant of the model selection (`provider/model#variant`), not
+  // as a flag, so beforeRun applies it (see reasoningVariant). This block declares support to
+  // the central step, which only validates the level: the `env` strategy sets nothing here.
   reasoningEffort: {
-    strategy: 'cli-flag',
-    flag: '--variant',
-    placement: 'append',
-    supportedLevels: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
-    userOverrideFlags: ['--variant'],
+    strategy: 'env',
+    supportedLevels: ['minimal', 'low', 'medium', 'high', 'xhigh'],
   },
 
   lifecycle: {
@@ -233,12 +293,10 @@ export const OpenCodePluginMetadata: AgentMetadata = {
       // injected plugin never loads.
       startOpenCodeIncrementalSync({
         sessionId,
-        startedAt: Date.now(),
-        cwd: process.cwd(),
         metadata: OpenCodePluginMetadata,
         buildContext: () => ({
           sessionId,
-          apiBaseUrl: env.CODEMIE_SYNC_API_URL || env.CODEMIE_BASE_URL || '',
+          apiBaseUrl: sendPathApiUrl(env) || '',
           cookies: '',
           clientType: env.CODEMIE_CLIENT_TYPE || OPENCODE_CLIENT_TYPE,
           version: env.CODEMIE_CLI_VERSION || '0.0.0',
@@ -247,7 +305,7 @@ export const OpenCodePluginMetadata: AgentMetadata = {
         }),
         ssoUrl: env.CODEMIE_URL,
         env,
-        syncApiUrl: env.CODEMIE_SYNC_API_URL || env.CODEMIE_BASE_URL,
+        syncApiUrl: sendPathApiUrl(env),
         cliVersion: env.CODEMIE_CLI_VERSION,
       });
     },
@@ -320,25 +378,38 @@ export const OpenCodePluginMetadata: AgentMetadata = {
       // Determine default model provider
       // - ollama: uses ollama provider directly
       // - bedrock: uses OpenCode's built-in amazon-bedrock provider (AWS env vars set by provider hook)
+      // - Responses API models: their own provider block below, never `codemie-proxy`. A
+      //   `codemie-proxy/<id>` default would not resolve, and OpenCode would silently start on
+      //   another model than the one the user selected.
       // - all others: route through codemie-proxy (SSO/proxy)
-      const activeProvider = provider === 'ollama' ? 'ollama' : (isBedrock ? 'amazon-bedrock' : 'codemie-proxy');
+      const startsOnResponsesApiModel = Boolean(proxyBaseUrl) && modelConfig.id in responsesApiModels;
+      const activeProvider = startsOnResponsesApiModel
+        ? RESPONSES_API_PROVIDER_ID
+        : provider === 'ollama' ? 'ollama' : (isBedrock ? 'amazon-bedrock' : CHAT_PROVIDER_ID);
       const timeout = providerOptions?.timeout ?? parseInt(env.CODEMIE_TIMEOUT || '600') * 1000;
 
-      // Always enable openai CUSTOM_LOADER when Responses API models exist.
-      // This fixes model-switching: if user starts with Claude and switches to GPT,
-      // the CUSTOM_LOADER must already be registered.
-      if (proxyBaseUrl && Object.keys(responsesApiModels).length > 0) {
-        env.OPENAI_API_KEY = 'proxy-handled';
-        logger.debug('[opencode] Enabling openai CUSTOM_LOADER for Responses API models');
+      const modelRef = `${activeProvider}/${isBedrock ? toBedrockModelId(modelConfig.id, env.AWS_REGION || env.CODEMIE_AWS_REGION) : modelConfig.id}`;
+      const variant = reasoningVariant(env, activeProvider);
+      const modelSelection = variant ? `${modelRef}#${variant}` : modelRef;
+      // `opencode run` starts on the configured model but drops its variant, so enrichArgs
+      // passes the full selection as `--model`.
+      if (variant) {
+        env[RUN_MODEL_ENV] = modelSelection;
       }
+
+      // A custom provider block has no "small" model of its own, so OpenCode would generate
+      // session titles with the selected model. The profile's haiku tier is CodeMie's small model.
+      const smallModelProvider = proxyBaseUrl
+        ? proxyProviderOf(env.CODEMIE_HAIKU_MODEL, chatModels, responsesApiModels)
+        : undefined;
 
       const hasResponsesApiModels = Object.keys(responsesApiModels).length > 0;
       const openCodeConfig: Record<string, unknown> = {
-        enabled_providers: ['codemie-proxy', 'openai', 'ollama', 'amazon-bedrock'],
+        enabled_providers: [CHAT_PROVIDER_ID, RESPONSES_API_PROVIDER_ID, 'ollama', 'amazon-bedrock'],
         share: 'disabled',
         provider: {
           ...(proxyBaseUrl && {
-            'codemie-proxy': {
+            [CHAT_PROVIDER_ID]: {
               npm: '@ai-sdk/openai-compatible',
               name: 'CodeMie SSO',
               options: {
@@ -350,15 +421,14 @@ export const OpenCodePluginMetadata: AgentMetadata = {
               models: chatModels
             }
           }),
-          // Built-in openai CUSTOM_LOADER: routes Responses API models via sdk.responses()
+          // `@ai-sdk/openai` under a custom id speaks the Responses API (POST /responses) and
+          // carries only the models listed here.
           ...(proxyBaseUrl && hasResponsesApiModels && {
-            openai: {
+            [RESPONSES_API_PROVIDER_ID]: {
+              npm: '@ai-sdk/openai',
               // OpenCode orders provider groups by name; a distinct, longer name keeps this group below
               // the 'CodeMie SSO' group that holds the routers (equal names left the order arbitrary).
               name: 'CodeMie SSO (Responses API)',
-              // whitelist: suppress the built-in openai model list (GPT-4, GPT-4o, etc.)
-              // OpenCode merges user models with models.dev — whitelist restricts to ours only
-              whitelist: Object.keys(responsesApiModels),
               options: {
                 baseURL: `${proxyBaseUrl}/`,
                 apiKey: 'proxy-handled',
@@ -378,13 +448,14 @@ export const OpenCodePluginMetadata: AgentMetadata = {
             }
           }
         },
-        model: `${activeProvider}/${isBedrock ? toBedrockModelId(modelConfig.id, env.AWS_REGION || env.CODEMIE_AWS_REGION) : modelConfig.id}`
+        model: modelSelection,
+        ...(smallModelProvider && { small_model: `${smallModelProvider}/${env.CODEMIE_HAIKU_MODEL}` })
       };
 
       // Inject the shell-hooks plugin — it is what delivers OPENCODE_HOOKS
       // (already registered above, before the base-URL early return) to
       // `codemie hook`. Only this half genuinely depends on the proxy config.
-      const pluginUrl = getHooksPluginFileUrl();
+      const pluginUrl = getHooksPluginDirUrl();
       openCodeConfig.plugin = (openCodeConfig.plugin as string[] | undefined) || [];
       (openCodeConfig.plugin as string[]).push(pluginUrl);
       logger.debug(`[opencode] Injected hooks plugin: ${pluginUrl}`);
@@ -417,7 +488,7 @@ export const OpenCodePluginMetadata: AgentMetadata = {
 
     enrichArgs: (args: string[], _config: AgentConfig) => {
       if (args.length > 0 && OPENCODE_SUBCOMMANDS.includes(args[0])) {
-        return args;
+        return args[0] === 'run' ? withPrivateServer(args) : args;
       }
 
       const taskIndex = args.indexOf('--task');
@@ -431,9 +502,13 @@ export const OpenCodePluginMetadata: AgentMetadata = {
         });
         // Message is a positional arg: `opencode run <message>`
         // Note: -m in upstream opencode-ai means --model, NOT --message.
-        return ['run', taskValue, ...otherArgs];
+        const runModel = process.env[RUN_MODEL_ENV];
+        return withPrivateServer(['run', taskValue, ...otherArgs, ...(runModel ? ['--model', runModel] : [])]);
       }
-      return args;
+      // A leading bare word is an OpenCode subcommand CodeMie does not know, and not every
+      // subcommand takes a server flag; the TUI (no subcommand) does.
+      const startsTui = args.length === 0 || args[0].startsWith('-');
+      return startsTui ? withPrivateServer(args) : args;
     },
 
     /**
@@ -461,23 +536,13 @@ export const OpenCodePluginMetadata: AgentMetadata = {
       stopOpenCodeIncrementalSync(sessionId);
 
       try {
-        // Discover the transcript to re-parse. Constrained to this working
-        // directory: the CLI reads the user's shared opencode.db, which holds
-        // sessions from every project they have open.
-        let transcriptPath = '';
+        // The transcript of this record's run (the shared selection): the user's shared
+        // opencode.db holds sessions from every project they have open.
+        let located: LocatedRun | undefined;
         try {
           const adapter = new OpenCodeSessionAdapter(OpenCodePluginMetadata);
-          const sessions = await adapter.discoverSessions({
-            maxAgeDays: 1,
-            limit: 1,
-            cwd: process.cwd(),
-          });
-          if (sessions.length > 0) {
-            transcriptPath = sessions[0].filePath;
-            logger.debug(`[opencode] Discovered OpenCode session: ${sessions[0].sessionId}`);
-          } else {
-            logger.debug('[opencode] No recent OpenCode sessions found for this directory');
-          }
+          located = await adapter.locateSessionTranscript(sessionId);
+          logger.debug(`[opencode] Run transcript: ${located?.transcript ?? 'none'}`);
         } catch (discoverError) {
           const msg = discoverError instanceof Error ? discoverError.message : String(discoverError);
           logger.debug(`[opencode] Session discovery failed (non-blocking): ${msg}`);
@@ -487,8 +552,9 @@ export const OpenCodePluginMetadata: AgentMetadata = {
         await processEvent(
           {
             hook_event_name: 'SessionEnd',
+            // The CodeMie id: processing takes every OpenCode session of the record's run, each in turn
             session_id: sessionId,
-            transcript_path: transcriptPath,
+            transcript_path: located?.transcript ?? '',
             permission_mode: 'default',
             cwd: process.cwd(),
             reason: exitCode === 0 ? 'exit' : `exit(${exitCode})`,
@@ -501,7 +567,7 @@ export const OpenCodePluginMetadata: AgentMetadata = {
         logger.error(`[opencode] SessionEnd hook failed (non-blocking): ${errorMessage}`);
         // Don't throw - metrics failure shouldn't block exit
       } finally {
-        cleanupHooksPlugin();
+        cleanupHooksPluginDir();
       }
     }
   }
@@ -554,6 +620,17 @@ export class OpenCodePlugin extends BaseAgentAdapter {
    */
   getSessionAdapter(): SessionAdapter {
     return this.sessionAdapter;
+  }
+
+  /** The session the launch names: `--session <ses_>` / `--session=<ses_>`. */
+  extractNativeResumeId(args: string[]): string | undefined {
+    // Only `--session` is a native resume form here: `-s` is the wrapper's own `--silent` and never reaches opencode; `--resume <ses_>` is the wrapper's form and travels separately
+    return flagValue(args, ['--session']);
+  }
+
+  /** A `--continue` / `-c` launch continues the last session without naming it. */
+  continuesNativeSession(args: string[]): boolean {
+    return hasFlagBeforeSeparator(args, ['--continue', '-c']);
   }
 
   /**

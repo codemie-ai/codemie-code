@@ -17,10 +17,11 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { PiMetricsProcessor } from '../session/processors/pi.metrics-processor.js';
 import type { PiMetricsProcessingContext } from '../session/processors/pi.metrics-processor.js';
-import { getSessionMetricsPath } from '../../../core/session/session-config.js';
+import { getSessionMetricsPath, getSessionPath } from '../../../core/session/session-config.js';
 import type { ParsedSession } from '../../../core/session/BaseSessionAdapter.js';
 import type { ProcessingContext } from '../../../core/session/BaseProcessor.js';
 import type { MetricDelta } from '../../../core/metrics/types.js';
@@ -231,10 +232,15 @@ beforeEach(() => {
   sessionId = `test-pi-metrics-${Math.random().toString(36).slice(2)}`;
   sessionRecords.clear();
   delete process.env.CODEMIE_MODEL;
+  // A metrics file is created only while the run's live record exists
+  mkdirSync(dirname(getSessionPath(sessionId)), { recursive: true });
+  writeFileSync(getSessionPath(sessionId), '{}');
+  seedSessionRecord();
 });
 
 afterEach(() => {
   rmSync(getSessionMetricsPath(sessionId), { force: true });
+  rmSync(getSessionPath(sessionId), { force: true });
 });
 
 describe('bashExecution entries', () => {
@@ -307,6 +313,20 @@ describe('model_change entries', () => {
     };
 
     expect(await run(buildSession([entry]))).toEqual([]);
+  });
+
+  it('writes a model switch before recordsBeforeMs, none at it: the next record over the same transcript owns it', async () => {
+    const modelChange = (id: string, at: number) => ({
+      type: 'model_change', id, parentId: null, timestamp: new Date(at).toISOString(), modelId: 'claude-opus-4',
+    });
+
+    const deltas = await run(
+      buildSession([modelChange('early', SESSION_START + 2000), modelChange('at-bound', SESSION_START + 5000)]),
+      undefined,
+      { ...context, recordsBeforeMs: SESSION_START + 5000 }
+    );
+
+    expect(deltas.map((d) => d.recordId)).toEqual(['early:model']);
   });
 
   it('does not double-count an entry already seen on another transcript', async () => {

@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "generated": "2026-11-11T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 14,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 4,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Two components modified across two layers — the CLI proxy status command (src/cli/commands/proxy/delivery-health.ts) and the OTLP spool's delivery-summary service (src/providers/plugins/sso/proxy/plugins/otlp-spool/delivery-summary.ts) — wired together through the existing policy-cache capability lookup; pattern of composing these modules was already established by the prior commit." },
+    { "dimension": "technical_risk", "reason": "Extends an existing DeliveryReason/precedence pattern with a new resolveCapability path (getStoredAnalyticsCredentials -> forwarderIdentity -> getPolicyState) threaded into summarizeSpoolDelivery; no new external calls or security surface, but the capability-threading is a new composition of established pieces, and correctness depends on precedence ordering (stale > marker > mismatch > send_failed > classification_unreachable)." },
+    { "dimension": "file_change_estimate", "reason": "diffstat reports 4 files changed (206 insertions, 25 deletions): 2 modified source files (delivery-health.ts, delivery-summary.ts) and their 2 co-located test files, both already present from the prior commit — no new files, two distinct directories (src/cli/commands/proxy, src/providers/plugins/sso/proxy/plugins/otlp-spool)." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

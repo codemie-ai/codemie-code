@@ -17,6 +17,8 @@ import {
   getPiRunLedgerPath,
   readPiRunLedger,
 } from '../pi.extension.js';
+import { PiSessionAdapter } from '../pi.session.js';
+import { PiPluginMetadata } from '../pi.plugin.js';
 
 // The file logger appends into CODEMIE_HOME asynchronously, which races the temp-dir
 // cleanup below. These tests are about the ledger, not about logging.
@@ -302,5 +304,31 @@ describe('readPiRunLedger', () => {
     ]);
 
     await expect(readPiRunLedger(SESSION)).resolves.toMatchObject({ loaded: true, transcripts: [] });
+  });
+});
+
+describe('PiSessionAdapter.locateTranscript', () => {
+  it('returns every transcript the run ledger recorded', async () => {
+    const first = realTranscript('first.jsonl');
+    const forked = realTranscript('forked.jsonl');
+    writeLedger([
+      { t: 'boot' },
+      { t: 'session', file: first, cwd: projectDir, piSessionId: 'pi-1' },
+      { t: 'session', file: forked, cwd: projectDir, piSessionId: 'pi-2' },
+    ]);
+    const adapter = new PiSessionAdapter(PiPluginMetadata);
+
+    const located = await adapter.locateTranscript({
+      sessionId: SESSION,
+      agentName: 'pi',
+      provider: 'ai-run-sso',
+      startTime: Date.now(),
+      workingDirectory: projectDir,
+      status: 'active',
+      activeDurationMs: 0,
+      correlation: { status: 'pending', retryCount: 0 },
+    });
+
+    expect(located).toEqual([first, forked]);
   });
 });

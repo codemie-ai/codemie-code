@@ -25,6 +25,43 @@ function envBoolean(name: string, fallbackValue: boolean): boolean {
   return raw === undefined ? fallbackValue : raw === 'true';
 }
 
+/**
+ * Idle days (since `last_used`) after which a durable evidence record may be evicted, unless
+ * pending spool still relies on it. Spool cleanup never removes records; only this retention does.
+ */
+export function evidenceRecordIdleDays(): number {
+  const parsed = Number(process.env.CODEMIE_EVIDENCE_RECORD_IDLE_DAYS);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 90;
+}
+
+/** Max evidence record files before oldest non-pending are evicted / new sessions are held. */
+export function evidenceRecordMaxFiles(): number {
+  const parsed = Number(process.env.CODEMIE_EVIDENCE_RECORD_MAX_FILES);
+  return Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : 20_000;
+}
+
+/**
+ * Retention bound for HELD spool data (stamp_pending, stamp_invalid, head-of-line proof holds, ...),
+ * measured from the first-hold time persisted in the session status. Past it the held backlog is
+ * dropped with its named loss reason. Independent of the sweep timers, which only remove drained data.
+ */
+export function heldRetentionMs(): number {
+  return envMinutesMs('OTLP_HELD_RETENTION_MINUTES', 24 * 60);
+}
+
+/** Longest wait between attempts for a stream whose delivery keeps failing. */
+const MAX_DELIVERY_BACKOFF_MS = 30 * 60_000;
+
+/**
+ * Bounded exponential backoff after the `attempts`-th consecutive unacknowledged delivery of a range:
+ * one send interval, doubling, capped at 30 minutes and at the retention bound. The retention bound
+ * itself (`heldRetentionMs`) is the total age; this only spaces the attempts inside it.
+ */
+export function deliveryBackoffMs(attempts: number): number {
+  const delay = sendIntervalMs() * 2 ** Math.min(Math.max(attempts, 1) - 1, 20);
+  return Math.min(delay, MAX_DELIVERY_BACKOFF_MS, heldRetentionMs());
+}
+
 /** How often pending spool bytes are forwarded. */
 export function sendIntervalMs(): number {
   return envMinutesMs('OTLP_SEND_INTERVAL_MINUTES', 2);
@@ -63,6 +100,22 @@ export function hooksOnlyForwardAllowed(): boolean {
  */
 export function endedSessionGraceMs(): number {
   return envMinutesMs('OTLP_ENDED_SESSION_GRACE_MINUTES', 15);
+}
+
+/**
+ * How long OTEL bytes that arrive after a session ended are kept back, so the `SessionStart(resume)`
+ * hook of a reopen has marked the session before its startup records can be forwarded.
+ */
+export function reopenSettleMs(): number {
+  return envMinutesMs('OTLP_REOPEN_SETTLE_MINUTES', 0.25);
+}
+
+/**
+ * A spool that was quiet for this long and then gets new bytes may be a session that was killed (no
+ * `SessionEnd`) and resumed: its OTEL records are kept back for the settle time, like those of an ended one.
+ */
+export function resumeQuietGapMs(): number {
+  return envMinutesMs('OTLP_RESUME_QUIET_MINUTES', 2);
 }
 
 /**

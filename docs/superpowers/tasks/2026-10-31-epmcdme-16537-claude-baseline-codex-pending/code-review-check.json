@@ -1,0 +1,44 @@
+{
+  "decision": "approve",
+  "rationale": "All 5 prior blocking findings verified resolved against source at HEAD 5c2d3e5a; the 3 deferred items were not re-checked. Confidence is medium, not high: CR-005 names messages-before.ts, which the fix-up left unchanged, and it is resolved by the new tests in messages-before.test.ts and claude-run-baseline.test.ts. Brief written to code-review-brief.local.md.",
+  "confidence": "medium",
+  "risk_flags": [],
+  "business_review": [
+    { "kind": "story-ac", "item": "EPMCDME-16537: after --resume/--continue synced deltas contain no recordId already synced for the same Claude session", "status": "pass", "notes": "SessionStart marker + applyClaudeBaseline seeding; claude-run-baseline.test.ts resumed record emits only its own delta" },
+    { "kind": "story-ac", "item": "EPMCDME-16537: a one-prompt resumed run reports 1 turn", "status": "pass", "notes": "resumed run emits one delta with only the new prompt; cutoff filter in collectRunPromptsAndInvocations" },
+    { "kind": "story-ac", "item": "EPMCDME-16537: automated test covers resume of a previously synced Claude transcript", "status": "pass", "notes": "claude-run-baseline.test.ts; hook-routing-contract.test.ts asserts marker at SessionStart" },
+    { "kind": "story-ac", "item": "EPMCDME-16543: a function_call whose output arrives after a pass is recorded once, as success", "status": "pass", "notes": "codex.metrics-processor.ts skips calls without output; fixed success status" },
+    { "kind": "story-ac", "item": "EPMCDME-16543: unit test covers a pending call completed between two passes", "status": "pass", "notes": "codex.metrics-processor.test.ts 'emits a pending call once its output appears'" },
+    { "kind": "spec", "item": "SessionStart of a new claude/claude-acp record stores a baseline marker (start time, transcript path, session id)", "status": "pass", "notes": "hook.ts createSessionRecord runtimeCheckpoint; non-Claude agent test asserts no marker" },
+    { "kind": "spec", "item": "Start time taken at record creation, after git detection", "status": "pass", "notes": "hook.ts startTime = Date.now() at record construction" },
+    { "kind": "spec", "item": "First pass applies the marker: pre-start lines marked processed and not sent, then marker cleared", "status": "pass", "notes": "claude-baseline.ts computes ids/pointer, clears marker, single save" },
+    { "kind": "spec", "item": "A line counts as before the start by its own timestamp (synthetic 'No response requested.' reply)", "status": "pass", "notes": "messages-before.ts per-line timestamp; synthetic reply test" },
+    { "kind": "spec", "item": "If the baseline step fails, the run sends nothing and the marker stays for retry", "status": "pass", "notes": "claude.session.ts catch returns failed 'baseline' when cutoff known; see CR-001 for the null-load path" },
+    { "kind": "spec", "item": "Baseline glue moved into shared claude-baseline.ts; Desktop adapter delegates to it", "status": "pass", "notes": "ClaudeDesktopTelemetryAdapter.applyBaseline calls applyClaudeBaseline" },
+    { "kind": "spec", "item": "Record start time kept in metrics sync state; filters pre-start prompts/invocations every pass", "status": "pass", "notes": "MetricsSyncState.baselineCutoffMs; isStampedBefore filter" },
+    { "kind": "spec", "item": "Conversation pointer only moves forward (uuid and index together)", "status": "pass", "notes": "claude-baseline.ts updates only when stored index undefined or below pointer" },
+    { "kind": "spec", "item": "Desktop: in-flight turn straddling daemon start keeps tokens, loses its prompt; tests cover start time and pointer", "status": "pass", "notes": "adapter-baseline.test.ts cutoff and pointer tests" },
+    { "kind": "spec", "item": "Per-run prompts and invocations from lines after last processed message up to last emitted group", "status": "pass", "notes": "collectRunPromptsAndInvocations slice runStart..lastEmittedIndex+1" },
+    { "kind": "spec", "item": "A Task/Skill call pending at a sync is counted once, by the run that emits it", "status": "pass", "notes": "trailing lines excluded on non-final pass; pending invocation tests" },
+    { "kind": "spec", "item": "A run never takes a prompt or invocation from a line stamped before its record's start", "status": "pass", "notes": "ownLine filter on run and trailing lines" },
+    { "kind": "spec", "item": "At SessionEnd, prompts after the last answered turn counted as one prompts-only delta when no turn emits", "status": "pass", "notes": "handleSessionEnd finalPass; <uuid>:prompts delta; repeated final-pass test" },
+    { "kind": "spec", "item": "Interrupt marker, meta line, local command output, slash-command line not counted at SessionEnd", "status": "pass", "notes": "isTypedPromptText + isMeta filter; '/exit alone' test" },
+    { "kind": "spec", "item": "Pending Skill/Task group at SessionEnd not emitted; invocation counted only when the pass emits another group", "status": "pass", "notes": "subagent namedOnly trailing handling; pending Skill tests" },
+    { "kind": "spec", "item": "Codex: function_call without output gives no delta, nothing written; next pass counts it once output appears", "status": "pass", "notes": "continue on missing output; JSONL absent after first pass" },
+    { "kind": "spec", "item": "Codex delta time is the call's own rollout line timestamp, else session start", "status": "pass", "notes": "record.timestamp with baseTimestamp fallback; tests for both" },
+    { "kind": "spec", "item": "Docs: external-integrations.md describes the Claude CLI baseline and the Codex call rule", "status": "pass", "notes": "external-integrations.md updated" }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "pass", "notes": "5 subjects in range all use type fix with allowed scope analytics, imperative mood, lengths 77-93 chars within the 100-char subject-max-length in git-workflow.md" },
+    { "kind": "code-quality", "status": "partial", "notes": "claude-baseline.ts conforms; claude.metrics-processor.ts grows to 525 lines (>500), collectRunPromptsAndInvocations ~65 lines (>50), messages: any[] undocumented" },
+    { "kind": "security", "status": "pass", "notes": "no hardcoded secrets or console.log; new logs carry only ids/caller/cutoff/counts/error; runtimeCheckpoint follows existing createSessionRecord pattern" }
+  ],
+  "findings": [],
+  "finding_status": [
+    { "id": "CR-001", "status": "resolved", "notes": "claude.session.ts:625-634 returns failed 'baseline' result before any processor runs when loadSession is null; test with invalid-JSON record added" },
+    { "id": "CR-002", "status": "resolved", "notes": "run-prompts.ts collectRunPromptsAndInvocations spans lines 18-63 (46 lines); final-pass block extracted to markFinalPass" },
+    { "id": "CR-003", "status": "resolved", "notes": "run-prompts.ts:19 comment documents any[] (gitBranch not on ClaudeMessage)" },
+    { "id": "CR-004", "status": "resolved", "notes": "claude.metrics-processor.ts now 391 lines; helpers moved to run-prompts.ts (157 lines), imported at line 22" },
+    { "id": "CR-005", "status": "resolved", "notes": "messages-before.test.ts covers group-follows-first-line and untimestamped-line rules; claude-run-baseline.test.ts adds straddling-group test; source file itself unchanged" }
+  ]
+}

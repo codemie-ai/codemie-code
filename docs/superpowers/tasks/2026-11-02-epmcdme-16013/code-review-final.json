@@ -1,0 +1,152 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.final",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "User approved; compact review, 0 findings, confidence high."
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "User approved; compact review, 0 findings, confidence high."
+    }
+  ],
+  "reviewed_head": "15fca22c12bc079d8a530cb794c7a156b9eec0d2",
+  "rounds": [
+    "final"
+  ],
+  "rationale": "Edge-case and acceptance lenses (compact profile) ran with parseable output and raised no failures; all 14 story criteria pass and the linear-time criterion is pending Stage 7. No findings, 0 deferred, 0 dismissed; standards audit was not part of this profile.",
+  "confidence": "high",
+  "check_confidence": null,
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 0,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "AC1 UUID prompts (bare, session-, agent-, -v2) resolve no story",
+      "status": "pass",
+      "notes": "coversUuidWindow + isUuidShaped; covered by story-resolver, ticket-parser and OtlpAgentAdapter tests."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC2 digit-led UUID and partial paste resolve no story",
+      "status": "pass",
+      "notes": "Window rule with number segment; ticket-parser tests for digit-led last group and partial paste."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC3 letter-led tail with numeric suffix, upper-case, bare tail, session_/id=/.json",
+      "status": "pass",
+      "notes": "12-hex key check plus window rule; all forms in it.each."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC4 standards, protocol and model-family tokens resolve no story",
+      "status": "pass",
+      "notes": "NON_TICKET_PREFIXES key and run-first-segment checks; every AC4 token has a test."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC5 real keys still resolve, also after noise",
+      "status": "pass",
+      "notes": "Skip-and-continue loop; story-resolver test 'still resolves a real key, also after noise'."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC6 marker, branch and short-key behaviour unchanged",
+      "status": "pass",
+      "notes": "Marker tier untouched; branch tier passes source 'branch'; tests added for ABC-1234-fade, ISO-77 and marker."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC7 ticket_mentions drops UUID fragments and listed prefixes, keeps first-seen order",
+      "status": "pass",
+      "notes": "parsePromptFields uses defaults; ticket-parser and claude-code-otlp tests added."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC8 existing test files extended in place, no new test files",
+      "status": "pass",
+      "notes": "Seven existing test files extended, including three adapter tests and OtlpAgentAdapter.test.ts."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC9 ARCHITECTURE-OTLP-PLUGIN.md updated in three places; code comments point to extractTicketMentions",
+      "status": "pass",
+      "notes": "Mention-tier line, Known-limitations (4) and ticket-parser.ts row changed; code comments updated."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC10 full model ids led by a listed token yield no story",
+      "status": "pass",
+      "notes": "Run-first-segment condition with digit-dot join; ticket-parser and story-resolver tests."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC11 real key not dash-glued to a model id still wins; dash-glued is accepted loss",
+      "status": "pass",
+      "notes": "Tests cover the kept and lost cases."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC12 branch tier ignores the prefix rule but still drops UUIDs",
+      "status": "pass",
+      "notes": "source 'branch' skips rule 2; tests for GPT-4 branches and UUID branch."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC13 upper-case preference",
+      "status": "pass",
+      "notes": "Upper-first ordering before the limit; it.each covers listed cases and the branch and ticket_mentions exceptions."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC14 prefix list is one named closed constant next to TICKET_RE naming pricing.json, one test per added family",
+      "status": "pass",
+      "notes": "NON_TICKET_PREFIXES with comment naming src/utils/pricing.json; families test lists grok, codex, chatgpt, mistral, deepseek, kimi."
+    },
+    {
+      "kind": "story-ac",
+      "item": "Linear-time behaviour on 1 MB repeated and long hex-run input",
+      "status": "pending-stage-7",
+      "notes": "Code reads linear (single tokenizer pass, bounded window); timing tests exist but need execution."
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "na",
+      "notes": "Standards audit not part of the compact review profile."
+    },
+    {
+      "kind": "code-quality",
+      "status": "na",
+      "notes": "Standards audit not part of the compact review profile."
+    },
+    {
+      "kind": "security",
+      "status": "na",
+      "notes": "Standards audit not part of the compact review profile."
+    }
+  ],
+  "final_round": {
+    "decision": "approve",
+    "rationale": "Edge-case and acceptance lenses (compact profile) ran with parseable output and raised no failures; all 14 story criteria pass and the linear-time criterion is pending Stage 7. No findings, 0 deferred, 0 dismissed; standards audit was not part of this profile.",
+    "confidence": "high",
+    "risk_flags": []
+  }
+}

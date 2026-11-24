@@ -10,10 +10,15 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: read
+
 jobs:
   publish:
     name: Publish Package
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     environment: prod
     env:
       ARTIFACTORY_INSTALL_URL: ${{ secrets.ARTIFACTORY_INSTALL_URL }}
@@ -27,10 +32,10 @@ jobs:
           exit 1
 
       - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
@@ -58,7 +63,7 @@ jobs:
         run: npm run prepare:install-artifacts
 
       - name: Upload installer artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codemie-installers
           path: artifacts/install

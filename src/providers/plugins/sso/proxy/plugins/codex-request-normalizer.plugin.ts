@@ -19,14 +19,16 @@
 import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
+import { CODEX_DESKTOP } from '../proxy-clients.js';
 import { fetchCodeMieLlmModels } from '../../sso.http-client.js';
+import { CredentialRefresher } from './credential-refresh.js';
 import {
   isCodexServableDeployment,
   rankDeploymentsByRecency,
   resolveCodexDeployment,
 } from './codex-model-resolver.js';
 
-const ALLOWED_CLIENTS = ['codex-desktop'];
+const ALLOWED_CLIENTS: readonly string[] = [CODEX_DESKTOP];
 
 /** Re-list deployments occasionally so a long-lived daemon picks up new models. */
 const MODEL_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -116,13 +118,9 @@ export class CodexRequestNormalizerPlugin implements ProxyPlugin {
   name = 'Codex Request Normalizer';
   version = '1.0.0';
   priority = 14;
+  clients = ALLOWED_CLIENTS;
 
   async createInterceptor(context: PluginContext): Promise<ProxyInterceptor> {
-    const clientType = context.config.clientType;
-    if (!clientType || !ALLOWED_CLIENTS.includes(clientType)) {
-      throw new Error(`Plugin disabled for agent: ${clientType}`);
-    }
-
     return new CodexRequestNormalizerInterceptor(context);
   }
 }
@@ -134,8 +132,14 @@ class CodexRequestNormalizerInterceptor implements ProxyInterceptor {
   private loadedAt = 0;
   private lastAttemptAt = 0;
   private inFlight: Promise<void> | null = null;
+  // Re-reads stored credentials (throttled) rather than the daemon-startup snapshot, so a
+  // successful browser re-login reaches the model catalogue fetch too (PR #655 review,
+  // blocking) — this TTL-gated refetch (every MODEL_CACHE_TTL_MS) is exactly where it matters.
+  private readonly credentials?: CredentialRefresher<NonNullable<PluginContext['credentials']>>;
 
-  constructor(private readonly context: PluginContext) {}
+  constructor(private readonly context: PluginContext) {
+    this.credentials = context.credentialRefresher;
+  }
 
   /** Test seam — lets the suite supply a deployment list without a network call. */
   setAvailableModelsForTest(models: string[]): void {
@@ -251,17 +255,19 @@ class CodexRequestNormalizerInterceptor implements ProxyInterceptor {
   private async loadModels(): Promise<void> {
     this.lastAttemptAt = Date.now();
 
-    const credentials = this.context.credentials;
-    if (!credentials) {
+    if (!this.credentials) {
       logger.debug(`[${this.name}] No credentials available; model names pass through unchanged`);
       return;
     }
+    const credentials = await this.credentials.refresh();
 
     try {
       const apiUrl = credentials.apiUrl || this.context.config.targetApiUrl;
+      // Whole catalog, not one project's: this only looks up metadata for requests
+      // the client already sends, so a model outside the project must still resolve.
       const models = 'cookies' in credentials
-        ? await fetchCodeMieLlmModels(apiUrl, credentials.cookies)
-        : await fetchCodeMieLlmModels(apiUrl, credentials.token);
+        ? await fetchCodeMieLlmModels(apiUrl, credentials.cookies, undefined)
+        : await fetchCodeMieLlmModels(apiUrl, credentials.token, undefined);
 
       this.availableModels = models
         .filter((model) => model.enabled !== false)

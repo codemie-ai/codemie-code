@@ -34,6 +34,8 @@ export const JWTTemplate = registerProvider<ProviderTemplate>({
   supportsStreaming: true,
   customProperties: {
     requiresToken: true,
+    // Each global profile owns a CodeMie project (EPMCDME-15411)
+    carriesCodeMieProject: true,
     tokenSource: 'runtime' // Token provided at runtime, not during setup
   },
 

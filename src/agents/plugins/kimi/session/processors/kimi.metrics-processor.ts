@@ -20,6 +20,7 @@
 
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../../../core/session/BaseProcessor.js';
 import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
+import { resolveRunWindow } from '../../../../core/session/run-window.js';
 import type { MetricDelta, FileOperationType, FileOperation } from '../../../../core/metrics/types.js';
 import { logger } from '../../../../../utils/logger.js';
 import type { KimiWireEvent, KimiWireEventDisplay } from '../types.js';
@@ -109,9 +110,7 @@ export class KimiMetricsProcessor implements SessionProcessor {
         newDeltas.push(delta);
       }
 
-      for (const delta of newDeltas) {
-        await writer.appendDelta(delta);
-      }
+      await writer.appendDeltas(newDeltas, await resolveRunWindow(session.sessionId, context));
 
       // Preserve in-memory summary of the latest step for callers/tests.
       const lastStep = steps[steps.length - 1];

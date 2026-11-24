@@ -2,7 +2,7 @@
 
 This directory contains source files for the CodeMie installers:
 
-- **CodeMie Connect** — a signed `.dmg` desktop app for macOS (Apple Silicon) that sets up Node.js and the CodeMie CLI on first launch, so there is nothing to install first.
+- **CodeMie Connect** — a signed desktop app for macOS (Apple Silicon, `.dmg`) and Windows (x64, `.exe`) that sets up Node.js and the CodeMie CLI on first launch, so there is nothing to install first.
 - **Script installers** — plain shell/PowerShell bootstrap scripts that install via npm. Prefer these for CI, headless machines, or when CodeMie Connect is unavailable.
 
 ## Distribution Models
@@ -15,7 +15,8 @@ Two distribution models are supported:
    - macOS/Linux/WSL: `install/macos/install.sh`
 
 2. **CodeMie Connect** — a self-contained desktop app:
-   - macOS: `CodeMie-Connect-2.1.0-aarch64.dmg` from the [codemie-connect releases](https://github.com/codemie-ai/codemie-connect/releases)
+   - macOS: the `.dmg` from the [latest codemie-connect release](https://github.com/codemie-ai/codemie-connect/releases/latest)
+   - Windows: the `.exe` from the [latest codemie-connect release](https://github.com/codemie-ai/codemie-connect/releases/latest)
    - `install/manifest.json` tells installed apps which version is the latest and where to download it.
 
 The scripts can be run directly from GitHub raw URLs or mirrored to Artifactory later. They do not require CodeMie Connect.
@@ -89,6 +90,33 @@ Pin a version on macOS/Linux/WSL:
 curl -fsSL https://raw.githubusercontent.com/codemie-ai/codemie-code/main/install/macos/install.sh | env CODEMIE_PACKAGE_VERSION=0.8.0 bash
 ```
 
+### Windows Diagnostics (`install/windows/clidiag.ps1`)
+
+A diagnostic script that does not install or reconfigure anything. It reports:
+
+1. **System Requirements** — Windows 10 / Server 2016+, PowerShell 5.1+, Node.js `>=20` and where it was installed from (MSI, nvm-windows, Volta, fnm, Scoop, Chocolatey, winget portable, or a portable archive), npm, whether the npm prefix is writable, registry/scope/proxy settings, HTTPS reachability of the registry and GitHub (through the system or npm proxy), and whether `@codemieai/code` is visible in the registry. A **build tooling** check reports Visual Studio / Build Tools instances (via `vswhere`) with the C++ workload and Windows SDK, Python 3 for node-gyp, and `build-from-source` / `keytar_binary_host` npm settings. It then says whether keytar can still be installed if its prebuilt binary cannot be downloaded from GitHub Releases.
+2. **Current user rights** — identity, membership in Administrators (checked by SID), elevation/UAC state, integrity level, execution policy, and directory writability.
+3. **Installation state** — raw Machine/User `PATH` from the registry (missing/duplicate entries, length, session vs registry), every `codemie*` command on PATH, installed package versions (npm global and portable), CodeMie/npm config files and environment variables, the keytar native module of each installed package (whether `keytar.node` exists, whether it is prebuilt or built locally, and whether it loads in the current Node.js), node-gyp / prebuild-install errors in recent npm debug logs, `codemie --version`, and `codemie doctor`. A bounded filesystem search runs when nothing is found on PATH.
+4. **Group Policy for PATH** (opt-in via `-RunGpoCheck`, skipped by default) — applied values from `gpresult` (RSoP), the list of applied GPOs, the local Group Policy Preferences cache, and `Environment.xml` / `Registry.xml` in SYSVOL.
+
+Secrets and e-mail addresses are masked. The transcript is saved to `%TEMP%\codemie-diagnostics-<timestamp>.log`.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\clidiag.ps1
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/codemie-ai/codemie-code/main/install/windows/clidiag.ps1))) -SkipDoctor
+```
+
+| Parameter | Purpose |
+|---|---|
+| `-ReportPath <file>` | Report location; `''` disables the report file |
+| `-SkipNetworkCheck` | Skip HTTPS checks and `npm view` |
+| `-SkipDoctor` / `-DoctorTimeoutSec <n>` | Skip or time-limit `codemie doctor` (default 180 s) |
+| `-NoWriteProbe` | Do not create temporary files for writability checks |
+| `-RunGpoCheck` / `-ScanAllSysvolGpos` | Run the Group Policy checks (off by default), or additionally scan every GPO in SYSVOL, not only applied ones |
+| `-SkipDeepSearch` / `-SearchRoots` / `-MaxSearchDepth` / `-SearchTimeoutSec` | Control the fallback filesystem search |
+
+Run it elevated to include computer-scope RSoP data from `gpresult`.
+
 ## Windows Defaults
 
 Windows uses `-Mode auto` by default: npm global installation when global npm is user-writable, otherwise a portable install into the current user's local profile:
@@ -98,6 +126,8 @@ Windows uses `-Mode auto` by default: npm global installation when global npm is
 ```
 
 The installer calls `npm.cmd` directly to avoid PowerShell resolving `npm` to `npm.ps1`.
+
+The `%LOCALAPPDATA%\CodeMie\bin\<command>.cmd` shims jump to the npm-generated `.cmd` without `call`, so `%` in an argument (for example `%20` in a repository URL) reaches the CLI as typed. Shims written by an older installer used `call`, which re-expanded `%`; re-run the installer to regenerate them. PowerShell still splits an unquoted-looking argument at `&` whenever it runs any `.cmd`, so pass URLs containing `&` in a form that has none (for example `codemie analytics sync install --webhook-b64`).
 
 Known limitation: `install/windows/install.cmd` forwards arguments to PowerShell through `%*`. Use the PowerShell installer directly when passing arguments that contain spaces, such as `-InstallRoot "C:\My Folder"`.
 
@@ -116,19 +146,29 @@ npm i -g @anthropic-ai/claude-code@latest   # repeat for each package listed in 
 
 ## macOS Installation
 
-`CodeMie-Connect-2.1.0-aarch64.dmg` is CodeMie Connect, a signed and notarized macOS desktop app for **Apple Silicon (aarch64)** Macs. On first launch it downloads Node.js and the CodeMie CLI for its own use, so nothing needs to be installed first, and it keeps that CLI up to date in the background. (An Intel x86_64 build is not shipped.)
+The macOS `.dmg` is CodeMie Connect, a signed and notarized macOS desktop app for **Apple Silicon (aarch64)** Macs. On first launch it downloads Node.js and the CodeMie CLI for its own use, so nothing needs to be installed first, and it keeps that CLI up to date in the background. (An Intel x86_64 build is not shipped.)
 
 CodeMie Connect is built and released from a separate repository, [codemie-connect](https://github.com/codemie-ai/codemie-connect/releases).
 
-### Running CodeMie Connect
+### Running CodeMie Connect (macOS)
 
-Download [`CodeMie-Connect-2.1.0-aarch64.dmg`](https://github.com/codemie-ai/codemie-connect/releases/download/v2.1.0/CodeMie-Connect-2.1.0-aarch64.dmg), open it, and run the app. It runs a guided setup (sign in, pick a model, install a tool), then opens to a Home screen, a Tools screen for installing or removing coding tools, and a Health screen that runs `codemie doctor`.
+Download the `.dmg` from the [latest release](https://github.com/codemie-ai/codemie-connect/releases/latest), open it, and run the app. It runs a guided setup (sign in, pick a model, install a tool), then opens to a Home screen, a Tools screen for installing or removing coding tools, and a Health screen that runs `codemie doctor`.
 
-### Log File
+### Log File (macOS)
 
 App output is written to `~/Library/Logs/CodeMie/codemie_wizard.log`. The log persists across runs.
 
-The app checks this repo for updates: `install/manifest.json` holds the latest app version and its download link. This is independent of the `@codemieai/code` npm package version.
+## Windows Installation
+
+The Windows `.exe` is CodeMie Connect, a signed desktop app for **Windows x64** machines. On first launch it downloads Node.js and the CodeMie CLI for its own use, so nothing needs to be installed first, and it keeps that CLI up to date in the background.
+
+CodeMie Connect is built and released from a separate repository, [codemie-connect](https://github.com/codemie-ai/codemie-connect/releases).
+
+### Running CodeMie Connect (Windows)
+
+Download the `.exe` from the [latest release](https://github.com/codemie-ai/codemie-connect/releases/latest) and run it. It runs the same guided setup (sign in, pick a model, install a tool), then opens to a Home screen, a Tools screen for installing or removing coding tools, and a Health screen that runs `codemie doctor`.
+
+From 2.1.1 the app checks codemie-connect's latest release for updates. `install/manifest.json` stays here for 2.1.0, which reads it from this repo; it points to 2.1.1 and now carries both the `darwin-aarch64` and `windows-x86_64` platform entries. App versions are independent of the `@codemieai/code` npm package version.
 
 ## Release Artifacts
 

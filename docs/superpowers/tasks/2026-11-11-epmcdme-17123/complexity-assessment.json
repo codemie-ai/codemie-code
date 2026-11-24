@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "task": "Let a team lead choose webhook, git or both as delivery targets in `codemie analytics sync bootstrap` (guided and non-interactive), check each chosen target (git via a temporary-copy test push) before printing the developer install command, and record the choice in a new versioned bootstrap state with Reuse / Change targets / Start over and re-checks on reuse.",
+  "generated": "2026-11-11T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 21,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Touches about 4 components across the bootstrap subsystem and shared sync utilities: the step model and guided wizard (steps.ts, guided.ts, guided-late-steps.ts, with hard-coded 'Step N of 8' indices replaced by a target-driven sequence), the state store (BootstrapState, firstUnansweredStep, checkReuse, toInstallCommandOptions), the runner and its dependencies (run-bootstrap.ts non-interactive git path, BootstrapOptions/BootstrapDeps gaining a git runner, an identity resolver and temporary-copy cleanup), and the Commander registration. It also reuses shared utilities (config-store git validators are exported, plus GitTarget.testPush with a dir override and resolveSyncIdentity). That is the L description ('shared utilities involved'), so the shared-utilities red flag was not counted a second time. Everything stays inside one CLI subsystem, so it is not XL."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Closest patterns: testSendLoop/runWebhookMode for check-before-print, install.ts for the git test push, and validateGitRepoUrl/hasEmbeddedCredentials for the credential rule. The credential rule is covered because D10 exports install's validators unchanged, and the scripted fake-prompter plus install error-path tests cover the enumerated variant cases, so neither auto-bump applies. Base M: resume, start and reuse logic is keyed to webhook fields and numeric step indices and must be reworked to follow the recorded target choice, and the lead-side test push must leave the installed ~/.codemie/analytics-sync-repo copy alone (ensureWorkingCopy deletes and re-clones on an origin mismatch). Bumped to L by the data-migration red flag: the persisted 0o600 state moves from version 1 to a new version, version 1 files are read as a webhook-only choice, and older CLIs must reject new files. This matches the project L calibration example (profile-provider-decoupling), which bumped Technical Risk for a migration of a local config file."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Roughly 9-10 modified source files (bootstrap/steps.ts, guided.ts, guided-late-steps.ts, guided-support.ts, state-store.ts, run-bootstrap.ts, types.ts, analytics/index.ts, sync/config-store.ts, and possibly install-command.ts), about 4 modified test suites (guided 32, state-store 25 and run-bootstrap 16 tests pin the webhook-only 8-step flow, plus config-store), and 3 docs (COMMANDS.md, ANALYTICS-SYNC.md, security-practices.md). That is about 15-17 modified files plus 2-4 new ones (a git/target step module, a lead-side test-push helper and their tests) across bootstrap/, sync/, analytics/, docs/ and .ai-run/guides/. Base is XL (the modified count is at the XL/XXL edge, the new count is in the L band). The data-migration red flag bumps it to XXL."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "4 layers: UI (CLI prompts, step headings, summary, Reuse/Change targets/Start over menu, help text), Service (bootstrap orchestration and target-aware resume/reuse), DB-Persistence (the lead state file gets a versioned schema with version 1 read compatibility), and External (a git push to the team remote plus the existing Power Automate webhook test send). 3-4 layers including a persistence schema change is L. The 'changes database schema significantly' flag was not applied: this is a single local JSON slot, read-compatible, with no stored-data rewrite."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M to L: requires data migration (bootstrap state version 1 to a new version; version 1 files read as webhook-only, new files rejected by older CLIs), consistent with the project calibration example profile-provider-decoupling",
+    "File Change Estimate bumped from XL to XXL: same data-migration red flag (state-version handling plus the version 1 compatibility path and its fixtures in state-store tests)"
+  ],
+  "split_recommendation": null
+}

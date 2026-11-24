@@ -1,0 +1,811 @@
+diff --git a/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/.state.json b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/.state.json
+new file mode 100644
+index 00000000..ecaf0abf
+--- /dev/null
++++ b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/.state.json
+@@ -0,0 +1,10 @@
++{
++  "schema": 1,
++  "flow": "sdlc-light",
++  "slug": "epmcdme-15372-missing-baseurl-proxy-startup",
++  "branch": "feature/EPMCDME-15372-sdlc-light",
++  "phase": "maintenance",
++  "started_at": "2026-10-22T00:00:00Z",
++  "completed_at": "2026-10-22T19:00:00Z",
++  "last_sync_commit": "992b9d6c"
++}
+diff --git a/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/actual-complexity.json b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/actual-complexity.json
+new file mode 100644
+index 00000000..df282c79
+--- /dev/null
++++ b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/actual-complexity.json
+@@ -0,0 +1,63 @@
++{
++  "task": "Guard ensureOtlpProxy() against a whitespace-only/blank baseUrl so background hook invocations skip cold start silently instead of attempting to spawn the daemon",
++  "generated": "2026-10-22T00:00:00Z",
++  "dimensions": {
++    "component_scope": {
++      "score": 1,
++      "label": "XS",
++      "affected": "ensureOtlpProxy (connect-orchestrator.ts)",
++      "layers": "Workflow"
++    },
++    "requirements_clarity": {
++      "score": 1,
++      "label": "XS",
++      "status": "Clear",
++      "gaps": null
++    },
++    "technical_risk": {
++      "score": 2,
++      "label": "S",
++      "risk_factors": "Change sits on a background hook path invoked on every tracked project run; an incorrect guard could silently suppress legitimate cold starts",
++      "mitigation": "Additive trimmed-falsy guard clause only, matches the existing adjacent 'skip cold start silently' comment/pattern; covered by 4 new unit tests (undefined, empty string, whitespace-only, present) in connect-orchestrator.test.ts"
++    },
++    "file_change_estimate": {
++      "score": 1,
++      "label": "XS",
++      "modified_files": 2,
++      "modified_file_list": [
++        "src/cli/commands/proxy/connect-orchestrator.ts",
++        "src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts"
++      ],
++      "new_files": 0,
++      "new_file_list": [],
++      "affected_dirs": [
++        "src/cli/commands/proxy",
++        "src/cli/commands/proxy/__tests__"
++      ]
++    },
++    "dependencies": {
++      "score": 1,
++      "label": "XS",
++      "new_packages": [],
++      "version_changes": []
++    },
++    "affected_layers": {
++      "score": 1,
++      "label": "XS",
++      "layers_changed": ["Workflow"],
++      "schema_migration": false,
++      "cross_system": false
++    }
++  },
++  "total": 7,
++  "size": "XS",
++  "band_range": "6-9",
++  "files_changed": 2,
++  "routing": "writing-plans",
++  "key_reasoning": [
++    { "dimension": "technical_risk", "reason": "Highest-scoring dimension: the guard sits on a background hook path run on every tracked project, so an incorrect condition risks silently suppressing legitimate proxy starts, though the fix itself is a trivial trimmed-falsy check matching an existing adjacent pattern and comment" },
++    { "dimension": "component_scope", "reason": "Entire change is a single guard clause inside ensureOtlpProxy(); no new components, no layer boundaries crossed" }
++  ],
++  "red_flags_applied": [],
++  "split_recommendation": null
++}
+diff --git a/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/code-review-check.diff b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/code-review-check.diff
+new file mode 100644
+index 00000000..4e32c9e5
+--- /dev/null
++++ b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/code-review-check.diff
+@@ -0,0 +1,34 @@
++diff --git a/src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts b/src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts
++index 6cd6cb27..55752ef4 100644
++--- a/src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts
+++++ b/src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts
++@@ -519,6 +519,16 @@ describe('ensureOtlpProxy', () => {
++     expect(spawnDaemon).not.toHaveBeenCalled();
++   });
++ 
+++  it('returns silently and does not spawn a daemon when baseUrl is whitespace-only', async () => {
+++    const { readState, spawnDaemon } = await import('../daemon-manager.js');
+++    vi.mocked(readState).mockResolvedValue(null);
+++    await setupHappyMocks({ baseUrl: '   ' });
+++
+++    await expect(ensureOtlpProxy('claude-code-otlp')).resolves.toBeUndefined();
+++
+++    expect(spawnDaemon).not.toHaveBeenCalled();
+++  });
+++
++   it('still cold-starts normally when baseUrl is present', async () => {
++     const { readState, spawnDaemon, checkStatus } = await import('../daemon-manager.js');
++     vi.mocked(readState).mockResolvedValue(null);
++diff --git a/src/cli/commands/proxy/connect-orchestrator.ts b/src/cli/commands/proxy/connect-orchestrator.ts
++index 3c710b85..d7532b10 100644
++--- a/src/cli/commands/proxy/connect-orchestrator.ts
+++++ b/src/cli/commands/proxy/connect-orchestrator.ts
++@@ -411,7 +411,7 @@ export async function ensureOtlpProxy(agentName: string): Promise<void> {
++   // Hook invocations run as a background side effect on every tracked project;
++   // an unconfigured baseUrl must skip cold start silently (not throw, unlike
++   // connectTargets' interactive ConfigurationError) so it never fails the hook.
++-  if (!config.baseUrl) {
+++  if (!config.baseUrl?.trim()) {
++     return;
++   }
++ 
+diff --git a/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/code-review-check.json b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/code-review-check.json
+new file mode 100644
+index 00000000..543f294a
+--- /dev/null
++++ b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/code-review-check.json
+@@ -0,0 +1,23 @@
++{
++  "decision": "approve",
++  "rationale": "CR-001 resolved: the guard now trims before checking (`if (!config.baseUrl?.trim()) return;`), so a whitespace-only baseUrl is correctly treated as unconfigured. A new test case covers it and passes. Narrow blind+edge-case confirmation pass on the fix-up diff alone found no new high-risk issue.",
++  "confidence": "high",
++  "risk_flags": [],
++  "business_review": [
++    {"kind": "story-ac", "item": "Missing or empty baseUrl is detected before daemon startup", "status": "pass", "notes": "connect-orchestrator.ts: guard placed before daemonConfig/ensureDaemon"},
++    {"kind": "story-ac", "item": "No daemon process is spawned", "status": "pass", "notes": "Early return occurs before ensureDaemon()/spawnDaemon(); asserted by new tests"},
++    {"kind": "story-ac", "item": "No daemon state file is created", "status": "pass", "notes": "readState() is read-only; no write occurs before the early return on the missing-baseUrl path"},
++    {"kind": "story-ac", "item": "Hook returns code 0", "status": "pass", "notes": "ensureOtlpProxy resolves without throwing; verified via resolves.toBeUndefined() in new tests"},
++    {"kind": "story-ac", "item": "No user-facing startup failure is produced", "status": "pass", "notes": "Guard only returns; no console.error/throw/ConfigurationError introduced"},
++    {"kind": "story-ac", "item": "A profile with a valid baseUrl continues to cold-start normally", "status": "pass", "notes": "Truthy, non-whitespace baseUrl falls through unchanged; covered by the 'still cold-starts normally' test"},
++    {"kind": "spec", "item": "Fix must not touch/build on/be committed with pre-existing TEMP LOCAL-DEV OVERRIDE scratch edits", "status": "pass", "notes": "Both commits (guard + trim fix-up) stage only the baseUrl-guard hunks via git add -p; scratch overrides remain uncommitted and untouched in the working tree"}
++  ],
++  "standards_review": [
++    {"guide": ".ai-run/guides/standards/git-workflow.md", "check": "Conventional Commits format", "status": "pass", "notes": "Commit subject 'fix(proxy): treat a whitespace-only baseUrl as unconfigured' matches <type>(<scope>): <subject>"},
++    {"guide": ".ai-run/guides/development/security-patterns.md", "check": "security checklist", "status": "na", "notes": "Guide not present in repo; no concrete security issue identified"}
++  ],
++  "findings": [],
++  "finding_status": [
++    {"id": "CR-001", "status": "resolved", "notes": "Guard now trims before the falsy check; whitespace-only baseUrl correctly treated as unconfigured, confirmed by new test and the fix-up confirmation pass"}
++  ]
++}
+diff --git a/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/code-review-final.json b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/code-review-final.json
+new file mode 100644
+index 00000000..2b8a0941
+--- /dev/null
++++ b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/code-review-final.json
+@@ -0,0 +1,30 @@
++{
++  "decision": "request-changes",
++  "rationale": "All 6 acceptance criteria and the no-commingling constraint pass per the acceptance lens. Blind and edge-case lenses independently converged on one real gap: the guard `if (!config.baseUrl) return;` is a falsy check, so a whitespace-only baseUrl (e.g. ' ') is truthy and bypasses the guard, letting cold start proceed against an effectively-unconfigured target — the same failure class this fix is meant to close. One finding (CR-001) raised to patch/major. Other blind-lens notes (no debug log on silent skip; no test for ConfigLoader.load itself throwing; an unverified claim in the guard comment about per-hook invocation; unclear test-mock relevance) are pre-existing-scope or stylistic, not blocking — recorded as deferred, not emitted as findings. Standards check: commit message matches Conventional Commits format in git-workflow.md; no security-patterns.md guide present to check against; husky pre-commit (lint/typecheck/secrets) passed clean on the commit.",
++  "confidence": "high",
++  "risk_flags": [],
++  "business_review": [
++    {"kind": "story-ac", "item": "Missing or empty baseUrl is detected before daemon startup", "status": "pass", "notes": "connect-orchestrator.ts: guard placed before daemonConfig/ensureDaemon"},
++    {"kind": "story-ac", "item": "No daemon process is spawned", "status": "pass", "notes": "Early return occurs before ensureDaemon()/spawnDaemon(); asserted by new tests"},
++    {"kind": "story-ac", "item": "No daemon state file is created", "status": "pass", "notes": "readState() is read-only; no write occurs before the early return on the missing-baseUrl path"},
++    {"kind": "story-ac", "item": "Hook returns code 0", "status": "pass", "notes": "ensureOtlpProxy resolves without throwing; verified via resolves.toBeUndefined() in new tests"},
++    {"kind": "story-ac", "item": "No user-facing startup failure is produced", "status": "pass", "notes": "Guard only returns; no console.error/throw/ConfigurationError introduced"},
++    {"kind": "story-ac", "item": "A profile with a valid baseUrl continues to cold-start normally", "status": "pass", "notes": "Truthy baseUrl falls through unchanged; covered by the 'still cold-starts normally' test"},
++    {"kind": "spec", "item": "Fix must not touch/build on/be committed with pre-existing TEMP LOCAL-DEV OVERRIDE scratch edits", "status": "pass", "notes": "Reviewed diff's only connect-orchestrator.ts hunk is the guard + its own comment; scratch overrides remain as separate uncommitted hunks, confirmed excluded via git add -p at commit time"}
++  ],
++  "standards_review": [
++    {"guide": ".ai-run/guides/standards/git-workflow.md", "check": "Conventional Commits format", "status": "pass", "notes": "Commit subject 'fix(proxy): skip cold start silently when baseUrl is missing' matches <type>(<scope>): <subject>"},
++    {"guide": ".ai-run/guides/development/security-patterns.md", "check": "security checklist", "status": "na", "notes": "Guide not present in repo; no concrete security issue identified by any lens"}
++  ],
++  "findings": [
++    {
++      "id": "CR-001",
++      "severity": "major",
++      "triage": "patch",
++      "location": "src/cli/commands/proxy/connect-orchestrator.ts:418",
++      "problem": "The baseUrl guard uses a plain falsy check (`if (!config.baseUrl) return;`), so a whitespace-only string (e.g. `' '`) is truthy and bypasses the guard.",
++      "impact": "A profile with a whitespace-only baseUrl still proceeds to daemon cold-start with an effectively-unconfigured target, reintroducing the same failure class (unnecessary spawn attempt / bad target URL) this fix is meant to close.",
++      "recommendation": "Trim before checking: `if (!config.baseUrl?.trim()) return;` (independently identified by both the blind and edge-case review lenses)."
++    }
++  ]
++}
+diff --git a/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/code-review.diff b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/code-review.diff
+new file mode 100644
+index 00000000..42a38971
+--- /dev/null
++++ b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/code-review.diff
+@@ -0,0 +1,88 @@
++diff --git a/src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts b/src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts
++index f506c860..6cd6cb27 100644
++--- a/src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts
+++++ b/src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts
++@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
++ import {
++   daemonMatchesRequest,
++   deriveDaemonIdentity,
+++  ensureOtlpProxy,
++   type ConnectTargets,
++   type RequestedDaemonConfig,
++ } from '../connect-orchestrator.js';
++@@ -26,6 +27,10 @@ vi.mock('../daemon-manager.js', () => ({
++   spawnDaemon: vi.fn(),
++   stopDaemon: vi.fn(),
++ }));
+++vi.mock('@/utils/processes.js', () => ({
+++  isProcessAlive: vi.fn().mockReturnValue(false),
+++  spawnDetached: vi.fn(),
+++}));
++ vi.mock('../health-check.js', () => ({
++   checkProxyHealth: vi.fn(),
++ }));
++@@ -489,6 +494,46 @@ describe('deriveDaemonIdentity — codex-desktop', () => {
++   });
++ });
++ 
+++describe('ensureOtlpProxy', () => {
+++  beforeEach(() => {
+++    vi.clearAllMocks();
+++  });
+++
+++  it('returns silently and does not spawn a daemon when baseUrl is undefined', async () => {
+++    const { readState, spawnDaemon } = await import('../daemon-manager.js');
+++    vi.mocked(readState).mockResolvedValue(null);
+++    await setupHappyMocks({ baseUrl: undefined });
+++
+++    await expect(ensureOtlpProxy('claude-code-otlp')).resolves.toBeUndefined();
+++
+++    expect(spawnDaemon).not.toHaveBeenCalled();
+++  });
+++
+++  it('returns silently and does not spawn a daemon when baseUrl is an empty string', async () => {
+++    const { readState, spawnDaemon } = await import('../daemon-manager.js');
+++    vi.mocked(readState).mockResolvedValue(null);
+++    await setupHappyMocks({ baseUrl: '' });
+++
+++    await expect(ensureOtlpProxy('claude-code-otlp')).resolves.toBeUndefined();
+++
+++    expect(spawnDaemon).not.toHaveBeenCalled();
+++  });
+++
+++  it('still cold-starts normally when baseUrl is present', async () => {
+++    const { readState, spawnDaemon, checkStatus } = await import('../daemon-manager.js');
+++    vi.mocked(readState).mockResolvedValue(null);
+++    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+++    vi.mocked(spawnDaemon).mockResolvedValue(
+++      daemonState({ telemetryMode: 'claude-code-otlp' }) as Awaited<ReturnType<typeof spawnDaemon>>
+++    );
+++    await setupHappyMocks();
+++
+++    await ensureOtlpProxy('claude-code-otlp');
+++
+++    expect(spawnDaemon).toHaveBeenCalledTimes(1);
+++  });
+++});
+++
++ describe('runCodexDesktop', () => {
++   // resetModules BEFORE each case: connect-orchestrator.js is cached by earlier
++   // describes, and vi.doMock only affects modules imported after the registry is
++diff --git a/src/cli/commands/proxy/connect-orchestrator.ts b/src/cli/commands/proxy/connect-orchestrator.ts
++index a961bf2b..3c710b85 100644
++--- a/src/cli/commands/proxy/connect-orchestrator.ts
+++++ b/src/cli/commands/proxy/connect-orchestrator.ts
++@@ -408,6 +408,13 @@ export async function ensureOtlpProxy(agentName: string): Promise<void> {
++     activeProfileName ? { name: activeProfileName } : undefined
++   );
++ 
+++  // Hook invocations run as a background side effect on every tracked project;
+++  // an unconfigured baseUrl must skip cold start silently (not throw, unlike
+++  // connectTargets' interactive ConfigurationError) so it never fails the hook.
+++  if (!config.baseUrl) {
+++    return;
+++  }
+++
++   const daemonConfig = {
++     clientType: agentName,
++     port: DEFAULT_DAEMON_PORT,
+diff --git a/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/decisions.jsonl b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/decisions.jsonl
+new file mode 100644
+index 00000000..08470d24
+--- /dev/null
++++ b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/decisions.jsonl
+@@ -0,0 +1,2 @@
++{"ts":"2026-10-22T18:21:43Z","gate_id":"code-review.final","mode":"hitl","verdict":{"decision":"request-changes","rationale":"(user accepted orchestrator verdict CR-001)","confidence":"high","source":"hitl"},"escalated":false,"prior_context":{"prior_orchestrator_verdict":"docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/code-review-final.json","artifact_refs":["docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/plan.md","docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/code-review.diff"]}}
++{"ts":"2026-10-22T18:34:14Z","gate_id":"code-review.check","mode":"hitl","verdict":{"decision":"approve","rationale":"(user accepted check-round verdict: CR-001 resolved)","confidence":"high","source":"hitl"},"escalated":false,"prior_context":{"prior_orchestrator_verdict":"docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/code-review-check.json"}}
+diff --git a/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/events.jsonl b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/events.jsonl
+new file mode 100644
+index 00000000..f92b115c
+--- /dev/null
++++ b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/events.jsonl
+@@ -0,0 +1,4 @@
++{"event":"lifecycle_emission","intent":"artifact_published","artifact_kind":"plan","status":"succeeded"}
++{"schema":1,"ts":"2026-10-22T18:21:43Z","event":"decision.recorded","actor":"decision-router","summary":"Decision recorded for code-review.final: request-changes","data":{"gate_id":"code-review.final","mode":"hitl","decision":"request-changes","source":"hitl","escalated":false}}
++{"schema":1,"ts":"2026-10-22T18:34:14Z","event":"decision.recorded","actor":"decision-router","summary":"Decision recorded for code-review.check: approve","data":{"gate_id":"code-review.check","mode":"hitl","decision":"approve","source":"hitl","escalated":false}}
++{"event":"lifecycle_emission","intent":"record_complexity_score","assessment_mode":"actual","status":"succeeded"}
+diff --git a/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/gate-plan.json b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/gate-plan.json
+new file mode 100644
+index 00000000..01f1cc96
+--- /dev/null
++++ b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/gate-plan.json
+@@ -0,0 +1,16 @@
++{
++  "schema": 1,
++  "runner": "npm",
++  "source": "guide-first: .ai-run/guides/quality-gates.md",
++  "gates": [
++    {"id": "license-check", "command": "npm run license-check", "available": true},
++    {"id": "lint", "command": "npm run lint", "available": true},
++    {"id": "typecheck", "command": "npm run typecheck", "available": true},
++    {"id": "build", "command": "npm run build", "available": true},
++    {"id": "unit", "command": "npx vitest run --project unit", "available": true},
++    {"id": "integration", "command": "npx vitest run --project cli", "available": true},
++    {"id": "ui", "command": "n/a", "available": false}
++  ],
++  "ui_globs": ["\\.(tsx|jsx|css|html|vue|svelte)$", "src/(ui|frontend|components)/"],
++  "detected_at": "2026-10-22T00:00:00Z"
++}
+diff --git a/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/plan.md b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/plan.md
+new file mode 100644
+index 00000000..ce2120a2
+--- /dev/null
++++ b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/plan.md
+@@ -0,0 +1,130 @@
++# EPMCDME-15372: Skip cold-start when baseUrl is missing — Implementation Plan
++
++> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task (sdlc-light runs this inline, not via subagent).
++
++**Goal:** `ensureOtlpProxy()` must detect a missing/empty `config.baseUrl` and return silently, before any daemon startup is attempted, so the `claude-code-otlp` hook never fails just because a profile has no `baseUrl` configured.
++
++**Architecture:** Single-function fix in the proxy orchestration layer. Insert a guard clause in `ensureOtlpProxy()` (`src/cli/commands/proxy/connect-orchestrator.ts`) immediately after the active profile `config` is loaded and before `daemonConfig`/`ensureDaemon` are reached. The guard returns (does not throw), matching the "background side effect inside every hook invocation" nature of this call path — unlike the sibling `connectTargets()`, which throws `ConfigurationError` because it is an interactive CLI command.
++
++**Tech Stack:** TypeScript, Vitest `^4.1.5`, existing `ConfigLoader`/`daemon-manager.js` mocking conventions in `src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts`.
++
++**Spec:** `docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/technical-analysis.md` (no separate spec.md — sdlc-light skips spec-writing).
++
++## Global Constraints
++
++- The guard must `return` silently — it must NOT throw `ConfigurationError` (that convention is for interactive commands only; AC4/AC5 require hook exit code 0 and no user-facing failure).
++- Guard condition is `!config.baseUrl` (falsy: `undefined` or `''`), placed after `ConfigLoader.load(...)` (current line ~413) and before `daemonConfig` is built (current line ~415).
++- Do NOT touch, build on top of, or commit the pre-existing uncommitted "TEMP LOCAL-DEV OVERRIDE — do not commit" scratch edits already in the working tree in `connect-orchestrator.ts` (hardcoded `targetUrl: 'http://localhost:8080'` at two call sites), `sso.proxy.ts`, or `spool-config.ts`. These are unrelated local-dev changes and must not appear in this fix's diff/commit.
++- A one-line comment at the guard explaining the intentional silent-return (vs. the throwing sibling pattern) is required, so a future reviewer doesn't "correct" it back to a throw.
++- EPMCDME-15369 (hook exit-code propagation on other `ensureOtlpProxy` failure modes) is explicitly out of scope.
++
++## Review Focus
++
++- Empty string `baseUrl: ''` must be treated the same as `undefined` (falsy check, not `=== undefined`).
++- A valid `baseUrl` must still cold-start normally — the guard must not short-circuit the happy path (AC6).
++- No daemon state file (`~/.codemie/proxy-daemon.json`) must be written when the guard returns early (AC3) — not just "no process spawned," but no `writeState` either.
++- The guard must sit strictly before `ensureDaemon`/`spawnDaemon` is reached, not just before the daemon starts logging — a `vi.fn()`-mocked `spawnDaemon`/`ensureDaemon` must assert zero calls, not merely "not awaited."
++- The function must resolve without throwing in the missing-`baseUrl` case — a caller (`OtlpAgentAdapter.processOtlpEvent`) with no try/catch around `ensureOtlpProxy` must not see a rejected promise.
++
++---
++
++### Task 1: Add baseUrl guard to `ensureOtlpProxy` with test coverage
++
++**Files:**
++- Modify: `src/cli/commands/proxy/connect-orchestrator.ts:410-414` (inside `ensureOtlpProxy`, after the `ConfigLoader.load(...)` call, before `daemonConfig` is built)
++- Test: `src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts` (add new test cases importing the real `ensureOtlpProxy`, not mocked)
++
++**Interfaces:**
++- Consumes: existing `ensureOtlpProxy(agentName: string): Promise<void>` signature (unchanged) — `ConfigLoader.load`, `ConfigLoader.getActiveProfileName`, `readState`, `isProcessAlive`, `ensureDaemon` as already imported in the file.
++- Produces: no new exports; behavior change only. `ensureOtlpProxy` resolves without throwing and without calling `ensureDaemon`/`spawnDaemon` when `config.baseUrl` is falsy.
++
++**Test-first: yes — failing test asserting `ensureOtlpProxy` returns early (no daemon spawn, no state write, no throw) when `baseUrl` is missing/empty.**
++
++- [ ] **Step 1: Write the failing tests**
++
++In `src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts`, add a `describe('ensureOtlpProxy')` block that imports the real (unmocked) `ensureOtlpProxy` from `connect-orchestrator.js`, mocks `ConfigLoader.load`/`getActiveProfileName` via the existing `setupHappyMocks`-style fixture, and mocks `daemon-manager.js` (`readState`, `isProcessAlive`, `spawnDaemon`, `writeState` if exported) the same way the existing suite already mocks them:
++
++```ts
++describe('ensureOtlpProxy', () => {
++  it('returns silently and does not spawn a daemon when baseUrl is undefined', async () => {
++    mockReadState.mockResolvedValue(null);
++    mockConfigLoaderLoad.mockResolvedValue({ ...baseConfigFixture, baseUrl: undefined });
++
++    await expect(ensureOtlpProxy('claude-code-otlp')).resolves.toBeUndefined();
++
++    expect(mockSpawnDaemon).not.toHaveBeenCalled();
++  });
++
++  it('returns silently and does not spawn a daemon when baseUrl is an empty string', async () => {
++    mockReadState.mockResolvedValue(null);
++    mockConfigLoaderLoad.mockResolvedValue({ ...baseConfigFixture, baseUrl: '' });
++
++    await expect(ensureOtlpProxy('claude-code-otlp')).resolves.toBeUndefined();
++
++    expect(mockSpawnDaemon).not.toHaveBeenCalled();
++  });
++
++  it('still cold-starts normally when baseUrl is present', async () => {
++    mockReadState.mockResolvedValue(null);
++    mockConfigLoaderLoad.mockResolvedValue({ ...baseConfigFixture, baseUrl: 'https://example.codemie.ai' });
++
++    await ensureOtlpProxy('claude-code-otlp');
++
++    expect(mockSpawnDaemon).toHaveBeenCalledTimes(1);
++  });
++});
++```
++
++Adapt mock variable names (`mockReadState`, `mockConfigLoaderLoad`, `mockSpawnDaemon`, `baseConfigFixture`) to whatever the existing file's established mocking convention actually names them — reuse the suite's current `setupHappyMocks`/`vi.mock` pattern rather than introducing a new one.
++
++- [ ] **Step 2: Run tests to verify the first two fail**
++
++Run: `npx vitest run src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts -t ensureOtlpProxy`
++Expected: the `undefined` and `''` baseUrl cases FAIL (current code calls `spawnDaemon` regardless of `baseUrl`); the "baseUrl present" case passes already (no behavior change needed there).
++
++- [ ] **Step 3: Implement the guard in `ensureOtlpProxy`**
++
++In `src/cli/commands/proxy/connect-orchestrator.ts`, immediately after the `const config = await ConfigLoader.load(...)` call and before `const daemonConfig = {...}` is built, add:
++
++```ts
++// Hook invocations run as a background side effect on every tracked project;
++// an unconfigured baseUrl must skip cold start silently (not throw, unlike
++// connectTargets' interactive ConfigurationError) so it never fails the hook.
++if (!config.baseUrl) {
++  return;
++}
++```
++
++Do not modify the pre-existing `targetUrl: 'http://localhost:8080'` scratch line below it — leave that local-dev override exactly as found; it is out of scope and must not be part of this task's diff when committing.
++
++- [ ] **Step 4: Run tests to verify they pass**
++
++Run: `npx vitest run src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts -t ensureOtlpProxy`
++Expected: all three cases PASS.
++
++- [ ] **Step 5: Run the full existing suite for this file to check no regression**
++
++Run: `npx vitest run src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts`
++Expected: all tests PASS (including pre-existing `connectTargets`/`deriveDaemonIdentity`/`daemonMatchesRequest` cases, unaffected by this change).
++
++- [ ] **Step 6: Commit (fix only — exclude unrelated local-dev scratch edits)**
++
++The working tree has pre-existing unrelated changes in `connect-orchestrator.ts` (the `targetUrl: 'http://localhost:8080'` scratch overrides), `sso.proxy.ts`, and `spool-config.ts`. Stage only the guard clause and the new/modified test block using a partial/patch add (e.g. `git add -p src/cli/commands/proxy/connect-orchestrator.ts` and select only the guard hunk, plus `git add src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts` in full) so the scratch edits remain unstaged and uncommitted:
++
++```bash
++git add -p src/cli/commands/proxy/connect-orchestrator.ts
++git add src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts
++git commit -m "fix(proxy): skip cold start silently when baseUrl is missing (EPMCDME-15372)"
++```
++
++Verify with `git status` / `git diff --cached` afterward that no `TEMP LOCAL-DEV OVERRIDE` lines are included in the commit.
++
++---
++
++## Self-Review
++
++1. **Spec coverage**: AC1 (detect missing/empty baseUrl before daemon startup) → Task 1 guard. AC2/AC3 (no process spawned, no state file) → Task 1 test assertions on `spawnDaemon`. AC4/AC5 (exit code 0, no user-facing failure) → guard resolves without throwing, so the uncaught-promise path in `OtlpAgentAdapter`/`hook.ts` never triggers. AC6 (valid baseUrl still cold-starts) → Task 1's third test case. All six covered by one task.
++2. **Step scan**: each step is a single concrete action (write tests, run, implement, run, run full suite, commit) with no open decisions left beyond adapting existing mock variable names to the file's real conventions.
++3. **Type consistency**: no new types/signatures introduced; `ensureOtlpProxy(agentName: string): Promise<void>` unchanged.
++4. **Review Focus**: all five items each map to one of the three new test cases in Task 1 (empty-string vs undefined, happy-path regression, no-state-write vs no-process-spawn distinction, pre-`ensureDaemon` placement, non-throwing resolution).
++5. **Proportion**: single task, one small code change, test-first — plan length matches the small fix surface identified in research.
+diff --git a/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/qa-report.md b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/qa-report.md
+new file mode 100644
+index 00000000..b3447c56
+--- /dev/null
++++ b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/qa-report.md
+@@ -0,0 +1,35 @@
++# QA Gate Report — EPMCDME-15372
++
++**Branch**: feature/EPMCDME-15372-sdlc-light
++**Runner**: npm (guide-first: `.ai-run/guides/quality-gates.md`)
++**Started**: 2026-10-22
++**Status**: PASSED (with pre-existing, unrelated baseline failures documented below)
++
++## Gates
++
++| Gate | Status | Command | Notes |
++|---|---|---|---|
++| License headers | PASS | `npm run license-check` | No missing/stale Apache-2.0 headers |
++| Lint | PASS | `npm run lint` | Zero errors, zero warnings |
++| Typecheck | PASS | `npm run typecheck` | No diagnostics |
++| Build | PASS | `npm run build` | `dist/` rebuilt, `copy-plugin` succeeded |
++| Unit tests | PASS (scoped) | `npx vitest run --project unit` | 356 files / 5493 tests pass. 6 files / 14 tests fail — verified pre-existing at merge-base `ce7e8c6d` (identical failure count/content with this branch's commits and local scratch changes both removed); unrelated to `connect-orchestrator.ts`/`ensureOtlpProxy` (failures are in `sso.auth-gate.test.ts` and 5 other SSO/session files, driven by an SSO URL/env mismatch not touched by this diff) |
++| Integration tests | PASS (scoped) | `npx vitest run --project cli` | 27 files / 238 tests pass. 10 files / 47 tests fail — verified pre-existing at merge-base `ce7e8c6d` (identical: 10 failed files, 47 failed tests). None of the failing files (`doctor`, `skills`, `version`, `list`, `workflow`, `sso-claude-plugin`, `analytics-auth-gate`) touch the proxy/connect-orchestrator surface this task changed |
++| Secrets scan | PASS | `npm run validate:secrets` (via pre-commit hook on both commits) | No leaks found |
++| Commit format | PASS | both commits inspected manually | `fix(proxy): ...` matches Conventional Commits |
++
++## Scope-specific verification
++
++`npx vitest run --project unit src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts` — **36/36 pass**, including the 4 new `ensureOtlpProxy` cases (undefined/empty/whitespace-only baseUrl skip cold start; valid baseUrl still cold-starts).
++
++## Pre-existing baseline verification method
++
++Stashed all uncommitted local-dev scratch changes (`-u`), checked out the merge-base commit `ce7e8c6dc750b1da951e16af0b9a70f57a32b3f8` directly (no fix commits, no scratch edits), ran both `--project unit` and `--project cli` suites, and confirmed identical failure counts and content to the branch's current state. Returned to the feature branch and restored the stash afterward — no commits or branch state were altered.
++
++## Failure detail
++
++Pre-existing, out of scope — not reproduced here; see verification method above. No new failures introduced by this task's 2 commits.
++
++## Drift signal
++
++no
+diff --git a/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/technical-analysis.md b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/technical-analysis.md
+new file mode 100644
+index 00000000..a58a7045
+--- /dev/null
++++ b/docs/superpowers/tasks/2026-10-22-epmcdme-15372-missing-baseurl-proxy-startup/technical-analysis.md
+@@ -0,0 +1,206 @@
++# Technical Research
++
++**Task**: otlp proxy auto-start ensureOtlpProxy ensureDaemon claude-code-otlp hook baseUrl
++**Generated**: 2026-10-22
++**Research path**: filesystem (codegraph MCP tool not available in this environment)
++
++---
++
++## 1. Original Context
++
++[CLI Analytics][auto-start] Missing baseUrl triggers proxy startup instead of silently skipping cold start.
++
++Problem: When no daemon state exists and the active profile has no usable baseUrl, the auto-start logic should skip cold start and return silently. Instead, the hook attempts to start the proxy daemon. The startup then fails, and the hook exits with code 1.
++
++Root cause (per Jira ticket EPMCDME-15372): ensureOtlpProxy() loads the active profile and builds the daemon config with targetUrl: config.baseUrl, then proceeds to ensureDaemon(). The guard 'if (!config.baseUrl) return;' that existed previously is missing, so an empty or missing baseUrl reaches the daemon startup path.
++
++Acceptance Criteria:
++1. Missing or empty baseUrl is detected before daemon startup.
++2. No daemon process is spawned.
++3. No daemon state file is created.
++4. Hook returns code 0.
++5. No user-facing startup failure is produced.
++6. A profile with a valid baseUrl continues to cold-start normally.
++
++Linked ticket EPMCDME-15369 covers the related issue that proxy startup failure propagates to the claude-code-otlp hook and returns non-zero exit code — out of scope for this task, but relevant context for how the hook currently handles ensureOtlpProxy() failures.
++
++---
++
++## 2. Codebase Findings
++
++### Existing Implementations
++
++- `src/cli/commands/proxy/connect-orchestrator.ts:399-433` — `ensureOtlpProxy(agentName)`. Reads existing daemon state via `readState()`, and if no live daemon is found, calls `ConfigLoader.load(...)` to resolve the active profile `config`, builds a `daemonConfig` object (including `targetUrl: config.baseUrl` at HEAD), then unconditionally calls `ensureDaemon(daemonConfig, daemonIdentity, config)`. **No `if (!config.baseUrl)` guard exists anywhere in this function.** This is the exact bug described in the ticket.
++- `src/cli/commands/proxy/connect-orchestrator.ts:336-397` — `ensureDaemon(requested, identity, config, force?, verbose?)`. Calls `checkStatus()`; when `!running || !state`, logs `Starting proxy...` and calls `spawnDaemon({...})`, which spawns the actual daemon process and writes the daemon state file. This is the path that must never be reached when `baseUrl` is missing.
++- `src/cli/commands/proxy/connect-orchestrator.ts:686-775` — `connectTargets(opts)`, the manual `codemie proxy connect` CLI command (sibling flow). At line 726 it already has the correct, analogous guard:
++  ```ts
++  if (!config.baseUrl) {
++    throw new ConfigurationError('No API URL configured. Run: codemie setup');
++  }
++  ```
++  placed before `ensureDaemon` is called (line 763). This is the pattern that is missing from `ensureOtlpProxy`, though the manual flow intentionally throws (interactive command) whereas the hook flow must return silently (non-interactive, background side effect).
++- `src/utils/config.ts:1123` — a second, independent `if (!config.baseUrl)` guard elsewhere in the codebase, confirming "load config → validate required field → proceed" is an established convention in this area of the code.
++- `src/agents/core/OtlpAgentAdapter.ts:78-120` — `processOtlpEvent(rawHookInput, deps)`. Gated by an `isTracked` allowlist check (lines 98-101), then calls `await ensureOtlpProxy(this.name)` at line 103. No try/catch around this call — any thrown error propagates upward uncaught.
++- `src/agents/core/types.ts:735` — `OtlpAdapterDeps.ensureOtlpProxy: (agentName: string) => Promise<void>` — type signature for the injected dependency.
++- `src/cli/commands/hook.ts:8` — imports `{ ensureOtlpProxy }` from `./proxy/connect-orchestrator.js`.
++- `src/cli/commands/hook.ts:1539-1544` — `hook` command's `action()` resolves `analyticsAgent = AgentRegistry.getAnalyticsAgent(opts.agent!)` and calls `analyticsAgent.processOtlpEvent(input, { ensureOtlpProxy, forwardOtlpEventsToSpool })`. This sits inside a `try` block starting ~line 1521, whose `catch` is at line 1597 — an uncaught throw from `ensureOtlpProxy` lands there and (per out-of-scope ticket EPMCDME-15369) currently produces a non-zero exit code.
++- `src/cli/commands/proxy/daemon-manager.ts` — `readState`, `checkStatus`, `spawnDaemon`, `stopDaemon`, `isProcessAlive`, `DaemonState` type. `readState()` + `isProcessAlive(state.pid)` is the existing early-exit mechanism `ensureOtlpProxy` already uses before reaching the (currently unguarded) config/daemon-start path.
++
++### Root Cause Confirmation
++
++Exact current code building the daemon config (`connect-orchestrator.ts`, HEAD/committed version, lines ~415-425):
++
++```ts
++const daemonConfig = {
++  clientType: agentName,
++  port: DEFAULT_DAEMON_PORT,
++  profile: config.name ?? 'default',
++  project: config.codeMieProject,
++  provider: config.provider ?? 'ai-run-sso',
++  syncApiUrl: config.ssoConfig?.apiUrl,
++  syncCodeMieUrl: config.codeMieUrl,
++  targetUrl: config.baseUrl,
++  model: normalizeDaemonModel(config.model)
++}
++```
++
++followed unconditionally by `await ensureDaemon(daemonConfig, daemonIdentity, config);` at line 432. There is no guard between config load (line 410) and this call. This matches the Jira root-cause description exactly.
++
++**Important caveat**: the current working tree (uncommitted, per `git status`) has a `// TEMP LOCAL-DEV OVERRIDE — do not commit` comment hardcoding `targetUrl` to `'http://localhost:8080'` in both `ensureDaemon`'s `spawnDaemon()` call and `ensureOtlpProxy`'s `daemonConfig`. This is unrelated local dev scaffolding and must not be confused with the real bug or carried into the fix. The condition to guard on is `config.baseUrl`, not the literal `targetUrl` field — in HEAD, `targetUrl` is directly `config.baseUrl`. Two other files flagged as modified in git status (`src/providers/plugins/sso/proxy/sso.proxy.ts`, `src/providers/plugins/sso/proxy/plugins/otlp-spool/spool-config.ts`) also carry similar "do not commit" local-dev overrides (a hardcoded sync URL and a shortened spool-send interval, respectively) that are pre-existing, unrelated to this task, and should be left untouched by this fix.
++
++### Architecture and Layers Affected
++
++- **CLI hook entrypoint layer** — `src/cli/commands/hook.ts` (`hook` command action, dispatches to agent adapters)
++- **Agent adapter layer** — `src/agents/core/OtlpAgentAdapter.ts` (`processOtlpEvent`: allowlist gate → `ensureOtlpProxy` → `evaluate` → spool forward)
++- **Proxy orchestration layer** — `src/cli/commands/proxy/connect-orchestrator.ts` (`ensureOtlpProxy`, `ensureDaemon`, `connectTargets` — this is where the fix belongs)
++- **Daemon lifecycle layer** — `src/cli/commands/proxy/daemon-manager.ts` (`readState`, `spawnDaemon`, `stopDaemon`, `checkStatus`, `DaemonState`)
++- **Config/profile layer** — `src/utils/config.ts` (`ConfigLoader.load`, `ConfigLoader.getActiveProfileName`, profile/baseUrl resolution, env override handling)
++- **Provider/SSO proxy runtime layer** — `src/providers/plugins/sso/proxy/sso.proxy.ts`, `.../otlp-spool/spool-config.ts` — the actual spawned proxy process; not touched by this fix, but currently carries unrelated local-dev-only diffs that should not be conflated with this change.
++
++Only one layer requires a code change: **Proxy orchestration layer**, specifically `ensureOtlpProxy` in `connect-orchestrator.ts`. This is a small, single-function, single-file fix.
++
++### Integration Points
++
++**Call chain** (hook → `ensureOtlpProxy` → `ensureDaemon`):
++1. `src/cli/commands/hook.ts:1501` — `hook` command `.action(async (opts) => {...})` entrypoint.
++2. `src/cli/commands/hook.ts:1539-1541` — resolves `analyticsAgent` and calls `analyticsAgent.processOtlpEvent(input, { ensureOtlpProxy, forwardOtlpEventsToSpool })`.
++3. `src/agents/core/OtlpAgentAdapter.ts:82-103` — `processOtlpEvent` parses input, checks `isTracked`, then at line 103 calls `await ensureOtlpProxy(this.name)`.
++4. `src/cli/commands/proxy/connect-orchestrator.ts:399-432` — `ensureOtlpProxy`: `readState()` → (if no live daemon) `ConfigLoader.load(...)` → builds `daemonConfig` with `targetUrl: config.baseUrl` → **[missing guard point]** → `await ensureDaemon(daemonConfig, daemonIdentity, config)`.
++5. `src/cli/commands/proxy/connect-orchestrator.ts:336-394` — `ensureDaemon`: `checkStatus()` → since no state exists, `!running || !state` is true → logs `Starting proxy...` → `spawnDaemon({...})` — the unwanted daemon-startup path when `baseUrl` is missing.
++6. Back in `src/cli/commands/hook.ts:1597` — if `spawnDaemon`/startup throws, it's caught by the outer `catch`, logs, and (per out-of-scope ticket EPMCDME-15369) leads to non-zero exit — the user-visible symptom in the bug report.
++
++**Config resolution**: `ConfigLoader.getActiveProfileName(cwd)` (`src/utils/config.ts:891`) reads local `.codemie/codemie-cli.config.json` if present, else falls back to the global `~/.codemie/codemie-cli.config.json`, returning `config.activeProfile`. `ConfigLoader.load(cwd, { name: activeProfileName })` then merges profile fields (incl. `baseUrl`) with workspace config and env overrides (`CODEMIE_BASE_URL`, `CODEMIE_SYNC_API_URL`, `CODEMIE_TARGET_API_URL`) into the returned `config` object.
++
++**Type**: `ProviderProfile.baseUrl?: string` (`src/env/types.ts:54`) — optional, no required/validation decorator; same optional shape in `LegacyConfig.baseUrl` (`src/env/types.ts:151`). Nothing upstream guarantees `baseUrl` is populated — this is exactly why a guard is needed at the point of use.
++
++**Daemon state file**: `~/.codemie/proxy-daemon.json` (`DEFAULT_STATE_FILE`, `daemon-manager.ts:33`, via `getCodemieHome()`), written atomically (`.tmp` + rename). Must not be created when `baseUrl` is missing (AC3).
++
++### Patterns and Conventions
++
++- **"Load config → validate required field → proceed" pattern**: validation done inline immediately after `ConfigLoader.load(...)`, matching `connectTargets` (line 726) and the independent occurrence at `src/utils/config.ts:1123`.
++- **Fail-loud vs fail-silent convention** (documented in `.ai-run/guides/integration/external-integrations.md`, "Configuration Validation" table): missing required config → throw `ConfigurationError`; connectivity/runtime failure once config is present → `logger.warn` only, don't block. The manual `connectTargets` path follows "throw" (interactive CLI command). The hook-driven `ensureOtlpProxy` path must follow "return silently" per this task's acceptance criteria, since it runs as a side effect inside every tracked-project hook invocation, not as a user-facing command — throwing would break every hook call for a user with no profile configured.
++- **Early-exit style already present**: `ensureOtlpProxy` already short-circuits via `readState()` + `isProcessAlive(state.pid)` before doing any work. The missing `baseUrl` guard should be added in that same early-return style, placed right after `config` is loaded and before `daemonConfig`/`ensureDaemon` are reached — i.e. `if (!config.baseUrl) return;` immediately after the `ConfigLoader.load(...)` call (~line 413-414).
++- `ConfigurationError` is the canonical error class for "required configuration missing" in this codebase (both guides and the sibling manual-connect code path use it) — but per the acceptance criteria and the fail-silent/fail-loud distinction above, this particular guard should **return**, not throw.
++- Local-dev-only scratch edits in this codebase are marked with `// TEMP LOCAL-DEV OVERRIDE — do not commit` comments — these are pre-existing uncommitted changes unrelated to this bug and must not be touched or conflated with the fix.
++
++---
++
++## 3. Documentation Findings
++
++### Guides and Architecture Docs
++
++- `.ai-run/guides/architecture/architecture.md` — plugin-based 5-layer architecture (CLI → Registry → Plugin → Core → Utils); notes `OtlpAgentAdapter` as a non-chat plugin type, pointing to `docs/ARCHITECTURE-OTLP-PLUGIN.md`.
++- `.ai-run/guides/integration/external-integrations.md` — documents OTLP hook ingestion (`codemie hook --agent <adapter-name>`) and contains the Configuration Validation convention table referenced above (missing required config → throw; connectivity failure → warn-and-continue).
++- `.ai-run/guides/development/development-practices.md` — establishes `ConfigurationError` as the canonical class for missing-required-config situations; no proxy/OTLP-specific content.
++- `docs/ARCHITECTURE-OTLP-PLUGIN.md` — full `OtlpAgentAdapter` dispatch pattern (`parseHookInput` → `isTracked` → `ensureOtlpProxy` → `evaluate` → forward/block). §3.5 states proxy readiness is explicitly "the adapter's own responsibility" — i.e. the base class intentionally defers baseUrl/readiness validation to `ensureOtlpProxy()`'s own implementation, which is exactly the gap being fixed here.
++- `docs/ARCHITECTURE-PROXY.md` — §9.1/§3.1 describe `targetApiUrl`/`targetUrl` as a required `ProxyConfig` parameter with no documented fallback, consistent with the assumption that the caller (not the daemon) validates the target URL before starting.
++
++### Architectural Decisions
++
++No formal ADR/DECISION-tagged entries exist for this specific bug. The closest recorded precedent is the already-correct guard in `connectTargets` (connect-orchestrator.ts:726-728) using `ConfigurationError`. There is a legitimate tension worth flagging for the implementer: the documented "missing config → throw" convention is designed for interactive commands, but `ensureOtlpProxy` runs inside every hook invocation as a background side effect — throwing would regress every hook call for unconfigured profiles, which is exactly the opposite of what this task's acceptance criteria require (silent skip, exit code 0). The task's own framing ("silently skipping cold start") confirms the intended behavior is a silent `return`, not a throw.
++
++EPMCDME-15369 (explicitly out of scope) separately tracks how `ensureOtlpProxy()` failures should affect the hook's own exit code — not to be addressed here.
++
++### Derived Conventions
++
++- Guard-before-use for required config fields, placed immediately after config load.
++- Silent return for non-interactive/background paths vs. throw-with-user-message for interactive CLI commands.
++- Local-dev scratch changes are explicitly comment-marked and must be left alone.
++
++No `.ai-run/guides/` content specifically covers this exact function; conventions above are derived from the sibling `connectTargets` guard and the external-integrations.md validation table.
++
++---
++
++## 4. Testing Landscape
++
++### Existing Coverage
++
++- `src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts` — tests `deriveDaemonIdentity`, `daemonMatchesRequest`, and `connectTargets` (including its baseUrl-missing-throw path indirectly via fixtures). **Does not import or exercise `ensureOtlpProxy` at all.**
++- `src/cli/commands/proxy/__tests__/daemon-manager.test.ts` — `readState`/`writeState` round-trip against a temp state file, with `spawnDetached` stubbed.
++- `src/cli/commands/proxy/__tests__/daemon-status-contract.test.ts` — state file round-trip, `checkStatus`, `isProcessAlive`, `daemonMatchesRequest` matrix. No daemon-spawn-with-missing-baseUrl case.
++- `src/cli/commands/__tests__/hook.analytics-wiring.test.ts` — mocks `ensureOtlpProxy` wholesale via `vi.mock('../proxy/connect-orchestrator.js', () => ({ ensureOtlpProxy: vi.fn() }))`; the real implementation is never executed here.
++- `src/agents/core/__tests__/OtlpAgentAdapter.test.ts` — passes `ensureOtlpProxy = vi.fn(async () => {})` as an injected dependency; asserts only call-order, never the real implementation.
++- No test file exists for `spool-config.ts` or `sso.proxy.ts` directly (not relevant to this fix).
++
++### Testing Framework and Patterns
++
++- Vitest `^4.1.5`, multi-project config (`--project unit/cli/agent`).
++- Module mocking via `vi.mock(path, factory)` for `ConfigLoader`, `daemon-manager.js` (`checkStatus`/`readState`/`spawnDaemon`/`stopDaemon`), etc.
++- Fixture factories: `setupHappyMocks(overrides)` builds a canned `ConfigLoader.load` result (`{ name, provider, baseUrl, codeMieUrl, codeMieProject, ...overrides }`) — this is the natural seam to add a "config with blank/undefined baseUrl" case.
++- `spyConsole()` wraps console spies and makes `process.exit` throw (`process.exit:${code}`), with `process.exitCode` asserted directly in tests — reusable for asserting exit code 0 behavior.
++- No test currently calls the real, un-mocked `spawnDaemon` → `spawnDetached` path end-to-end; it's always stubbed at a module boundary.
++
++### Coverage Gaps
++
++- **Core gap matching the bug**: no test exercises the real `ensureOtlpProxy` function body at all — every test referencing it stubs it out entirely with `vi.fn()`.
++- No test asserts behavior when `baseUrl` is missing/empty specifically for `ensureOtlpProxy` (the `connectTargets` sibling does have an equivalent throw-path test).
++- No test asserts `spawnDaemon`/`ensureDaemon` is **not** called when `baseUrl` is missing.
++- No test drives the hook (`hook.ts`) with a real (unmocked) `ensureOtlpProxy` to confirm exit code 0 and no daemon spawn when `baseUrl` is absent.
++- No test asserts daemon state file creation is skipped when `baseUrl` is missing.
++
++The natural location for new coverage is `src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts`, importing the real `ensureOtlpProxy` (not mocked), mocking `ConfigLoader.load`/`getActiveProfileName` to return profiles with `baseUrl: undefined` and `baseUrl: ''`, mocking `daemon-manager.js` collaborators, and asserting `spawnDaemon` is never called, no state file is written, and the function resolves without throwing — reusing the existing `setupHappyMocks`/`daemonState` fixture style.
++
++---
++
++## 5. Configuration and Environment
++
++### Environment Variables
++
++- `CODEMIE_HOME` — overrides CodeMie home dir (`~/.codemie`); used for all state/config paths.
++- `CODEMIE_BASE_URL` — env override for the active profile's `baseUrl` (`src/cli/first-time.ts:31`, multiple `hook.ts` call sites via `getConfigValue('CODEMIE_BASE_URL', config)`).
++- `CODEMIE_SYNC_API_URL` / `CODEMIE_TARGET_API_URL` — take precedence over `CODEMIE_BASE_URL` in specific `hook.ts` call sites.
++- `CODEMIE_DEBUG` / `MCP_PROXY_DEBUG` — verbose logging; unrelated to baseUrl validation.
++
++### Configuration Files
++
++- `~/.codemie/codemie-cli.config.json` (or `<cwd>/.codemie/codemie-cli.config.json` as a local override) — `MultiProviderConfig` (`activeProfile`, `profiles`, `workspace`), loaded by `ConfigLoader`.
++- `~/.codemie/proxy-daemon.json` (`DEFAULT_STATE_FILE`) — daemon state file; must not be written when `baseUrl` is missing (AC3).
++- `getCodemiePath(...)` (`src/utils/paths.ts:385`) is the general path-join helper used for all proxy state files.
++
++### Feature Flags and Deployment Concerns
++
++- No feature flags gate OTLP proxy auto-start/cold-start/skip behavior. The only pre-existing gate is the analytics project allowlist (`isTracked`), which runs before `ensureOtlpProxy` and is unrelated to `baseUrl`.
++- No CI/build/husky hooks execute this path; it only runs at runtime when the `claude-code-otlp` Claude Code hook fires on a tracked project.
++- Real-world deployment risk being fixed: any user/profile without `baseUrl` set (fresh install, incomplete `codemie setup`) currently triggers a proxy spawn attempt on every tracked-project hook invocation instead of a silent no-op.
++- Reminder: the three git-status-modified files (`connect-orchestrator.ts`, `sso.proxy.ts`, `spool-config.ts`) all currently carry unrelated "do not commit" local-dev overrides that must be excluded from the eventual fix commit.
++
++---
++
++## 6. Risk Indicators
++
++- No existing test exercises the real `ensureOtlpProxy` implementation at all — every current reference to it is fully mocked (`hook.analytics-wiring.test.ts`, `OtlpAgentAdapter.test.ts`). This is the central coverage gap the fix should close.
++- The working tree currently contains unrelated "TEMP LOCAL-DEV OVERRIDE — do not commit" scratch edits in all three git-status-modified files (`connect-orchestrator.ts`, `sso.proxy.ts`, `spool-config.ts`). Care must be taken to isolate the real fix's diff from these pre-existing local changes when committing.
++- Behavioral tension between the documented "missing config → throw `ConfigurationError`" convention and this task's "return silently" requirement — the fix intentionally departs from the sibling `connectTargets` pattern; this should be called out explicitly in the implementation (e.g. a one-line comment) so it isn't "corrected" back to a throw by a future reviewer unfamiliar with the acceptance criteria.
++- Linked ticket EPMCDME-15369 (hook exit-code propagation on `ensureOtlpProxy` failure) is explicitly out of scope — do not conflate fixing the guard with fixing exit-code handling for other failure modes.
++- `ensureOtlpProxy`'s config resolution via `ConfigLoader.load`/`getActiveProfileName` depends on `cwd`-based profile detection; `docs/ARCHITECTURE-OTLP-PLUGIN.md` separately flags (as a known, distinct limitation) that `ensureOtlpProxy` keys off the hook's own unwalked `cwd` for allowlist/profile gating — not part of this fix, but adjacent context worth being aware of.
++- The fix surface is very small (likely a single added line/guard in one function in one file, plus one new test block) — low implementation risk once isolated from the unrelated local-dev diffs.
++
++---
++
++## 7. Summary for Complexity Assessment
++
++This task touches exactly one architectural layer — the proxy orchestration layer (`src/cli/commands/proxy/connect-orchestrator.ts`) — and the fix is a single missing guard clause inside `ensureOtlpProxy()` (lines ~399-433), to be inserted immediately after `config` is loaded and before `daemonConfig`/`ensureDaemon` are reached: `if (!config.baseUrl) return;`. The analogous, already-correct pattern exists two hundred lines away in the sibling `connectTargets` function, so this is a well-precedented fix, not a novel pattern — the only design nuance is that the hook path must return silently rather than throw `ConfigurationError` (as the sibling does), because `ensureOtlpProxy` runs as a background side effect inside every tracked-project hook invocation rather than as a user-facing CLI command. Expected file change surface is 1 source file (one small edit) plus 1 test file (new test cases added to the existing `connect-orchestrator.test.ts` suite, reusing its established `setupHappyMocks`/mock-module conventions).
++
++Test coverage posture for this exact code path is a clean gap rather than mixed: every existing test that references `ensureOtlpProxy` replaces it entirely with `vi.fn()`, so no test currently exercises its real body or would catch the regression described in this ticket. New tests should assert: `spawnDaemon` is not called, no daemon state file is written, the function resolves without throwing, and (via a hook-level test if desired) exit code 0 is preserved — mirroring patterns already established in `daemon-manager.test.ts` and `daemon-status-contract.test.ts` for state-file assertions.
++
++Key risk factors for complexity scoring: the fix itself is low-risk and low-surface-area, but the working tree currently contains unrelated "do not commit" local-dev scratch edits in the exact files this fix touches (`connect-orchestrator.ts`) and in two adjacent files (`sso.proxy.ts`, `spool-config.ts`), which must be carefully excluded from the fix's diff to avoid accidentally shipping debug-only code. There is also a legitimate behavioral-convention tension (silent-return vs. documented throw-on-missing-config convention) that should be explicitly justified in the implementation rather than silently deviated from. Overall this should score as low-to-medium complexity: small, well-precedented, single-layer change with a clear test gap to close, offset slightly by the surrounding noise from unrelated uncommitted changes in the same files.
+diff --git a/src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts b/src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts
+index f506c860..55752ef4 100644
+--- a/src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts
++++ b/src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts
+@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+ import {
+   daemonMatchesRequest,
+   deriveDaemonIdentity,
++  ensureOtlpProxy,
+   type ConnectTargets,
+   type RequestedDaemonConfig,
+ } from '../connect-orchestrator.js';
+@@ -26,6 +27,10 @@ vi.mock('../daemon-manager.js', () => ({
+   spawnDaemon: vi.fn(),
+   stopDaemon: vi.fn(),
+ }));
++vi.mock('@/utils/processes.js', () => ({
++  isProcessAlive: vi.fn().mockReturnValue(false),
++  spawnDetached: vi.fn(),
++}));
+ vi.mock('../health-check.js', () => ({
+   checkProxyHealth: vi.fn(),
+ }));
+@@ -489,6 +494,56 @@ describe('deriveDaemonIdentity — codex-desktop', () => {
+   });
+ });
+ 
++describe('ensureOtlpProxy', () => {
++  beforeEach(() => {
++    vi.clearAllMocks();
++  });
++
++  it('returns silently and does not spawn a daemon when baseUrl is undefined', async () => {
++    const { readState, spawnDaemon } = await import('../daemon-manager.js');
++    vi.mocked(readState).mockResolvedValue(null);
++    await setupHappyMocks({ baseUrl: undefined });
++
++    await expect(ensureOtlpProxy('claude-code-otlp')).resolves.toBeUndefined();
++
++    expect(spawnDaemon).not.toHaveBeenCalled();
++  });
++
++  it('returns silently and does not spawn a daemon when baseUrl is an empty string', async () => {
++    const { readState, spawnDaemon } = await import('../daemon-manager.js');
++    vi.mocked(readState).mockResolvedValue(null);
++    await setupHappyMocks({ baseUrl: '' });
++
++    await expect(ensureOtlpProxy('claude-code-otlp')).resolves.toBeUndefined();
++
++    expect(spawnDaemon).not.toHaveBeenCalled();
++  });
++
++  it('returns silently and does not spawn a daemon when baseUrl is whitespace-only', async () => {
++    const { readState, spawnDaemon } = await import('../daemon-manager.js');
++    vi.mocked(readState).mockResolvedValue(null);
++    await setupHappyMocks({ baseUrl: '   ' });
++
++    await expect(ensureOtlpProxy('claude-code-otlp')).resolves.toBeUndefined();
++
++    expect(spawnDaemon).not.toHaveBeenCalled();
++  });
++
++  it('still cold-starts normally when baseUrl is present', async () => {
++    const { readState, spawnDaemon, checkStatus } = await import('../daemon-manager.js');
++    vi.mocked(readState).mockResolvedValue(null);
++    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
++    vi.mocked(spawnDaemon).mockResolvedValue(
++      daemonState({ telemetryMode: 'claude-code-otlp' }) as Awaited<ReturnType<typeof spawnDaemon>>
++    );
++    await setupHappyMocks();
++
++    await ensureOtlpProxy('claude-code-otlp');
++
++    expect(spawnDaemon).toHaveBeenCalledTimes(1);
++  });
++});
++
+ describe('runCodexDesktop', () => {
+   // resetModules BEFORE each case: connect-orchestrator.js is cached by earlier
+   // describes, and vi.doMock only affects modules imported after the registry is
+diff --git a/src/cli/commands/proxy/connect-orchestrator.ts b/src/cli/commands/proxy/connect-orchestrator.ts
+index a961bf2b..d7532b10 100644
+--- a/src/cli/commands/proxy/connect-orchestrator.ts
++++ b/src/cli/commands/proxy/connect-orchestrator.ts
+@@ -408,6 +408,13 @@ export async function ensureOtlpProxy(agentName: string): Promise<void> {
+     activeProfileName ? { name: activeProfileName } : undefined
+   );
+ 
++  // Hook invocations run as a background side effect on every tracked project;
++  // an unconfigured baseUrl must skip cold start silently (not throw, unlike
++  // connectTargets' interactive ConfigurationError) so it never fails the hook.
++  if (!config.baseUrl?.trim()) {
++    return;
++  }
++
+   const daemonConfig = {
+     clientType: agentName,
+     port: DEFAULT_DAEMON_PORT,

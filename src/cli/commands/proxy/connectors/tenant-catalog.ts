@@ -1,8 +1,9 @@
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
+import type { LlmModel } from '@/providers/plugins/sso/sso.http-client.js';
 
-interface CodeMieLlmModel {
+interface CodeMieLlmModel extends Partial<Pick<LlmModel, 'max_input_tokens' | 'max_output_tokens'>> {
   id?: string;
   base_name?: string;
   deployment_name?: string;
@@ -22,6 +23,10 @@ export interface TenantModelDescriptor {
   multimodal?: boolean;
   /** From `features.tools`. */
   toolCalling?: boolean;
+  /** From `max_input_tokens`; set only when a finite number > 0. */
+  maxInputTokens?: number;
+  /** From `max_output_tokens`; set only when a finite number > 0. */
+  maxOutputTokens?: number;
 }
 
 interface ModelsListResponse {
@@ -50,12 +55,18 @@ function extractModelId(model: CodeMieLlmModel): string | undefined {
   return model.id || model.base_name || model.deployment_name;
 }
 
+function isPositiveFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
 function toDescriptor(model: CodeMieLlmModel, id: string): TenantModelDescriptor {
   const descriptor: TenantModelDescriptor = { id };
   if (typeof model.label === 'string') descriptor.label = model.label;
   if (typeof model.provider === 'string') descriptor.provider = model.provider;
   if (typeof model.multimodal === 'boolean') descriptor.multimodal = model.multimodal;
   if (typeof model.features?.tools === 'boolean') descriptor.toolCalling = model.features.tools;
+  if (isPositiveFiniteNumber(model.max_input_tokens)) descriptor.maxInputTokens = model.max_input_tokens;
+  if (isPositiveFiniteNumber(model.max_output_tokens)) descriptor.maxOutputTokens = model.max_output_tokens;
   return descriptor;
 }
 
@@ -127,6 +138,16 @@ function logCatalogFetchThrew(endpoint: string, proxyUrl: string, error: unknown
   );
 }
 
+/**
+ * Model catalog URL on the local proxy. With a project, `project_id` makes the backend
+ * narrow the list to the models that project allows (its Models tab).
+ */
+export function buildProxyLlmModelsUrl(proxyUrl: string, project: string | undefined): string {
+  const url = new URL('/v1/llm_models?include_all=true', proxyUrl);
+  if (project) url.searchParams.set('project_id', project);
+  return url.toString();
+}
+
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
 }
@@ -136,17 +157,18 @@ function isAbortError(error: unknown): boolean {
  * exposes, in catalog order.
  *
  * Modeled on `desktop.ts`'s `fetchClaudeModels`, minus its Claude-family
- * filter and vertex/curated-list fallback — this is a generic catalog read
+ * filter, vertex handling and 5xx tolerance — this is a generic catalog read
  * consumed by connectors (VS Code Copilot BYOK) that enrich the result from
  * their own capability table rather than a Claude-specific curated list.
  */
 export async function fetchTenantModelDescriptors(
   proxyUrl: string,
-  gatewayKey: string
+  gatewayKey: string,
+  project: string | undefined
 ): Promise<TenantModelDescriptor[]> {
   let endpoint: string;
   try {
-    endpoint = new URL('/v1/llm_models?include_all=true', proxyUrl).toString();
+    endpoint = buildProxyLlmModelsUrl(proxyUrl, project);
   } catch (error) {
     throw new ConfigurationError(
       `Local proxy model discovery could not build a request URL from proxyUrl "${proxyUrl}". ` +
@@ -194,6 +216,10 @@ export async function fetchTenantModelDescriptors(
 }
 
 /** Every enabled deployment id the tenant's gateway exposes, in catalog order. */
-export async function fetchTenantModelCatalog(proxyUrl: string, gatewayKey: string): Promise<string[]> {
-  return (await fetchTenantModelDescriptors(proxyUrl, gatewayKey)).map((d) => d.id);
+export async function fetchTenantModelCatalog(
+  proxyUrl: string,
+  gatewayKey: string,
+  project: string | undefined
+): Promise<string[]> {
+  return (await fetchTenantModelDescriptors(proxyUrl, gatewayKey, project)).map((d) => d.id);
 }

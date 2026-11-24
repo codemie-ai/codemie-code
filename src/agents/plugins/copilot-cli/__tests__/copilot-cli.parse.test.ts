@@ -7,7 +7,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { getSessionMetricsPath, getSessionPath } from '../../../core/session/session-config.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CopilotCliSessionAdapter } from '../copilot-cli.session.js';
@@ -196,6 +198,57 @@ describe('CopilotCliSessionAdapter.parseSessionFile', () => {
     expect(parsed.metrics!.userPrompts).toEqual([{ count: 1, text: 'hello there' }]);
   });
 
+  it('counts a slash command from the transformed instruction and shows it as the prompt', async () => {
+    const f = join(dir, 'slash.jsonl');
+    const transformedContent = 'The user has requested a review via the /review command. Use the task tool.';
+    writeFileSync(
+      f,
+      [
+        { type: 'user.message', data: { content: transformedContent, transformedContent } },
+        { type: 'user.message', data: { content: '/tmp is full' } },
+      ].map((l) => JSON.stringify(l)).join('\n') + '\n'
+    );
+
+    const parsed = await newAdapter().parseSessionFile(f, 'sess-slash');
+    expect(parsed.metrics!.commandInvocations).toEqual({ review: 1 });
+    expect(parsed.metrics!.userPrompts![0].text).toBe('/review');
+    expect(parsed.metrics!.userPrompts![1].text).toBe('/tmp is full');
+  });
+
+  it('does not count a sub-agent injected prompt as a user prompt or command', async () => {
+    const f = join(dir, 'subagent.jsonl');
+    const review = 'The user has requested a review via the /review command. Use the task tool.';
+    writeFileSync(
+      f,
+      [
+        { type: 'user.message', data: { content: 'check my branch' } },
+        { type: 'user.message', data: { content: review, transformedContent: review, source: 'agent-sess-sub' } },
+      ].map((l) => JSON.stringify(l)).join('\n') + '\n'
+    );
+
+    const parsed = await newAdapter().parseSessionFile(f, 'sess-sub');
+    expect(parsed.metrics!.userPrompts).toEqual([{ count: 1, text: 'check my branch' }]);
+    expect(parsed.metrics!.commandInvocations ?? {}).toEqual({});
+  });
+
+  it('records every file of a successful apply_patch call', async () => {
+    const f = join(dir, 'patch.jsonl');
+    const patch = '*** Begin Patch\n*** Add File: /repo/app/new.ts\n+x\n*** Update File: /repo/app/a.ts\n-a\n+b\n*** End Patch';
+    writeFileSync(
+      f,
+      [
+        { type: 'tool.execution_start', data: { toolCallId: 'p1', toolName: 'apply_patch', arguments: { input: patch } } },
+        { type: 'tool.execution_complete', data: { toolCallId: 'p1', success: true } },
+      ].map((l) => JSON.stringify(l)).join('\n') + '\n'
+    );
+
+    const parsed = await newAdapter().parseSessionFile(f, 'sess-patch');
+    expect(parsed.metrics!.fileOperations!.map((o) => `${o.type}:${o.path}`)).toEqual([
+      'write:/repo/app/new.ts',
+      'edit:/repo/app/a.ts',
+    ]);
+  });
+
   it('reads the real content-based Copilot transcript fields', async () => {
     const contentFile = join(dir, 'content-shaped.jsonl');
     writeFileSync(
@@ -248,6 +301,52 @@ describe('CopilotCliSessionAdapter.parseSessionFile', () => {
       content: 'Hello from content',
       toolRequests: [{ toolCallId: 'tool-1', name: 'view', arguments: { path: '/repo/app/a.ts' } }],
     });
+  });
+
+  it('strips the desktop <copilot_tauri_workspace> preamble from user prompts', async () => {
+    const tauriFile = join(dir, 'tauri.jsonl');
+    writeFileSync(
+      tauriFile,
+      [
+        { type: 'session.start', timestamp: '2026-08-11T11:29:20.000Z', data: { sessionId: 'cp-tauri' } },
+        {
+          type: 'user.message',
+          timestamp: '2026-08-11T11:29:21.000Z',
+          data: { text: '<copilot_tauri_workspace>\ninternal\n</copilot_tauri_workspace>\n<current_datetime>2026-08-11</current_datetime>\nFix the bug' },
+        },
+        {
+          type: 'user.message',
+          timestamp: '2026-08-11T11:29:21.500Z',
+          data: { text: '<copilot_artifacts>\nartifacts_dir: /Users/dev/.copilot/artifacts/x\n</copilot_artifacts>\n<branch_rename_request>\nrename\n</branch_rename_request>\nAdd a test' },
+        },
+        {
+          type: 'user.message',
+          timestamp: '2026-08-11T11:29:22.000Z',
+          data: { text: '<copilot_tauri_workspace>only preamble</copilot_tauri_workspace>' },
+        },
+        {
+          type: 'user.message',
+          timestamp: '2026-08-11T11:29:23.000Z',
+          data: {
+            text: 'Read notes.txt <system_notification> Reminder: rename the session. </system_notification>\n<app_user_message_source_json>{"id":"m1"}</app_user_message_source_json>',
+          },
+        },
+      ].map((l) => JSON.stringify(l)).join('\n') + '\n'
+    );
+
+    const parsed = await newAdapter().parseSessionFile(tauriFile, 'cp-tauri');
+    const users = (parsed.messages as Array<{ type?: string; message?: { content?: string } }>).filter(
+      (m) => m.type === 'user'
+    );
+
+    expect(parsed.metrics!.userPrompts).toEqual([
+      { count: 1, text: 'Fix the bug' },
+      { count: 1, text: 'Add a test' },
+      { count: 1, text: 'Read notes.txt' },
+    ]);
+    expect(users[0].message?.content).toBe('Fix the bug');
+    expect(users[1].message?.content).toBe('Add a test');
+    expect(users[3].message?.content).toBe('Read notes.txt');
   });
 
   it('merges session.shutdown line totals into the per-file operations without duplicating', async () => {
@@ -437,11 +536,19 @@ describe('CopilotCliSessionAdapter — model attribution fallbacks', () => {
 
 describe('CopilotCliSessionAdapter.processSession', () => {
   it('runs registered processors and aggregates their results', async () => {
-    const adapter = newAdapter();
-    const result = await adapter.processSession(file, 'sess-1', {} as never);
+    // The metrics processor needs the run's live record: its start time and its existence
+    mkdirSync(dirname(getSessionPath('sess-1')), { recursive: true });
+    writeFileSync(getSessionPath('sess-1'), JSON.stringify({ sessionId: 'sess-1', startTime: 0 }));
+    try {
+      const adapter = newAdapter();
+      const result = await adapter.processSession(file, 'sess-1', {} as never);
 
-    expect(result.success).toBe(true);
-    expect(result.failedProcessors).toEqual([]);
-    expect(Object.keys(result.processors).length).toBeGreaterThan(0);
+      expect(result.success).toBe(true);
+      expect(result.failedProcessors).toEqual([]);
+      expect(Object.keys(result.processors).length).toBeGreaterThan(0);
+    } finally {
+      rmSync(getSessionPath('sess-1'), { force: true });
+      rmSync(getSessionMetricsPath('sess-1'), { force: true });
+    }
   });
 });

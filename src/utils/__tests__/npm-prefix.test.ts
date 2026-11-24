@@ -129,6 +129,28 @@ describe('npm-prefix', () => {
       const { getUserNpmrcPrefix } = await import('../npm-prefix.js');
       await expect(getUserNpmrcPrefix()).resolves.toBeNull();
     });
+
+    it('bounds the npm call with a timeout so a hanging npm cannot block indefinitely', async () => {
+      const { exec } = await import('@/utils/exec.js');
+      vi.mocked(exec).mockResolvedValue({ code: 0, stdout: '/home/u/.npmrc\n', stderr: '' });
+      const { readFile } = await import('fs/promises');
+      vi.mocked(readFile).mockResolvedValue('prefix=/home/u/.codemie/npm-prefix\n');
+      const { getUserNpmrcPrefix } = await import('../npm-prefix.js');
+
+      await getUserNpmrcPrefix();
+      expect(exec).toHaveBeenCalledWith(
+        'npm',
+        ['config', 'get', 'userconfig'],
+        expect.objectContaining({ timeout: expect.any(Number) })
+      );
+    });
+
+    it('returns null when the npm call times out', async () => {
+      const { exec } = await import('@/utils/exec.js');
+      vi.mocked(exec).mockRejectedValue(new Error('Command timed out after 5000ms'));
+      const { getUserNpmrcPrefix } = await import('../npm-prefix.js');
+      await expect(getUserNpmrcPrefix()).resolves.toBeNull();
+    });
   });
 
   describe('getNpmPrefixArgs', () => {

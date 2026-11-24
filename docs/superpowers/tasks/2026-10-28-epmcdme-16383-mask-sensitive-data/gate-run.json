@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-16383",
+  "head": "c433480fb5ff6bfa1b98895e91a09452d2e94aed",
+  "runner": "npm",
+  "started_at": "2026-10-28T17:39:00Z",
+  "completed_at": "2026-10-28T17:48:00Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {"id": "license-check", "source": "guide", "status": "PASS", "duration_ms": 6930, "command": "npm run license-check", "exit_code": 0},
+    {"id": "lint", "source": "guide", "status": "PASS", "duration_ms": 34890, "command": "npm run lint", "exit_code": 0},
+    {"id": "typecheck", "source": "guide", "status": "PASS", "duration_ms": 19704, "command": "npm run typecheck", "exit_code": 0},
+    {"id": "build", "source": "guide", "status": "PASS", "duration_ms": 27971, "command": "npm run build", "exit_code": 0},
+    {"id": "unit", "source": "guide", "status": "PASS", "duration_ms": 110191, "command": "npx vitest run --project unit", "exit_code": 0, "notes": "First run in the caller shell had 14 failures in 6 files (AgentCLI-model-source, codex/opencode/pi incremental-sync, providers-core, sso.auth-gate). All pass (387 files, 6185 tests) when ambient CODEMIE_*/ANTHROPIC_* env vars are unset; failures are environmental and unrelated to the diff (none of those files are in the changed set)."},
+    {"id": "integration", "source": "guide", "status": "PASS", "duration_ms": 55045, "command": "npx vitest run --project cli", "exit_code": 0, "notes": "Run with CODEMIE_*/ANTHROPIC_* env unset. 37 files passed, 1 skipped."},
+    {"id": "secrets", "source": "hook", "status": "SKIPPED", "duration_ms": 3016, "command": "npm run validate:secrets", "exit_code": 0, "notes": "Output: 'No staged changes to scan' (changes are unstaged, so nothing was scanned). CI secrets-detection (reusable workflow) will re-run it; to run locally stage changes with Docker/Gitleaks available."},
+    {"id": "commitlint", "source": "guide", "status": "N/A", "command": "npm run commitlint:last", "notes": "Changes are uncommitted; no commit to lint."},
+    {"id": "ci-secrets-detection", "source": "ci", "status": "N/A", "command": "reusable workflow codemie-ai/ci-workflows reusable-secrets-detection.yml", "notes": "External reusable CI workflow, cannot run locally."}
+  ],
+  "failures": {}
+}

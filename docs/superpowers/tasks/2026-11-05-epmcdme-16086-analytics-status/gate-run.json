@@ -1,0 +1,102 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-16086_analytics-status",
+  "head": "1232c1f850645d91c2ba9fe41c5d9de6fdeb1773",
+  "runner": "npm",
+  "started_at": "2026-11-06T08:07:44Z",
+  "completed_at": "2026-11-06T08:17:56.684Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 6299,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 37958,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 17055,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 26521,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 248628,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "FAILED test files (4 tests): src/agents/core/session/__tests__/stale-session-reconciliation.test.ts (2 failed, known: EPERM symlink), src/utils/__tests__/system-proxy-dispatcher.test.ts (1 failed, known), src/cli/commands/__tests__/hook.session-delivery.test.ts (1 failed, known: timing). All on the known Windows/environment list; no NEW failing files. 498 files passed, 8680 tests passed. Run with CODEMIE_*, ANTHROPIC_*, NO_PROXY unset. Other known-list files (010-clear-cloned-profile-identity, config-per-profile-identity, launch-identity) did not fail this run."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 177682,
+      "command": "npx vitest run --project cli",
+      "exit_code": 1,
+      "notes": "FAILED test file (4 tests): tests/integration/analytics/claude-analytics-disable.test.ts (known: EPERM temp cleanup; 1 EPERM error plus 3 dependent assertion failures, all inside this file). No NEW failing files. 40 files passed, 1 skipped. self-update TC-030 did not fail this run."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 12987,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Gitleaks ran (no leaks found) but scans only the STAGED diff (~205 KB); unstaged working-tree edits were not scanned. CI re-scans in full."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4112,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Validated existing HEAD commit 1232c1f only (HEAD~1..HEAD); the new commit message is checked by .husky/commit-msg at commit time."
+    },
+    {
+      "id": "lint-staged",
+      "source": "hook",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npx lint-staged",
+      "exit_code": null,
+      "notes": "Needs staged files and stashes via git (git write op, forbidden this run). Its eslint step is covered by the lint gate and its adjacent vitest step by the unit gate; package.json license-check covered by license gate."
+    },
+    {
+      "id": "ci-secrets-detection",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "codemie-ai/ci-workflows reusable-secrets-detection.yml",
+      "exit_code": null,
+      "notes": "Reusable remote workflow; not runnable locally. Local equivalent is the secrets gate (staged diff only)."
+    }
+  ],
+  "failures": {
+    "unit": "    119|       expect(proxyRoutes).toBeGreaterThan(0);\n       |                           ^\n    120|     } finally {\n    121|       await proxy.close();\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯\n\n FAIL  |unit| src/cli/commands/__tests__/hook.session-delivery.test.ts > SessionEnd inside the agent hook process > generation A's SessionEnd holds the lock 12 s while its line waits on the server: B's /clear start gives up at 10 s; B's Stop then writes a fresh record of its own, B's SessionEnd delivers it; no sidecar of A overwritten\nAssertionError: expected 12400 to be less than 12000\n ❯ src/cli/commands/__tests__/hook.session-delivery.test.ts:1041:30\n    1039|\n    1040|     expect(startGaveUpAfter).toBeGreaterThanOrEqual(10 * SECOND);\n    1041|     expect(startGaveUpAfter).toBeLessThan(12 * SECOND);\n       |                              ^\n    1042|     expect(existsSync(join(sessionsDir, `${id}.json`))).toBe(false);\n    1043|     const aRecordBytes = readFileSync(join(sessionsDir, `completed_${i…\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯\n\n FAIL  |unit| src/agents/core/session/__tests__/stale-session-reconciliation.test.ts > nextRecordStart > bounds a opencode record by the later one in the same directory reached through a symlink\nError: EPERM: operation not permitted, symlink 'C:\\Users\\DZMITR~1\\AppData\\Local\\Temp\\codemie-reconcile-OaIYI4\\repo' -> 'C:\\Users\\DZMITR~1\\AppData\\Local\\Temp\\codemie-reconcile-OaIYI4\\repo-link'\n ❯ src/agents/core/session/__tests__/stale-session-reconciliation.test.ts:1056:5\n    1054|     mkdirSync(repo);\n    1055|     mkdirSync(other);\n    1056|     symlinkSync(repo, join(home, 'repo-link'));\n       |     ^\n    1057|     const earlier = record({ agentName, startTime: t0, ownerPid: proce…\n    1058|     save(earlier);\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯\n\n FAIL  |unit| src/agents/core/session/__tests__/stale-session-reconciliation.test.ts > nextRecordStart > bounds a codemie-code record by the later one in the same directory reached through a symlink\nError: EPERM: operation not permitted, symlink 'C:\\Users\\DZMITR~1\\AppData\\Local\\Temp\\codemie-reconcile-0ksNE7\\repo' -> 'C:\\Users\\DZMITR~1\\AppData\\Local\\Temp\\codemie-reconcile-0ksNE7\\repo-link'\n ❯ src/agents/core/session/__tests__/stale-session-reconciliation.test.ts:1056:5\n    1054|     mkdirSync(repo);\n    1055|     mkdirSync(other);\n    1056|     symlinkSync(repo, join(home, 'repo-link'));\n       |     ^\n    1057|     const earlier = record({ agentName, startTime: t0, ownerPid: proce…\n    1058|     save(earlier);\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯\n\n\n Test Files  3 failed | 498 passed (501)\n      Tests  4 failed | 8680 passed | 6 skipped (8690)\n   Start at  11:09:28\n   Duration  244.67s (transform 87.63s, setup 0ms, import 381.08s, tests 773.47s, environment 175ms)\n\n",
+    "integration": "    324|\n    325|     const unlisted = runPromptHook(outside, 'sess-project-outside');\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯\n\n FAIL  |cli| tests/integration/analytics/claude-analytics-disable.test.ts > Claude Code analytics opt-out > should fail closed on corrupt preferences and never overwrite the file\nAssertionError: expected false to be true // Object.is equality\n\n- Expected\n+ Received\n\n- true\n+ false\n\n ❯ tests/integration/analytics/claude-analytics-disable.test.ts:345:31\n    343|     const tracked = runPromptHook(project, 'sess-corrupt-control');\n    344|     expect(tracked.run.error, describeRun(tracked.run)).toBeUndefined(…\n    345|     expect(tracked.forwarded).toBe(true);\n       |                               ^\n    346|\n    347|     writeFileSync(prefsPath(), '{ \"enabled\": tru', 'utf-8');\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯\n\n FAIL  |cli| tests/integration/analytics/claude-analytics-disable.test.ts > Claude Code analytics opt-out > should silence an already installed hook after disable without spooling or starting a proxy\nAssertionError: expected false to be true // Object.is equality\n\n- Expected\n+ Received\n\n- true\n+ false\n\n ❯ tests/integration/analytics/claude-analytics-disable.test.ts:385:31\n    383|     const tracked = runPromptHook(project, 'sess-hook-001');\n    384|     expect(tracked.run.error, describeRun(tracked.run)).toBeUndefined(…\n    385|     expect(tracked.forwarded).toBe(true);\n       |                               ^\n    386|\n    387|     expectExit(runCli(['proxy', 'analytics', 'disable'], { cwd: projec…\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯\n\n\n Test Files  1 failed | 40 passed | 1 skipped (42)\n      Tests  4 failed | 321 passed | 10 skipped (335)\n   Start at  11:14:07\n   Duration  174.57s (transform 30.66s, setup 0ms, import 60.62s, tests 650.53s, environment 11ms)\n\n"
+  }
+}

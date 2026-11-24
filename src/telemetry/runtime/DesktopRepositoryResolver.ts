@@ -36,6 +36,14 @@ export interface DesktopRequestHints {
   url?: string;
 }
 
+export interface DesktopResolveOptions {
+  /**
+   * Neither read nor write the last-resolved slot: an unresolved session gets no other session's repository, and
+   * this one's resolution stands in for none.
+   */
+  skipLastResolved?: boolean;
+}
+
 export interface DesktopAttribution {
   /** Resolved repository, or null when the caller should apply its own default. */
   repository: string | null;
@@ -97,10 +105,12 @@ export class DesktopRepositoryResolver {
    * Confirmed records are returned as-is. Tentative records (TTL-window guesses) are
    * retried on every request so the first real resolution can correct them — a session
    * opened seconds after another must not stay pinned to the previous repository.
+   * With `skipLastResolved` the last-resolved slot is neither read nor written.
    */
   async resolveForRequest(
     cliSessionId: string | undefined,
-    hints: DesktopRequestHints
+    hints: DesktopRequestHints,
+    options: DesktopResolveOptions = {}
   ): Promise<DesktopAttribution> {
     if (!cliSessionId) {
       return { repository: null, branch: null, isCowork: false };
@@ -120,11 +130,13 @@ export class DesktopRepositoryResolver {
         isCowork,
         tentative: !resolved.confident
       });
-      this.lastResolved = {
-        repository: resolved.repository,
-        branch: resolved.branch,
-        ts: Date.now()
-      };
+      if (!options.skipLastResolved) {
+        this.lastResolved = {
+          repository: resolved.repository,
+          branch: resolved.branch,
+          ts: Date.now()
+        };
+      }
       return { repository: resolved.repository, branch: resolved.branch, isCowork };
     }
 
@@ -132,7 +144,7 @@ export class DesktopRepositoryResolver {
       return { repository: known.repository, branch: known.branch, isCowork: known.isCowork };
     }
 
-    const fallback = this.lastResolved;
+    const fallback = options.skipLastResolved ? undefined : this.lastResolved;
     if (fallback && Date.now() - fallback.ts < FALLBACK_TTL_MS) {
       this.sessions.set(cliSessionId, {
         repository: fallback.repository,
@@ -156,9 +168,10 @@ export class DesktopRepositoryResolver {
    *
    * A confirmed per-request resolution wins, because it reads the real process CWD rather
    * than the session file's recorded directory. A tentative record is only a guess, so the
-   * poll result replaces it.
+   * poll result replaces it. `isCowork` marks a session of Desktop's local-agent-mode root,
+   * so its first request is answered as Cowork.
    */
-  recordDiscoveredSession(agentSessionId: string, repository: string | undefined): void {
+  recordDiscoveredSession(agentSessionId: string, repository: string | undefined, isCowork = false): void {
     // Desktop's own `local_<uuid>` ids never arrive as x-claude-code-session-id.
     if (agentSessionId.startsWith('local_')) {
       return;
@@ -172,7 +185,7 @@ export class DesktopRepositoryResolver {
     this.sessions.set(agentSessionId, {
       repository: repository || 'Cowork',
       branch: known?.branch ?? null,
-      isCowork: known?.isCowork ?? false,
+      isCowork: isCowork || (known?.isCowork ?? false),
       tentative: false
     });
   }

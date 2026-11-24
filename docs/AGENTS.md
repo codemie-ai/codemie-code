@@ -2,7 +2,7 @@
 
 ## CodeMie Native (Built-in)
 
-LangGraph-based coding assistant with no installation required.
+Built-in CodeMie coding assistant with no installation required.
 
 **Features:**
 - Modern terminal UI with streaming responses

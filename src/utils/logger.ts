@@ -1,6 +1,10 @@
-import chalk from 'chalk';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { Console } from 'node:console';
+import { Writable } from 'node:stream';
 import * as fs from 'fs';
 import * as path from 'path';
+import chalk from 'chalk';
+import stripAnsi from 'strip-ansi';
 import { sanitizeLogArgs } from './security.js';
 import { getCodemiePath } from './paths.js';
 
@@ -19,7 +23,15 @@ export interface LogContext {
   model?: string;
 }
 
+/** The agent / session / profile one call's log lines carry instead of the process-wide ones. */
+export interface LogCallContext {
+  agentName: string;
+  sessionId: string;
+  profileName?: string;
+}
+
 class Logger {
+  private readonly callContext = new AsyncLocalStorage<LogCallContext>();
   private sessionId: string = ''; // Will be set by agent
   private agentName: string | null = null;
   private profileName: string | null = null;
@@ -28,8 +40,43 @@ class Logger {
   private writeStream: fs.WriteStream | null = null;
   private currentLogDate: string | null = null;
   private isRotating: boolean = false;
+  private consoleSink: Console = console;
 
   constructor() {}
+
+  /**
+   * Send every console-bound level (success, status, notice, debug, error in debug mode)
+   * to one stream, e.g. stderr in a process whose stdout is a protocol channel.
+   * `null` drops console output entirely, e.g. in a process whose stdout and stderr both
+   * belong to another program. The file sink is unaffected.
+   */
+  setConsoleStream(stream: NodeJS.WritableStream | null): void {
+    const target =
+      stream ??
+      new Writable({
+        write(_chunk, _encoding, callback) {
+          callback();
+        }
+      });
+    this.consoleSink = new Console(target, target);
+  }
+
+  /**
+   * Run `fn` with its log lines (and those of everything it awaits) carrying `context`;
+   * lines logged outside it keep the process-wide agent / session / profile.
+   */
+  runWithContext<T>(context: LogCallContext, fn: () => Promise<T>): Promise<T> {
+    return this.callContext.run(context, fn);
+  }
+
+  /** The `[agent] [session]` and optional ` [profile]` part of a line's prefix. */
+  private contextPrefix(): string {
+    const call = this.callContext.getStore();
+    const agentName = (call ? call.agentName : this.agentName) || 'system';
+    const sessionId = call ? call.sessionId : this.sessionId;
+    const profileName = call ? call.profileName : this.profileName;
+    return `[${agentName}] [${sessionId}]${profileName ? ` [${profileName}]` : ''}`;
+  }
 
   /**
    * Set agent name for log formatting
@@ -203,15 +250,7 @@ class Logger {
     try {
       const timestamp = new Date().toISOString();
 
-      // Build log prefix using agent/session/profile set at startup
-      const agentName = this.agentName || 'system';
-
-      let prefix = `[${timestamp}] [${level.toUpperCase()}] [${agentName}] [${this.sessionId}]`;
-
-      // Add profile if set
-      if (this.profileName) {
-        prefix += ` [${this.profileName}]`;
-      }
+      const prefix = `[${timestamp}] [${level.toUpperCase()}] ${this.contextPrefix()}`;
 
       // Sanitize args before writing to file
       const sanitizedArgs = sanitizeLogArgs(...args);
@@ -229,7 +268,8 @@ class Logger {
 
   /**
    * Flush and close the write stream
-   * Returns a Promise that resolves when all data is flushed
+   * Returns a Promise that resolves once the file is flushed and its handle released;
+   * the next write opens the log file again under the current CODEMIE_HOME
    * Waits for any in-progress rotation to complete before closing
    */
   async close(): Promise<void> {
@@ -241,15 +281,17 @@ class Logger {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
 
-    return new Promise((resolve) => {
-      if (this.writeStream) {
-        this.writeStream.end(() => {
-          this.writeStream = null;
-          resolve();
-        });
-      } else {
-        resolve();
-      }
+    const stream = this.writeStream;
+    this.writeStream = null;
+    this.logFilePath = null;
+    this.currentLogDate = null;
+    this.logFileInitialized = false;
+    if (!stream || stream.closed) return;
+
+    // 'close', not the end() callback ('finish'): only 'close' means the fd is released.
+    await new Promise<void>((resolve) => {
+      stream.once('close', () => resolve());
+      stream.end();
     });
   }
 
@@ -295,17 +337,9 @@ class Logger {
     if (this.isDebugMode()) {
       // Write to log file
       this.writeToLogFile('debug', message, ...args);
-      // Build console prefix using agent/session/profile set at startup
-      const agentName = this.agentName || 'system';
+      const prefix = `[DEBUG] ${this.contextPrefix()}`;
 
-      let prefix = `[DEBUG] [${agentName}] [${this.sessionId}]`;
-
-      // Add profile if set
-      if (this.profileName) {
-        prefix += ` [${this.profileName}]`;
-      }
-
-      console.log(chalk.dim(`${prefix} ${message}`), ...args);
+      this.consoleSink.error(chalk.dim(`${prefix} ${message}`), ...args);
     }
   }
 
@@ -315,7 +349,14 @@ class Logger {
   }
 
   success(message: string, ...args: unknown[]): void {
-    console.log(chalk.green(`✓ ${message}`), ...args);
+    this.writeToLogFile('info', stripAnsi(message), ...args);
+    this.consoleSink.log(chalk.green(`✓ ${message}`), ...args);
+  }
+
+  /** A plain console status line, no prefix; the log file gets the same message at level info. */
+  status(message: string): void {
+    this.writeToLogFile('info', stripAnsi(message));
+    this.consoleSink.log(message);
   }
 
   warn(message: string, ...args: unknown[]): void {
@@ -341,15 +382,15 @@ class Logger {
 
     if (this.isDebugMode()) {
         // Console output
-        console.error(chalk.red(`✗ ${message}`));
+        this.consoleSink.error(chalk.red(`✗ ${message}`));
         if (error) {
             if (error instanceof Error) {
-                console.error(chalk.red(error.message));
+                this.consoleSink.error(chalk.red(error.message));
                 if (error.stack) {
-                    console.error(chalk.white(error.stack));
+                    this.consoleSink.error(chalk.white(error.stack));
                 }
             } else {
-                console.error(chalk.red(String(error)));
+                this.consoleSink.error(chalk.red(String(error)));
             }
         }
     }
@@ -364,7 +405,7 @@ class Logger {
     const logPath = this.getLogFilePath();
     const suffix = logPath ? ` (see ${logPath})` : '';
     const sanitizedArgs = sanitizeLogArgs(...args);
-    console.warn(chalk.yellow(`⚠ ${message}${suffix}`), ...sanitizedArgs);
+    this.consoleSink.warn(chalk.yellow(`⚠ ${message}${suffix}`), ...sanitizedArgs);
   }
 }
 

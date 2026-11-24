@@ -1,0 +1,217 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "request-changes",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "yes: CR-002 is fixed; CR-001 - security-review sign-off is requested on the PR and is given there before merge"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "CR-001: mark the branch-attribution change CRITICAL and request security-review sign-off on the PR; CR-002: make the Cowork producer tests independent of outer git state"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "yes: CR-002 is fixed; CR-001 - security-review sign-off is requested on the PR and is given there before merge"
+    }
+  ],
+  "reviewed_head": "968dc2c463879a828b43409955482bd1e2d112d3",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "CR-002 resolved: at HEAD 968dc2c4 the GIT_* scrub and empty GIT_CONFIG_GLOBAL run in a file-level beforeAll, so the sandbox git_branch assertion no longer runs against inherited git env. CR-001 (kind evidence) unresolved: fix_evidence maps only a decision record stating sign-off was requested, with no artifact or command proving the CRITICAL callout or a recorded security-review sign-off. Brief written to code-review-brief.local.md.",
+  "confidence": "low",
+  "check_confidence": "medium",
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 1,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 1
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "evidence",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/telemetry/runtime/cowork/CoworkEventProducer.ts",
+      "line": 317,
+      "title": "Branch attribution change lacks security sign-off",
+      "problem": "security-practices.md 'CRITICAL: Project & User Attribution Headers' (rule 2) and the git-workflow.md review checklist make any change to the derivation source of branch attribution a CRITICAL change needing security-review sign-off. This change derives Cowork events' git_branch and summary branch_dominant from the host folder via detectGitBranch (CoworkEventProducer.ts:317, cowork-events.ts:348-352), overwrites any transcript branch and deletes branch_counts; no sign-off is recorded.",
+      "impact": "Branch attribution drives analytics attribution across repositories and branches; the project guide forbids merging a change to its derivation without security review, so the documented workflow is not met.",
+      "recommendation": "Mark the PR CRITICAL in its description, complete the security-practices.md reviewer checklist for attribution changes, and obtain and record security-review sign-off before merge. No source edit is needed; the derivation already uses the canonical detectGitBranch() helper the guide's Good example names.",
+      "status": "wont-fix",
+      "check_notes": "evidence finding: fix_evidence maps only a decision record (sign-off requested, not given); no artifact or command proves the PR callout or a recorded sign-off",
+      "decision": {
+        "outcome": "addressed in the PR description: the change is called out as a CRITICAL branch-attribution change with security-review sign-off requested on the PR before merge",
+        "rationale": "The PR description's Summary now carries the CRITICAL callout the checklist of security-practices.md ('CRITICAL: Project & User Attribution Headers') asks for: it names the derivation source change of git_branch and branch_dominant on Cowork events, from the transcript's gitBranch to detectGitBranch() of the session's folder, a failed lookup giving no branch, and requests security-review sign-off before merge. The sign-off itself is a reviewer's act on the PR and cannot exist before the PR is opened. No source change: the derivation uses the canonical detectGitBranch() the guide names as the good example and treats a failure as no attribution."
+      },
+      "disposition": {
+        "rationale": "Security-review sign-off is requested on the PR, called out as a CRITICAL branch-attribution change in its description, and is given there before merge; no code change is needed.",
+        "source": "hitl"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/telemetry/runtime/cowork/__tests__/CoworkEventProducer.test.ts",
+      "line": 234,
+      "title": "Sandbox branch assertion bypasses Git env scrub",
+      "problem": "The assertion added to the existing sandbox test (git_branch must be '') sits outside the nested describe that deletes GIT_* from process.env and stubs GIT_CONFIG_GLOBAL/NOSYSTEM. detectGitBranch runs git via execAsync with the inherited environment, so an exported GIT_DIR/GIT_WORK_TREE points it at the outer repository and it reports that branch.",
+      "impact": "The test can fail spuriously when run inside a git hook (lint-staged in .husky/pre-commit runs tests for changed files) or with the temp dir inside a repository, the hazard the new describe's own comment names; reachability depends on whether the hook exports GIT_DIR and was not confirmed.",
+      "recommendation": "Run the git_branch '' assertion under the same GIT_* scrub the nested 'the branch of the session's folder' describe uses (delete GIT_* from process.env and stub GIT_CONFIG_GLOBAL/GIT_CONFIG_NOSYSTEM for that test), or move the assertion into that describe, so an exported GIT_DIR/GIT_WORK_TREE cannot point detectGitBranch at the outer repository.",
+      "status": "resolved",
+      "check_notes": "HEAD source: file-level beforeAll (lines 164-176) deletes GIT_* and sets empty GIT_CONFIG_GLOBAL + NOSYSTEM before every test, sandbox assertion included; restored in afterAll",
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "src/telemetry/runtime/cowork/__tests__/CoworkEventProducer.test.ts"
+          }
+        ],
+        "commands": [
+          {
+            "command": "GIT_DIR=<repo>/.git GIT_WORK_TREE=<repo> npx vitest run --project unit src/telemetry/runtime/cowork/__tests__/CoworkEventProducer.test.ts (at 968dc2c4)",
+            "exit_code": 0
+          },
+          {
+            "command": "same test 'writes the session on the run after the one that first saw it' with the session's fallback working directory created, at 2ccd7a1f",
+            "exit_code": 1
+          },
+          {
+            "command": "same, at 968dc2c4",
+            "exit_code": 0
+          }
+        ]
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "A session in a folder on a named branch shows that branch",
+      "status": "pass",
+      "notes": "envelope() resolves detectGitBranch(workingDirectory); stampCoworkEvent writes git_branch; producer test over temp repo"
+    },
+    {
+      "kind": "spec",
+      "item": "A session with no Git folder, or with a detached HEAD, shows no branch",
+      "status": "pass",
+      "notes": "detectGitBranch returns undefined for non-branch HEAD; stamp writes git_branch ''; tests for detached, plain folder, sandbox"
+    },
+    {
+      "kind": "spec",
+      "item": "HEAD is never reported as a branch name",
+      "status": "pass",
+      "notes": "lineBranch()/CoworkLine.gitBranch removed; stampCoworkEvent overwrites git_branch on every event"
+    },
+    {
+      "kind": "spec",
+      "item": "Suggested fix: resolve branch on host with detectGitBranch(workingDirectory) in envelope()",
+      "status": "pass",
+      "notes": "added to the envelope Promise.all next to repository resolution"
+    },
+    {
+      "kind": "spec",
+      "item": "Suggested fix: put the host branch on events instead of transcript gitBranch; ignore gitBranch HEAD",
+      "status": "pass",
+      "notes": "transcript gitBranch no longer read; envelope branch stamped on all events"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC1: Cowork session in a Git folder on branch X shows branch X in Session Details and Repositories -> Branch",
+      "status": "pending-stage-7",
+      "notes": "events carry folder branch (producer test); UI display needs runtime evidence"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC2: Cowork session with no Git folder shows no branch (not HEAD)",
+      "status": "pass",
+      "notes": "git_branch '' and no branch_dominant; plain folder and sandbox tests"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC3: Cowork session in a folder with a detached HEAD shows no branch",
+      "status": "pass",
+      "notes": "detached-HEAD producer test asserts git_branch '' and no branch_dominant"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC4: Native Claude Code sessions are unchanged",
+      "status": "pass",
+      "notes": "diff touches only src/telemetry/runtime/cowork/* plus docs/CHANGELOG"
+    },
+    {
+      "kind": "spec",
+      "item": "Test: Cowork event builder with gitBranch HEAD lines emits no git_branch HEAD; envelope branch used",
+      "status": "pass",
+      "notes": "cowork-events.test.ts asserts built events carry no git_branch; stamp tests cover envelope/empty branch"
+    },
+    {
+      "kind": "spec",
+      "item": "Test: envelope() resolves branch from workingDirectory (named, detached, no repository)",
+      "status": "pass",
+      "notes": "covered via producer runs over real temp git folders"
+    },
+    {
+      "kind": "spec",
+      "item": "Test (integration): transcript fixture with selected Git folder produces spool events with that git_branch",
+      "status": "pass",
+      "notes": "producer test reads spool, asserts git_branch and no HEAD"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: event ids hashed before branch replacement, independent of host branch",
+      "status": "pass",
+      "notes": "id computed before branch overwrite; test asserts identical ids"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: summary carries folder branch as branch_dominant (none without branch) and no branch_counts",
+      "status": "pass",
+      "notes": "stampCoworkEvent; unit and producer tests"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: ARCHITECTURE-PROXY.md 6.12.3 names the branch rule; CHANGELOG [Unreleased] has the fix",
+      "status": "pass",
+      "notes": "docs/ARCHITECTURE-PROXY.md and CHANGELOG Fixed entry"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "partial",
+      "notes": "1 subject in range; type fix and scope analytics are allowed, subject is imperative and under 100 chars, body gives context; but the subject carries the ticket key (EPMCDME-17197), which git-workflow.md Anti-Patterns lists as avoid (reference the ticket in the body footer instead)"
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "changed source cowork-events.ts and CoworkEventProducer.ts: imports keep .js/@/ alias, exported stampCoworkEvent/buildCoworkEvents keep explicit return types and updated JSDoc explaining why, new optional interface field documented, removed lineBranch helper leaves no dead code, no console.log or any introduced"
+    },
+    {
+      "kind": "security",
+      "status": "partial",
+      "notes": "branch derivation uses detectGitBranch() from src/utils/processes.ts and reports no branch on failure/detached HEAD, as the guide's Good example requires, and the value passes maskSecretsDeep; however the change replaces the derivation source of git_branch/branch_dominant analytics attribution (transcript gitBranch -> host folder Git) and drops branch_counts, which security-practices.md CRITICAL section rule 2 and the git-workflow review checklist require to be called out as CRITICAL with security-review sign-off; no sign-off is evidenced in the commit"
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "All four lenses and the standards audit ran; every spec/AC item passes (AC1 UI display pending Stage 7), but the Cowork branch-attribution derivation change lacks the security-review sign-off security-practices.md makes CRITICAL (CR-001), and a new sandbox assertion runs outside the GIT_* env scrub (CR-002, reachability under hooks unconfirmed, so confidence is low). 0 deferred; 11 candidates dismissed as handled, spec-mandated or below the emission floor, including the commit-subject ticket key (soft avoid, common in main history).",
+    "confidence": "low",
+    "risk_flags": []
+  }
+}

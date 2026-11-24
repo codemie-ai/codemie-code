@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "branch": "fix/EPMCDME-16080-self-update-path-check",
+  "head": "9f910c369748463882624eb67f5009b48d5d36a5",
+  "runner": "npm",
+  "started_at": "2026-11-07T00:00:00Z",
+  "completed_at": "2026-11-07T00:03:00Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {"id": "license-check", "source": "guide", "status": "PASS", "duration_ms": 6659, "command": "npm run license-check", "exit_code": 0},
+    {"id": "lint", "source": "guide", "status": "PASS", "duration_ms": 42905, "command": "npm run lint", "exit_code": 0},
+    {"id": "typecheck", "source": "guide", "status": "PASS", "duration_ms": 15899, "command": "npm run typecheck", "exit_code": 0},
+    {"id": "build", "source": "guide", "status": "PASS", "duration_ms": 25891, "command": "npm run build", "exit_code": 0},
+    {"id": "secrets", "source": "hook", "status": "SKIPPED", "duration_ms": 2543, "command": "npm run validate:secrets", "exit_code": 0, "notes": "Self-skip: output 'No staged changes to scan' (changes are unstaged/uncommitted). To run locally: stage the changes (git add) with Docker/Gitleaks available; CI runs the scan unconditionally."},
+    {"id": "unit", "source": "guide", "status": "SKIPPED", "command": "npx vitest run --project unit", "notes": "AGENTS.md policy: tests run only on explicit user request; not requested."},
+    {"id": "integration", "source": "guide", "status": "SKIPPED", "command": "npx vitest run --project cli", "notes": "AGENTS.md policy: tests run only on explicit user request; not requested."},
+    {"id": "commitlint", "source": "guide", "status": "N/A", "command": "npm run commitlint:last", "notes": "Changes uncommitted by user instruction; no new commits to lint."}
+  ],
+  "failures": {}
+}

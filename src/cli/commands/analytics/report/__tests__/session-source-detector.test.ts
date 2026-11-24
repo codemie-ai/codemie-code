@@ -25,6 +25,14 @@ describe('detectSessionSource', () => {
     expect(detectSessionSource(session({ command: ['sdlc-autonomous'] }))).toBe('CodeMie AI Factory');
   });
 
+  it('recognizes the slash-namespaced and bare skill names oh-my-pi records', () => {
+    expect(detectSessionSource(session({ skill: ['sdlc-factory/code-review'] }))).toBe('CodeMie AI Factory');
+    for (const skill of ['sdlc-standard', 'sdlc-doctor', 'sdlc-status']) {
+      expect(detectSessionSource(session({ skill: [skill] }))).toBe('CodeMie AI Factory');
+    }
+    expect(detectSessionSource(session({ skill: ['superpowers/using-superpowers'] }))).toBe('Superpowers');
+  });
+
   it('labels a session with a superpowers skill as Superpowers when no sdlc-factory signal is present', () => {
     expect(detectSessionSource(session({ skill: ['superpowers:test-driven-development'] }))).toBe('Superpowers');
   });
@@ -55,7 +63,29 @@ describe('detectSessionSource', () => {
     expect(detectSessionSource(session({ agent: ['SDLC-Factory:Foo'] }))).toBe('CodeMie AI Factory');
   });
 
+  // @case cli-analytics-report-oh-my_TC_007
+  it('labels a session with an invocation from each of the newly added framework bundles', () => {
+    expect(detectSessionSource(session({ skill: ['sast-fix'] }))).toBe('SecOps');
+    expect(detectSessionSource(session({ skill: ['ask-matt'] }))).toBe('Matt Pocock Skills');
+    expect(detectSessionSource(session({ command: ['caveman-mode'] }))).toBe('Caveman');
+    expect(detectSessionSource(session({ agent: ['ponytail-planner'] }))).toBe('Ponytail');
+    expect(detectSessionSource(session({ skill: ['codemie-deploy'] }))).toBe('CodeMie Skills');
+    expect(detectSessionSource(session({ skill: ['herdr'] }))).toBe('Herdr');
+  });
+
   it('exposes the ordered detector list for callers that need custom ordering/extension', () => {
-    expect(SESSION_SOURCE_DETECTORS.map((d) => d.name)).toEqual(['sdlc-factory', 'superpowers', 'openspec', 'speckit', 'bmad']);
+    expect(SESSION_SOURCE_DETECTORS.map((d) => d.name)).toEqual([
+      'sdlc-factory',
+      'superpowers',
+      'secops',
+      'openspec',
+      'speckit',
+      'bmad',
+      'matt-pocock-skills',
+      'caveman',
+      'ponytail',
+      'codemie-skills',
+      'herdr',
+    ]);
   });
 });

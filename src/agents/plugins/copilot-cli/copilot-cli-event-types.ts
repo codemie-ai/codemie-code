@@ -18,6 +18,8 @@ export interface CopilotWorkspaceManifest {
   hostType?: string;
   branch?: string;
   name?: string;
+  /** Host application that created the session (`github/cli`, `github/autopilot` for the desktop app, `vscode-agent-host` for VS Code Chat). */
+  clientName?: string;
   /** Epoch ms. */
   createdAt?: number;
   /** Epoch ms. */
@@ -33,6 +35,7 @@ export interface RawWorkspaceYaml {
   host_type?: string;
   branch?: string;
   name?: string;
+  client_name?: string;
   created_at?: string;
   updated_at?: string;
 }
@@ -44,6 +47,8 @@ export interface CopilotEvent {
   id?: string;
   parentId?: string | null;
   timestamp?: string;
+  /** The sub-agent's id on every event a sub-agent produced (tool, user.message, hook.start); absent on main-agent events. */
+  agentId?: string;
 }
 
 /**
@@ -83,6 +88,11 @@ export interface CopilotShutdownData {
   >;
 }
 
+/** `data` of a `session.usage_record` event: one model request. */
+export interface CopilotUsageRecordData {
+  usage?: CopilotUsageBuckets & { model?: string; apiCallId?: string };
+}
+
 /** `data` of a `session.start` event. */
 export interface CopilotSessionStartData {
   sessionId?: string;
@@ -120,7 +130,8 @@ export interface CopilotToolStartData {
   toolCallId?: string;
   toolName?: string;
   turnId?: string;
-  arguments?: {
+  /** An object for most tools; the patch text itself for `apply_patch`. */
+  arguments?: string | {
     path?: string;
     /** Present on `create`. */
     file_text?: string;
@@ -142,6 +153,11 @@ export interface CopilotToolCompleteData {
   result?: unknown;
   model?: string;
   turnId?: string;
+  /** On a file-writing call (`edit`, `create`, `apply_patch`): its paths (JSON-encoded lists) and lines. */
+  toolTelemetry?: {
+    restrictedProperties?: { filePaths?: string; addedPaths?: string; deletedPaths?: string };
+    metrics?: { linesAdded?: number; linesRemoved?: number };
+  };
 }
 
 /** `data` of a `skill.invoked` event — feeds the report's session-source classification. */

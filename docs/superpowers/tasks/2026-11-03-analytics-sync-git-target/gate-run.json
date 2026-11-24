@@ -1,0 +1,140 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-16564_analytics-sync-git-target",
+  "head": "9bc26b40eab58a6e3e78e6026a6045ad0b8b919c",
+  "runner": "npm",
+  "started_at": "2026-11-03T12:14:03Z",
+  "completed_at": "2026-11-03T12:22:30Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5052,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 24838,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 12189,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 15324,
+      "command": "npm run build",
+      "exit_code": 0,
+      "notes": "Guide documents build as tsc && tsc-alias && copy-plugin; package.json build also runs bundle-statusline (repo is source of truth)."
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 90322,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "2 failures in src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts (file not in merge_base...HEAD diff)."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 147468,
+      "command": "npx vitest run --project cli",
+      "exit_code": 1,
+      "notes": "3 failures in tests/integration/hook-stdout.test.ts (what's-new notice) plus suite failure in tests/integration/cli-commands/list.test.ts; neither file in merge_base...HEAD diff."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 942,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: \"No staged changes to scan\". Script scans staged changes only; working tree has nothing staged. CI secrets-detection (reusable-secrets-detection.yml) runs for real; stage the branch changes or run gitleaks over the commit range to settle locally."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 552,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Covers HEAD~1..HEAD only; full branch range covered by commitlint-range."
+    },
+    {
+      "id": "pre-commit-aggregate",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 33742,
+      "command": "npm run check:pre-commit",
+      "exit_code": 0
+    },
+    {
+      "id": "full-ci",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 128500,
+      "command": "npm run ci",
+      "exit_code": 1,
+      "notes": "Stopped at unit tests (same sso.auth-gate.test.ts failures); integration step not reached inside this aggregate."
+    },
+    {
+      "id": "commitlint-range",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 556,
+      "command": "npx --no -- commitlint --from EPMCDME-16488_analytics-sync-install --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "Added: .husky/commit-msg enforces commitlint on every commit; guide gate only checks HEAD~1. Range EPMCDME-16488_analytics-sync-install..HEAD passed."
+    },
+    {
+      "id": "lint-staged",
+      "source": "hook",
+      "status": "N/A",
+      "command": "npx lint-staged",
+      "notes": ".husky/pre-commit step 1; no staged files, so it would run nothing. Its eslint and adjacent-vitest work is covered by lint and unit gates."
+    },
+    {
+      "id": "ci-test-windows",
+      "source": "ci",
+      "status": "N/A",
+      "command": "npx vitest run --project unit && npx vitest run --project cli (windows-latest)",
+      "notes": "Needs Windows runner. Local repro per guide: convert files to CRLF and rerun vitest. Only CI settles."
+    },
+    {
+      "id": "ci-codeql",
+      "source": "ci",
+      "status": "N/A",
+      "command": ".github/workflows/codeql.yml",
+      "notes": "GitHub CodeQL analysis; needs GitHub Actions infrastructure. Only CI settles."
+    },
+    {
+      "id": "ci-pr-title",
+      "source": "ci",
+      "status": "N/A",
+      "command": ".github/workflows/pr-title-lint.yml (reusable-commit-lint.yml)",
+      "notes": "Lints PR title; no PR exists yet. Only CI settles."
+    }
+  ],
+  "failures": {
+    "unit": "  1st vi.fn() call:\n\n  [\n-   \"https://codemie.example.com\",\n+   \"https://api.anthropic.com\",\n  ]\n\n\nNumber of calls: 1\n\n ❯ src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts:63:35\n     61|\n     62|     expect(result).toEqual({ ok: false, reason: 'no valid CodeMie SSO …\n     63|     expect(startDetachedSsoLogin).toHaveBeenCalledWith(configured.ssoU…\n       |                                   ^\n     64|   });\n     65|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯\n\n FAIL  |unit| src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts > ensureCodeMieSsoAuth > blocks without starting a sign-in when the provider is SSO but no url is configured\nAssertionError: expected { ok: true } to deeply equal { ok: false, …(2) }\n\n- Expected\n+ Received\n\n  {\n-   \"loginOutcome\": \"failed\",\n-   \"ok\": false,\n-   \"reason\": \"no valid CodeMie SSO credentials found\",\n+   \"ok\": true,\n  }\n\n ❯ src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts:123:20\n    121|\n    122|     // 'failed' (not undefined) so describeLogin tells the user to sig…\n    123|     expect(result).toEqual({ ok: false, reason: 'no valid CodeMie SSO …\n       |                    ^\n    124|     expect(getStoredCredentials).not.toHaveBeenCalled();\n    125|     expect(startDetachedSsoLogin).not.toHaveBeenCalled();\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯\n\n\n Test Files  1 failed | 415 passed (416)\n      Tests  2 failed | 6735 passed (6737)\n   Start at  13:15:11\n   Duration  89.57s (transform 42.54s, setup 0ms, import 271.18s, tests 143.46s, environment 182ms)\n\n",
+    "integration": "- Checking SpecKit...\n- Checking BMAD Method...\n- Checking Codebase Memory MCP...\n- Checking CodeGraph...\n- Checking Graphify...\n ❯ |cli| tests/integration/hook-stdout.test.ts (15 tests | 3 failed) 145028ms\n       × a piped command prints no notice and keeps the marker 21758ms\n       × in a terminal the notice shows the installed version's own entry and writes the marker 22195ms\n       × in a terminal, no entry for the installed version prints no notes and still writes the marker 21405ms\n\n⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  |cli| tests/integration/cli-commands/list.test.ts > List Command\nError: Hook timed out in 60000ms.\nIf this is a long-running hook, pass a timeout value as the last argument or configure it globally with \"hookTimeout\".\n ❯ tests/integration/cli-commands/list.test.ts:23:3\n     21|   let listResult: CommandResult;\n     22|\n     23|   beforeAll(() => {\n       |   ^\n     24|     // Execute once, validate many times\n     25|     listResult = cli.runSilent('list');\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯\n\n\n⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  |cli| tests/integration/hook-stdout.test.ts > hook process stdout (codemie hook / codemie sound) > what's-new notice > a piped command prints no notice and keeps the marker\n FAIL  |cli| tests/integration/hook-stdout.test.ts > hook process stdout (codemie hook / codemie sound) > what's-new notice > in a terminal the notice shows the installed version's own entry and writes the marker\n FAIL  |cli| tests/integration/hook-stdout.test.ts > hook process stdout (codemie hook / codemie sound) > what's-new notice > in a terminal, no entry for the installed version prints no notes and still writes the marker\nError: codemie list did not exit within 20000ms\nstderr: \n ❯ Timeout._onTimeout tests/integration/hook-stdout.test.ts:139:14\n    137|       const timer = setTimeout(() => {\n    138|         child.kill('SIGKILL');\n    139|         fail(new Error(`codemie ${args.join(' ')} did not exit within …\n       |              ^\n    140|       }, RUN_TIMEOUT_MS);\n    141|       child.on('error', fail);\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯\n\n\n Test Files  2 failed | 38 passed | 1 skipped (41)\n      Tests  3 failed | 300 passed | 12 skipped (315)\n   Start at  13:16:43\n   Duration  145.93s (transform 16.28s, setup 0ms, import 52.53s, tests 479.89s, environment 15ms)\n\n",
+    "full-ci": "  1st vi.fn() call:\n\n  [\n-   \"https://codemie.example.com\",\n+   \"https://api.anthropic.com\",\n  ]\n\n\nNumber of calls: 1\n\n ❯ src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts:63:35\n     61|\n     62|     expect(result).toEqual({ ok: false, reason: 'no valid CodeMie SSO …\n     63|     expect(startDetachedSsoLogin).toHaveBeenCalledWith(configured.ssoU…\n       |                                   ^\n     64|   });\n     65|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯\n\n FAIL  |unit| src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts > ensureCodeMieSsoAuth > blocks without starting a sign-in when the provider is SSO but no url is configured\nAssertionError: expected { ok: true } to deeply equal { ok: false, …(2) }\n\n- Expected\n+ Received\n\n  {\n-   \"loginOutcome\": \"failed\",\n-   \"ok\": false,\n-   \"reason\": \"no valid CodeMie SSO credentials found\",\n+   \"ok\": true,\n  }\n\n ❯ src/providers/plugins/sso/__tests__/sso.auth-gate.test.ts:123:20\n    121|\n    122|     // 'failed' (not undefined) so describeLogin tells the user to sig…\n    123|     expect(result).toEqual({ ok: false, reason: 'no valid CodeMie SSO …\n       |                    ^\n    124|     expect(getStoredCredentials).not.toHaveBeenCalled();\n    125|     expect(startDetachedSsoLogin).not.toHaveBeenCalled();\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯\n\n\n Test Files  1 failed | 415 passed (416)\n      Tests  2 failed | 6735 passed (6737)\n   Start at  13:20:39\n   Duration  84.80s (transform 40.28s, setup 0ms, import 247.91s, tests 153.39s, environment 128ms)\n\n"
+  }
+}

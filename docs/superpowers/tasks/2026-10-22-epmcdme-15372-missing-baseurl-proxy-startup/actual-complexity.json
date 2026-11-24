@@ -1,0 +1,63 @@
+{
+  "task": "Guard ensureOtlpProxy() against a whitespace-only/blank baseUrl so background hook invocations skip cold start silently instead of attempting to spawn the daemon",
+  "generated": "2026-10-22T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 1,
+      "label": "XS",
+      "affected": "ensureOtlpProxy (connect-orchestrator.ts)",
+      "layers": "Workflow"
+    },
+    "requirements_clarity": {
+      "score": 1,
+      "label": "XS",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 2,
+      "label": "S",
+      "risk_factors": "Change sits on a background hook path invoked on every tracked project run; an incorrect guard could silently suppress legitimate cold starts",
+      "mitigation": "Additive trimmed-falsy guard clause only, matches the existing adjacent 'skip cold start silently' comment/pattern; covered by 4 new unit tests (undefined, empty string, whitespace-only, present) in connect-orchestrator.test.ts"
+    },
+    "file_change_estimate": {
+      "score": 1,
+      "label": "XS",
+      "modified_files": 2,
+      "modified_file_list": [
+        "src/cli/commands/proxy/connect-orchestrator.ts",
+        "src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts"
+      ],
+      "new_files": 0,
+      "new_file_list": [],
+      "affected_dirs": [
+        "src/cli/commands/proxy",
+        "src/cli/commands/proxy/__tests__"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 1,
+      "label": "XS",
+      "layers_changed": ["Workflow"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 7,
+  "size": "XS",
+  "band_range": "6-9",
+  "files_changed": 2,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "technical_risk", "reason": "Highest-scoring dimension: the guard sits on a background hook path run on every tracked project, so an incorrect condition risks silently suppressing legitimate proxy starts, though the fix itself is a trivial trimmed-falsy check matching an existing adjacent pattern and comment" },
+    { "dimension": "component_scope", "reason": "Entire change is a single guard clause inside ensureOtlpProxy(); no new components, no layer boundaries crossed" }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

@@ -14,6 +14,7 @@ import type {
   HealthCheckDetail as DoctorHealthCheckDetail
 } from './types.js';
 import { ProviderRegistry } from '../../../providers/core/registry.js';
+import { renderHint } from '@/utils/hint.js';
 
 /**
  * Convert provider HealthCheckDetail to doctor format
@@ -71,7 +72,7 @@ export function adaptProviderResult(
       details.push({
         status: 'info',
         message: 'Setup instructions available',
-        hint: `Run: codemie setup ${template.name}`
+        hint: renderHint({ reason: 'Not set up', command: `codemie setup ${template.name}` })
       });
     }
   }

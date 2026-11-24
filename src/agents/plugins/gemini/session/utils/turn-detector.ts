@@ -6,11 +6,13 @@
  * - Turn ends at: next 'user' OR 'error'/'info'/'warning' OR EOF
  */
 
+import type { GeminiContent } from './message-text.js';
+
 export interface GeminiMessage {
   id: string;
   type: 'user' | 'gemini' | 'assistant' | 'error' | 'info' | 'warning';
   timestamp: string; // ISO format
-  content: string;
+  content: GeminiContent;
   toolCalls?: GeminiToolCall[];
   tokens?: {
     input: number;

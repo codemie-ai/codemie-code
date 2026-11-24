@@ -54,6 +54,13 @@ export interface ProviderProfile {
   baseUrl?: string;
   apiKey?: string;
   model?: string;
+
+  // Per-global-profile CodeMie identity (EPMCDME-15411). `codeMieProject: null`
+  // means "this profile stays off CodeMie": such a record holds no URL or
+  // integration. Local profiles still resolve identity via WorkspaceConfig.
+  codeMieUrl?: string;
+  codeMieProject?: string | null;
+  codeMieIntegration?: CodeMieIntegrationInfo;
   /** Reasoning/thinking effort level. Persisted profile default; CLI flag overrides. */
   reasoningEffort?: CanonicalReasoningEffort;
 
@@ -61,6 +68,12 @@ export interface ProviderProfile {
   haikuModel?: string;
   sonnetModel?: string;
   opusModel?: string;
+  /**
+   * Non-Claude catalog models the user opted into for the Claude clients (the Claude Code
+   * `/model` picker and Claude Desktop). Claude-family models are always offered; these are
+   * added on top. Set with `codemie-claude models select`.
+   */
+  claudeExtraModels?: string[];
 
   timeout?: number;
   debug?: boolean;
@@ -95,6 +108,23 @@ export interface ProviderProfile {
 
   // In-memory assistants/skills state (not persisted here; stored at MultiProviderConfig level)
   codemieAssistants?: CodemieAssistant[];
+}
+
+/**
+ * CodeMie identity keys: the trio that attributes a session to a CodeMie
+ * project. Stored per global profile; local profiles take them from the
+ * scope workspace.
+ */
+export const IDENTITY_KEYS = ['codeMieUrl', 'codeMieProject', 'codeMieIntegration'] as const;
+export type IdentityKey = typeof IDENTITY_KEYS[number];
+
+/**
+ * Identity as stored on a global profile. `codeMieProject: null` = off CodeMie.
+ */
+export interface StoredIdentity {
+  codeMieUrl?: string;
+  codeMieProject?: string | null;
+  codeMieIntegration?: CodeMieIntegrationInfo;
 }
 
 /**
@@ -188,7 +218,7 @@ export interface MultiProviderConfig {
  */
 export interface ConfigWithSource {
   value: any;
-  source: 'default' | 'global' | 'project' | 'env' | 'cli';
+  source: 'default' | 'global' | 'project' | 'profile' | 'env' | 'cli';
 }
 
 /**
@@ -203,7 +233,7 @@ export interface ConfigWithSources {
 /**
  * Unified configuration options (for runtime use)
  */
-export type CodeMieConfigOptions = ProviderProfile & WorkspaceConfig;
+export type CodeMieConfigOptions = Omit<ProviderProfile, 'codeMieProject'> & WorkspaceConfig;
 
 /**
  * Type guard to check if config is multi-provider format

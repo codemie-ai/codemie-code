@@ -5,17 +5,38 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { homedir, tmpdir } from 'os';
 import { isAbsolute, join } from 'path';
-import { writeFile, readFile, mkdir, rm } from 'fs/promises';
+import { writeFile, readFile, mkdir, rm, lstat, readdir, symlink, chmod } from 'fs/promises';
 import { existsSync } from 'fs';
+
+// A path whose file is deleted on its next lstat, before the call goes through.
+const lstatRemoves = vi.hoisted(() => ({ path: undefined as string | undefined }));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    lstat: async (p: Parameters<typeof actual.lstat>[0], ...rest: unknown[]) => {
+      if (lstatRemoves.path !== undefined && String(p) === lstatRemoves.path) {
+        lstatRemoves.path = undefined;
+        await actual.rm(String(p), { force: true });
+      }
+      return (actual.lstat as (...a: unknown[]) => unknown)(p, ...rest);
+    },
+  };
+});
 
 import { logger } from '@/utils/logger.js';
 import { getClaudeDesktopManagedSettingsPath } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
+import {
+  isDesktopPointedAtLocalProxy,
+  readDesktopGatewayConfig,
+} from '@/telemetry/clients/claude-desktop/claude-desktop.gateway.js';
 
 import {
   buildGatewayConfig,
   cloneManagedEntry,
   DEFAULT_MANAGED_MCP_SERVERS,
   describeManagedSettingsOverride,
+  type DesktopModel,
   fetchClaudeModels,
   getDesktopBaseDir,
   getDesktopConfigPath,
@@ -23,13 +44,27 @@ import {
   type ManagedMcpServerEntry,
   mapCanonicalToDesktop,
   mergeManagedMcpServers,
+  moveDesktopToNamedKey,
+  readDesktopGateway,
   reconcileManagedMcpServers,
+  removeDesktopConfig,
   resolveDesktopOAuth,
   selectDesktopClaudeModels,
   selectPreferredClaudeModels,
   summarizeManagedOauthShapes,
   writeDesktopConfig,
 } from '../desktop.js';
+
+const LOOPBACK_GATEWAY_CONFIG = JSON.stringify({
+  inferenceProvider: 'gateway',
+  inferenceGatewayBaseUrl: 'http://127.0.0.1:4001',
+  inferenceGatewayApiKey: 'codemie-proxy',
+});
+
+const ids = (models: DesktopModel[]) => models.map((model) => model.id);
+
+const selectDesktopIds = (available: string[]) =>
+  ids(selectDesktopClaudeModels(available.map((id) => ({ id, isRouter: false }))));
 
 // Mirrors the real gateway response shape — includes vertex/non-claude/dated
 // variants so we exercise the filter and resolver logic together.
@@ -75,6 +110,7 @@ describe('buildGatewayConfig', () => {
       inferenceGatewayBaseUrl: 'http://localhost:4001',
       inferenceGatewayApiKey: 'codemie-proxy',
       inferenceGatewayAuthScheme: 'bearer',
+      inferenceCredentialKind: 'static',
     });
   });
 });
@@ -219,7 +255,7 @@ describe('fetchClaudeModels', () => {
     }) as unknown as typeof globalThis.fetch;
 
     const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
-    expect(models).toEqual([
+    expect(ids(models)).toEqual([
       'claude-sonnet-4-5-20250929',
       'claude-4-5-sonnet',
       'claude-sonnet-5',
@@ -242,13 +278,43 @@ describe('fetchClaudeModels', () => {
     expect(init.headers.Authorization).toBe('Bearer my-key');
   });
 
+  it('omits project_id when no project is given', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, headers: mkHeaders('application/json'), json: async () => [] });
+    globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
+
+    await fetchClaudeModels('http://127.0.0.1:4001', 'my-key');
+    const url = new URL(String(fetchSpy.mock.calls[0][0]));
+    expect(url.pathname).toBe('/v1/llm_models');
+    expect(url.searchParams.get('include_all')).toBe('true');
+    expect(url.searchParams.has('project_id')).toBe(false);
+  });
+
+  it('narrows discovery to the profile project via project_id', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, headers: mkHeaders('application/json'), json: async () => [] });
+    globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
+
+    await fetchClaudeModels('http://127.0.0.1:4001', 'my-key', 'demo project&x=1');
+    const url = new URL(String(fetchSpy.mock.calls[0][0]));
+    expect(url.searchParams.get('include_all')).toBe('true');
+    expect(url.searchParams.get('project_id')).toBe('demo project&x=1');
+  });
+
+  it('names the project when the backend does not find it', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false, status: 404, statusText: 'Not Found', headers: mkHeaders('application/json'),
+    }) as unknown as typeof globalThis.fetch;
+
+    await expect(fetchClaudeModels('http://127.0.0.1:4001', 'k', 'gone-project'))
+      .rejects.toThrow(/project "gone-project" was not found/);
+  });
+
   it('throws when fetch fails', async () => {
     globalThis.fetch = vi.fn().mockRejectedValue(new Error('network down')) as any;
     await expect(fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy'))
       .rejects.toThrow('Local proxy model discovery could not reach');
   });
 
-  it('falls back to preferred Claude ids when the proxy upstream returns 5xx', async () => {
+  it('returns null when the proxy upstream returns 5xx', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 500,
@@ -257,16 +323,7 @@ describe('fetchClaudeModels', () => {
       json: async () => ({ data: [] }),
     }) as unknown as typeof globalThis.fetch;
 
-    const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
-    expect(models).toEqual([
-      'claude-opus-5',
-      'claude-opus-4-8',
-      'claude-opus-4-7',
-      'claude-opus-4-6',
-      'claude-sonnet-5',
-      'claude-sonnet-4-6',
-      'claude-haiku-4-5',
-        ]);
+    expect(await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy')).toBeNull();
   });
 
   it('throws when response is not ok', async () => {
@@ -287,7 +344,7 @@ describe('fetchClaudeModels', () => {
     }) as unknown as typeof globalThis.fetch;
 
     const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
-    expect(models).toEqual([
+    expect(ids(models)).toEqual([
       'claude-sonnet-4-5-vertex',
       'claude-sonnet-4-6-vertex',
     ]);
@@ -305,7 +362,7 @@ describe('fetchClaudeModels', () => {
     }) as unknown as typeof globalThis.fetch;
 
     const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
-    expect(models).toEqual(['claude-sonnet-4-6']);
+    expect(ids(models)).toEqual(['claude-sonnet-4-6']);
   });
 
   it('throws ConfigurationError with re-auth message when response is HTML (Keycloak redirect)', async () => {
@@ -338,7 +395,7 @@ describe('fetchClaudeModels', () => {
     }) as unknown as typeof globalThis.fetch;
 
     const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
-    expect(models).toContain('claude-sonnet-4-6');
+    expect(ids(models)).toContain('claude-sonnet-4-6');
   });
 });
 
@@ -424,23 +481,52 @@ describe('selectPreferredClaudeModels', () => {
 });
 
 describe('selectDesktopClaudeModels', () => {
-  it('exposes only Opus 4.8 when the gateway serves it', () => {
-    const result = selectDesktopClaudeModels([
-      'claude-sonnet-4-6',
-      'claude-opus-4-8',
-      'claude-opus-4-7',
-      'claude-opus-4-6-20260205',
+  it('puts Opus 5.5, Sonnet 5.5 and Haiku 5.5 first, then every other model', () => {
+    const result = selectDesktopIds([
+      'claude-sonnet-5',
+      'claude-sonnet-5-5',
+      'claude-opus-5',
+      'claude-opus-5-5',
       'claude-haiku-4-5-20251001',
+      'claude-haiku-5-5',
     ]);
     expect(result).toEqual([
-      'claude-opus-4-8',
-      'claude-sonnet-4-6',
+      'claude-opus-5-5',
+      'claude-sonnet-5-5',
+      'claude-haiku-5-5',
+      'claude-sonnet-5',
+      'claude-opus-5',
       'claude-haiku-4-5-20251001',
-        ]);
+    ]);
   });
 
-  it('falls back to the highest available opus when 4.8 is absent', () => {
-    const result = selectDesktopClaudeModels([
+  it('puts the highest-priority Haiku first', () => {
+    const result = selectDesktopIds([
+      'claude-haiku-4-5-20251001',
+      'claude-haiku-5-5',
+    ]);
+    expect(result).toEqual(['claude-haiku-5-5', 'claude-haiku-4-5-20251001']);
+  });
+
+  it('puts Opus 4.8 first when the gateway serves it', () => {
+    const result = selectDesktopIds([
+      'claude-sonnet-4-6',
+      'claude-opus-4-8',
+      'claude-opus-4-7',
+      'claude-opus-4-6-20260205',
+      'claude-haiku-4-5-20251001',
+    ]);
+    expect(result).toEqual([
+      'claude-opus-4-8',
+      'claude-sonnet-4-6',
+      'claude-haiku-4-5-20251001',
+      'claude-opus-4-7',
+      'claude-opus-4-6-20260205',
+    ]);
+  });
+
+  it('puts the highest available opus first when 4.8 is absent', () => {
+    const result = selectDesktopIds([
       'claude-sonnet-4-6',
       'claude-opus-4-7',
       'claude-opus-4-6-20260205',
@@ -450,24 +536,58 @@ describe('selectDesktopClaudeModels', () => {
       'claude-opus-4-7',
       'claude-sonnet-4-6',
       'claude-haiku-4-5-20251001',
-        ]);
+      'claude-opus-4-6-20260205',
+    ]);
   });
 
   it('uses the next opus down when only 4.6 is available', () => {
-    expect(selectDesktopClaudeModels(['claude-opus-4-6-20260205']))
+    expect(selectDesktopIds(['claude-opus-4-6-20260205']))
       .toEqual(['claude-opus-4-6-20260205']);
   });
 
-  it('keeps a single dated Opus 4.8 over older canonical opus ids', () => {
-    expect(selectDesktopClaudeModels([
+  it('puts a dated Opus 4.8 before older canonical opus ids', () => {
+    expect(selectDesktopIds([
       'claude-opus-4-8-20260601',
       'claude-opus-4-7',
-    ])).toEqual(['claude-opus-4-8-20260601']);
+    ])).toEqual(['claude-opus-4-8-20260601', 'claude-opus-4-7']);
   });
 
   it('returns no opus entry when the gateway serves none', () => {
-    expect(selectDesktopClaudeModels(['claude-sonnet-4-6', 'claude-haiku-4-5-20251001']))
+    expect(selectDesktopIds(['claude-sonnet-4-6', 'claude-haiku-4-5-20251001']))
       .toEqual(['claude-sonnet-4-6', 'claude-haiku-4-5-20251001']);
+  });
+
+  it('keeps unlisted and version-first ids at the end in catalog order', () => {
+    expect(selectDesktopIds([
+      'claude-opus-4-5',
+      'claude-4-5-sonnet',
+      'claude-sonnet-4-6',
+      'claude-3-haiku-20240307',
+    ])).toEqual([
+      'claude-sonnet-4-6',
+      'claude-opus-4-5',
+      'claude-4-5-sonnet',
+      'claude-3-haiku-20240307',
+    ]);
+  });
+
+  it('puts routers between the curated pick and the other models', () => {
+    expect(ids(selectDesktopClaudeModels([
+      { id: 'claude-opus-5', isRouter: false },
+      { id: 'claude-router-standard', isRouter: true },
+      { id: 'claude-opus-5-5', isRouter: false },
+    ]))).toEqual(['claude-opus-5-5', 'claude-router-standard', 'claude-opus-5']);
+  });
+
+  it('starts with the routers when no model matches the curated set', () => {
+    expect(ids(selectDesktopClaudeModels([
+      { id: 'claude-opus-4-5', isRouter: false },
+      { id: 'claude-router-standard', isRouter: true },
+    ]))).toEqual(['claude-router-standard', 'claude-opus-4-5']);
+  });
+
+  it('returns an empty list for an empty catalog', () => {
+    expect(selectDesktopClaudeModels([])).toEqual([]);
   });
 });
 
@@ -485,7 +605,7 @@ describe('writeDesktopConfig', () => {
     statePath = join(baseDir, 'managed-state.json');
     await rm(baseDir, { recursive: true, force: true });
     originalFetch = globalThis.fetch;
-    // Default: stub fetch to return our model list so writeDesktopConfig can populate inferenceModels.
+    // Default: stub fetch to return our model list so writeDesktopConfig can check the catalog.
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       headers: { get: (h: string) => h === 'content-type' ? 'application/json' : null },
@@ -505,13 +625,67 @@ describe('writeDesktopConfig', () => {
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(config.inferenceProvider).toBe('gateway');
     expect(config.inferenceGatewayBaseUrl).toBe('http://localhost:4001');
-    expect(config.inferenceGatewayApiKey).toBe('codemie-proxy');
+    expect(config.inferenceGatewayApiKey).toBe('codemie-proxy.claude-desktop');
     expect(config.inferenceGatewayAuthScheme).toBe('bearer');
 
     const meta = JSON.parse(await readFile(metaPath, 'utf-8'));
     expect(meta.appliedId).toBeDefined();
     expect(meta.entries).toEqual([{ id: meta.appliedId, name: 'CodeMie Proxy' }]);
     expect(written).toBe(join(libDir, `${meta.appliedId}.json`));
+  });
+
+  it('checks the profile project\'s models and leaves the list to Desktop discovery', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => [{ base_name: 'claude-router-standard' }, { base_name: 'claude-router-premium' }],
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
+
+    const written = await writeDesktopConfig(
+      'http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath, 'router-demo'
+    );
+    expect(new URL(String(fetchSpy.mock.calls[0][0])).searchParams.get('project_id')).toBe('router-demo');
+    const config = JSON.parse(await readFile(written, 'utf-8'));
+    // Desktop asks the proxy's GET /v1/models on every start instead of reading a fixed list.
+    expect(config.inferenceModels).toBeUndefined();
+    expect(config.modelDiscoveryEnabled).toBe(true);
+  });
+
+  it('explains when the profile project allows no Claude models', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => [{ base_name: 'grok-4-6' }],
+    }) as unknown as typeof globalThis.fetch;
+
+    await expect(writeDesktopConfig('http://127.0.0.1:4001', 'k', baseDir, [], statePath, 'no-claude'))
+      .rejects.toThrow(/Project "no-claude" does not allow any Claude models/);
+  });
+
+  it('connects a project whose Claude models match none of the curated set', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => [{ base_name: 'claude-opus-4-5-20251101' }, { base_name: 'claude-3-haiku-20240307' }],
+    }) as unknown as typeof globalThis.fetch;
+
+    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'k', baseDir, [], statePath, 'legacy-claude');
+    const config = JSON.parse(await readFile(written, 'utf-8'));
+    expect(config.modelDiscoveryEnabled).toBe(true);
+  });
+
+  it('still writes the config when the upstream model catalog fails', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      headers: { get: () => 'application/json' },
+    }) as unknown as typeof globalThis.fetch;
+
+    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'k', baseDir, [], statePath, 'p1');
+    const config = JSON.parse(await readFile(written, 'utf-8'));
+    expect(config.modelDiscoveryEnabled).toBe(true);
   });
 
   it('reuses appliedId from existing _meta.json when present', async () => {
@@ -531,6 +705,32 @@ describe('writeDesktopConfig', () => {
     expect(meta.entries[0].name).toBe('Default');
   });
 
+  it('writes a fresh UUID config and leaves the target untouched when appliedId leads outside the library', async () => {
+    await mkdir(libDir, { recursive: true });
+    await writeFile(metaPath, JSON.stringify({ appliedId: '../outside', entries: [] }), 'utf-8');
+    await writeFile(join(baseDir, 'outside.json'), LOOPBACK_GATEWAY_CONFIG, 'utf-8');
+
+    const written = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
+
+    const meta = JSON.parse(await readFile(metaPath, 'utf-8'));
+    expect(meta.appliedId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(written).toBe(join(libDir, `${meta.appliedId}.json`));
+    expect(existsSync(written)).toBe(true);
+    expect(await readFile(join(baseDir, 'outside.json'), 'utf-8')).toBe(LOOPBACK_GATEWAY_CONFIG);
+  });
+
+  it('writes a fresh UUID config when appliedId is empty', async () => {
+    await mkdir(libDir, { recursive: true });
+    await writeFile(metaPath, JSON.stringify({ appliedId: '', entries: [] }), 'utf-8');
+
+    const written = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
+
+    const meta = JSON.parse(await readFile(metaPath, 'utf-8'));
+    expect(meta.appliedId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(written).toBe(join(libDir, `${meta.appliedId}.json`));
+    expect(existsSync(join(libDir, '.json'))).toBe(false);
+  });
+
   it('preserves non-inference keys in the config file', async () => {
     const existingId = 'reuse-id';
     await mkdir(libDir, { recursive: true });
@@ -546,31 +746,19 @@ describe('writeDesktopConfig', () => {
     expect(config.inferenceGatewayBaseUrl).toBe('http://localhost:4001');
   });
 
-  it('populates inferenceModels with the curated preferred Claude set (single opus)', async () => {
-    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
-    const config = JSON.parse(await readFile(written, 'utf-8'));
-    expect(JSON.parse(config.inferenceModels)).toEqual([
-      { name: 'claude-opus-4-7' },
-      { name: 'claude-sonnet-4-6' },
-      { name: 'claude-haiku-4-5-20251001' },
-        ]);
-  });
-
-  it('replaces existing inferenceModels entries — does not merge user-added ones', async () => {
+  it('removes a model list written by an earlier connect, so Desktop discovers models', async () => {
     const existingId = 'reuse-id';
     await mkdir(libDir, { recursive: true });
     await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'X' }] }), 'utf-8');
     await writeFile(join(libDir, `${existingId}.json`), JSON.stringify({
-      inferenceModels: [{ name: 'my-custom-model' }, { name: 'claude-sonnet-4-5-20250929' }],
+      inferenceModels: JSON.stringify([{ name: 'claude-sonnet-4-5-20250929' }]),
+      modelDiscoveryEnabled: false,
     }), 'utf-8');
 
     const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
     const config = JSON.parse(await readFile(written, 'utf-8'));
-    expect(JSON.parse(config.inferenceModels)).toEqual([
-      { name: 'claude-opus-4-7' },
-      { name: 'claude-sonnet-4-6' },
-      { name: 'claude-haiku-4-5-20251001' },
-        ]);
+    expect(config.inferenceModels).toBeUndefined();
+    expect(config.modelDiscoveryEnabled).toBe(true);
   });
 
   it('fails fast when discovery returns nothing', async () => {
@@ -597,9 +785,7 @@ describe('writeDesktopConfig', () => {
 
     const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir);
     const config = JSON.parse(await readFile(written, 'utf-8'));
-    expect(JSON.parse(config.inferenceModels)).toEqual([
-      { name: 'claude-sonnet-4-6-vertex' },
-    ]);
+    expect(config.inferenceProvider).toBe('gateway');
   });
 
   it('overwrites the four inference keys with new values', async () => {
@@ -617,8 +803,106 @@ describe('writeDesktopConfig', () => {
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(config.inferenceProvider).toBe('gateway');
     expect(config.inferenceGatewayBaseUrl).toBe('http://localhost:4002');
-    expect(config.inferenceGatewayApiKey).toBe('new-key');
+    expect(config.inferenceGatewayApiKey).toBe('new-key.claude-desktop');
     expect(config.inferenceGatewayAuthScheme).toBe('bearer');
+  });
+
+  it('writes the named Desktop key, reads the catalog with the shared one, and reads back as pointed at the local proxy', async () => {
+    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
+
+    const config = JSON.parse(await readFile(written, 'utf-8'));
+    expect(config.inferenceGatewayApiKey).toBe('codemie-proxy.claude-desktop');
+    const init = vi.mocked(globalThis.fetch).mock.calls[0][1] as { headers: Record<string, string> };
+    expect(init.headers.Authorization).toBe('Bearer codemie-proxy');
+    const gateway = await readDesktopGatewayConfig(baseDir);
+    expect(gateway).toEqual({ port: 4001, apiKey: 'codemie-proxy.claude-desktop' });
+    expect(isDesktopPointedAtLocalProxy(gateway, 'codemie-proxy')).toBe(true);
+  });
+
+  it('rewrites a config holding the shared key to one named key, also on a second connect', async () => {
+    const existingId = 'shared-key-config';
+    await mkdir(libDir, { recursive: true });
+    await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'X' }] }), 'utf-8');
+    await writeFile(join(libDir, `${existingId}.json`), LOOPBACK_GATEWAY_CONFIG, 'utf-8');
+
+    await writeDesktopConfig('http://127.0.0.1:4001', 'k', baseDir, [], statePath);
+    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'k', baseDir, [], statePath);
+
+    expect(JSON.parse(await readFile(written, 'utf-8')).inferenceGatewayApiKey).toBe('k.claude-desktop');
+  });
+
+  it('removes the named key again on disconnect', async () => {
+    await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
+
+    await removeDesktopConfig(baseDir, statePath);
+
+    await expect(readDesktopGatewayConfig(baseDir)).resolves.toBeNull();
+  });
+
+  it('removes every inferenceBedrock* key in the same rewrite and ends on the gateway provider', async () => {
+    const existingId = 'bedrock-left-over';
+    await mkdir(libDir, { recursive: true });
+    await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'X' }] }), 'utf-8');
+    await writeFile(join(libDir, `${existingId}.json`), JSON.stringify({
+      inferenceProvider: 'bedrock',
+      inferenceBedrockRegion: 'us-east-1',
+      inferenceBedrockProfile: 'work',
+      inferenceBedrockBearerToken: 'secret-token',
+      unrelatedUserKey: 'kept',
+    }), 'utf-8');
+
+    const written = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
+    const config = JSON.parse(await readFile(written, 'utf-8'));
+
+    expect(config.inferenceProvider).toBe('gateway');
+    expect(Object.keys(config).filter((key) => key.startsWith('inferenceBedrock'))).toEqual([]);
+    expect(config.unrelatedUserKey).toBe('kept');
+  });
+
+  it('drops a sign-in mode left by "Sign in with your organization" and pins the static gateway key', async () => {
+    const existingId = 'sso-left-over';
+    await mkdir(libDir, { recursive: true });
+    await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'X' }] }), 'utf-8');
+    await writeFile(join(libDir, `${existingId}.json`), JSON.stringify({
+      inferenceProvider: 'gateway',
+      inferenceGatewayBaseUrl: 'http://localhost:4001',
+      inferenceGatewayApiKey: 'codemie-proxy',
+      inferenceGatewayAuthScheme: 'sso',
+      inferenceCredentialKind: 'interactive',
+      inferenceGatewayOidc: { issuer: 'https://idp.example.com' },
+      inferenceGatewayOidcAuthFlow: 'device-code',
+      inferenceIdpOidc: { issuer: 'https://idp.example.com' },
+      inferenceIdpAuthFlow: 'device-code',
+      inferenceCredentialHelper: '/usr/local/bin/helper',
+      inferenceCredentialHelperArgs: ['--x'],
+      inferenceCredentialHelperWindows: 'C:\\helper.exe',
+      inferenceCredentialHelperTtlSec: 300,
+      inferenceCredentialHelperTimeoutSec: 10,
+      inferenceCredentialHelperSilentRefreshEnabled: true,
+      unrelatedUserKey: 'kept',
+    }), 'utf-8');
+
+    const written = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
+    const config = JSON.parse(await readFile(written, 'utf-8'));
+
+    expect(written).toBe(join(libDir, `${existingId}.json`));
+    expect(config.inferenceGatewayAuthScheme).toBe('bearer');
+    expect(config.inferenceCredentialKind).toBe('static');
+    for (const key of [
+      'inferenceGatewayOidc',
+      'inferenceGatewayOidcAuthFlow',
+      'inferenceIdpOidc',
+      'inferenceIdpAuthFlow',
+      'inferenceCredentialHelper',
+      'inferenceCredentialHelperArgs',
+      'inferenceCredentialHelperWindows',
+      'inferenceCredentialHelperTtlSec',
+      'inferenceCredentialHelperTimeoutSec',
+      'inferenceCredentialHelperSilentRefreshEnabled',
+    ]) {
+      expect(config).not.toHaveProperty(key);
+    }
+    expect(config.unrelatedUserKey).toBe('kept');
   });
 
   it('writes org MCP servers and persists managed-state for revocation', async () => {
@@ -1127,6 +1411,189 @@ describe('writeDesktopConfig', () => {
   });
 });
 
+describe('removeDesktopConfig', () => {
+  let baseDir: string;
+  let libDir: string;
+  let metaPath: string;
+  let statePath: string;
+
+  beforeEach(async () => {
+    baseDir = join(tmpdir(), `desktop-remove-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    libDir = join(baseDir, 'configLibrary');
+    metaPath = join(libDir, '_meta.json');
+    statePath = join(baseDir, 'managed-state.json');
+    await mkdir(libDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(baseDir, { recursive: true, force: true });
+  });
+
+  it('deletes an applied loopback gateway config that holds nothing else and drops its entry', async () => {
+    await writeFile(metaPath, JSON.stringify({ appliedId: 'a', entries: [{ id: 'a', name: 'CodeMie Proxy' }] }), 'utf-8');
+    await writeFile(join(libDir, 'a.json'), LOOPBACK_GATEWAY_CONFIG, 'utf-8');
+
+    const result = await removeDesktopConfig(baseDir, statePath);
+
+    expect(result).toEqual({ removed: true, configPath: join(libDir, 'a.json'), deletedConfigFile: true });
+    expect(existsSync(join(libDir, 'a.json'))).toBe(false);
+    expect(JSON.parse(await readFile(metaPath, 'utf-8'))).toEqual({ entries: [] });
+  });
+
+  it('leaves a local gateway of another tool alone', async () => {
+    const foreign = JSON.stringify({
+      inferenceProvider: 'gateway',
+      inferenceGatewayBaseUrl: 'http://localhost:11434',
+      inferenceGatewayApiKey: 'ollama',
+    });
+    await writeFile(metaPath, JSON.stringify({ appliedId: 'a', entries: [{ id: 'a', name: 'Local' }] }), 'utf-8');
+    await writeFile(join(libDir, 'a.json'), foreign, 'utf-8');
+
+    const result = await removeDesktopConfig(baseDir, statePath);
+
+    expect(result.removed).toBe(false);
+    expect(await readFile(join(libDir, 'a.json'), 'utf-8')).toBe(foreign);
+  });
+
+  it('removes an emptied applied entry whose file is gone before the link check', async () => {
+    await writeFile(metaPath, JSON.stringify({ appliedId: 'a', entries: [{ id: 'a', name: 'CodeMie Proxy' }] }), 'utf-8');
+    await writeFile(join(libDir, 'a.json'), LOOPBACK_GATEWAY_CONFIG, 'utf-8');
+    lstatRemoves.path = join(libDir, 'a.json');
+
+    let result: Awaited<ReturnType<typeof removeDesktopConfig>>;
+    try {
+      result = await removeDesktopConfig(baseDir, statePath);
+    } finally {
+      lstatRemoves.path = undefined;
+    }
+
+    expect(result).toEqual({ removed: true, configPath: join(libDir, 'a.json'), deletedConfigFile: true });
+    expect(existsSync(join(libDir, 'a.json'))).toBe(false);
+    expect(JSON.parse(await readFile(metaPath, 'utf-8'))).toEqual({ entries: [] });
+  });
+
+  it.skipIf(process.platform === 'win32')('empties the target of a linked applied entry, removes the link, and the next connect writes a new file', async () => {
+    const target = join(baseDir, 'dotfiles-desktop.json');
+    await writeFile(target, LOOPBACK_GATEWAY_CONFIG, 'utf-8');
+    await writeFile(metaPath, JSON.stringify({ appliedId: 'a', entries: [{ id: 'a', name: 'CodeMie Proxy' }] }), 'utf-8');
+    await symlink(target, join(libDir, 'a.json'));
+
+    const result = await removeDesktopConfig(baseDir, statePath);
+
+    expect(result).toEqual({ removed: true, configPath: join(libDir, 'a.json'), deletedConfigFile: true });
+    expect(existsSync(join(libDir, 'a.json'))).toBe(false);
+    expect(await readdir(libDir)).toEqual(['_meta.json']);
+    expect(JSON.parse(await readFile(target, 'utf-8'))).toEqual({});
+    expect(JSON.parse(await readFile(metaPath, 'utf-8'))).toEqual({ entries: [] });
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: (h: string) => h === 'content-type' ? 'application/json' : null },
+      json: async () => MODEL_LIST_RESPONSE,
+    }) as unknown as typeof globalThis.fetch;
+    let written: string;
+    try {
+      written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(written).not.toBe(join(libDir, 'a.json'));
+    expect((await lstat(written)).isSymbolicLink()).toBe(false);
+    expect(JSON.parse(await readFile(written, 'utf-8')).inferenceGatewayApiKey).toBe('codemie-proxy.claude-desktop');
+    expect(JSON.parse(await readFile(target, 'utf-8'))).toEqual({});
+  });
+
+  it.skipIf(process.platform === 'win32')('removes a linked applied entry whose target cannot be written, with one warning', async () => {
+    if (process.getuid?.() === 0) return; // root bypasses file-mode permission checks; nothing to assert here.
+    const targetDir = join(baseDir, 'read-only-dotfiles');
+    const target = join(targetDir, 'desktop.json');
+    await mkdir(targetDir);
+    await writeFile(target, LOOPBACK_GATEWAY_CONFIG, 'utf-8');
+    await chmod(target, 0o444);
+    await chmod(targetDir, 0o555);
+    await writeFile(metaPath, JSON.stringify({ appliedId: 'a', entries: [{ id: 'a', name: 'CodeMie Proxy' }] }), 'utf-8');
+    await symlink(target, join(libDir, 'a.json'));
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+
+    let result: Awaited<ReturnType<typeof removeDesktopConfig>>;
+    let warnings: number;
+    try {
+      result = await removeDesktopConfig(baseDir, statePath);
+      warnings = warn.mock.calls.length;
+    } finally {
+      await chmod(targetDir, 0o755);
+      await chmod(target, 0o644);
+      warn.mockRestore();
+    }
+
+    expect(result).toEqual({ removed: true, configPath: join(libDir, 'a.json'), deletedConfigFile: true });
+    expect(existsSync(join(libDir, 'a.json'))).toBe(false);
+    expect(await readFile(target, 'utf-8')).toBe(LOOPBACK_GATEWAY_CONFIG);
+    expect(warnings).toBe(1);
+  });
+
+  it('drops the sign-in keys with the gateway, so a config holding nothing else is deleted', async () => {
+    await writeFile(metaPath, JSON.stringify({ appliedId: 'a', entries: [{ id: 'a', name: 'CodeMie Proxy' }] }), 'utf-8');
+    await writeFile(join(libDir, 'a.json'), JSON.stringify({
+      ...JSON.parse(LOOPBACK_GATEWAY_CONFIG),
+      inferenceCredentialKind: 'interactive',
+      inferenceGatewayOidc: { issuer: 'https://idp.example.com' },
+      inferenceIdpAuthFlow: 'device-code',
+    }), 'utf-8');
+
+    const result = await removeDesktopConfig(baseDir, statePath);
+
+    expect(result).toEqual({ removed: true, configPath: join(libDir, 'a.json'), deletedConfigFile: true });
+    expect(existsSync(join(libDir, 'a.json'))).toBe(false);
+  });
+
+  it('keeps unrelated keys but drops the sign-in keys when other settings remain', async () => {
+    await writeFile(metaPath, JSON.stringify({ appliedId: 'a', entries: [{ id: 'a', name: 'CodeMie Proxy' }] }), 'utf-8');
+    await writeFile(join(libDir, 'a.json'), JSON.stringify({
+      ...JSON.parse(LOOPBACK_GATEWAY_CONFIG),
+      inferenceCredentialKind: 'static',
+      inferenceGatewayOidcAuthFlow: 'device-code',
+      unrelatedUserKey: 'kept',
+    }), 'utf-8');
+
+    const result = await removeDesktopConfig(baseDir, statePath);
+
+    expect(result).toMatchObject({ removed: true, deletedConfigFile: false });
+    expect(JSON.parse(await readFile(join(libDir, 'a.json'), 'utf-8'))).toEqual({ unrelatedUserKey: 'kept' });
+  });
+
+  it('leaves inferenceBedrock* keys alone on disconnect (only connect strips them)', async () => {
+    await writeFile(metaPath, JSON.stringify({ appliedId: 'a', entries: [{ id: 'a', name: 'CodeMie Proxy' }] }), 'utf-8');
+    await writeFile(join(libDir, 'a.json'), JSON.stringify({
+      ...JSON.parse(LOOPBACK_GATEWAY_CONFIG),
+      inferenceBedrockRegion: 'us-east-1',
+      unrelatedUserKey: 'kept',
+    }), 'utf-8');
+
+    const result = await removeDesktopConfig(baseDir, statePath);
+
+    expect(result).toMatchObject({ removed: true, deletedConfigFile: false });
+    expect(JSON.parse(await readFile(join(libDir, 'a.json'), 'utf-8'))).toEqual({
+      inferenceBedrockRegion: 'us-east-1',
+      unrelatedUserKey: 'kept',
+    });
+  });
+
+  it('touches no file when appliedId leads outside the library', async () => {
+    const metaText = JSON.stringify({ appliedId: '../outside', entries: [] });
+    await writeFile(metaPath, metaText, 'utf-8');
+    await writeFile(join(baseDir, 'outside.json'), LOOPBACK_GATEWAY_CONFIG, 'utf-8');
+
+    const result = await removeDesktopConfig(baseDir, statePath);
+
+    expect(result).toEqual({ removed: false, deletedConfigFile: false, reason: 'no applied Claude Desktop config' });
+    expect(await readFile(join(baseDir, 'outside.json'), 'utf-8')).toBe(LOOPBACK_GATEWAY_CONFIG);
+    expect(await readFile(metaPath, 'utf-8')).toBe(metaText);
+  });
+});
+
 describe('mapCanonicalToDesktop', () => {
   it('maps remote oauth/none entries and sets the oauth boolean', () => {
     const result = mapCanonicalToDesktop([
@@ -1231,6 +1698,17 @@ describe('getDesktopConfigPath', () => {
     await mkdir(libDir, { recursive: true });
     await writeFile(join(libDir, '_meta.json'), JSON.stringify({ appliedId: 'abc-123', entries: [] }), 'utf-8');
     expect(await getDesktopConfigPath(baseDir)).toBe(join(libDir, 'abc-123.json'));
+  });
+
+  it('returns a fresh UUID path inside the library when appliedId leads outside it', async () => {
+    await mkdir(libDir, { recursive: true });
+    await writeFile(join(libDir, '_meta.json'), JSON.stringify({ appliedId: '../outside', entries: [] }), 'utf-8');
+    await writeFile(join(baseDir, 'outside.json'), LOOPBACK_GATEWAY_CONFIG, 'utf-8');
+
+    const path = await getDesktopConfigPath(baseDir);
+
+    expect(path.startsWith(libDir)).toBe(true);
+    expect(path).toMatch(/[0-9a-f-]{36}\.json$/);
   });
 });
 
@@ -1363,5 +1841,255 @@ describe('summarizeManagedOauthShapes', () => {
   it('returns zeroes for a failed fetch (null) and for an empty list', () => {
     expect(summarizeManagedOauthShapes(null)).toEqual({ oauthConfigured: 0, oauthFlagged: 0, noAuth: 0 });
     expect(summarizeManagedOauthShapes([])).toEqual({ oauthConfigured: 0, oauthFlagged: 0, noAuth: 0 });
+  });
+});
+
+describe('readDesktopGateway', () => {
+  let baseDir: string;
+  const originalPlatform = process.platform;
+
+  beforeEach(async () => {
+    baseDir = join(tmpdir(), `desktop-gateway-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    await mkdir(join(baseDir, 'configLibrary'), { recursive: true });
+  });
+
+  afterEach(async () => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    await logger.close();
+    await rm(baseDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+
+  async function writeLibrary(meta: unknown, applied?: unknown): Promise<void> {
+    const lib = join(baseDir, 'configLibrary');
+    await writeFile(join(lib, '_meta.json'), typeof meta === 'string' ? meta : JSON.stringify(meta));
+    if (applied !== undefined) {
+      await writeFile(join(lib, 'a.json'), typeof applied === 'string' ? applied : JSON.stringify(applied));
+    }
+  }
+
+  const gatewayConfig = (key?: string) => ({
+    inferenceProvider: 'gateway',
+    inferenceGatewayBaseUrl: 'http://127.0.0.1:4001',
+    ...(key === undefined ? {} : { inferenceGatewayApiKey: key }),
+  });
+
+  it('gives the port of an applied loopback gateway config with the default key and no daemon state', async () => {
+    await writeLibrary({ appliedId: 'a' }, gatewayConfig('codemie-proxy'));
+    await expect(readDesktopGateway(baseDir, join(baseDir, 'no-state.json'))).resolves.toEqual({ port: 4001 });
+  });
+
+  it('gives the port when the key is the one the daemon state file names', async () => {
+    const stateFile = join(baseDir, 'proxy-daemon.json');
+    await writeFile(stateFile, JSON.stringify({ gatewayKey: 'daemon-own-key' }));
+    await writeLibrary({ appliedId: 'a' }, gatewayConfig('daemon-own-key'));
+    await expect(readDesktopGateway(baseDir, stateFile)).resolves.toEqual({ port: 4001 });
+  });
+
+  it('reads a config holding the named Desktop key as connected', async () => {
+    const stateFile = join(baseDir, 'proxy-daemon.json');
+    await writeFile(stateFile, JSON.stringify({ gatewayKey: 'daemon-own-key' }));
+    await writeLibrary({ appliedId: 'a' }, gatewayConfig('daemon-own-key.claude-desktop'));
+    await expect(readDesktopGateway(baseDir, stateFile)).resolves.toEqual({ port: 4001 });
+  });
+
+  it('gives the port of a config whose key Desktop has sealed', async () => {
+    const stateFile = join(baseDir, 'proxy-daemon.json');
+    await writeFile(stateFile, JSON.stringify({ gatewayKey: 'daemon-own-key' }));
+    await writeLibrary({ appliedId: 'a' }, gatewayConfig('__sealed__:v1:QUJD'));
+    await expect(readDesktopGateway(baseDir, stateFile)).resolves.toEqual({ port: 4001 });
+  });
+
+  it('a start with no record port, no state and no OTLP endpoint asks for the port of Desktop\'s sealed config', async () => {
+    const home = join(baseDir, 'home');
+    for (const name of ['HOME', 'USERPROFILE']) vi.stubEnv(name, home);
+    vi.stubEnv('CODEMIE_HOME', join(home, '.codemie'));
+    vi.stubEnv('XDG_CONFIG_HOME', join(home, '.config'));
+    vi.stubEnv('LOCALAPPDATA', join(home, 'AppData', 'Local'));
+    try {
+      const lib = join(getDesktopBaseDir(), 'configLibrary');
+      await mkdir(lib, { recursive: true });
+      await writeFile(join(lib, '_meta.json'), JSON.stringify({ appliedId: 'a' }));
+      await writeFile(join(lib, 'a.json'), JSON.stringify({
+        inferenceProvider: 'gateway',
+        inferenceGatewayBaseUrl: 'http://127.0.0.1:4123',
+        inferenceGatewayApiKey: '__sealed__:v1:QUJD',
+      }));
+      const { requestedDaemonPort } = await import('../../connect-orchestrator.js');
+      await expect(requestedDaemonPort()).resolves.toBe(4123);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it.each([
+    ['a key that is neither the default nor the daemon state one', 'sk-user-own'],
+    ['no key', undefined],
+    ['the key named for another client', 'daemon-own-key.codex-desktop'],
+  ])('is null for a loopback gateway config with %s', async (_case, key) => {
+    const stateFile = join(baseDir, 'proxy-daemon.json');
+    await writeFile(stateFile, JSON.stringify({ gatewayKey: 'daemon-own-key' }));
+    await writeLibrary({ appliedId: 'a' }, gatewayConfig(key));
+    await expect(readDesktopGateway(baseDir, stateFile)).resolves.toBeNull();
+  });
+
+  it('is null when appliedId leads outside the config library', async () => {
+    await writeLibrary({ appliedId: '../outside' });
+    await writeFile(join(baseDir, 'outside.json'), JSON.stringify(gatewayConfig('codemie-proxy')));
+    await expect(readDesktopGateway(baseDir, join(baseDir, 'no-state.json'))).resolves.toBeNull();
+  });
+
+  it.each([
+    ['_meta.json is unparsable', '{not json', undefined],
+    ['_meta.json has no appliedId', { entries: [] }, { inferenceProvider: 'gateway', inferenceGatewayBaseUrl: 'http://127.0.0.1:4001' }],
+    ['the applied file is missing', { appliedId: 'a' }, undefined],
+    ['the applied file is unparsable', { appliedId: 'a' }, '{not json'],
+    ['inferenceProvider is not gateway', { appliedId: 'a' }, { inferenceProvider: 'bedrock', inferenceGatewayBaseUrl: 'http://127.0.0.1:4001' }],
+    ['the URL is not loopback', { appliedId: 'a' }, { inferenceProvider: 'gateway', inferenceGatewayBaseUrl: 'https://gateway.example.com:4001' }],
+    ['the URL has no port', { appliedId: 'a' }, { inferenceProvider: 'gateway', inferenceGatewayBaseUrl: 'http://127.0.0.1' }],
+  ])('is null when %s', async (_case, meta, applied) => {
+    await writeLibrary(meta, applied);
+    await expect(readDesktopGateway(baseDir)).resolves.toBeNull();
+  });
+
+  it('is null when the base directory is missing', async () => {
+    await expect(readDesktopGateway(join(baseDir, 'missing'))).resolves.toBeNull();
+  });
+
+  it('is null on an unsupported platform', async () => {
+    Object.defineProperty(process, 'platform', { value: 'aix', configurable: true });
+    await expect(readDesktopGateway()).resolves.toBeNull();
+  });
+});
+
+describe('moveDesktopToNamedKey', () => {
+  let baseDir: string;
+  let lib: string;
+  const originalPlatform = process.platform;
+  const META = JSON.stringify({ appliedId: 'a', entries: [{ id: 'a', name: 'CodeMie Proxy' }], desktopOwn: 1 }, null, 2);
+
+  beforeEach(async () => {
+    baseDir = join(tmpdir(), `desktop-move-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    lib = join(baseDir, 'configLibrary');
+    await mkdir(lib, { recursive: true });
+  });
+
+  afterEach(async () => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    await rm(baseDir, { recursive: true, force: true });
+  });
+
+  const olderEntry = (key: string | undefined, extra: Record<string, unknown> = {}) => ({
+    inferenceProvider: 'gateway',
+    inferenceGatewayBaseUrl: 'http://127.0.0.1:4001',
+    ...(key === undefined ? {} : { inferenceGatewayApiKey: key }),
+    inferenceGatewayAuthScheme: 'bearer',
+    userOwnField: { nested: true },
+    inferenceModels: ['claude-sonnet-4-6'],
+    ...extra,
+  });
+
+  async function writeLibrary(entry: unknown, meta: string = META): Promise<string> {
+    await writeFile(join(lib, '_meta.json'), meta);
+    const path = join(lib, 'a.json');
+    await writeFile(path, typeof entry === 'string' ? entry : JSON.stringify(entry, null, 2));
+    return path;
+  }
+
+  it.each([
+    ['the shared key, no inferenceCredentialKind', 'codemie-proxy', {}],
+    ['the shared key and inferenceCredentialKind', 'codemie-proxy', { inferenceCredentialKind: 'static' }],
+    ['a sealed key', '__sealed__:v1:QUJD', {}],
+  ])('writes Desktop\'s named key alone into an older CLI\'s entry with %s', async (_case, key, extra) => {
+    const before = olderEntry(key, extra);
+    const path = await writeLibrary(before);
+
+    await expect(moveDesktopToNamedKey('codemie-proxy', 4001, baseDir)).resolves.toBe('moved');
+
+    expect(JSON.parse(await readFile(path, 'utf-8'))).toEqual({ ...before, inferenceGatewayApiKey: 'codemie-proxy.claude-desktop' });
+    expect(await readFile(join(lib, '_meta.json'), 'utf-8')).toBe(META);
+    await expect(readDesktopGatewayConfig(baseDir)).resolves.toEqual({ port: 4001, apiKey: 'codemie-proxy.claude-desktop' });
+  });
+
+  it('builds the named key from a daemon gateway key that is not the default', async () => {
+    const before = olderEntry('gk');
+    const path = await writeLibrary(before);
+
+    await expect(moveDesktopToNamedKey('gk', 4001, baseDir)).resolves.toBe('moved');
+
+    expect(JSON.parse(await readFile(path, 'utf-8'))).toEqual({ ...before, inferenceGatewayApiKey: 'gk.claude-desktop' });
+  });
+
+  it.each([
+    ['Desktop\'s own named key in plain', olderEntry('codemie-proxy.claude-desktop')],
+    ['the key named for another client', olderEntry('codemie-proxy.codex-desktop')],
+    ['a key the proxy refuses', olderEntry('sk-user-own')],
+    ['no key', olderEntry(undefined)],
+    ['a loopback gateway on another port', { ...olderEntry('codemie-proxy'), inferenceGatewayBaseUrl: 'http://127.0.0.1:4002' }],
+    ['a gateway that is not loopback', { ...olderEntry('codemie-proxy'), inferenceGatewayBaseUrl: 'https://gateway.example.com:4001' }],
+    ['a provider that is not gateway', { ...olderEntry('codemie-proxy'), inferenceProvider: 'bedrock' }],
+    ['an unreadable entry', '{not json'],
+  ])('writes nothing for %s', async (_case, entry) => {
+    const path = await writeLibrary(entry);
+    const bytes = await readFile(path, 'utf-8');
+
+    await expect(moveDesktopToNamedKey('codemie-proxy', 4001, baseDir)).resolves.toBe('unchanged');
+
+    expect(await readFile(path, 'utf-8')).toBe(bytes);
+  });
+
+  it('writes nothing with no applied config', async () => {
+    const path = await writeLibrary(olderEntry('codemie-proxy'), JSON.stringify({ entries: [] }));
+    const bytes = await readFile(path, 'utf-8');
+
+    await expect(moveDesktopToNamedKey('codemie-proxy', 4001, baseDir)).resolves.toBe('unchanged');
+
+    expect(await readFile(path, 'utf-8')).toBe(bytes);
+  });
+
+  it('writes nothing when _meta.json is not JSON', async () => {
+    const path = await writeLibrary(olderEntry('codemie-proxy'), '{not json');
+    const bytes = await readFile(path, 'utf-8');
+
+    await expect(moveDesktopToNamedKey('codemie-proxy', 4001, baseDir)).resolves.toBe('unchanged');
+
+    expect(await readFile(path, 'utf-8')).toBe(bytes);
+    expect(await readFile(join(lib, '_meta.json'), 'utf-8')).toBe('{not json');
+  });
+
+  it('writes nothing on a platform without a Desktop directory', async () => {
+    Object.defineProperty(process, 'platform', { value: 'aix', configurable: true });
+    await expect(moveDesktopToNamedKey('codemie-proxy', 4001)).resolves.toBe('unchanged');
+  });
+  it('leaves no temporary file beside the moved entry', async () => {
+    const path = await writeLibrary(olderEntry('codemie-proxy'));
+
+    await expect(moveDesktopToNamedKey('codemie-proxy', 4001, baseDir)).resolves.toBe('moved');
+
+    expect(JSON.parse(await readFile(path, 'utf-8')).inferenceGatewayApiKey).toBe('codemie-proxy.claude-desktop');
+    expect((await readdir(lib)).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it.skipIf(process.platform === 'win32')('moves an applied entry that is a symbolic link through the link, and a second move leaves it', async () => {
+    const target = join(baseDir, 'dotfiles-desktop.json');
+    await writeFile(target, JSON.stringify(olderEntry('codemie-proxy'), null, 2));
+    await writeFile(join(lib, '_meta.json'), META);
+    await symlink(target, join(lib, 'a.json'));
+
+    await expect(moveDesktopToNamedKey('codemie-proxy', 4001, baseDir)).resolves.toBe('moved');
+    await expect(moveDesktopToNamedKey('codemie-proxy', 4001, baseDir)).resolves.toBe('unchanged');
+
+    expect((await lstat(join(lib, 'a.json'))).isSymbolicLink()).toBe(true);
+    expect(JSON.parse(await readFile(target, 'utf-8')).inferenceGatewayApiKey).toBe('codemie-proxy.claude-desktop');
+  });
+
+  it.skipIf(process.platform === 'win32')('changes nothing for an applied entry that is a link to nothing, and creates nothing at its target', async () => {
+    const target = join(baseDir, 'missing-desktop.json');
+    await writeFile(join(lib, '_meta.json'), META);
+    await symlink(target, join(lib, 'a.json'));
+
+    await expect(moveDesktopToNamedKey('codemie-proxy', 4001, baseDir)).resolves.toBe('unchanged');
+
+    expect((await lstat(join(lib, 'a.json'))).isSymbolicLink()).toBe(true);
+    expect(existsSync(target)).toBe(false);
   });
 });

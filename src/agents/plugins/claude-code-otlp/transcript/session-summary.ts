@@ -18,6 +18,7 @@
 
 import type { NamedInvocationCounts } from '@/agents/plugins/claude/session/claude-named-invocations.js';
 import type { Compaction } from './session-signals.js';
+import { isSyntheticModel } from './synthetic-model.js';
 
 export type { NamedInvocationCounts };
 
@@ -74,9 +75,16 @@ function maxKey(counts: Record<string, number>, tieToLater = false): string {
   return best;
 }
 
-/** The model with the highest count in `models`, or `''` when empty. */
+/**
+ * The model with the highest count in `models`, or `''` when empty. The `<synthetic>` API-error
+ * placeholder never ranks, so an all-synthetic map yields `''` rather than a fake model.
+ */
 export function primaryModel(models: Record<string, number>): string {
-  return maxKey(models);
+  const realModels: Record<string, number> = {};
+  for (const [model, count] of Object.entries(models)) {
+    if (!isSyntheticModel(model)) realModels[model] = count;
+  }
+  return maxKey(realModels);
 }
 
 /** The branch with the highest count in `counts` (a tie goes to the later one), or `''` when empty. */

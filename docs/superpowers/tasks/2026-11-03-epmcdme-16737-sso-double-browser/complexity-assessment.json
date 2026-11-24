@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "task": "Fix the SSO re-authentication race so one session expiry opens exactly one browser (stale CredentialRefresher snapshot, superseded-cookie redirects re-marking auth invalid, stale marker in the hook gate, misleading post-success cooldown message).",
+  "generated": "2026-11-03T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 21,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Four production components change (CredentialRefresher, SSOSessionExpiryInterceptor plus its wiring to PluginContext.credentialRefresher, the hook gate ensureCodeMieSsoAuth, and the detached-login lock module acquireLock/describeLogin). A cross-module read of the lock's latest succeededAt must be exposed, since readLock is private. Splitting the cooldown outcome ripples to the hook command and three OTLP agent plugins." },
+    { "dimension": "technical_risk", "reason": "Closest pattern is the EPMCDME-16568 lock/marker/throttle mechanism, which is the very thing being corrected. It does not cover comparing cookies actually sent against the store, and the lock and marker are global and not keyed by profile or URL. Authentication-flow race across the proxy daemon, hook process and detached child. A real revoke after a sign-in must still trigger exactly one sign-in, and fail/timeout/interrupt and API-key no-retry behaviour must be preserved. Daemon is long-lived, so rollout needs a restart. Client retry behaviour for a retryable 401 is unverified. Base L, bumped to XL for the authentication red flag." },
+    { "dimension": "file_change_estimate", "reason": "About 4-5 production files modified (credential-refresh.ts, sso-session-expiry.plugin.ts, sso.auth-gate.ts, sso.detached-login.ts, probably sso-auth.plugin.ts/types.ts) plus roughly 4-5 existing tests that assert 'cooldown' or fully mock the detached-login module, and new tests for the expiry and gate paths. Roughly 8-11 files in 3+ directories. The two regression tests are already applied." },
+    { "dimension": "affected_layers", "reason": "Service (login lock, credential refresher), Infrastructure (long-lived proxy daemon interceptors and hook process), file-based persistence (credential store, sso-login.lock, analytics-auth-status marker; no schema or migration), and External (oauth2-proxy redirect semantics, agent clients consuming the 401). Cross-process coordination between three processes." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from L (4) to XL (5): affects authentication (re-auth / session-expiry flow).",
+    "Borderline 20->21 resolved upward because Technical Risk is XL; Affected Layers scored L for three-process coordination with persistence and the external redirect.",
+    "Calibration: the project L example (profile-provider-decoupling, 23) is larger in file count and includes a data migration; this task is lower on files and has no migration but carries higher auth/race risk, so it sits at the low end of L."
+  ],
+  "split_recommendation": null
+}

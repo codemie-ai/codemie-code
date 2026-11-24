@@ -653,6 +653,13 @@ describe('gatherUsageDeduped — copilot-cli', () => {
     expect([...viaDedup.entries()]).toEqual([...viaReader.entries()]);
   });
 
+  it('prices copilot-desktop sessions exactly like copilot-cli', () => {
+    expect([...readUsageByModel('copilot-desktop', copilotParsed).entries()])
+      .toEqual([...readUsageByModel('copilot-cli', copilotParsed).entries()]);
+    expect([...gatherUsageDeduped('copilot-desktop', copilotParsed, new Set()).entries()])
+      .toEqual([...readUsageByModel('copilot-cli', copilotParsed).entries()]);
+  });
+
   it('is session-local — a shared seen set does not suppress a second session', () => {
     const seen = new Set<string>();
     const first = gatherUsageDeduped('copilot-cli', copilotParsed, seen);
@@ -885,6 +892,13 @@ describe('gatherUsageDeduped / gatherDedupedUsageRecords — pi fork replay', ()
     const second = gatherUsageDeduped('pi', forkOfPiParsed, seen);
     expect(first.get('kimi-k2.7-code')!.total).toBe(9425);
     expect(second.size).toBe(0);
+  });
+
+  it('prices an oh-my-pi session with the Pi reader and dedupes it against Pi forks', () => {
+    const seen = new Set<string>();
+    expect(gatherUsageDeduped('omp', piParsed, seen).get('kimi-k2.7-code')!.total).toBe(9425);
+    expect(gatherUsageDeduped('pi', forkOfPiParsed, seen).size).toBe(0);
+    expect(readUsageByModel('omp', piParsed).get('kimi-k2.7-code')!.total).toBe(9425);
   });
 
   it('dedupes on responseId — the provider response identity, not the file it lives in', () => {

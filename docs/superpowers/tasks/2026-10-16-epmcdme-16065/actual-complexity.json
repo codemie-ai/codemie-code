@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated": "2026-10-17T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 13,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 4,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Touches two components within one subsystem — the ClaudeCodeOtlpPlugin hook dispatcher (claude-code-otlp.plugin.ts) and the transcript orchestrator's session-env merge logic (transcript/orchestrator.ts) — both in the claude-code-otlp plugin, no new layer boundary crossed." },
+    { "dimension": "file_change_estimate", "reason": "4 files changed (124 insertions, 6 deletions) across 2 directories (claude-code-otlp/ and claude-code-otlp/transcript/), all modifications of existing files plus their matching test files, no new files." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

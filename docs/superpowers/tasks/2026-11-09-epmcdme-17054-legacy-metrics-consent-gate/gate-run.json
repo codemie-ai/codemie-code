@@ -1,0 +1,141 @@
+{
+  "schema": 1,
+  "branch": "fix/EPMCDME-17054-legacy-metrics-consent-gate",
+  "head": "5aad23654629da2d7bb965f22f6ee96864ab8669",
+  "runner": "npm",
+  "started_at": "2026-11-09T18:24:40Z",
+  "completed_at": "2026-11-09T18:31:35Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2121,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3924,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4261,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 9119,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 90079,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "1 failure: hook.session-delivery.test.ts:1190 timing assertion (expected 12725 < 12000). File not in diff; re-running that file alone afterwards passed 166/166, suggesting load-sensitive timing. Recorded FAIL per exit code."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 66168,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 746,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: exit 0 but output was 'No staged changes to scan' -- nothing scanned. To run locally: stage the branch changes (or scan the commit range with gitleaks). CI secrets-detection job (reusable-secrets-detection.yml) still owed."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 686,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Guide range covers HEAD~1..HEAD only; branch has 4 commits, so commitlint-branch also checks the full merge-base range."
+    },
+    {
+      "id": "pre-commit-aggregate",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 9295,
+      "command": "npm run check:pre-commit",
+      "exit_code": 0
+    },
+    {
+      "id": "full-ci",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 118541,
+      "command": "npm run ci",
+      "exit_code": 1,
+      "notes": "Composite of license-check+lint+build+unit+integration; failed in unit with 2 hook.session-delivery.test.ts timing failures (line-1190 lock-timeout test plus 'start-id step returns at once' test)."
+    },
+    {
+      "id": "commitlint-branch",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 1020,
+      "command": "npx commitlint --from 3df3f560449dc79f03102d9c3596b617ea3d8ea1 --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": "Added for .husky/commit-msg (commitlint --edit) across all branch commits since merge_base."
+    },
+    {
+      "id": "lint-staged",
+      "source": "hook",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npx lint-staged",
+      "notes": ".husky/pre-commit lint-staged; nothing staged so it would no-op. Its eslint and vitest-related work is covered by the lint and unit gates; .husky/pre-commit typecheck is covered by the typecheck gate."
+    },
+    {
+      "id": "ci-test-windows",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npx vitest run --project unit && npx vitest run --project cli (windows-latest)",
+      "notes": "Needs a Windows runner. Only CI can settle this; the guide documents a local CRLF repro."
+    },
+    {
+      "id": "ci-pr-title-lint",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "reusable-commit-lint.yml (PR title)",
+      "notes": "No PR exists yet; the PR title gets checked when the PR is created."
+    },
+    {
+      "id": "ci-codeql",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": ".github/workflows/codeql.yml",
+      "notes": "Requires GitHub CodeQL infrastructure; still owed in CI."
+    }
+  ],
+  "failures": {
+    "unit": "\n RUN  v4.1.5 /Users/Sviatoslav_Likhtarchyk/mdtu_gpt/codemie-code\n\n(node:50068) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n\u001b[33m\u26a0\ufe0f  CodeMie profile \"work\" has no project of its own; this session uses project \"config-project\" (last saved by setup, possibly for another profile). To fix: launch this profile once in a terminal, or run `codemie setup`.\u001b[39m\n\u001b[33m\u001b[39m(node:51328) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:54200) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K- Fetching user integrations...\n- Fetching user integrations...\n\u001b[33m\u26a0\ufe0f  CodeMie profile \"g\" has no project of its own; this session uses project \"profile-project\" (last saved by setup, possibly for another profile). To fix: launch this profile once in a terminal, or run `codemie setup`.\u001b[39m\n\u001b[33m\u001b[39m \u276f |unit| src/cli/commands/__tests__/hook.session-delivery.test.ts (166 tests | 1 failed) 78373ms\n     \u00d7 generation A's SessionEnd holds the lock 12 s while its line waits on the server: B's /clear start gives up at 10 s; B's Stop then writes a fresh record of its own, B's SessionEnd delivers it; no sidecar of A overwritten 1034ms\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af Failed Tests 1 \u23af\u23af\u23af\u23af\u23af\u23af\u23af\n\n FAIL  |unit| src/cli/commands/__tests__/hook.session-delivery.test.ts > SessionEnd inside the agent hook process > generation A's SessionEnd holds the lock 12 s while its line waits on the server: B's /clear start gives up at 10 s; B's Stop then writes a fresh record of its own, B's SessionEnd delivers it; no sidecar of A overwritten\nAssertionError: expected 12725 to be less than 12000\n \u276f src/cli/commands/__tests__/hook.session-delivery.test.ts:1190:30\n    1188|\n    1189|     expect(startGaveUpAfter).toBeGreaterThanOrEqual(10 * SECOND);\n    1190|     expect(startGaveUpAfter).toBeLessThan(12 * SECOND);\n       |                              ^\n    1191|     expect(existsSync(join(sessionsDir, `${id}.json`))).toBe(false);\n    1192|     const aRecordBytes = readFileSync(join(sessionsDir, `completed_${i\u2026\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[1/1]\u23af\n\n\n Test Files  1 failed | 551 passed (552)\n      Tests  1 failed | 9575 passed (9576)\n   Start at  20:25:08\n   Duration  89.00s (transform 22.68s, setup 0ms, import 152.22s, tests 361.49s, environment 44ms)",
+    "full-ci": "\u26a1 Done in 4ms\nomp extension bundled successfully!\n\n RUN  v4.1.5 /Users/Sviatoslav_Likhtarchyk/mdtu_gpt/codemie-code\n\n(node:65711) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:67164) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n\u001b[33m\u26a0\ufe0f  CodeMie profile \"work\" has no project of its own; this session uses project \"config-project\" (last saved by setup, possibly for another profile). To fix: launch this profile once in a terminal, or run `codemie setup`.\u001b[39m\n\u001b[33m\u001b[39m(node:70968) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n- Fetching user integrations...\n- Fetching user integrations...\n\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[33m\u26a0\ufe0f  CodeMie profile \"g\" has no project of its own; this session uses project \"profile-project\" (last saved by setup, possibly for another profile). To fix: launch this profile once in a terminal, or run `codemie setup`.\u001b[39m\n\u001b[33m\u001b[39m \u276f |unit| src/cli/commands/__tests__/hook.session-delivery.test.ts (166 tests | 2 failed) 88196ms\n     \u00d7 generation A's SessionEnd holds the lock 12 s while its line waits on the server: B's /clear start gives up at 10 s; B's Stop then writes a fresh record of its own, B's SessionEnd delivers it; no sidecar of A overwritten 1271ms\n     \u00d7 the hook aborted right after the start metric is accepted, the reconcile lock held: the start-id step returns at once, the id not stored, a warn logged 226ms\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af Failed Tests 2 \u23af\u23af\u23af\u23af\u23af\u23af\u23af\n\n FAIL  |unit| src/cli/commands/__tests__/hook.session-delivery.test.ts > SessionEnd inside the agent hook process > generation A's SessionEnd holds the lock 12 s while its line waits on the server: B's /clear start gives up at 10 s; B's Stop then writes a fresh record of its own, B's SessionEnd delivers it; no sidecar of A overwritten\nAssertionError: expected 13975 to be less than 12000\n \u276f src/cli/commands/__tests__/hook.session-delivery.test.ts:1190:30\n    1188|\n    1189|     expect(startGaveUpAfter).toBeGreaterThanOrEqual(10 * SECOND);\n    1190|     expect(startGaveUpAfter).toBeLessThan(12 * SECOND);\n       |                              ^\n    1191|     expect(existsSync(join(sessionsDir, `${id}.json`))).toBe(false);\n    1192|     const aRecordBytes = readFileSync(join(sessionsDir, `completed_${i\u2026\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[1/2]\u23af\n\n FAIL  |unit| src/cli/commands/__tests__/hook.session-delivery.test.ts > one server id per run: the start metric's session_id > the hook aborted right after the start metric is accepted, the reconcile lock held: the start-id step returns at once, the id not stored, a warn logged\nAssertionError: expected 2075 to be less than 2000\n \u276f src/cli/commands/__tests__/hook.session-delivery.test.ts:3029:23\n    3027|     });\n    3028|\n    3029|     expect(elapsedMs).toBeLessThan(2 * SECOND);\n       |                       ^\n    3030|     expect(readRecord(session.sessionId).startMetricSessionId).toBeUnd\u2026\n    3031|     expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(l\u2026\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[2/2]\u23af\n\n\n Test Files  1 failed | 551 passed (552)\n      Tests  2 failed | 9574 passed (9576)\n   Start at  20:28:07\n   Duration  104.67s (transform 25.75s, setup 0ms, import 170.64s, tests 437.58s, environment 160ms)"
+  }
+}

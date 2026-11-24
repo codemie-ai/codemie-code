@@ -45,6 +45,10 @@ export interface MetricDelta {
   agentSessionId: string;        // Agent-specific session ID
   timestamp: number | string;    // Unix ms or ISO string
   gitBranch?: string;            // Git branch at time of this turn (can change mid-session)
+  // False only for a processor-synthesized delta that carries activity with no turn of its own
+  // (e.g. a tool result that arrived after every turn was already written). Absent/true for a
+  // real turn. The aggregator's turn counts must exclude `isTurn === false` deltas.
+  isTurn?: boolean;
 
   // Tools used in this turn (counts)
   tools?: {
@@ -94,6 +98,8 @@ export interface MetricDelta {
   syncedAt?: number;
   syncAttempts: number;
   syncError?: string;
+  /** Stable id of the batch this delta was written in (see deltaIdOf); sent unchanged on every resend */
+  deltaId?: string;
 }
 
 /**

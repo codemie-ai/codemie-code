@@ -24,6 +24,12 @@ export function createWhatsnewCommand(): Command {
       const targetVersion = options.all ? undefined : (version ?? getCurrentVersion());
       const entries = getReleaseNotes(targetVersion);
 
+      if (entries.length === 0 && targetVersion && getReleaseNotes().length > 0) {
+        console.log(chalk.yellow(`\nNo release notes for ${targetVersion} in CHANGELOG.md.\n`));
+        console.log(chalk.dim('Run `codemie whatsnew --all` to browse every release.\n'));
+        return;
+      }
+
       if (entries.length === 0) {
         console.log(chalk.yellow('\nNo release notes found — CHANGELOG.md is missing or has no entries.\n'));
         return;

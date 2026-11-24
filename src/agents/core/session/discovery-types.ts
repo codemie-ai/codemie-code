@@ -59,4 +59,7 @@ export interface SessionDescriptor {
 
   /** Agent name that created this session */
   agentName?: string;
+
+  /** The parent session of a subagent's child session */
+  parentId?: string;
 }

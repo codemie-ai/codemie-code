@@ -1,0 +1,508 @@
+{
+  "decision": "request-changes",
+  "rationale": "Oversized diff: lenses could not read it in full, and the 30-call reachability budget ran out, leaving CR-004 unverified and 14 findings at unconfirmed reachability; all 4 lenses ran, and no standards coverage gap. Two decisions remain (CR-007 end id of a resumed run with no events; CR-021 security sign-off), with confirmed defects at CR-005 and CR-022; 12 candidates dismissed and 1 deferred (9 files already over 500 lines grew; see code-review-deferred.local.md). Process note: this agent ran one read-only Bash call (wc, git log, git merge-base) outside its allow-list on this round.",
+  "confidence": "low",
+  "risk_flags": [
+    "security",
+    "breaking-change",
+    "public-api"
+  ],
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "EPMCDME-16536: continuing an opencode session syncs only the new run's deltas; no earlier recordId re-sent",
+      "status": "pass",
+      "notes": "opencode.metrics-processor.ts appends through resolveRunWindow; run selection in selectRunSessions; non-claude-processor-gaps.test.ts"
+    },
+    {
+      "kind": "story-ac",
+      "item": "EPMCDME-16536: the continued run's own conversation exchange reaches the server",
+      "status": "pass",
+      "notes": "getPriorRunsCheckpoint plus per-conversation checkpoint; test 'numbers runs A, C, D over one opencode session'"
+    },
+    {
+      "kind": "story-ac",
+      "item": "EPMCDME-16536: a run with no opencode session of its own syncs no metrics or conversation from other sessions",
+      "status": "pass",
+      "notes": "selectRunSessions returns [] for a fresh run; selectSessionFromDb fallback removed; empty transcript_path skips extraction"
+    },
+    {
+      "kind": "story-ac",
+      "item": "EPMCDME-16536: automated tests cover continuation and the no-own-session case",
+      "status": "pass",
+      "notes": "opencode.run-session.test.ts; opencode.incremental-sync.test.ts; non-claude-processor-gaps.test.ts"
+    },
+    {
+      "kind": "story-ac",
+      "item": "EPMCDME-16536 expected: a run sends only metric deltas and conversation messages produced during that run",
+      "status": "pass",
+      "notes": "metrics bounded by resolveRunWindow; conversation events filtered by recordsBeforeMs and getPriorRunsCheckpoint"
+    },
+    {
+      "kind": "story-ac",
+      "item": "EPMCDME-16474 expected: a resumed or continued Copilot run is counted consistently and synced",
+      "status": "pass",
+      "notes": "runSessionIdOf, locateRunTranscript, runDeltas window filter, inRun gating; 'copilot-cli runs over one resumed native session' tests"
+    },
+    {
+      "kind": "story-ac",
+      "item": "EPMCDME-16474 expected: a session's turns/model calls and tokens/cost come from the same set of requests",
+      "status": "pass",
+      "notes": "extractCopilotRunUsage over the window; deltas by the same bounds; analytics/cost/copilot-runs.ts; copilot-managed-report.test.ts"
+    },
+    {
+      "kind": "story-ac",
+      "item": "EPMCDME-16474 comment (E4): explicit --session-id run is a managed copilot-cli session, reported, synced, correct duration",
+      "status": "pass",
+      "notes": "extractNativeResumeId reads --session-id; runSessionIdOf uses it; recordRolloutCorrelation stores the transcript"
+    },
+    {
+      "kind": "story-ac",
+      "item": "EPMCDME-16475 expected: a run without a native transcript is not matched and agentSessionId names no non-existent session",
+      "status": "pass",
+      "notes": "recordNoTranscript sets failed and the CodeMie id, no agentSessionFile; called from plugin end and syntheticSessionEnd"
+    },
+    {
+      "kind": "story-ac",
+      "item": "EPMCDME-16475 expected: Priced sessions counts only sessions in the report, even with a non-session JSON in the directory",
+      "status": "pass",
+      "notes": "keptCostSummary counts the aggregated report's sessions; copilot-managed-report.test.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: one run-session lookup shared by the three OpenCode agents, the incremental sync and the synthetic session end",
+      "status": "pass",
+      "notes": "locateRun/locatedRun used by locateTranscript and locateSessionTranscript"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: run sessions are the named session, sessions created in the window in the real directory, and for --continue the continued one",
+      "status": "pass",
+      "notes": "selectRunSessions by realpath and until; also falls back to newest-updated older session with no message in the window"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: a child session's tool calls are the run's; its messages make no conversation and count no user prompt",
+      "status": "pass",
+      "notes": "parentId check in shouldProcess and in the metrics user prompt branch; test 'a subagent's child session'"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: a fresh run with no session selects nothing; newest-anywhere and cwd fallbacks are gone",
+      "status": "pass",
+      "notes": "selectRunSessions returns named-or-empty with no workingDirectory; selectSessionFromDb deleted"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: history_index is numbered over the full OpenCode session and only this run's turns are emitted",
+      "status": "pass",
+      "notes": "opencode.conversation-checkpoints.ts counts prior prompts; buildIncrementalTurn starts past the watermark"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: startMetricSessionId stored when the start metric succeeded, of its generation, under the reconcile lock; deltas and end take it",
+      "status": "pass",
+      "notes": "recordStartMetricSessionId; isOtherGeneration check; metrics-aggregator.ts and end-metric.ts prefer it"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: a conversation goes under the native session the run continues, else the CodeMie id",
+      "status": "pass",
+      "notes": "transcriptSessionId in copilot-cli.conversations-processor.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: Pi sends start, deltas and end under the CodeMie id",
+      "status": "pass",
+      "notes": "startMetricSessionId taken by the aggregator and the end metric"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: a full UUID from --resume / -r / --session-id is the Copilot run's id for start, deltas, conversation and end",
+      "status": "pass",
+      "notes": "AgentCLI.ts hands the id to RESUME_SESSION_ENV_KEY; runSessionIdOf lower-cases it"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: a --resume <prefix> launch takes only a session with that prefix; --continue and a name are located by the run window",
+      "status": "pass",
+      "notes": "resumedIdPrefix filter in locateTranscript; see CR-008 for a hex-shaped name"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: Copilot counts, prompts, file ops, lines, tokens, requests come only from this run's records; untimed events are in no bounded window",
+      "status": "pass",
+      "notes": "inRun/beforeRunEnd; parseSessionFile gating; selectRunTurns skips untimed turns"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: cumulative counters subtract the last shutdown before the start; a killed earlier run's work leaves the share unknown",
+      "status": "pass",
+      "notes": "runShutdownShare base and unclosedBefore; see CR-009 for a run with no shutdown of its own"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: patch paths join the directory of the latest session start or resume",
+      "status": "pass",
+      "notes": "directoryCursor and callFileOperations in copilot-cli.file-operations.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: a run with no transcript (killed, resumed id with no events, no record) is failed under the CodeMie id and queues no conversation",
+      "status": "partial",
+      "notes": "correlation is failed under the CodeMie id, but a --resume <uuid> run with no events still sends SessionEnd and metrics under the UUID (CR-007)"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: the SessionEnd handler persists the transcript path a finalization located, so a stranded record keeps its transcript",
+      "status": "partial",
+      "notes": "flush path holds; syntheticSessionEnd with flush:false strips a copilot-cli record's named agentSessionFile (CR-005)"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: the ownership marker is a sidecar, one per session and transcript; nothing written into a transcript or opencode.db; old forms recognised",
+      "status": "pass",
+      "notes": "writeOwnershipMarker; isSharedTranscriptStore guard; native-loader.test.ts covers both naming schemes and the in-band line"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: a resumed copilot run is priced inside its own sibling window, not into the original session",
+      "status": "pass",
+      "notes": "copilotRunWindows and parseCopilotRun; cost-enricher.test.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: new modules for run-session selection, conversation checkpoints, run-window pricing, file-operation helpers, hook record updates",
+      "status": "pass",
+      "notes": "all five modules added"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: docs/ANALYTICS-REPORT.md, docs/COMMANDS.md and external-integrations.md are updated to match",
+      "status": "partial",
+      "notes": "analytics and commands docs match; external-integrations.md:143 misstates named-session selection (CR-001)"
+    },
+    {
+      "kind": "spec",
+      "item": "PR negative: X-CodeMie-* headers, their derivation source, the Responses API user field and JWT overrides are not changed",
+      "status": "pass",
+      "notes": "header-injection.plugin.ts and proxy plugins absent from the diff; startMetricSessionId read only by aggregator and end metric"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: security-review sign-off is required before merge for the session attribution change",
+      "status": "partial",
+      "notes": "requirement flagged, but no sign-off in the diff or task folder (CR-021)"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: npm run ci is green and live before/after checks hold against the real CodeMie server",
+      "status": "pending-stage-7",
+      "notes": "implementing code is present; remaining proof is CI results and live runs"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "All 3 subjects use allowed type fix and scope analytics, imperative, 88-99 chars of 100; body references the three tickets. Only subjects and ticket references checked; body line lengths not."
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "Conventions met in the 7 new files read; no added console.*, generic throw, any, require(). Unmet: deep relative imports in session-record-updates.ts; 9 over-500-line files grew. Function length partly checked."
+    },
+    {
+      "kind": "security",
+      "status": "partial",
+      "notes": "No header, user-field or JWT change; SQL binds with ?; resumed-id path join guarded. Unmet: metric session_id has a new derivation source and no CRITICAL callout or sign-off; PR description unavailable."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": ".ai-run/guides/integration/external-integrations.md",
+      "line": 143,
+      "title": "Guide contradicts OpenCode run selection",
+      "problem": "The guide says a run selects the named session exactly, else the sessions created in the window, and that a continued run takes the newest updated session. selectRunSessions returns the named session plus sessions created in the window, and a continued run prefers the newest updated session with a message in the window.",
+      "impact": "The PR requires this guide to match, and project guides own policy lookups, so the next change to run selection starts from a wrong description of it.",
+      "recommendation": "Rewrite the sentence to match selectRunSessions: the named session plus sessions created in the window; a continued run prefers the newest updated session with a message in the window."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/flag-transform.ts",
+      "line": 148,
+      "title": "Continue flag with =value not detected",
+      "problem": "hasFlagBeforeSeparator matches with flags.includes(arg), so --continue=true or -c=true is not seen. The copilot plugin's own session-selection check accepts the = form.",
+      "impact": "continuesPriorSession stays unset, the continued session is not selected and its window activity goes unreported. Reachability unconfirmed: the caller path was not read within budget.",
+      "recommendation": "Match `arg === flag || arg.startsWith(`${flag}=`)` in hasFlagBeforeSeparator, as the copilot plugin's session-selection check already does."
+    },
+    {
+      "id": "CR-003",
+      "kind": "decision",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/session/no-transcript-correlation.ts",
+      "line": 14,
+      "title": "recordNoTranscript throws on missing correlation",
+      "problem": "recordNoTranscript destructures record.correlation unguarded, while its caller syntheticSessionEnd reads record.correlation?. as optional.",
+      "impact": "A stored record with no correlation throws TypeError at stale-session-reconciliation.ts:383, outside finalizeRecord's try, so even the exhausted local close never runs. Reachability unconfirmed: the type declares correlation required, but it is read as optional from disk.",
+      "recommendation": "Default the destructure: `const { agentSessionFile: _none, ...correlation } = record.correlation ?? { status: 'failed', retryCount: 0 };`"
+    },
+    {
+      "id": "CR-004",
+      "kind": "decision",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/session/session-origin-audit.ts",
+      "title": "Retired marker forms may lose consumers",
+      "problem": "The in-band codemie_session_start line and the <transcript basename>-codemie-marker.json sidecar name are both retired; native-loader handles both forms, but resolveResumeOwnership has no hunk in this change.",
+      "impact": "A consumer of the old forms may stop recognising new sessions as CodeMie-owned. Reachability unconfirmed: the 2.3 budget ran out before this was read.",
+      "recommendation": "Check resolveResumeOwnership and every other reader of the old sidecar name and in-band line; make each accept both forms as native-loader does."
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/agents/core/session/synthetic-session-end.ts",
+      "line": 32,
+      "title": "Exhausted reconcile wipes real copilot correlation",
+      "problem": "With flush:false, located is [] whatever the record names, so a copilot-cli record counts as having no transcript and recordNoTranscript deletes agentSessionFile, overwrites the native id and sets status failed. finalizeRecord passes flush:!exhausted at stale-session-reconciliation.ts:383, so this runs whenever a stranded record's attempts are exhausted. A later reconcile without the run's custom COPILOT_HOME reaches the same result through existsSync.",
+      "impact": "A real correlation is permanently lost: the run goes unpriced in codemie analytics and no longer bounds the run it continued. This breaks the PR requirement that a stranded record keeps its transcript. No test exercises the branch.",
+      "recommendation": "Decide 'no transcript' from the named or located file, independent of flush: with flush false still check existence of correlation.agentSessionFile and call recordNoTranscript only when no file exists; keep transcript_path empty for flush false. Add a test for the exhausted branch."
+    },
+    {
+      "id": "CR-006",
+      "kind": "decision",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/copilot-cli/copilot-cli.plugin.ts",
+      "line": 303,
+      "title": "recordNoTranscript writes without lock or generation check",
+      "problem": "The plugin's onSessionEnd calls recordNoTranscript, an unlocked load-modify-save with no generation check. The synthetic path's caller holds the reconcile lock, and recordStartMetricSessionId takes it for a similar write.",
+      "impact": "A concurrent reconcile or start-id save could be lost or overwritten. Reachability unconfirmed: no concurrent writer was shown active at wrapper exit.",
+      "recommendation": "Take the record's reconcile lock and apply the generation check in the plugin path, as recordStartMetricSessionId does."
+    },
+    {
+      "id": "CR-007",
+      "kind": "decision",
+      "severity": "critical",
+      "triage": "decision_needed",
+      "file": "src/agents/plugins/copilot-cli/copilot-cli.plugin.ts",
+      "line": 310,
+      "title": "Resumed run with no events ends under native id",
+      "problem": "A --resume <full uuid> run whose session wrote no events gets the CodeMie id on its stored correlation, but SessionEnd still sends session_id: runSessionId, read before recordNoTranscript, and the start and end metrics carry the UUID through startMetricSessionId. copilot-cli.analytics.test.ts pins session_id: resumed. The syntheticSessionEnd comment claims the opposite, so a killed run and a normal exit end under different ids.",
+      "impact": "The server holds a session for a native id that does not exist, which the PR's no-transcript criterion excludes. Sending the CodeMie id instead would split the end metric from a start metric already sent under the UUID, so the right fix depends on intent.",
+      "recommendation": "Decide which id a --resume <uuid> run with no events ends under, given its start metric already went out under the UUID: the CodeMie id (the PR's wording, breaks start/end pairing) or the UUID (update the PR and the syntheticSessionEnd comment). Then align both end paths and the test."
+    },
+    {
+      "id": "CR-008",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/copilot-cli/copilot-cli.session.ts",
+      "line": 405,
+      "title": "Hex-named resume loses window fallback",
+      "problem": "resumedIdPrefix reads any hex-and-dash --resume value as an id prefix, such as a session named cafe or feed. The doc comment admits the ambiguity, but when no directory starts with the value, locateTranscript returns [] with no window match.",
+      "impact": "The run ends uncorrelated, failed under the CodeMie id, and its analytics are lost, where any other session name would have been located.",
+      "recommendation": "When no session directory starts with the prefix, fall back to the window match used for session names."
+    },
+    {
+      "id": "CR-009",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/copilot-cli/copilot-cli.usage.ts",
+      "line": 117,
+      "title": "Resumed run with no shutdown reports zero",
+      "problem": "last also takes a shutdown before the run's start, so a resumed run after a closed run with no shutdown of its own has last equal to base. The guard does not catch this and the share computes as last minus itself.",
+      "impact": "A killed resumed run reports 0 premium requests, 0 lines and no files instead of unknown, understating GitHub's billing unit for that run. The live path is a kill after a resume.",
+      "recommendation": "Return undefined when the last shutdown is the base: `if (!last || last === base || unclosedBefore || (!base && !startedInRun(events, run))) return undefined;`"
+    },
+    {
+      "id": "CR-010",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/copilot-cli/copilot-cli.usage.ts",
+      "line": 135,
+      "title": "Usage records without a model dropped silently",
+      "problem": "fromUsageRecords skips a session.usage_record with no usage.model, which CopilotUsageRecordData declares optional, while extractCopilotRunUsage returns partial:false when any other record has one.",
+      "impact": "A window mixing both forms under-reports tokens and requests with no partial flag, and a resumed run with only model-less records reports usage unavailable. Reachability unconfirmed: no real transcript was seen with a model-less record.",
+      "recommendation": "Attribute the record to the model in effect at that point (session.model_change), and set partial when any record stays unattributed."
+    },
+    {
+      "id": "CR-011",
+      "kind": "decision",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/copilot-cli/session/processors/copilot-cli.conversations-processor.ts",
+      "line": 304,
+      "title": "Turn dated only by its user prompt",
+      "problem": "selectRunTurns dates a turn only by turn.user?.timestamp. An assistant-only turn is dropped from every bounded window and does not advance priorHistoryIndex; a prompt sent before the run with its reply inside it is dropped from this run.",
+      "impact": "That exchange may never reach the server, since the earlier run may not have seen the reply. Reachability unconfirmed: whether Copilot writes such turns was not established.",
+      "recommendation": "Date a turn by `turn.user?.timestamp ?? turn.assistant?.timestamp`, and state the rule for a prompt before the run with its reply inside it."
+    },
+    {
+      "id": "CR-012",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/copilot-cli/session/processors/copilot-cli.metrics-processor.ts",
+      "line": 85,
+      "title": "Supplement delta can fall outside run window",
+      "problem": "The supplement delta is stamped lastRecordAt ?? Date.now(); lastRecordAt has an upper limit only, and Date.now() can fall past upperBound when an old run is reprocessed. appendDeltas now applies the full window, and the old never-silently-drop comment was removed.",
+      "impact": "The delta can be dropped with no warning, losing that run's pending totals. Reachability unconfirmed: the budget ran out before appendDeltas was read.",
+      "recommendation": "Clamp the supplement's timestamp into the run window, or log a warning when appendDeltas would drop it."
+    },
+    {
+      "id": "CR-013",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/opencode/opencode.run-session.ts",
+      "line": 144,
+      "title": "Hook process selects later runs' sessions",
+      "problem": "With hookProcess set, recordSessionIds has no upper bound, and a test pins that a session created after a later record's start is selected. The test file's header claims the opposite.",
+      "impact": "Those sessions count under this record and their own run; delta dedupe is per record file, so metrics could be double-counted, against EPMCDME-16536. Reachability unconfirmed: whether a hook process can run over a record with a later sibling was not established.",
+      "recommendation": "Bound the hook path by a later record's start, or confirm hook runs can never overlap a later record and correct the test file's header claim."
+    },
+    {
+      "id": "CR-014",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/opencode/opencode.run-session.ts",
+      "line": 162,
+      "title": "Legacy file-storage run selection untested",
+      "problem": "regression-gap: no test exercises run-window and directory selection on the file-storage branch of locateRun, the only directory and window filter on that path. The two tests reaching it store a single in-window session in the record's directory, and selection tests go through a real opencode.db.",
+      "impact": "If the branch returned the discover list unfiltered, a run on file storage would flush the newest session of the last 30 days, and these tests would still pass. Consumers: OpenCode and CodeMie Code onSessionEnd, and the incremental-sync tick.",
+      "recommendation": "In opencode.locate-transcript.test.ts (no opencode.db in storage), store a session in another directory, one created before record.startTime, and one created at or after a later record's start, alongside the run's own session; assert `await adapter.locateSessionTranscript(record.sessionId)` names only the run's own session file and id, and that a run with no qualifying session returns undefined."
+    },
+    {
+      "id": "CR-015",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/opencode/opencode.run-session.ts",
+      "line": 241,
+      "title": "Continued pick can choose a child session",
+      "problem": "The continued-session pick does not exclude child sessions; SessionDescriptor does not carry parentID. An older child updated in the window can be chosen as the session the run continued.",
+      "impact": "The real parent is skipped and the child is filtered out of the conversation, so that run's exchange is lost. Reachability unconfirmed: a parent is normally updated after its child returns, so this needs a tick or kill mid-subagent.",
+      "recommendation": "Carry parentID on the descriptor and exclude child sessions from the continued-session candidates."
+    },
+    {
+      "id": "CR-016",
+      "kind": "decision",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/opencode/opencode.session.ts",
+      "line": 210,
+      "title": "Records naming opencode.db go unpriced",
+      "problem": "parseSessionFromDb now throws when given a CodeMie id and no ses_ id, where it used to fall back through selectSessionFromDb. realDeps.parseNative calls parseSessionFile(filePath, sessionId, undefined, run) with no agent session id and logs the error at debug.",
+      "impact": "Records whose agentSessionFile is a .db path would silently become unpriced, with no reason shown. Reachability unconfirmed: how many stored records name a .db path was not established.",
+      "recommendation": "In realDeps.parseNative, when the path is a shared transcript store, parse the record's run sessions from locateRun rather than the bare CodeMie id; or confirm no record names a .db path and say so."
+    },
+    {
+      "id": "CR-017",
+      "kind": "decision",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/opencode/opencode.sqlite-reader.ts",
+      "line": 221,
+      "title": "parent_id selected without a column check",
+      "problem": "readSessionsFromDb always SELECTs parent_id with no check the column exists, and test fixtures had to add the column.",
+      "impact": "Against an opencode.db without the column the query fails with no such column, breaking discovery, selection and parsing for that user. Reachability unconfirmed: the repository holds no OpenCode schema history to settle whether such a db exists.",
+      "recommendation": "Confirm parent_id exists in every supported OpenCode schema, or guard the SELECT with PRAGMA table_info(session)."
+    },
+    {
+      "id": "CR-018",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/opencode/session/processors/opencode.conversation-checkpoints.ts",
+      "line": 16,
+      "title": "Unparseable date counted as earlier run",
+      "problem": "getPriorRunsCheckpoint skips an event only when Date.parse(event.date) >= startTime; NaN fails that, so an unparseable date counts as an earlier run's event and advances both watermarks. The copilot side states the opposite rule.",
+      "impact": "A turn can be dropped from sync. Reachability unconfirmed: whether normalizeEvents can yield an unparseable date was not read.",
+      "recommendation": "Skip events whose date does not parse: `if (!(Date.parse(event.date) < startTime)) continue;`"
+    },
+    {
+      "id": "CR-019",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/opencode/session/processors/opencode.conversations-processor.ts",
+      "line": 94,
+      "title": "Legacy child sessions counted as conversations",
+      "problem": "shouldProcess and the metrics prompt branch rely on metadata.parentId, which only the SQLite parser sets (opencode.session.ts:246). The file-storage parser does not.",
+      "impact": "On legacy storage, the parent agent's prompts to a subagent are queued as user conversation and counted as user prompts, against the PR's child-session rule. Reachability unconfirmed: legacy runs carry only the newest-updated file, so the child must be newest.",
+      "recommendation": "Set `parentId: sessionData.parentID` in the file-storage parser's metadata too."
+    },
+    {
+      "id": "CR-020",
+      "kind": "decision",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/opencode/session/processors/opencode.conversations-processor.ts",
+      "line": 135,
+      "title": "One source watermark for many sessions",
+      "problem": "lastSyncedMessageUuid holds one value per record, but a run can now hold several OpenCode sessions, and the processor ignores it unless it starts with that session's id. Every other session falls back to parseLastSyncedSourceIndex(undefined, persistedHistoryIndex) once its queued payloads leave the conversation file.",
+      "impact": "Already synced turns could be re-queued and re-sent, against EPMCDME-16536. Reachability unconfirmed: the fallback's behaviour was not read within budget.",
+      "recommendation": "Keep a per-conversation source watermark, or show that parseLastSyncedSourceIndex's fallback cannot re-queue a synced turn, with a test over two sessions in one run."
+    },
+    {
+      "id": "CR-021",
+      "kind": "decision",
+      "severity": "critical",
+      "triage": "decision_needed",
+      "file": "src/cli/commands/hook/end-metric.ts",
+      "line": 151,
+      "title": "Attribution change lacks security sign-off",
+      "problem": "security-practices.md (CRITICAL: Project & User Attribution Headers, rules 1-2) requires sign-off for attribution derivation changes. The end metric sessionId changes to session.startMetricSessionId || agentSessionId, metrics-aggregator.ts puts the same field first, and no commit body or task-folder file records a CRITICAL callout or sign-off. The PR itself states sign-off is required before merge.",
+      "impact": "The guide and the git-workflow.md checklist gate merge on this, and a wrong session_id can break server-side correlation of start, end and delta metrics. Whether a metric body session_id is in scope is a reading of the guide's catch-all clause, and a sign-off held outside the repository would satisfy it.",
+      "recommendation": "Call the change out as CRITICAL in the PR description and record security-review sign-off with the reviewer checklist, or record in the PR why the metric session_id is outside the attribution scope."
+    },
+    {
+      "id": "CR-022",
+      "kind": "decision",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/hook/session-record-updates.ts",
+      "line": 37,
+      "title": "SessionEnd re-adopts external-origin transcripts",
+      "problem": "recordLocatedTranscript sets agentSessionFile and status matched with no isExternalOrigin check. hook.ts:952 and hook.ts:1033 refuse to stamp external-origin records, so such a record has no path and hook.ts:304 stamps it at SessionEnd.",
+      "impact": "The native-loader ownership index reads agentSessionFile from records, so an external transcript is re-adopted into local analytics ownership, undoing the exclusion.",
+      "recommendation": "Return early on `isExternalOrigin(record)` in recordLocatedTranscript, as hook.ts:952 and hook.ts:1033 do."
+    },
+    {
+      "id": "CR-023",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/hook/session-record-updates.ts",
+      "line": 59,
+      "title": "Deep relative imports in new file",
+      "problem": "AGENTS.md Common Pitfalls requires the @/ alias over deep relative imports. This new file uses ../../../utils/pid-lock.js at line 59 and ../../../agents/core/session/SessionStore.js at line 71, though line 21 imports the same SessionStore module as @/agents/core/session/SessionStore.js.",
+      "impact": "New code breaks a documented repository convention, importing one module through two path forms. code-quality.md's own example shows a ../../../ path, so the two documents differ on this point.",
+      "recommendation": "Change lines 59 and 71 to @/utils/pid-lock.js and @/agents/core/session/SessionStore.js."
+    }
+  ],
+  "deferred": [
+    {
+      "id": "DF-001",
+      "severity": "major",
+      "file": "src/cli/commands/analytics/cost/cost-enricher.ts",
+      "title": "Source files already over 500 lines grew",
+      "problem": "Nine files over the code-quality.md 500-line limit gained 1-21 lines each: cost-enricher.ts, hook.ts, codemie-code.plugin.ts, opencode.conversations-processor.ts, AgentCLI.ts, opencode.plugin.ts, native-loader.ts, opencode.metrics-processor.ts, pi.plugin.ts.",
+      "preexisting": "All nine were over the limit at base; no changed file newly crossed 500 lines."
+    }
+  ]
+}

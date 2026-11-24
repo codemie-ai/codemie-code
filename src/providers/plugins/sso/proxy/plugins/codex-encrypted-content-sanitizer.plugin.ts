@@ -24,28 +24,31 @@
  * Stripping is the same trade as before: reasoning effort, visible messages,
  * tool calls, and tool outputs survive; prior hidden reasoning does not.
  *
- * Scope: codemie-codex, codemie-code, codemie-opencode, codemie-pi, and
- * vscode-byok.
+ * Scope: codemie-codex, codemie-code, codemie-opencode, codemie-pi, vscode-byok, codex-desktop,
+ * codemie-codex-acp, and codemie-daemon.
  */
 
 import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
+import { CODEMIE_DAEMON, CODEX_DESKTOP, VSCODE_BYOK } from '../proxy-clients.js';
 
-const ALLOWED_AGENTS = [
+const ALLOWED_AGENTS: readonly string[] = [
   'codemie-codex',
   'codemie-code',
   'codemie-opencode',
   'codemie-pi',
-  'vscode-byok',
+  VSCODE_BYOK,
   // The Codex desktop app speaks the Responses API and replays reasoning state
   // exactly like the Codex CLI. It has its own daemon client type, so without
   // this entry the sanitizer silently stops loading for that surface.
-  'codex-desktop',
+  CODEX_DESKTOP,
   // codex-acp (the ACP editor adapter) also routes through the 'codemie'
   // custom model provider with wire_api="responses", so it replays
   // reasoning.encrypted_content the same way the Codex CLI does.
   'codemie-codex-acp',
+  // Generic identity for `proxy start` and `connect --omp`; omp replays GPT-5.x/6 Responses reasoning state.
+  CODEMIE_DAEMON,
 ];
 const ENCRYPTED_CONTENT_INCLUDE = 'reasoning.encrypted_content';
 const RESPONSES_PATH_SUFFIX = '/responses';
@@ -73,27 +76,24 @@ export class CodexEncryptedContentSanitizerPlugin implements ProxyPlugin {
   name = 'Codex Encrypted Content Sanitizer';
   version = '1.0.0';
   priority = 16;
+  clients = ALLOWED_AGENTS;
 
-  async createInterceptor(context: PluginContext): Promise<ProxyInterceptor> {
-    const clientType = context.config.clientType;
-    if (!clientType || !ALLOWED_AGENTS.includes(clientType)) {
-      throw new Error(`Plugin disabled for agent: ${clientType}`);
-    }
-
-    return new CodexEncryptedContentSanitizerInterceptor(clientType);
+  async createInterceptor(_context: PluginContext): Promise<ProxyInterceptor> {
+    return new CodexEncryptedContentSanitizerInterceptor();
   }
 }
 
 class CodexEncryptedContentSanitizerInterceptor implements ProxyInterceptor {
   name = 'codex-encrypted-content-sanitizer';
 
-  /** Set once upstream rejects replayed reasoning state; never cleared for this proxy. */
-  private reasoningStateUnusable = false;
-
-  constructor(private readonly clientType: string) {}
+  /**
+   * The clients whose upstream rejected replayed reasoning state; never cleared for this proxy. Kept per client: one
+   * client's rejection strips no other client's requests.
+   */
+  private readonly reasoningStateUnusable = new Set<string>();
 
   async onRequest(context: ProxyContext): Promise<void> {
-    if (!this.reasoningStateUnusable) {
+    if (!this.reasoningStateUnusable.has(context.agentName)) {
       return;
     }
 
@@ -114,7 +114,7 @@ class CodexEncryptedContentSanitizerInterceptor implements ProxyInterceptor {
       context.headers['content-length'] = String(context.requestBody.length);
 
       logger.debug(
-        `[${this.name}] Removed encrypted reasoning content from ${this.clientType} request: ${sanitized.removedCount} item(s)`
+        `[${this.name}] Removed encrypted reasoning content from ${context.agentName} request: ${sanitized.removedCount} item(s)`
       );
     } catch {
       // Not valid JSON or unexpected structure — pass through unchanged.
@@ -123,10 +123,10 @@ class CodexEncryptedContentSanitizerInterceptor implements ProxyInterceptor {
 
   /**
    * Read-only scan of the upstream stream. Returns the chunk untouched; the only
-   * effect is latching `reasoningStateUnusable` so later requests get stripped.
+   * effect is latching `reasoningStateUnusable` for the request's client so its later requests get stripped.
    */
   async onResponseChunk(context: ProxyContext, chunk: Buffer): Promise<Buffer | null> {
-    if (this.reasoningStateUnusable || !context.url.includes(RESPONSES_PATH_SUFFIX)) {
+    if (this.reasoningStateUnusable.has(context.agentName) || !context.url.includes(RESPONSES_PATH_SUFFIX)) {
       return chunk;
     }
 
@@ -136,10 +136,10 @@ class CodexEncryptedContentSanitizerInterceptor implements ProxyInterceptor {
     const marker = UNUSABLE_REASONING_STATE_MARKERS.find(m => searchable.includes(m));
 
     if (marker) {
-      this.reasoningStateUnusable = true;
+      this.reasoningStateUnusable.add(context.agentName);
       delete context.metadata[MARKER_CARRY_KEY];
       logger.warn(
-        `[${this.name}] Upstream rejected replayed reasoning state for ${this.clientType} ("${marker}"). ` +
+        `[${this.name}] Upstream rejected replayed reasoning state for ${context.agentName} ("${marker}"). ` +
         'Stripping reasoning state from subsequent requests — cross-turn reasoning continuity is degraded ' +
         'for the rest of this session. Expected after an encrypted_content_affinity pin expires; ' +
         'a rising rate means deployment_affinity_ttl_seconds is too short.'

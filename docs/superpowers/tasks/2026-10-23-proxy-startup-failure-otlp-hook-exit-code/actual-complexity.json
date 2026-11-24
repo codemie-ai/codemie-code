@@ -1,0 +1,69 @@
+{
+  "task": "Wrap the unguarded ensureOtlpProxy call in OtlpAgentAdapter.processOtlpEvent() in a non-rethrowing try/catch so a daemon start/restart failure no longer propagates to the OTLP hook's exit code.",
+  "generated": "2026-10-23T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 2,
+      "label": "S",
+      "affected": "OtlpAgentAdapter.processOtlpEvent (shared base class for all OTLP hook adapters, e.g. claude-code-otlp)",
+      "layers": "Agent-Tool"
+    },
+    "requirements_clarity": {
+      "score": 1,
+      "label": "XS",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 1,
+      "label": "XS",
+      "risk_factors": null,
+      "mitigation": "Mirrors the existing non-rethrowing try/catch + logger pattern already used in the same method for decision.finalize failures (logger.warn '... failed:'); trivially reversible."
+    },
+    "file_change_estimate": {
+      "score": 2,
+      "label": "S",
+      "modified_files": 3,
+      "modified_file_list": [
+        "src/agents/core/OtlpAgentAdapter.ts",
+        "src/agents/core/__tests__/OtlpAgentAdapter.test.ts",
+        "src/cli/commands/__tests__/hook.analytics-wiring.test.ts"
+      ],
+      "new_files": 0,
+      "new_file_list": [],
+      "affected_dirs": ["src/agents", "src/cli"]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 1,
+      "label": "XS",
+      "layers_changed": ["Agent-Tool"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 8,
+  "size": "XS",
+  "band_range": "6-9",
+  "files_changed": 3,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "The touched method, OtlpAgentAdapter.processOtlpEvent, is a shared base class used by every OTLP hook adapter (currently claude-code-otlp, documented as the reference implementation for future adapters), so even a single-method change here counts as touching a core shared utility rather than a fully isolated endpoint — bumped from XS to S by red flag."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "3 files changed (1 production file, 2 existing test files updated with new coverage), 0 new files, spanning two directories (src/agents/core and src/cli/commands) — squarely in the S band (3-4 modified files)."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from XS to S: touches a core shared utility (OtlpAgentAdapter base class shared by all OTLP hook adapters)."
+  ],
+  "split_recommendation": null
+}

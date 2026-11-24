@@ -29,11 +29,12 @@ vi.mock('../opencode.paths.js', async (importOriginal) => ({
   getOpenCodeDbPath: () => '/data/opencode/opencode.db',
 }));
 vi.mock('../../codemie-code-hooks/index.js', () => ({
-  getHooksPluginFileUrl: () => 'file:///tmp/codemie-hooks/shell-hooks.ts',
-  cleanupHooksPlugin: vi.fn(),
+  getHooksPluginDirUrl: () => 'file:///tmp/codemie-hooks/opencode-v2/',
+  cleanupHooksPluginDir: vi.fn(),
 }));
 
 const { OpenCodePluginMetadata } = await import('../opencode.plugin.js');
+const { OpenCodeSessionAdapter } = await import('../opencode.session.js');
 
 function baseEnv(): NodeJS.ProcessEnv {
   return {
@@ -51,6 +52,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe('OpenCode onSessionStart', () => {
@@ -79,7 +81,6 @@ describe('OpenCode onSessionStart', () => {
     expect(startIncrementalSync).toHaveBeenCalledTimes(1);
     const options = startIncrementalSync.mock.calls[0][0];
     expect(options.sessionId).toBe('codemie-uuid-1');
-    expect(options.cwd).toBe(process.cwd());
     expect(options.buildContext().clientType).toBe('codemie-opencode');
   });
 
@@ -109,6 +110,42 @@ describe('OpenCode onSessionStart', () => {
     expect(options.buildContext().clientType).toBe('codemie-opencode-acp');
   });
 
+  it('hands processEvent the wrapper owner and the sync URL from the env, so the record stores it and the hook can send', async () => {
+    const env = {
+      ...baseEnv(),
+      CODEMIE_WRAPPER_PID: '4242',
+      CODEMIE_WRAPPER_STARTED_AT: '1790000000000',
+      CODEMIE_SYNC_API_URL: 'https://sync.example.com/code-assistant-api',
+    };
+
+    await OpenCodePluginMetadata.lifecycle!.onSessionStart!('codemie-uuid-1', env);
+
+    const [, config] = processEvent.mock.calls[0];
+    expect(config).toMatchObject({
+      ownerPid: 4242,
+      ownerStartedAt: 1_790_000_000_000,
+      syncApiUrl: 'https://sync.example.com/code-assistant-api',
+    });
+  });
+
+  it('with no started proxy and no sync URL, the failsafe gets no send path: CODEMIE_BASE_URL is the LLM host', async () => {
+    await OpenCodePluginMetadata.lifecycle!.onSessionStart!('codemie-uuid-1', { ...baseEnv(), CODEMIE_BASE_URL: 'https://llm.example.com' });
+
+    const options = startIncrementalSync.mock.calls[0][0];
+    expect(options.syncApiUrl).toBeUndefined();
+    expect(options.buildContext().apiBaseUrl).toBe('');
+  });
+
+  it('with the started proxy, the failsafe sends through it', async () => {
+    const env = { ...baseEnv(), CODEMIE_BASE_URL: 'http://127.0.0.1:4000', CODEMIE_TARGET_API_URL: 'https://sso.example.com/code-assistant-api' };
+
+    await OpenCodePluginMetadata.lifecycle!.onSessionStart!('codemie-uuid-1', env);
+
+    const options = startIncrementalSync.mock.calls[0][0];
+    expect(options.syncApiUrl).toBe('http://127.0.0.1:4000');
+    expect(options.buildContext().apiBaseUrl).toBe('http://127.0.0.1:4000');
+  });
+
   it('falls back to codemie-opencode when CODEMIE_CLIENT_TYPE is unset (unchanged plain-OpenCode behavior)', async () => {
     await OpenCodePluginMetadata.lifecycle!.onSessionStart!('codemie-uuid-1', baseEnv());
 
@@ -117,6 +154,90 @@ describe('OpenCode onSessionStart', () => {
 
     const options = startIncrementalSync.mock.calls[0][0];
     expect(options.buildContext().clientType).toBe('codemie-opencode');
+  });
+});
+
+const proxyEnv = (extra: NodeJS.ProcessEnv): NodeJS.ProcessEnv => ({
+  ...baseEnv(),
+  CODEMIE_BASE_URL: 'http://localhost:1234',
+  ...extra,
+});
+
+describe('OpenCode reasoning effort', () => {
+  const beforeRun = OpenCodePluginMetadata.lifecycle!.beforeRun!;
+
+  it('writes the level as a variant of a Responses API model, clamped to xhigh', async () => {
+    const env = proxyEnv({ CODEMIE_MODEL: 'gpt-5-2-2025-12-11', CODEMIE_REASONING_EFFORT: 'max' });
+
+    await beforeRun(env, {} as never);
+
+    // An unknown variant fails the OpenCode session, so the level must be one the provider has.
+    const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT!);
+    expect(config.model).toBe('codemie-openai/gpt-5-2-2025-12-11#xhigh');
+    // `opencode run` drops the configured variant; enrichArgs passes the selection as --model.
+    expect(env.CODEMIE_OPENCODE_RUN_MODEL).toBe(config.model);
+  });
+
+  it('clamps to low…high for a chat-completions model', async () => {
+    const env = proxyEnv({ CODEMIE_MODEL: 'claude-4-5-sonnet', CODEMIE_REASONING_EFFORT: 'minimal' });
+
+    await beforeRun(env, {} as never);
+
+    expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT!).model).toBe('codemie-proxy/claude-4-5-sonnet#low');
+  });
+
+  it('leaves the selection bare when no level is requested', async () => {
+    const env = proxyEnv({ CODEMIE_MODEL: 'gpt-5-2-2025-12-11' });
+
+    await beforeRun(env, {} as never);
+
+    expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT!).model).toBe('codemie-openai/gpt-5-2-2025-12-11');
+    expect(env.CODEMIE_OPENCODE_RUN_MODEL).toBeUndefined();
+  });
+});
+
+// OpenCode titles a session with `small_model`, so it has to name a model the proxy serves.
+describe('OpenCode title model', () => {
+  const smallModelFor = async (haikuModel: string | undefined): Promise<string | undefined> => {
+    const env = proxyEnv({ CODEMIE_MODEL: 'claude-4-5-sonnet', CODEMIE_HAIKU_MODEL: haikuModel });
+    await OpenCodePluginMetadata.lifecycle!.beforeRun!(env, {} as never);
+    return JSON.parse(env.OPENCODE_CONFIG_CONTENT!).small_model;
+  };
+
+  it.each([
+    ['a chat-completions model', 'claude-4-5-sonnet', 'codemie-proxy/claude-4-5-sonnet'],
+    ['a Responses API model', 'gpt-5-2-2025-12-11', 'codemie-openai/gpt-5-2-2025-12-11'],
+  ])('names %s under the provider that serves it', async (_kind, haikuModel, expected) => {
+    expect(await smallModelFor(haikuModel)).toBe(expected);
+  });
+
+  it.each([
+    ['unset', undefined],
+    ['not in the catalog', 'not-a-catalog-model'],
+  ])('leaves the choice to OpenCode when the haiku model is %s', async (_case, haikuModel) => {
+    expect(await smallModelFor(haikuModel)).toBeUndefined();
+  });
+});
+
+describe('OpenCode enrichArgs', () => {
+  const enrichArgs = (args: string[]) => OpenCodePluginMetadata.lifecycle!.enrichArgs!(args, {} as never);
+
+  // OpenCode v2's shared background service keeps the settings of the session that started it.
+  it('runs the TUI and --task on a private server', () => {
+    expect(enrichArgs([])).toEqual(['--standalone']);
+    expect(enrichArgs(['--task', 'hi'])).toEqual(['run', 'hi', '--standalone']);
+  });
+
+  it('passes the variant selection to run', () => {
+    vi.stubEnv('CODEMIE_OPENCODE_RUN_MODEL', 'codemie-openai/gpt-5-2-2025-12-11#high');
+
+    expect(enrichArgs(['--task', 'hi']))
+      .toEqual(['run', 'hi', '--model', 'codemie-openai/gpt-5-2-2025-12-11#high', '--standalone']);
+  });
+
+  it('keeps an explicit server choice and an unknown subcommand as given', () => {
+    expect(enrichArgs(['run', 'hi', '--server', 'http://127.0.0.1:1'])).toEqual(['run', 'hi', '--server', 'http://127.0.0.1:1']);
+    expect(enrichArgs(['models'])).toEqual(['models']);
   });
 });
 
@@ -133,7 +254,8 @@ describe('OpenCode beforeRun', () => {
     expect(hooks.Stop[0].hooks[0].async).toBe(true);
 
     const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT!);
-    expect(config.plugin).toContain('file:///tmp/codemie-hooks/shell-hooks.ts');
+    // OpenCode v2 loads a configured plugin only from a directory.
+    expect(config.plugin).toContain('file:///tmp/codemie-hooks/opencode-v2/');
   });
 
   it('registers the telemetry hooks even when the profile defines none', async () => {
@@ -210,6 +332,20 @@ describe('OpenCode onSessionEnd', () => {
     expect(config.clientType).toBe('codemie-opencode');
   });
 
+  it('carries the CodeMie id and the located transcript, so processing takes every session of the run', async () => {
+    const locate = vi.spyOn(OpenCodeSessionAdapter.prototype, 'locateSessionTranscript')
+      .mockResolvedValue({ transcript: '/data/opencode/opencode.db', sessionIds: ['ses_run'] });
+    try {
+      await OpenCodePluginMetadata.lifecycle!.onSessionEnd!(0, baseEnv());
+    } finally {
+      locate.mockRestore();
+    }
+
+    const [event] = processEvent.mock.calls[0];
+    expect(event.session_id).toBe('codemie-uuid-1');
+    expect(event.transcript_path).toBe('/data/opencode/opencode.db');
+  });
+
   it('reports a non-zero exit code in the reason', async () => {
     await OpenCodePluginMetadata.lifecycle!.onSessionEnd!(3, baseEnv());
 
@@ -227,7 +363,8 @@ describe('OpenCode telemetry metadata', () => {
   it('excludes shell errors using the lower-cased tool name', () => {
     // filterErrorTools does an exact match and the processor lower-cases tool
     // names, so the global ['Bash','Execute','Shell'] default never matches.
-    expect(OpenCodePluginMetadata.metricsConfig?.excludeErrorsFromTools).toEqual(['bash']);
+    // OpenCode v2 renamed the tool to `shell`; `bash` stays for sessions recorded by v1.
+    expect(OpenCodePluginMetadata.metricsConfig?.excludeErrorsFromTools).toEqual(['bash', 'shell']);
   });
 
   it('declares MCP and extension locations so the scans report non-zero', () => {

@@ -37,6 +37,7 @@ import { ProxyConfig, ProxyContext } from './proxy-types.js';
 import { AuthenticationError, NetworkError, TimeoutError, normalizeError } from './proxy-errors.js';
 import { getPluginRegistry } from './plugins/registry.js';
 import { PluginContext, ProxyInterceptor, ResponseMetadata, UpstreamResponseTools } from './plugins/types.js';
+import { CredentialRefresher } from './plugins/credential-refresh.js';
 import './plugins/index.js'; // Auto-register core plugins
 
 /**
@@ -115,12 +116,52 @@ export class CodeMieProxy {
       }
     }
 
+    const refresherParams = {
+      provider: this.config.provider,
+      baseUrl: this.config.targetApiUrl,
+      codeMieUrl: this.config.syncCodeMieUrl,
+    };
+    // One refresher per credential SOURCE, not one total, so a consumer never gets another
+    // source's identity (PR #661 review): `credentialRefresher` wraps the main auth method's
+    // own snapshot (SSO or JWT — JWT `refresh()` is a no-op) for auth injection and the
+    // model-catalogue fetch; `syncCredentialRefresher` wraps whichever of
+    // `syncCredentials`/`credentials` actually has SSO cookies, for session sync.
+    const credentialRefresher = credentials
+      ? new CredentialRefresher(credentials, refresherParams)
+      : undefined;
+    const syncSource = syncCredentials && 'cookies' in syncCredentials
+      ? syncCredentials
+      : credentials && 'cookies' in credentials
+        ? credentials
+        : null;
+    // A distinct sync source has its own host (syncCodeMieUrl), not the main profile's
+    // (targetApiUrl). `refresherParams` above resolves candidates with baseUrl (targetApiUrl)
+    // first, so re-using it here would re-read and overwrite the sync cookies with the main
+    // profile's on the very next refresh tick (PR #661 review). No `provider`/`baseUrl` makes
+    // `getPlatformUrlCandidates` resolve `codeMieUrl` alone as the only candidate, unfiltered by
+    // profile origin — the same direct, unfiltered lookup the startup snapshot above used.
+    const syncOnlyRefresherParams = {
+      baseUrl: this.config.syncCodeMieUrl as string, // inert: no `provider` means only `codeMieUrl` is tried
+      codeMieUrl: this.config.syncCodeMieUrl,
+    };
+    // When sync has no credentials of its own, it falls back to the same snapshot as
+    // `credentials` — reuse that SAME refresher instance in that case (rather than a second one
+    // over an identical snapshot) so the cache/throttle clock stays singular for one SSO
+    // identity, same as before this split.
+    const syncCredentialRefresher: CredentialRefresher<SSOCredentials> | undefined = !syncSource
+      ? undefined
+      : syncSource === credentials && credentialRefresher
+        ? (credentialRefresher as CredentialRefresher<SSOCredentials>)
+        : new CredentialRefresher(syncSource as SSOCredentials, syncOnlyRefresherParams);
+
     // 3. Build plugin context (includes profile config read once at CLI level)
     const pluginContext: PluginContext = {
       config: this.config,
       logger,
       credentials: credentials || undefined,
       syncCredentials: syncCredentials || undefined,
+      credentialRefresher,
+      syncCredentialRefresher,
       profileConfig: this.config.profileConfig
     };
 
@@ -199,13 +240,11 @@ export class CodeMieProxy {
     });
   }
 
-  /**
-   * Stop the proxy server
-   */
-  async stop(): Promise<void> {
+  /** Stop the proxy; the plugins' final work (e.g. the session sync) stops at `bounds.deadlineMs` when given. */
+  async stop(bounds?: { deadlineMs?: number }): Promise<void> {
     // 1. Call onProxyStop lifecycle hooks (before stopping server)
     await this.runHook('onProxyStop', interceptor =>
-      interceptor.onProxyStop?.()
+      interceptor.onProxyStop?.(bounds)
     );
 
     // 2. Stop server
@@ -252,17 +291,22 @@ export class CodeMieProxy {
     if (req.method === 'GET' && (req.url === '/health' || req.url === '/healthz')) {
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
+      const analytics = this.interceptors.find((i) => i.healthStatus)?.healthStatus?.();
       res.end(JSON.stringify({
         status: 'ok',
         port: this.actualPort,
         startedAt: this.startedAt,
+        pid: process.pid,
+        ...(analytics ? { analytics } : {}),
       }));
       return;
     }
 
+    let builtContext: ProxyContext | undefined;
     try {
       // 1. Build context
       const context = await this.buildContext(req);
+      builtContext = context;
 
       // 1.5. Try handleRequest hooks (full custom handling, in priority order).
       // When a plugin handles the request (returns true), the standard pipeline
@@ -272,7 +316,7 @@ export class CodeMieProxy {
       // owns all security guarantees for its traffic. See ProxyInterceptor.handleRequest
       // in types.ts for the full contract.
       for (const interceptor of this.interceptors) {
-        if (interceptor.handleRequest) {
+        if (interceptor.handleRequest && this.serves(interceptor, context)) {
           try {
             const handled = await interceptor.handleRequest(context, req, res, this.httpClient);
             if (handled) {
@@ -281,7 +325,7 @@ export class CodeMieProxy {
             }
           } catch (error) {
             // Route through the normal error pipeline so onError interceptors run
-            await this.handleError(error, req, res);
+            await this.handleError(error, req, res, context);
             return;
           }
         }
@@ -337,7 +381,7 @@ export class CodeMieProxy {
       // 4. Run onResponseHeaders hooks (BEFORE streaming)
       await this.runHook('onResponseHeaders', interceptor =>
         interceptor.onResponseHeaders?.(context, upstreamResponse.headers)
-      );
+      , context);
 
       // 5. Stream response to client
       logger.debug(`[proxy] Starting response streaming for ${context.requestId}`);
@@ -361,7 +405,7 @@ export class CodeMieProxy {
       logger.debug(`[proxy] Running onResponseComplete hooks for ${context.requestId}`);
       await this.runHook('onResponseComplete', interceptor =>
         interceptor.onResponseComplete?.(context, metadata)
-      );
+      , context);
       logger.debug(`[proxy] All hooks completed for ${context.requestId}`);
 
       // 7. Final completion marker
@@ -372,7 +416,7 @@ export class CodeMieProxy {
 
     } catch (error) {
       logger.debug(`[proxy] Error during request handling:`, error);
-      await this.handleError(error, req, res);
+      await this.handleError(error, req, res, builtContext);
     }
   }
 
@@ -444,7 +488,8 @@ export class CodeMieProxy {
   }
 
   /**
-   * Stream response with optional chunk transformation
+   * Stream response with optional chunk transformation; once the upstream ends or fails, the bytes
+   * interceptors still hold are written before the downstream ends or the error propagates.
    */
   private async streamResponse(
     context: ProxyContext,
@@ -493,35 +538,53 @@ export class CodeMieProxy {
       logger.debug(`[proxy-stream] Downstream error for ${context.requestId}:`, error);
     });
 
-    for await (const chunk of upstream) {
-      chunkCount++;
-      let processedChunk: Buffer | null = Buffer.from(chunk);
+    try {
+      for await (const chunk of upstream) {
+        chunkCount++;
+        let processedChunk: Buffer | null = Buffer.from(chunk);
 
-      // Run onResponseChunk hooks (optional transform)
-      for (const interceptor of this.interceptors) {
-        if (interceptor.onResponseChunk && processedChunk) {
+        // Run onResponseChunk hooks (optional transform)
+        for (const interceptor of this.interceptors) {
+          if (interceptor.onResponseChunk && processedChunk && this.serves(interceptor, context)) {
+            try {
+              processedChunk = await interceptor.onResponseChunk(context, processedChunk);
+            } catch (error) {
+              logger.error(`[CodeMieProxy] Chunk hook error:`, error);
+              // Continue streaming even if hook fails
+            }
+          }
+        }
+
+        // Write to client (if not filtered out)
+        if (processedChunk) {
+          downstream.write(processedChunk);
+          bytesSent += processedChunk.length;
+        }
+
+        // Check if downstream disconnected
+        if (downstreamClosed) {
+          logger.debug(`[proxy-stream] Downstream closed, stopping chunk iteration for ${context.requestId}`);
+          break;
+        }
+      }
+      logger.debug(`[proxy-stream] Finished chunk iteration for ${context.requestId}. Total chunks: ${chunkCount}, bytes: ${bytesSent}`);
+    } finally {
+      // Runs on an upstream failure too, so the bytes interceptors hold reach the client before the error propagates.
+      if (!downstreamClosed) {
+        for (const interceptor of this.interceptors) {
+          if (!interceptor.onResponseStreamEnd || !this.serves(interceptor, context)) continue;
           try {
-            processedChunk = await interceptor.onResponseChunk(context, processedChunk);
+            const held = await interceptor.onResponseStreamEnd(context);
+            if (held && held.length > 0) {
+              downstream.write(held);
+              bytesSent += held.length;
+            }
           } catch (error) {
-            logger.error(`[CodeMieProxy] Chunk hook error:`, error);
-            // Continue streaming even if hook fails
+            logger.error(`[CodeMieProxy] Stream end hook error:`, error);
           }
         }
       }
-
-      // Write to client (if not filtered out)
-      if (processedChunk) {
-        downstream.write(processedChunk);
-        bytesSent += processedChunk.length;
-      }
-
-      // Check if downstream disconnected
-      if (downstreamClosed) {
-        logger.debug(`[proxy-stream] Downstream closed, stopping chunk iteration for ${context.requestId}`);
-        break;
-      }
     }
-    logger.debug(`[proxy-stream] Finished chunk iteration for ${context.requestId}. Total chunks: ${chunkCount}, bytes: ${bytesSent}`);
 
     // Explicitly destroy upstream to ensure connection closes
     if (!upstream.destroyed) {
@@ -544,8 +607,14 @@ export class CodeMieProxy {
     };
   }
 
+  /** Whether an interceptor's request hooks run for this request: it lists no clients, or the request's client. */
+  private serves(interceptor: ProxyInterceptor, context: ProxyContext): boolean {
+    return !interceptor.clients || interceptor.clients.includes(context.agentName);
+  }
+
   /**
    * Run interceptor hook safely (errors don't break flow)
+   * With a request's context: only the interceptors that serve its client, checked at each one's turn
    * For onRequest hooks: stop execution if any plugin blocks the request
    */
   private async runHook(
@@ -554,6 +623,7 @@ export class CodeMieProxy {
     context?: ProxyContext
   ): Promise<void> {
     for (const interceptor of this.interceptors) {
+      if (context && !this.serves(interceptor, context)) continue;
       try {
         await fn(interceptor);
 
@@ -582,13 +652,13 @@ export class CodeMieProxy {
       retry: (requestBody) => this.httpClient.forward(targetUrl, {
         method,
         headers: context.headers,
-        body: requestBody,
+        body: requestBody || undefined,
       }),
       fromBuffer: (incoming, body) => this.createBufferedResponse(incoming, body),
     };
 
     for (const interceptor of this.interceptors) {
-      if (!interceptor.onUpstreamResponse) {
+      if (!interceptor.onUpstreamResponse || !this.serves(interceptor, context)) {
         continue;
       }
 
@@ -616,12 +686,14 @@ export class CodeMieProxy {
   }
 
   /**
-   * Handle errors with proper status codes and structure
+   * Handle errors with proper status codes and structure; reported under the client of the request's context,
+   * else (no context could be built) the proxy's own client type
    */
   private async handleError(
     error: unknown,
     req: IncomingMessage,
-    res: ServerResponse
+    res: ServerResponse,
+    requestContext?: ProxyContext
   ): Promise<void> {
     // Check if this is a normal client disconnect (abort)
     const isAbortError = error && typeof error === 'object' &&
@@ -643,7 +715,7 @@ export class CodeMieProxy {
     const context: ProxyContext = {
       requestId: randomUUID(),
       sessionId: this.config.sessionId || 'unknown',
-      agentName: this.config.clientType || 'unknown',
+      agentName: requestContext?.agentName ?? (this.config.clientType || 'unknown'),
       method: req.method || 'GET',
       url: req.url || '/',
       headers: {},
@@ -655,7 +727,7 @@ export class CodeMieProxy {
     // Run onError interceptors
     const errorObj = error instanceof Error ? error : new Error(String(error));
     for (const interceptor of this.interceptors) {
-      if (interceptor.onError) {
+      if (interceptor.onError && this.serves(interceptor, context)) {
         try {
           await interceptor.onError(context, errorObj);
         } catch (interceptorError) {

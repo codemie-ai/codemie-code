@@ -7,7 +7,7 @@
  * returns and cannot tolerate a thrown exception interrupting that loop.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, utimesSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -21,6 +21,13 @@ import {
   type OpenUsageRequest,
   type TranscriptParseState,
 } from '../parse-state.js';
+import { exec } from '@/utils/exec.js';
+
+// Process spawns are a boundary: the lock runs inside an agent hook and must never spawn `ps`
+vi.mock('@/utils/exec.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/utils/exec.js')>();
+  return { ...actual, exec: vi.fn(actual.exec) };
+});
 
 let codemieHome: string;
 
@@ -50,6 +57,10 @@ describe('createParseState', () => {
       openRequests: {},
       activeSkill: '',
       branchCounts: {},
+      gitHeadStart: '',
+      sessionStartedAt: '',
+      lastSessionEnvFields: null,
+      lastCompactionEnd: '',
     });
   });
 });
@@ -104,6 +115,10 @@ describe('loadParseState', () => {
       openRequests: { 'req1::claude-3-5-sonnet': openRequest },
       activeSkill: 'brainstorming',
       branchCounts: { main: 3, feature: 1 },
+      gitHeadStart: 'abc123def456',
+      sessionStartedAt: '2026-10-01T00:00:00.000Z',
+      lastSessionEnvFields: null,
+      lastCompactionEnd: '2026-10-01T00:10:00.000Z',
     };
 
     await saveParseState('session-roundtrip', state);
@@ -185,6 +200,26 @@ describe('withParseStateLock', () => {
     await expect(pending).resolves.toBe('acquired');
   });
 
+  it('judges a holder by its pid alone: a live pid with a mismatched start keeps the lock, no ps spawned', async () => {
+    const sessionId = 'session-pid-only-holder';
+    const lockPath = join(codemieHome, 'analytics', 'state', `${sessionId}.json.lock`);
+    mkdirSync(dirname(lockPath), { recursive: true });
+    // This process's live pid with a start time `ps` would call a different process
+    const holder = JSON.stringify({ pid: process.pid, startedAt: 1 });
+    writeFileSync(lockPath, holder);
+    vi.mocked(exec).mockClear();
+
+    const pending = withParseStateLock(sessionId, async () => 'acquired');
+    // Time-based: the waiter must poll the held lock a few times before the holder releases it
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(vi.mocked(exec).mock.calls.filter(([command]) => command === 'ps')).toEqual([]);
+    expect(readFileSync(lockPath, 'utf-8')).toBe(holder);
+
+    rmSync(lockPath, { force: true });
+    await expect(pending).resolves.toBe('acquired');
+  });
+
   it('reclaims an empty lock only once it is old enough to be abandoned', async () => {
     const sessionId = 'session-empty-lock';
     const lockPath = join(codemieHome, 'analytics', 'state', `${sessionId}.json.lock`);
@@ -224,5 +259,51 @@ describe('acquireParseStateLock', () => {
     expect(existsSync(lockPath)).toBe(true);
 
     await reacquireRelease();
+  });
+});
+
+describe('continuation and reopen fields', () => {
+  it('loads a state saved without the fields with them undefined', async () => {
+    const dir = join(codemieHome, 'analytics', 'state');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'old-session.json'), JSON.stringify({ mainOffset: 12 }), 'utf-8');
+
+    const state = await loadParseState('old-session');
+
+    expect(state.mainOffset).toBe(12);
+    expect(state.inheritedUuids).toBeUndefined();
+    expect(state.inheritedResolved).toBeUndefined();
+    expect(state.reopened).toBeUndefined();
+    expect(state.reopenActive).toBeUndefined();
+    expect(state.inheritedAgentIds).toBeUndefined();
+    expect(state.inheritedLookups).toBeUndefined();
+    expect(state.reopenedAt).toBeUndefined();
+    expect(state.continuationActive).toBeUndefined();
+  });
+
+  it('round-trips the fields through save and load', async () => {
+    const state: TranscriptParseState = {
+      ...createParseState(),
+      inheritedUuids: ['u1', 'u2'],
+      inheritedAgentIds: ['a1', 'a2'],
+      inheritedResolved: true,
+      inheritedLookups: 2,
+      reopened: true,
+      reopenActive: false,
+      reopenedAt: 1_762_800_000_000,
+      continuationActive: true,
+    };
+
+    await saveParseState('new-session', state);
+    const loaded = await loadParseState('new-session');
+
+    expect(loaded.inheritedUuids).toEqual(['u1', 'u2']);
+    expect(loaded.inheritedAgentIds).toEqual(['a1', 'a2']);
+    expect(loaded.inheritedResolved).toBe(true);
+    expect(loaded.inheritedLookups).toBe(2);
+    expect(loaded.reopened).toBe(true);
+    expect(loaded.reopenActive).toBe(false);
+    expect(loaded.reopenedAt).toBe(1_762_800_000_000);
+    expect(loaded.continuationActive).toBe(true);
   });
 });

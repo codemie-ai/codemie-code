@@ -1,0 +1,34 @@
+{
+  "decision": "request-changes",
+  "rationale": "All three lenses ran (acceptance audited against the Jira ticket's acceptance criteria plus the plan's constraints, since sdlc-light has no spec.md). AC1 and AC2 are met, but the plan constraint that a failed migration's warning stays on stderr is only partly met: under --json the runner is silent and logger.error prints to the console only in debug mode, so a failed migration leaves no trace outside the log file. Filtered 9 dismissed items (accepted --json <path>/passthrough trade-offs, --json=false, docs wording, eager updater import, --help --json, test coupling, unverified-premise claims) and deferred 1: --format json/jsonl and --export json carry the same start-up banner but are explicitly out of scope per the plan and ticket.",
+  "confidence": "high",
+  "risk_flags": ["breaking-change"],
+  "business_review": [
+    {"kind": "story-ac", "item": "AC1: `codemie proxy analytics status --json` on a clean CODEMIE_HOME prints only valid JSON to stdout", "status": "pass", "notes": "runPending is silent when argv has --json; update check and what's-new notice skipped; regression test asserts exit 0, no 'migration(s)' in stdout and JSON.parse(stdout). Reviewer also ran the repro manually: JSON.parse OK, empty stderr."},
+    {"kind": "story-ac", "item": "AC2: The migration banner does not appear in stdout when --json is used", "status": "pass", "notes": "Every console.log in runner.ts is gated by !silent; details go to the file log ([MigrationRunner] Found ...)."},
+    {"kind": "spec", "item": "Scope is the --json flag only; version/--version control tests keep asserting the banner", "status": "pass", "notes": "Helper matches only --json and --json=...; control tests untouched and passing (19/19 in hook-stdout.test.ts)."},
+    {"kind": "spec", "item": "Hook behaviour (hook, sound) must not change", "status": "pass", "notes": "isHookProcess logic unchanged; additions are `|| isMachineOutput` / `&& !isMachineOutput` only; hook/sound tests pass."},
+    {"kind": "spec", "item": "A failed migration must never block the command; its warning stays on stderr, never stdout", "status": "partial", "notes": "Never blocks and never reaches stdout, but under --json a failure handled inside runPending (result.success=false or throw in up()) is no longer shown anywhere except the log file: runner console.log lines are gated by silent and logger.error prints only in debug mode. Previously it appeared on stdout."},
+    {"kind": "spec", "item": "Conventions: ESM, .js extensions, no console.log for debug, no any, explicit return types on exports", "status": "pass", "notes": "machine-output.ts exports isMachineOutputInvocation(argv: readonly string[]): boolean; imports use .js."},
+    {"kind": "spec", "item": "Helper wired into bin/codemie.js; migrations still run and are recorded; `--` terminator and look-alikes do not match", "status": "pass", "notes": "Integration test asserts migrations.json written and log line present; unit tests cover --, --jsonl, --no-json, -j, --json-schema."},
+    {"kind": "spec", "item": "Regression test, helper unit test and docs/COMMANDS.md updated", "status": "pass", "notes": "tests/integration/hook-stdout.test.ts, src/utils/__tests__/machine-output.test.ts, docs/COMMANDS.md."}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "pass", "notes": "Subjects use allowed type/scope (fix(cli), docs(cli)), under 100 chars; ticket in body footer."},
+    {"kind": "code-quality", "status": "pass", "notes": "ESM, .js extensions, no any, no console.log debug. bin/codemie.js is plain JS outside tsc/eslint (noted, not a violation)."},
+    {"kind": "security", "status": "pass", "notes": "No secrets, no attribution-header changes, no path or process handling touched."}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "file": "bin/codemie.js",
+      "line": 44,
+      "title": "Failed migrations invisible on stderr under --json",
+      "problem": "silent is now true for --json, so MigrationRunner.runPending prints no '✗ Failed/Error' line, and logger.error writes to the console only in debug mode. A migration that returns success:false or throws inside up() is recorded only in the log file; the wrapper ignores runPending's returned { failed } count. The plan constraint says a failed migration's warning stays on stderr.",
+      "impact": "A script or CI job consuming --json gets valid JSON and exit 0 with no signal that start-up migrations failed (they retry on every run); before this change the failure was at least visible on stdout. No test asserts stderr for a failing migration.",
+      "recommendation": "Keep the result of runPending in bin/codemie.js and, when result.failed > 0 and the run is silent only because of isMachineOutput (not a hook), write one line to stderr via console.error (e.g. 'Warning: N migration(s) failed; see the log file') while leaving stdout untouched; hooks keep logger.warn behaviour. Add a test that a failing migration under --json produces stderr text and still-valid JSON on stdout."
+    }
+  ]
+}

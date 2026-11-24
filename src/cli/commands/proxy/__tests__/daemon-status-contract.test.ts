@@ -23,10 +23,9 @@ import {
   checkStatus,
   type DaemonState,
 } from '../daemon-manager.js';
-import { isProcessAlive } from '../../../../utils/processes.js';
+import { isProcessAlive, processStartedAt } from '../../../../utils/processes.js';
 import {
   daemonMatchesRequest,
-  getEffectiveClientType,
   type RequestedDaemonConfig,
 } from '../connect-orchestrator.js';
 import { createProxyCommand } from '../index.js';
@@ -40,14 +39,14 @@ function makeFullState(overrides: Partial<DaemonState> = {}): DaemonState {
     url: 'http://localhost:4001',
     profile: 'work',
     gatewayKey: 'codemie-proxy',
-    telemetryMode: 'claude-desktop',
     targetUrl: 'https://upstream.example.com',
     provider: 'ai-run-sso',
     project: 'team-project',
-    clientType: 'vscode-byok',
     syncApiUrl: 'https://api.example.com',
     syncCodeMieUrl: 'https://codemie.example.com',
-    startedAt: new Date().toISOString(),
+    version: '0.17.0',
+    desktopConnectedSince: '2026-11-16T10:00:00.000Z',
+    startedAt: new Date(processStartedAt()).toISOString(),
     health: 'ok',
     healthReason: undefined,
     recoveryAttempts: 0,
@@ -78,9 +77,21 @@ describe('daemon-manager: state file round-trip (explicit stateFile in a temp di
     // Full-fidelity: the persisted JSON must round-trip byte-equivalently.
     expect(read).toEqual(state);
     // Spot-check optional fields the minimal fixtures elsewhere never exercise.
-    expect(read?.telemetryMode).toBe('claude-desktop');
+    expect(read?.version).toBe('0.17.0');
+    expect(read?.desktopConnectedSince).toBe('2026-11-16T10:00:00.000Z');
     expect(read?.syncApiUrl).toBe('https://api.example.com');
     expect(read?.syncCodeMieUrl).toBe('https://codemie.example.com');
+  });
+
+  it('reads a state file that still holds telemetryMode and clientType with no error', async () => {
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(stateFile, JSON.stringify({
+      ...makeFullState(),
+      telemetryMode: 'claude-desktop',
+      clientType: 'codemie-daemon',
+    }), 'utf-8');
+
+    await expect(readState(stateFile)).resolves.toMatchObject({ pid: process.pid, version: '0.17.0' });
   });
 
   it('write → clear → read yields null (full lifecycle)', async () => {
@@ -159,16 +170,11 @@ describe('daemon-manager: isProcessAlive', () => {
 });
 
 describe('connect-orchestrator: daemonMatchesRequest matrix', () => {
-  const baseState: DaemonState = makeFullState({
-    pid: 1234,
-    clientType: 'vscode-byok',
-    telemetryMode: undefined,
-  });
+  const baseState: DaemonState = makeFullState({ pid: 1234 });
   const request: RequestedDaemonConfig = {
     profile: 'work',
     port: 4001,
     project: 'team-project',
-    clientType: 'vscode-byok',
     provider: 'ai-run-sso',
     targetUrl: 'https://upstream.example.com',
   };
@@ -197,10 +203,6 @@ describe('connect-orchestrator: daemonMatchesRequest matrix', () => {
     expect(daemonMatchesRequest({ ...baseState, targetUrl: 'https://elsewhere' }, request)).toBe(false);
   });
 
-  it('does not match on a different effective client type', () => {
-    expect(daemonMatchesRequest({ ...baseState, clientType: 'claude-desktop' }, request)).toBe(false);
-  });
-
   it('ignores provider when the request omits it', () => {
     const req = { ...request, provider: undefined };
     expect(daemonMatchesRequest({ ...baseState, provider: 'anything' }, req)).toBe(true);
@@ -209,19 +211,6 @@ describe('connect-orchestrator: daemonMatchesRequest matrix', () => {
   it('ignores targetUrl when the request omits it', () => {
     const req = { ...request, targetUrl: undefined };
     expect(daemonMatchesRequest({ ...baseState, targetUrl: 'https://anything' }, req)).toBe(true);
-  });
-
-  it('matches a legacy telemetry-mode daemon against a claude-desktop request', () => {
-    // No explicit clientType → effective type derived from telemetryMode.
-    const legacy = makeFullState({ clientType: undefined, telemetryMode: 'claude-desktop' });
-    expect(getEffectiveClientType(legacy)).toBe('claude-desktop');
-    expect(daemonMatchesRequest(legacy, { ...request, clientType: 'claude-desktop' })).toBe(true);
-  });
-
-  it('falls back to codemie-daemon effective type when neither clientType nor claude-desktop telemetry is set', () => {
-    const generic = makeFullState({ clientType: undefined, telemetryMode: 'none' });
-    expect(getEffectiveClientType(generic)).toBe('codemie-daemon');
-    expect(daemonMatchesRequest(generic, { ...request, clientType: 'codemie-daemon' })).toBe(true);
   });
 });
 
@@ -258,5 +247,26 @@ describe('proxy status --json: stopped shape (no live daemon)', () => {
     expect(parsed).not.toHaveProperty('url');
     expect(parsed).not.toHaveProperty('port');
     expect(parsed).not.toHaveProperty('level');
+    expect(parsed).not.toHaveProperty('analytics');
+  });
+
+  it('prints only "Status: stopped" in text mode, with no Analytics line', async () => {
+    const proxy = createProxyCommand();
+    await proxy.parseAsync(['status'], { from: 'user' });
+
+    expect(logSpy).toEqual(['Status: stopped']);
+  });
+
+  it('reads the state of a dead daemon as stopped and leaves its file byte-identical', async () => {
+    const content = JSON.stringify(makeFullState({ pid: DEAD_PID }), null, 2);
+    const { mkdir, writeFile, readFile } = await import('node:fs/promises');
+    await mkdir(getCodemieHome(), { recursive: true });
+    await writeFile(defaultStateFile, content, 'utf-8');
+
+    const proxy = createProxyCommand();
+    await proxy.parseAsync(['status'], { from: 'user' });
+
+    expect(logSpy).toEqual(['Status: stopped']);
+    expect(await readFile(defaultStateFile, 'utf-8')).toBe(content);
   });
 });

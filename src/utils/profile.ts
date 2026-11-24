@@ -19,6 +19,8 @@ export function renderProfileInfo(config: {
   provider?: string;
   model?: string;
   codeMieUrl?: string;
+  /** Project text incl. its binding (see describeProjectBinding()); omitted → no Project line */
+  project?: string;
   authStatus?: AuthStatusDisplay;
   agent?: string;
   cliVersion?: string;
@@ -55,6 +57,10 @@ export function renderProfileInfo(config: {
   }
   if (config.codeMieUrl) {
     outputLines.push(formatRow('CodeMie URL', config.codeMieUrl));
+  }
+  if (config.project) {
+    const color = /\((shared fallback|no project selected)\)$/.test(config.project) ? chalk.yellow : chalk.white;
+    outputLines.push(formatRow('Project', config.project, color));
   }
   // Auth status inline
   if (config.authStatus) {

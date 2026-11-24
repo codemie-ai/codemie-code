@@ -2,7 +2,8 @@
  * JWT Bearer Authorization Setup Steps
  *
  * Simplified setup flow for JWT authentication.
- * Only asks for API URL during setup - token is provided later at runtime.
+ * Asks for the API URL and, with a token available, the CodeMie project; the
+ * token itself is provided at runtime and never stored.
  */
 
 import inquirer from 'inquirer';
@@ -15,7 +16,72 @@ import type {
 import { ProviderName, AuthMethod } from '@/providers/core/types.js';
 import { JWT_TOKEN_DEFAULT_ENV_VAR, resolveJwtToken, resolveJwtTokenEnvVar } from '@/providers/plugins/jwt/jwt.utils.js';
 import type { CodeMieConfigOptions } from '@/env/types.js';
-import { ensureApiBase } from '../../core/codemie-auth-helpers.js';
+import { ensureApiBase, selectCodeMieProject } from '../../core/codemie-auth-helpers.js';
+
+/** Seams for tests. */
+export interface JwtProjectStepDeps {
+  prompt?: typeof inquirer.prompt;
+  select?: typeof selectCodeMieProject;
+  env?: NodeJS.ProcessEnv;
+}
+
+/**
+ * JWT setup project step: lists the account's projects with bearer auth against
+ * the URL typed in this run and returns the pick. The token comes from the chosen
+ * env var, or is pasted once (hidden; never stored or logged). Skip or failure
+ * returns undefined: nothing new is saved, so a project already stored for this
+ * profile on the same CodeMie URL is kept (ConfigLoader carry-over rule).
+ */
+export async function selectJwtProfileProject(
+  apiUrl: string,
+  tokenEnvVar: string,
+  deps: JwtProjectStepDeps = {}
+): Promise<string | undefined> {
+  const prompt = deps.prompt ?? inquirer.prompt;
+  const select = deps.select ?? selectCodeMieProject;
+  const env = deps.env ?? process.env;
+
+  console.log(chalk.cyan('\n📂 CodeMie project (billing) for this profile\n'));
+  let token = env[tokenEnvVar]?.trim() || undefined;
+  if (token) {
+    const { useEnv } = await prompt([{
+      type: 'confirm',
+      name: 'useEnv',
+      message: `Select the project now using the token in ${tokenEnvVar}?`,
+      default: true,
+    }]) as { useEnv: boolean };
+    if (!useEnv) token = undefined;
+  } else {
+    const { source } = await prompt([{
+      type: 'list',
+      name: 'source',
+      message: `No token found in ${tokenEnvVar}. How should the project be selected?`,
+      choices: [
+        { name: 'Paste a token once (not stored)', value: 'paste' },
+        { name: 'Skip — select later with `codemie setup` when the token is available', value: 'skip' },
+      ],
+    }]) as { source: 'paste' | 'skip' };
+    if (source === 'paste') {
+      const { pasted } = await prompt([{ type: 'password', name: 'pasted', mask: '*', message: 'JWT token:' }]) as { pasted: string };
+      token = pasted?.trim() || undefined;
+    }
+  }
+
+  if (!token) {
+    console.log(chalk.yellow(
+      '⚠️  No project selected. A project already saved for this profile is kept; otherwise it uses the shared project until you run `codemie setup` again.\n'
+    ));
+    return undefined;
+  }
+  try {
+    const { project } = await select({ apiUrl, jwtToken: token });
+    return project;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(chalk.yellow(`⚠️  Could not list projects (${message}). A project already saved for this profile is kept.\n`));
+    return undefined;
+  }
+}
 
 export const JWTBearerSetupSteps: ProviderSetupSteps = {
   name: ProviderName.BEARER_AUTH,
@@ -87,6 +153,9 @@ export const JWTBearerSetupSteps: ProviderSetupSteps = {
       tokenEnvVar = envVarAnswers.envVar;
     }
 
+    // Step 3: CodeMie project for this profile (EPMCDME-15411)
+    const codeMieProject = await selectJwtProfileProject(baseUrl, tokenEnvVar);
+
     console.log(chalk.green('\n✓ Configuration saved\n'));
     console.log(chalk.cyan('📌 Next Steps:\n'));
     console.log(chalk.white('1. Set your JWT token:'));
@@ -101,6 +170,7 @@ export const JWTBearerSetupSteps: ProviderSetupSteps = {
       baseUrl,  // Full API URL with suffix
       additionalConfig: {
         codeMieUrl,  // User's input (base URL)
+        codeMieProject,
         authMethod: AuthMethod.JWT,
         jwtConfig: {
           tokenEnvVar
@@ -131,13 +201,15 @@ export const JWTBearerSetupSteps: ProviderSetupSteps = {
       | { tokenEnvVar?: string }
       | undefined;
 
+    const codeMieProject = credentials.additionalConfig?.codeMieProject as string | undefined;
     return {
       provider: ProviderName.BEARER_AUTH,
       codeMieUrl: credentials.additionalConfig?.codeMieUrl as string | undefined,  // Base URL (user input)
       baseUrl: credentials.baseUrl,  // Full API URL with suffix
       model: selectedModel,
       authMethod: AuthMethod.JWT,
-      jwtConfig
+      jwtConfig,
+      ...(codeMieProject ? { codeMieProject } : {})
     };
   },
 

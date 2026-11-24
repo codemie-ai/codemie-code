@@ -1,0 +1,38 @@
+{
+  "decision": "request-changes",
+  "superseded_by": "code-review-check.json",
+  "superseded_note": "This is the historical record of the FIRST review round only — it genuinely found CR-001 and CR-002 at that point, before any fix-up. It is intentionally left unchanged (rewriting it to 'approve' would hide that these findings were real and had to be fixed). The actual final, current state (all findings resolved, decision: approve, full round-by-round decision_history) is in code-review-check.json.",
+  "rationale": "Three independent lenses (blind, edge-case, acceptance) ran cleanly against the full diff. Two confirmed the same correctness/security gap (CR-001): the 'already managed' check only looks at hook commands, so a settings file with codemie env keys but no codemie hook group is misclassified as unmanaged and gets a raw copyFile backup — potentially enshrining the OTLP bearer token as the 'pre-connect original', the exact failure mode this fix explicitly set out to avoid for the hooks case. The acceptance lens also flagged AC1 as only 'partial': once a backup exists for an already-managed file, later connects that further modify settings (e.g. allowlist changes) do not refresh it (CR-002) — this mirrors the already-accepted codex-desktop precedent and is functionally mitigated by AC3's no-restore redesign, but is a literal AC1 gap worth a human call on whether it's acceptable as-is. Two speculative blind-lens concerns were checked and ruled out: addProjectPath is verified pure (returns a new array, never mutates its input), and a grep + clean `tsc --noEmit` confirm no other consumer reads the removed `usedBackup` field. The unlink-ordering/no-try-catch concerns (blind + edge-case) are deferred: narrow OS-lock-only edge cases, consistent with this file's existing lack of try/catch around fs calls elsewhere, and any throw still surfaces correctly via disconnect-orchestrator's existing catch block (exit code 1) rather than failing silently.",
+  "confidence": "low",
+  "risk_flags": ["security"],
+  "business_review": [
+    {"kind": "spec", "item": "AC1: Backup is refreshed (or recreated) on each connect that modifies the file", "status": "partial", "notes": "Refreshed on the not-yet-managed -> managed transition and when an already-managed file's backup is missing (rebuilt from stripped content). Once a backup exists for an already-managed file, later connects that further modify the file (e.g. allowlist/env changes) do not refresh it — see CR-002."},
+    {"kind": "spec", "item": "AC2: After a successful disconnect the backup file is removed", "status": "pass", "notes": "removeClaudeCodeOtlpConfig now unconditionally unlinks an existing backup after any successful full removal, not just the previously-empty-only case."},
+    {"kind": "spec", "item": "AC3: Disconnect never restores values changed/removed by the user after connect", "status": "pass", "notes": "The isEmpty branch's raw backup-restore-and-write was removed entirely; disconnect only ever writes the live-derived `stripped` result or deletes the file."},
+    {"kind": "spec", "item": "AC4 (plan's clarification assumption): disconnect must derive the result from the current live settings file via surgical strip, deleting the file when nothing foreign remains, instead of restoring the backup", "status": "pass", "notes": "Implemented via the shared stripCodemieManagedContent helper; usedBackup field and its CLI warning were removed, confirming no restore path remains."}
+  ],
+  "standards_review": [
+    {"standard": "git-workflow.md commit format", "status": "pass", "notes": "All three commits use Conventional Commits with allowed types (fix/chore) and the allowed 'proxy' scope."},
+    {"standard": "code-quality.md (ES modules, explicit types, no any)", "status": "pass", "notes": "New helper stripCodemieManagedContent has an explicit return type; no `any` introduced; existing .js-extension import convention untouched."}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "triage": "patch",
+      "severity": "major",
+      "title": "Backup can still copy CodeMie's own bearer token as the 'pre-connect original' when env keys are managed but no hook group is",
+      "location": "src/cli/commands/proxy/connectors/claude-code-otlp.ts (writeClaudeCodeOtlpConfig backup block, ~lines 330-360)",
+      "evidence": "`alreadyManaged` is computed only from `existingHooksBlock` entries containing a codemie hook command (`groupContainsCodemieCommand`). If a settings file has codemie env keys (including `OTEL_EXPORTER_OTLP_HEADERS` with a live bearer token) but no codemie hook-command group — reachable if a user or another process strips only the hooks block while leaving env alone — `alreadyManaged` is false, so the `else` branch runs a raw `copyFile(settingsPath, backupPathCandidate)`, copying the bearer token into the backup as the 'original'. This is exactly the failure mode the managed-but-missing branch was written to avoid for hooks; it is not closed for env-only management. Confirmed independently by both the blind and edge-case lenses.",
+      "recommendation": "Compute `alreadyManaged` from env keys too (e.g. any CODEMIE_ENV_KEYS value already matching codemieEnv's desired value), not hook commands alone, so this state also takes the strip-and-rebuild path."
+    },
+    {
+      "id": "CR-002",
+      "triage": "decision_needed",
+      "severity": "major",
+      "title": "AC1 ('refreshed on each connect that modifies the file') is only partially satisfied — human call needed on whether this is acceptable",
+      "location": "src/cli/commands/proxy/connectors/claude-code-otlp.ts (writeClaudeCodeOtlpConfig backup block, 'alreadyManaged && existsSync(backupPathCandidate)' branch)",
+      "evidence": "Once a backup exists for an already-managed settings file, the code explicitly leaves it untouched on every subsequent connect, even if that connect further changes hooks/env/allowlist entries in the live file. This exactly mirrors the already-reviewed codex-desktop precedent this fix explicitly ports, and is functionally safe because AC3's redesign means disconnect never reads backup content back in — but it is a literal partial against AC1's wording as written in the ticket.",
+      "recommendation": "Either accept this as intentional (the backup's only remaining purpose is an advisory manual-recovery snapshot, and codex-desktop's identical precedent already encodes this), or explicitly re-scope AC1's wording in the ticket/plan to 'refreshed when management begins or is re-established' rather than 'each connect.' No code change needed if the former is accepted."
+    }
+  ]
+}

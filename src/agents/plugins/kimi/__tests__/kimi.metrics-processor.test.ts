@@ -13,14 +13,21 @@ vi.mock('../../../../utils/logger.js', () => ({
   },
 }));
 
-const { mockAppendDelta, mockReadAll } = vi.hoisted(() => ({
-  mockAppendDelta: vi.fn<(delta: Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>) => Promise<string>>(),
+const { mockAppendDeltas, mockReadAll } = vi.hoisted(() => ({
+  mockAppendDeltas: vi.fn<(deltas: Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>>) => Promise<unknown>>(),
   mockReadAll: vi.fn<() => Promise<MetricDelta[]>>(),
 }));
 
+/** Every delta handed to the writer, across all batches. */
+const appendedDeltas = (): MetricDelta[] => mockAppendDeltas.mock.calls.flatMap((call) => call[0] as MetricDelta[]);
+
+vi.mock('../../../core/session/run-window.js', () => ({
+  resolveRunWindow: async () => ({ startTime: 0 }),
+}));
+
 vi.mock('../../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js', () => ({
-  MetricsWriter: vi.fn(function (this: { appendDelta: typeof mockAppendDelta; readAll: typeof mockReadAll; getFilePath: () => string; exists: () => boolean }) {
-    this.appendDelta = mockAppendDelta;
+  MetricsWriter: vi.fn(function (this: { appendDeltas: typeof mockAppendDeltas; readAll: typeof mockReadAll; getFilePath: () => string; exists: () => boolean }) {
+    this.appendDeltas = mockAppendDeltas;
     this.readAll = mockReadAll;
     this.getFilePath = vi.fn().mockReturnValue('/tmp/test-metrics.jsonl');
     this.exists = vi.fn().mockReturnValue(false);
@@ -115,7 +122,7 @@ describe('KimiMetricsProcessor', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockReadAll.mockResolvedValue([]);
-    mockAppendDelta.mockImplementation(async (delta) => delta.recordId);
+    mockAppendDeltas.mockResolvedValue(undefined);
   });
 
   it('shouldProcess returns true only for Kimi Code sessions', () => {
@@ -374,8 +381,8 @@ describe('KimiMetricsProcessor', () => {
 
     await processor.process(session, baseContext);
 
-    expect(mockAppendDelta).toHaveBeenCalledTimes(2);
-    const [first, second] = mockAppendDelta.mock.calls.map((call) => call[0] as MetricDelta);
+    expect(appendedDeltas()).toHaveLength(2);
+    const [first, second] = appendedDeltas();
     expect(first.commandInvocations).toEqual({ pm: 1 });
     expect(second.commandInvocations).toBeUndefined();
   });
@@ -394,8 +401,8 @@ describe('KimiMetricsProcessor', () => {
     const result = await processor.process(session, baseContext);
 
     expect(result.success).toBe(true);
-    expect(mockAppendDelta).toHaveBeenCalledTimes(1);
-    expect(mockAppendDelta.mock.calls[0][0]).toMatchObject({ gitBranch: 'feature/kimi-metrics' });
+    expect(appendedDeltas()).toHaveLength(1);
+    expect(appendedDeltas()[0]).toMatchObject({ gitBranch: 'feature/kimi-metrics' });
   });
 
   it('emits one delta per completed step', async () => {
@@ -413,7 +420,7 @@ describe('KimiMetricsProcessor', () => {
 
     expect(result.success).toBe(true);
     expect(result.metadata?.deltasWritten).toBe(2);
-    expect(mockAppendDelta).toHaveBeenCalledTimes(2);
+    expect(appendedDeltas()).toHaveLength(2);
     expect(session.metrics?.tools).toEqual({ Write: 1 });
   });
 
@@ -444,8 +451,8 @@ describe('KimiMetricsProcessor', () => {
 
     expect(result.success).toBe(true);
     expect(result.metadata?.deltasWritten).toBe(1);
-    expect(mockAppendDelta).toHaveBeenCalledTimes(1);
-    expect(mockAppendDelta.mock.calls[0][0].recordId).toBe('step-b');
+    expect(appendedDeltas()).toHaveLength(1);
+    expect(appendedDeltas()[0].recordId).toBe('step-b');
   });
 
   it('attaches user prompt only to first step of a turn', async () => {
@@ -466,8 +473,8 @@ describe('KimiMetricsProcessor', () => {
 
     await processor.process(session, baseContext);
 
-    expect(mockAppendDelta).toHaveBeenCalledTimes(2);
-    const [first, second] = mockAppendDelta.mock.calls.map((call) => call[0] as MetricDelta);
+    expect(appendedDeltas()).toHaveLength(2);
+    const [first, second] = appendedDeltas();
     expect(first.userPrompts).toEqual([{ count: 1, text: 'hello world' }]);
     expect(second.userPrompts).toBeUndefined();
   });

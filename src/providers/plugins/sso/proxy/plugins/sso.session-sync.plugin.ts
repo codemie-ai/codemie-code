@@ -4,7 +4,7 @@
  *
  * Purpose: Unified orchestrator that syncs session data via multiple processors
  * - Runs only in SSO mode (ai-run-sso provider)
- * - Background timer (every 5 minutes)
+ * - Background timer (every 2 minutes by default, CODEMIE_SESSION_SYNC_INTERVAL)
  * - Discovers session files once via adapter
  * - Passes parsed sessions to all processors (metrics, conversations)
  * - Tracks processed sessions in unified store
@@ -27,6 +27,14 @@ import { SessionSyncer } from '../../session/SessionSyncer.js';
 import type { SSOCredentials } from '../../../../core/types.js';
 import { ConfigurationError } from '../../../../../utils/errors.js';
 import type { ProxyConfig } from '../proxy-types.js';
+import { CredentialRefresher } from './credential-refresh.js';
+import { buildCookieHeader, droppedCookieKeys, sentCredentialsSuperseded } from '../../session/cookie-auth.js';
+import { attemptOutcome } from '../../session/bounded-request.js';
+import { readFile } from 'fs/promises';
+import { SessionStore } from '@/agents/core/session/SessionStore.js';
+import { getSessionPath } from '@/agents/core/session/session-config.js';
+import { stampRejection } from '@/agents/core/session/delivery-budget.js';
+import type { Session } from '@/agents/core/session/types.js';
 
 export class SSOSessionSyncPlugin implements ProxyPlugin {
   id = '@codemie/sso-session-sync';
@@ -61,19 +69,23 @@ export class SSOSessionSyncPlugin implements ProxyPlugin {
       throw new ConfigurationError('Session sync disabled by configuration');
     }
 
+    // Built in sso.proxy.ts from whichever of syncCredentials/credentials has cookies — the
+    // guard above already confirmed one of them does, so this is always set.
+    if (!context.syncCredentialRefresher) {
+      logger.debug('[SSOSessionSyncPlugin] Skipping: sync credential refresher not available');
+      throw new ConfigurationError('SSO credential refresher not available (session sync disabled)');
+    }
+
     logger.debug('[SSOSessionSyncPlugin] Initializing unified session sync');
 
     // Check if dry-run mode is enabled
     const dryRun = this.isDryRunEnabled(context);
 
-    // Cast credentials to SSOCredentials (already validated above)
-    const ssoCredentials = syncCredentials as SSOCredentials;
-
     return new SSOSessionSyncInterceptor(
       context.config.sessionId,
       context.config.syncApiUrl,
       context.config,
-      ssoCredentials.cookies,
+      context.syncCredentialRefresher,
       context.config.clientType,
       context.config.version,
       dryRun
@@ -137,7 +149,7 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     private sessionId: string,
     private explicitSyncApiUrl: string | undefined,
     private proxyConfig: ProxyConfig,
-    cookies: Record<string, string>,
+    private readonly credentials: CredentialRefresher<SSOCredentials>,
     clientType: string,
     version: string = '0.0.0',
     dryRun: boolean = false
@@ -157,16 +169,19 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
       logger.info(`[sso-session-sync] Local development mode: using ${devApiUrl} with user-id header`);
     }
 
-    // Build cookie header (only if not in local dev mode)
-    const cookieHeader = this.isLocalDev ? '' : Object.entries(cookies)
-      .map(([key, value]) => `${key}=${value}`)
-      .join('; ');
+    // Build cookie header from the daemon-startup snapshot (only if not in local dev mode) —
+    // refreshed before every sync tick in syncSessions(), so a successful browser re-login
+    // reaches this periodic sync too, not just the LLM-request path (PR #655 review, blocking).
+    const cookieHeader = this.isLocalDev ? '' : this.buildSyncCookieHeader(credentials.get().cookies);
 
     // Create processing context (shared by SessionSyncer)
     this.context = {
       apiBaseUrl: this.isLocalDev ? devApiUrl! : this.resolveSyncApiBaseUrl(),
       cookies: cookieHeader,
       apiKey: this.isLocalDev ? devApiKey : undefined,
+      credentialsSuperseded: this.isLocalDev
+        ? undefined
+        : (sent: string) => sentCredentialsSuperseded(sent, this.credentials),
       clientType,
       version,
       dryRun
@@ -197,7 +212,7 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
 
     // Start background timer
     this.syncTimer = setInterval(() => {
-      this.syncSessions().catch(error => {
+      this.syncSessions(undefined, true).catch(error => {
         logger.error(`[${this.name}] Sync failed:`, error);
       });
     }, this.syncInterval);
@@ -206,9 +221,9 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
   }
 
   /**
-   * Called when proxy stops - cleanup and final sync
+   * Called when proxy stops - cleanup and final sync (stopped at `bounds.deadlineMs` when given)
    */
-  async onProxyStop(): Promise<void> {
+  async onProxyStop(bounds?: { deadlineMs?: number }): Promise<void> {
     logger.debug(`[${this.name}] Stopping session sync`);
 
     // Stop timer
@@ -221,7 +236,7 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     // This syncs BOTH metrics and conversations
     try {
       logger.info(`[${this.name}] sync: phase=final session_id=${this.sessionId}`);
-      await this.syncSessions();
+      await this.syncSessions(bounds?.deadlineMs);
       logger.info(`[${this.name}] sync: phase=final status=success session_id=${this.sessionId}`);
     } catch (error) {
       logger.error(`[${this.name}] sync: phase=final status=error session_id=${this.sessionId}`, error);
@@ -229,9 +244,10 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
   }
 
   /**
-   * Sync sessions to API using SessionSyncer
+   * Sync sessions to API using SessionSyncer. `stopAtFirstFailure` is for the interval timer only: the final sync of
+   * `onProxyStop` is a full pass.
    */
-  private async syncSessions(): Promise<void> {
+  private async syncSessions(deadlineMs?: number, stopAtFirstFailure = false): Promise<void> {
     // Skip if already syncing (prevent concurrent syncs)
     if (this.isSyncing) {
       logger.debug(`[${this.name}] Sync already in progress, skipping`);
@@ -243,8 +259,21 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     try {
       logger.debug(`[${this.name}] Starting sync for session ${this.sessionId}`);
 
-      // Use SessionSyncer service
-      const result = await this.syncer.sync(this.sessionId, this.context);
+      // Re-read stored credentials (throttled) before each tick, so a browser re-login that
+      // completed between ticks is picked up here too, instead of this periodic sync forever
+      // posting the stale startup-time cookie header (PR #655 review, blocking).
+      if (!this.isLocalDev) {
+        this.context.cookies = this.buildSyncCookieHeader((await this.credentials.refresh()).cookies);
+      }
+
+      // Each run owns its controller: its outcomes are read from this signal alone
+      const run = new AbortController();
+      const result = await this.syncer.sync(this.sessionId, {
+        ...this.context,
+        abortSignal: run.signal,
+        stopAtFirstFailure,
+        ...(deadlineMs !== undefined && { syncDeadlineMs: deadlineMs })
+      });
 
       if (result.success) {
         logger.info(`[${this.name}] ${result.message}`);
@@ -252,11 +281,41 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
         logger.warn(`[${this.name}] Sync had failures: ${result.message}`);
       }
 
+      // A line the server refused for good (a JSON 400/409/422) is terminal on disk now; stamp the drop, or the record
+      // later leaves the queue unmarked and the exit notice never names it.
+      if (attemptOutcome(run.signal) === 'rejected') {
+        await this.stampRejection();
+      }
+
     } catch (error) {
       logger.error(`[${this.name}] Sync failed:`, error);
     } finally {
       this.isSyncing = false;
     }
+  }
+
+  /**
+   * Stamps the drop of a server rejection on the session's live record (`{id}.json` only: a record already renamed has
+   * left the queue and is never re-created here). Spends no attempt; a failure is logged, never thrown.
+   */
+  private async stampRejection(): Promise<void> {
+    try {
+      const live = JSON.parse(await readFile(getSessionPath(this.sessionId), 'utf-8')) as Session;
+      await new SessionStore().saveSession(stampRejection(live, Date.now()));
+    } catch (error) {
+      logger.warn(`[${this.name}] Cannot stamp the rejected data of session ${this.sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private buildSyncCookieHeader(cookies: Record<string, string>): string {
+    const dropped = droppedCookieKeys(cookies);
+    if (dropped.length > 0) {
+      logger.debug(`[${this.name}] Ignoring invalid cookie entries`, {
+        invalidCookieCount: dropped.length,
+        invalidCookieNames: dropped,
+      });
+    }
+    return buildCookieHeader(cookies);
   }
 
   private resolveSyncApiBaseUrl(): string {

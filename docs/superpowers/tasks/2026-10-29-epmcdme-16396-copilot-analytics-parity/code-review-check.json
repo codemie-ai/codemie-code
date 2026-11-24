@@ -1,0 +1,122 @@
+{
+  "decision": "approve",
+  "rationale": "Both blocking findings are resolved by the fix-up diff and no new high-risk issue was introduced. CR-001: read and update now share one isValidFile validator (numeric version, non-array object connectors), update throws ConfigurationError for every shape read treats as corrupt, covered by unit tests per shape and CLI tests for enable/exclude/include against a version-less file. CR-002: Copilot Chat onUntrackedHook returns silently for preferences-corrupt, analytics-disabled and project-excluded ahead of the unchanged scope/identity tail, covered for all enforced and non-enforced events including corrupt scope, missing identity and a disconnected connector. Deferred items from the final round remain deferred (pre-existing patterns shared with the Claude/connector-scope stores).",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "Global: ES modules, .js imports, @/ alias, no any, explicit return types on exports",
+      "status": "pass",
+      "notes": "New modules follow the conventions."
+    },
+    {
+      "kind": "spec",
+      "item": "Global: atomic writes; read never throws with ok/corrupt union; update throws ConfigurationError on corrupt file without touching bytes",
+      "status": "partial",
+      "notes": "Mechanics implemented, but update does not apply the same validity rules as read (no numeric version check; array connectors accepted) - see CR-001."
+    },
+    {
+      "kind": "spec",
+      "item": "Global: must NOT modify copilot-connector-scope.ts, resolveScope()/connectors/*, connect/disconnect",
+      "status": "pass",
+      "notes": "Diff touches none of them; matrix test proves connect/disconnect rewrites do not wipe preferences."
+    },
+    {
+      "kind": "spec",
+      "item": "Global: must NOT add onUntrackedHook to copilot-cli-otlp.plugin.ts",
+      "status": "pass",
+      "notes": "Only the import and the isTracked return line changed."
+    },
+    {
+      "kind": "spec",
+      "item": "Global: no-flag `codemie proxy analytics` keeps meaning claude-code-otlp",
+      "status": "pass",
+      "notes": "Default resolves to claude-code-otlp; test asserts no copilot file is created."
+    },
+    {
+      "kind": "spec",
+      "item": "Global: reuse *_AGENT_NAME constants for plugin names and CLI flag names",
+      "status": "pass",
+      "notes": "Flags built from the constants."
+    },
+    {
+      "kind": "spec",
+      "item": "Global: CODEMIE_SESSION_ID guard stays ahead of the gate in copilot-cli-otlp; none invented for copilot-chat",
+      "status": "pass",
+      "notes": "Test asserts the gate is not called when the env var is set."
+    },
+    {
+      "kind": "spec",
+      "item": "Task 1: preferences store interfaces and required tests",
+      "status": "pass",
+      "notes": "All exports and the listed tests present."
+    },
+    {
+      "kind": "spec",
+      "item": "Task 2: evaluateCopilotAnalyticsGate precedence and types",
+      "status": "pass",
+      "notes": "Matches the plan; every branch tested."
+    },
+    {
+      "kind": "spec",
+      "item": "Task 3: copilot-cli isTracked delegates to the gate after the SESSION_ID guard",
+      "status": "pass",
+      "notes": "Implemented and tested."
+    },
+    {
+      "kind": "spec",
+      "item": "Task 4: copilot-chat isTracked = gate.tracked && hasRequiredIdentity; onUntrackedHook gives feedback for the new reasons",
+      "status": "partial",
+      "notes": "isTracked is correct. The onUntrackedHook feedback is implemented as a hard block, which stops the user's Copilot Chat session/prompts/tools when analytics is merely disabled or the project excluded - see CR-002."
+    },
+    {
+      "kind": "spec",
+      "item": "Task 5: connector flags, multi-flag rejection, default to Claude, five subcommands, status",
+      "status": "pass",
+      "notes": "Implemented and tested; internal AnalyticsStore shape differs from the plan sketch with no behavioral effect."
+    },
+    {
+      "kind": "spec",
+      "item": "Review focus: undefined cwd, sibling-prefix, covering-parent exclude/include reuse",
+      "status": "pass",
+      "notes": "Covered in preferences, matrix and CLI suites."
+    },
+    {
+      "kind": "spec",
+      "item": "Review focus: corrupt config fails closed on hook path and refuses overwrite on CLI-write path",
+      "status": "partial",
+      "notes": "Hook path correct; write path weaker than read path - see CR-001."
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "Six commits use type(scope): subject (EPMCDME-16396) with the AI trailers."
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "Lint (max-warnings=0), typecheck and build clean; no any; explicit return types."
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "No secrets or unsafe logging introduced; gitleaks clean on every commit."
+    }
+  ],
+  "findings": [],
+  "finding_status": [
+    {
+      "id": "CR-001",
+      "status": "resolved",
+      "notes": "isValidFile shared by readCopilotAnalyticsPreferences and updateCopilotAnalyticsPreferences; connectors arrays and version-less/non-numeric-version files are corrupt on both paths; tests assert ConfigurationError and byte-identical file."
+    },
+    {
+      "id": "CR-002",
+      "status": "resolved",
+      "notes": "ANALYTICS_OPT_OUT_REASONS short-circuits onUntrackedHook before the scope/identity tail; analyticsBlockReason removed; 16 previously failing opt-out tests now pass."
+    }
+  ]
+}

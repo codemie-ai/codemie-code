@@ -16,6 +16,7 @@ import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../.
 import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
 import type { MetricDelta } from '../../../../core/metrics/types.js';
 import type { AgentMetadata } from '../../../../core/types.js';
+import { resolveRunWindow } from '../../../../core/session/run-window.js';
 import { logger } from '../../../../../utils/logger.js';
 import {
   extractPiToolCalls,
@@ -29,7 +30,7 @@ import {
   type PiToolCall,
   type PiToolResultMessage,
 } from '../../pi.types.js';
-import { extractPiFileOperation } from '../pi-file-operations.js';
+import { extractPiFileOperations, type PiFileOperationContext } from '../pi-file-operations.js';
 import { extractPiNamedInvocations, parseSkillWrapper } from '../pi-named-invocations.js';
 
 export const PI_METRICS_PROCESSOR_NAME = 'pi-metrics';
@@ -38,7 +39,7 @@ export const PI_METRICS_PROCESSOR_NAME = 'pi-metrics';
 const BASH_TOOL = 'bash';
 
 type PendingDelta = Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>;
-type PiFileOperation = NonNullable<ReturnType<typeof extractPiFileOperation>>;
+type PiFileOperation = ReturnType<typeof extractPiFileOperations>[number];
 
 interface UnmatchedToolCall {
   entryId: string;
@@ -236,6 +237,9 @@ export class PiMetricsProcessor implements SessionProcessor {
       // to the same transcript, so entries from earlier runs must not be re-emitted.
       const sessionStartTime = await this.getCodeMieSessionStartTime(session.sessionId, session);
       const gitBranch = context.gitBranch;
+      const fileOpContext: PiFileOperationContext = {
+        cwd: (session.metadata as { projectPath?: string } | undefined)?.projectPath,
+      };
       const fallbackModel = process.env.CODEMIE_MODEL;
       const emitUnresolvedToolCalls =
         (context as PiMetricsProcessingContext).emitUnresolvedToolCalls ?? true;
@@ -406,7 +410,7 @@ export class PiMetricsProcessor implements SessionProcessor {
             // Keep had_errors/error_tools reachable without uploading raw output.
             apiErrorMessage = `Tool failed: ${toolName}`;
           } else if (!isFailure) {
-            fileOps = this.extractFileOperations(toolCall, msg).filter((op): op is PiFileOperation => op !== undefined);
+            fileOps = this.extractFileOperations(toolCall, msg, fileOpContext);
           }
 
           const delta: PendingDelta = {
@@ -505,14 +509,17 @@ export class PiMetricsProcessor implements SessionProcessor {
 
       const { MetricsWriter } = await import('../../../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js');
       const writer = new MetricsWriter(session.sessionId);
-      for (const delta of deltas) {
-        await writer.appendDelta(delta);
+      const appended = await writer.appendDeltas(deltas, await resolveRunWindow(session.sessionId, context));
+      if (appended.gone) {
+        logger.warn(`[pi-metrics] Metrics file of session ${session.sessionId} is gone (completed); ${deltas.length} deltas not written`);
+        return { success: false, message: `Metrics file of session ${session.sessionId} is gone; deltas not written` };
       }
 
+      logger.debug(`[pi-metrics] Generated ${deltas.length} deltas, wrote ${appended.written}`);
       return {
         success: true,
-        message: `Generated ${deltas.length} deltas`,
-        metadata: { recordsProcessed: entries.length, deltasWritten: deltas.length, deltasSkipped: skippedDueToDedup },
+        message: `Wrote ${appended.written} of ${deltas.length} deltas`,
+        metadata: { recordsProcessed: entries.length, deltasWritten: appended.written, deltasSkipped: skippedDueToDedup },
       };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -667,9 +674,12 @@ export class PiMetricsProcessor implements SessionProcessor {
     }
   }
 
-  private extractFileOperations(toolCall: PiToolCall, result?: PiToolResultMessage): PiFileOperation[] {
-    const op = extractPiFileOperation(toolCall.name, toolCall.arguments, result?.details);
-    return op ? [op] : [];
+  private extractFileOperations(
+    toolCall: PiToolCall,
+    result: PiToolResultMessage | undefined,
+    context: PiFileOperationContext
+  ): PiFileOperation[] {
+    return extractPiFileOperations(toolCall.name, toolCall.arguments, result?.details, context);
   }
 
   /**

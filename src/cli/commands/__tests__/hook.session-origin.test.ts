@@ -4,7 +4,7 @@
  * (re-)stamped with a CodeMie ownership marker.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getCodemiePath } from '../../../utils/paths.js';
@@ -34,15 +34,21 @@ function sessionFilePath(sessionId: string): string {
   return getSessionPath(sessionId);
 }
 
-function markerFilePath(claudeSessionId: string): string {
-  return getCodemiePath('sessions', `${claudeSessionId}-codemie-marker.json`);
+/** The ownership sidecar that names the transcript of `claudeSessionId`, if one was written. */
+function markerFilePath(claudeSessionId: string): string | undefined {
+  const transcriptPath = join(TMP, `${claudeSessionId}.jsonl`);
+  const sessionsDir = getCodemiePath('sessions');
+  return readdirSync(sessionsDir)
+    .filter((file) => file.endsWith('-codemie-marker.json'))
+    .map((file) => join(sessionsDir, file))
+    .find((file) => JSON.parse(readFileSync(file, 'utf-8')).transcriptPath === transcriptPath);
 }
 
 function cleanupSession(sessionId: string, claudeSessionId: string): void {
   const p = sessionFilePath(sessionId);
   if (existsSync(p)) rmSync(p, { force: true });
   const m = markerFilePath(claudeSessionId);
-  if (existsSync(m)) rmSync(m, { force: true });
+  if (m) rmSync(m, { force: true });
 }
 
 describe('hook.ts external-resume origin gating', () => {
@@ -95,7 +101,7 @@ describe('hook.ts external-resume origin gating', () => {
     expect(mockSendSessionStart).not.toHaveBeenCalled();
 
     // No ownership marker written (sidecar or in-band) — must not re-adopt the transcript.
-    expect(existsSync(markerFilePath(claudeSessionId))).toBe(false);
+    expect(markerFilePath(claudeSessionId)).toBeUndefined();
     const transcriptContent = readFileSync(transcriptPath, 'utf-8');
     expect(transcriptContent).not.toContain('codemie_session_start');
 
@@ -125,7 +131,7 @@ describe('hook.ts external-resume origin gating', () => {
     expect(saved.origin).toBeUndefined();
 
     expect(mockSendSessionStart).toHaveBeenCalledTimes(1);
-    expect(existsSync(markerFilePath(claudeSessionId))).toBe(true);
+    expect(markerFilePath(claudeSessionId)).toBeDefined();
 
     cleanupSession(sessionId, claudeSessionId);
   });
@@ -168,7 +174,11 @@ describe('hook.ts external-resume origin gating', () => {
     await processEvent(event, { ...baseConfig, sessionId });
 
     expect(mockSendSessionEnd).not.toHaveBeenCalled();
+    const completedPath = getCodemiePath('sessions', `completed_${sessionId}.json`);
+    expect(existsSync(sessionFilePath(sessionId))).toBe(false);
+    expect(JSON.parse(readFileSync(completedPath, 'utf-8')).endMetricSkipped).toBe('external-resume');
 
+    rmSync(completedPath, { force: true });
     cleanupSession(sessionId, claudeSessionId);
   });
 });

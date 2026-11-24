@@ -13,8 +13,10 @@ import chalk from 'chalk';
 import type { SSOAuthConfig, SSOAuthResult, SSOCredentials } from '../../core/types.js';
 import { CredentialStore } from '../../../utils/security.js';
 import { clearAnalyticsAuthStatus } from '../../../utils/analytics-auth-status.js';
+import { withVerifiedOwner } from '../../core/credential-owner.js';
 import { ensureApiBase } from '../../core/codemie-auth-helpers.js';
 import { logger } from '../../../utils/logger.js';
+import { effectiveExpiresAt } from './sso.expiry.js';
 
 function escapeHtml(str: string): string {
   return str
@@ -40,10 +42,10 @@ function normalizeToBase(url: string): string {
 
 /**
  * Derive credential expiresAt from codemie_access_token JWT exp claim.
- * Falls back to 24h when the cookie is absent or the JWT cannot be decoded.
+ * Returns undefined when the cookie is absent or the JWT has no decodable exp:
+ * cookie-only sessions (e.g. _oauth2_proxy) have no locally known expiry.
  */
-export function deriveExpiresAt(cookies: Record<string, string>): number {
-  const DEFAULT_TTL = 24 * 60 * 60 * 1000;
+export function deriveExpiresAt(cookies: Record<string, string>): number | undefined {
   if (cookies.codemie_access_token) {
     try {
       const parts = cookies.codemie_access_token.split('.');
@@ -56,11 +58,13 @@ export function deriveExpiresAt(cookies: Record<string, string>): number {
         }
       }
     } catch {
-      // malformed JWT — fall through to default
+      // malformed JWT — no known expiry
     }
   }
-  return Date.now() + DEFAULT_TTL;
+  return undefined;
 }
+
+export { effectiveExpiresAt };
 
 /**
  * CodeMie SSO Authentication
@@ -135,15 +139,18 @@ export class CodeMieSSO {
 
       // 5. Store credentials if successful
       if (result.success && result.apiUrl && result.cookies) {
+        const expiresAt = deriveExpiresAt(result.cookies);
         const credentials: SSOCredentials = {
           cookies: result.cookies,
           apiUrl: result.apiUrl,
-          expiresAt: deriveExpiresAt(result.cookies),
+          ...(expiresAt !== undefined ? { expiresAt } : {}),
         };
 
         const store = CredentialStore.getInstance();
         // Key must match getStoredCredentials() lookup, which normalizes to protocol+host
         await store.storeSSOCredentials(credentials, this.codeMieUrl);
+        // Establish the signed-in email for these cookies now (best-effort; a failed lookup is retried at most every 30 s by the hook/daemon)
+        await withVerifiedOwner(credentials);
         // Fresh credentials — analytics auth is healthy again
         await clearAnalyticsAuthStatus();
       }
@@ -209,7 +216,8 @@ export class CodeMieSSO {
     }
 
     // Check if credentials are expired
-    if (credentials && credentials.expiresAt && Date.now() > credentials.expiresAt) {
+    const expiresAt = credentials ? effectiveExpiresAt(credentials) : undefined;
+    if (credentials && expiresAt && Date.now() > expiresAt) {
       await store.clearSSOCredentials(url);
       return null;
     }

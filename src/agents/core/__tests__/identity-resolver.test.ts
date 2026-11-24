@@ -70,3 +70,51 @@ describe('resolveIdentity', () => {
     expect(result.developerName.length).toBeGreaterThan(0);
   });
 });
+
+describe('raw identity tiers', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('resolveGitEmail returns the configured git email', async () => {
+    const execModule = await import('@/utils/exec.js');
+    vi.spyOn(execModule, 'exec').mockResolvedValue({ code: 0, stdout: 'git@example.com\n', stderr: '', signal: null });
+
+    const { resolveGitEmail } = await import('../identity-resolver.js');
+
+    expect(await resolveGitEmail('/repo')).toBe('git@example.com');
+  });
+
+  it('resolveGitEmail returns "" for an empty cwd or a git failure', async () => {
+    const { resolveGitEmail } = await import('../identity-resolver.js');
+    expect(await resolveGitEmail('')).toBe('');
+
+    const execModule = await import('@/utils/exec.js');
+    vi.spyOn(execModule, 'exec').mockResolvedValue({ code: 1, stdout: '', stderr: '', signal: null });
+
+    expect(await resolveGitEmail('/repo')).toBe('');
+  });
+
+  it('resolveCodemieCliEmail returns the persisted userEmail and "" when absent', async () => {
+    const configModule = await import('@/utils/config.js');
+    const loadSpy = vi.spyOn(configModule.ConfigLoader, 'loadMultiProviderConfig').mockResolvedValue({
+      version: 2,
+      activeProfile: 'default',
+      profiles: {},
+      userEmail: 'cli@example.com',
+    } as never);
+
+    const { resolveCodemieCliEmail } = await import('../identity-resolver.js');
+
+    expect(await resolveCodemieCliEmail()).toBe('cli@example.com');
+
+    loadSpy.mockResolvedValue({ version: 2, activeProfile: 'default', profiles: {} } as never);
+    expect(await resolveCodemieCliEmail()).toBe('');
+  });
+
+  it('resolveOsUser returns the os username', async () => {
+    const { resolveOsUser } = await import('../identity-resolver.js');
+
+    expect(resolveOsUser()).toBe(os.userInfo().username);
+  });
+});

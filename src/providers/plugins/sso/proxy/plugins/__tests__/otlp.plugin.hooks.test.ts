@@ -8,15 +8,24 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import type { ProxyContext } from '../../proxy-types.js';
 import type { ProxyHTTPClient } from '../../proxy-http-client.js';
 
-const appendSpoolMock = vi.fn(async (_sessionId: string, _stream: string, _data: string) => {});
-vi.mock('../otlp-spool/spool-io.js', () => ({ appendSpool: appendSpoolMock }));
+const recordStampLossMock = vi.fn().mockResolvedValue(undefined);
+const appendSpoolMock = vi.fn(
+  async (_sessionId: string, _stream: string, _data: string, _projectNames?: string[]) => {}
+);
+vi.mock('../otlp-spool/spool-io.js', () => ({ appendSpool: appendSpoolMock, recordStampLoss: recordStampLossMock }));
 
-const getAnalyticsAgentMock = vi.fn((name: string) => (name === 'claude-code-otlp' ? { name } : undefined));
+const scheduleMock = vi.fn();
+vi.mock('../otlp-spool/copilot-usage-enrichment.js', () => ({ scheduleCopilotUsageEnrichment: scheduleMock }));
+
+const getAnalyticsAgentMock = vi.fn((name: string) =>
+  name === 'claude-code-otlp' || name === 'copilot-cli-otlp' ? { name } : undefined
+);
 vi.mock('@/agents/registry.js', () => ({
   AgentRegistry: { getAnalyticsAgent: getAnalyticsAgentMock },
 }));
 
 const { OtlpPlugin } = await import('../otlp.plugin.js');
+const { GatewayKeyPlugin } = await import('../gateway-key.plugin.js');
 
 function fakeResponse(): ServerResponse & { statusCode: number; body: string } {
   const res = {
@@ -71,6 +80,32 @@ describe('OtlpPlugin — POST /v1/analytics/hooks', () => {
     );
     expect(res.statusCode).toBe(401);
     expect(appendSpoolMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['the shared key', 'Bearer codemie-proxy'],
+    ['a named key', 'Bearer codemie-proxy.claude-desktop'],
+  ])('accepts a batch whose request carried %s, checked by the gateway key first', async (_case, authorization) => {
+    const gatewayKey = new GatewayKeyPlugin().createInterceptor({ config: { targetApiUrl: 'http://127.0.0.1:9', gatewayKey: 'codemie-proxy' } } as never);
+    const ctx = hooksContext({ agentName: 'claude-code-otlp', hookEvents: [hookEvent('s1')] }, { headers: { authorization }, metadata: {} });
+    const res = fakeResponse();
+
+    expect(await gatewayKey.handleRequest!(ctx, {} as IncomingMessage, res, {} as ProxyHTTPClient)).toBe(false);
+    await new OtlpPlugin().createInterceptor({} as never).handleRequest(ctx, {} as IncomingMessage, res, {} as ProxyHTTPClient);
+
+    expect(res.statusCode).toBe(202);
+  });
+
+  it('inbound analytics-only headers (cloned settings, any case) never reach the spooled record', async () => {
+    const res = await postHooks(
+      { agentName: 'claude-code-otlp', hookEvents: [hookEvent('s1')] },
+      { headers: { 'X-CodeMie-Work-Consent': 'explicit-folder', 'x-codemie-funding-route': 'forged-route', 'X-CODEMIE-PUBLICATION-CONTRACT': '9' } }
+    );
+    expect(res.statusCode).toBe(202);
+    const spooled = appendSpoolMock.mock.calls.map((c) => c[2]).join('').toLowerCase();
+    expect(spooled).not.toContain('explicit-folder');
+    expect(spooled).not.toContain('forged-route');
+    expect(spooled).not.toContain('x-codemie-');
   });
 
   it('rejects with 400 on an empty body', async () => {
@@ -148,9 +183,121 @@ describe('OtlpPlugin — POST /v1/analytics/hooks', () => {
     expect(decoded.map((e) => e['n'])).toEqual([1, 2, 3]);
   });
 
+  it('CR001: an evidence_loss report with no events records a visible loss and spools nothing', async () => {
+    const res = await postHooks({ agentName: 'claude-code-otlp', hookEvents: [], evidence_loss: { session_id: 's1', reason: 'no_credentials', events: 2 } });
+    expect(res.statusCode).toBe(202);
+    expect(recordStampLossMock).toHaveBeenCalledWith('s1', 'no_credentials', 2);
+    expect(appendSpoolMock).not.toHaveBeenCalled();
+    const bad = await postHooks({ agentName: 'claude-code-otlp', hookEvents: [], evidence_loss: { session_id: '../x', reason: 'r', events: 1 } });
+    expect(bad.statusCode).toBe(400);
+  });
+
+  it('carries evidence_v in the spool envelope only when the batch is marked, never in the event body', async () => {
+    await postHooks({ agentName: 'claude-code-otlp', evidence_v: 1, hookEvents: [hookEvent('s1')] });
+    await postHooks({ agentName: 'claude-code-otlp', hookEvents: [hookEvent('s1')] });
+    const parse = (i: number) =>
+      JSON.parse((appendSpoolMock.mock.calls[i] as [string, string, string])[2].trim()) as Record<string, string>;
+    expect(parse(0)['evidence_v']).toBe(1);
+    expect(JSON.parse(parse(0)['hookEvent'])).not.toHaveProperty('evidence_v');
+    expect(parse(1)).not.toHaveProperty('evidence_v');
+  });
+
+  it('passes the project names of the spooled events as the fourth argument', async () => {
+    const res = await postHooks({
+      agentName: 'claude-code-otlp',
+      hookEvents: [
+        hookEvent('s1', { codemie_project_name: 'A' }),
+        hookEvent('s1', { raw: { codemie_project_name: 'B' } }),
+        hookEvent('s1'),
+        { type: 'agent.event', codemie_project_name: 'dropped (no session_id)' },
+      ],
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(appendSpoolMock.mock.calls[0][3]).toEqual(['A', 'B']);
+  });
+
+  it('passes an empty name list when no event carries a project name', async () => {
+    await postHooks({ agentName: 'claude-code-otlp', hookEvents: [hookEvent('s1')] });
+    expect(appendSpoolMock.mock.calls[0][3]).toEqual([]);
+  });
+
   it('answers 500, not 202, when the spool write fails', async () => {
     appendSpoolMock.mockRejectedValueOnce(new Error('disk full'));
     const res = await postHooks({ agentName: 'claude-code-otlp', hookEvents: [hookEvent('s1')] });
     expect(res.statusCode).toBe(500);
+  });
+});
+
+describe('OtlpPlugin — deferred Copilot usage scheduling', () => {
+  beforeEach(() => {
+    appendSpoolMock.mockReset();
+    appendSpoolMock.mockResolvedValue(undefined);
+    scheduleMock.mockClear();
+  });
+
+  it('hands an accepted batch to the Copilot usage enrichment after it is durable', async () => {
+    const events = [hookEvent('s1', { type: 'agent.session.end' })];
+    const res = await postHooks({ agentName: 'copilot-cli-otlp', hookEvents: events });
+    expect(res.statusCode).toBe(202);
+    expect(scheduleMock).toHaveBeenCalledWith('copilot-cli-otlp', events);
+  });
+
+  it('does not schedule anything when the batch could not be persisted', async () => {
+    appendSpoolMock.mockRejectedValue(new Error('disk full'));
+    const res = await postHooks({ agentName: 'copilot-cli-otlp', hookEvents: [hookEvent('s1', { type: 'agent.session.end' })] });
+    expect(res.statusCode).toBe(500);
+    expect(scheduleMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the Claude Code hooks flow unchanged: still 202 and spooled once', async () => {
+    const res = await postHooks({ agentName: 'claude-code-otlp', hookEvents: [hookEvent('s1')] });
+    expect(res.statusCode).toBe(202);
+    expect(appendSpoolMock).toHaveBeenCalledTimes(1);
+    expect(scheduleMock).toHaveBeenCalledWith('claude-code-otlp', expect.any(Array));
+  });
+
+  it('still answers 202 when scheduling throws after the batch is durable', async () => {
+    scheduleMock.mockImplementationOnce(() => {
+      throw new TypeError('boom');
+    });
+    const res = await postHooks({ agentName: 'copilot-cli-otlp', hookEvents: [hookEvent('s1', { type: 'agent.session.end' })] });
+    expect(res.statusCode).toBe(202);
+    expect(appendSpoolMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts a batch containing a null element alongside a valid event', async () => {
+    const res = await postHooks({ agentName: 'copilot-cli-otlp', hookEvents: [null, hookEvent('s1', { type: 'agent.session.end' })] });
+    expect(res.statusCode).toBe(202);
+    expect(appendSpoolMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('OtlpPlugin — session_id validation', () => {
+  beforeEach(() => {
+    appendSpoolMock.mockReset();
+    appendSpoolMock.mockResolvedValue(undefined);
+    scheduleMock.mockClear();
+  });
+
+  it.each(['../../x', '..', 'a/b', 'a\\b', 'a..b'])(
+    'rejects the batch with 400 for session_id %j, spooling and scheduling nothing',
+    async (sessionId) => {
+      const res = await postHooks({
+        agentName: 'copilot-cli-otlp',
+        hookEvents: [hookEvent(sessionId, { type: 'agent.session.end' })],
+      });
+      expect(res.statusCode).toBe(400);
+      expect(appendSpoolMock).not.toHaveBeenCalled();
+      expect(scheduleMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it('accepts a UUID session_id', async () => {
+    const res = await postHooks({
+      agentName: 'copilot-cli-otlp',
+      hookEvents: [hookEvent('c73ecba6-c21a-415d-b40f-cb0cdb416155')],
+    });
+    expect(res.statusCode).toBe(202);
   });
 });

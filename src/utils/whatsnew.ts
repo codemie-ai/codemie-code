@@ -4,13 +4,17 @@
  * CHANGELOG.md (Keep a Changelog format) is the curated source of truth for
  * release notes. It ships inside the npm package and is consumed by:
  * - `codemie whatsnew` — browse notes for the current, one, or all versions
- * - the once-per-upgrade startup notice in bin/codemie.js, which shows the
- *   current version's notes once and records a `.last-seen-version` marker
- *   under the CodeMie home directory
+ * - the once-per-upgrade startup notice in bin/codemie.js
+ *   (`showUpgradeNotice`), which runs only on interactive, non-hook
+ *   invocations and only moves forward: after an upgrade it shows the notes
+ *   for the versions between the `.last-seen-version` marker (under the
+ *   CodeMie home directory) and the installed version, newest first — never
+ *   another version's notes in place of a missing section — then records the
+ *   installed version
  *
  * This module must stay safe to import from the bin entry point, so its
- * dependencies are limited to fs/path/chalk plus the logger, paths, and tips
- * utilities — never commander or the CLI layer.
+ * dependencies are limited to fs/path/chalk plus the logger, paths, tips, and
+ * version utilities — never commander or the CLI layer.
  *
  * Environment Variables:
  * - CODEMIE_TIPS=false|0|no: also suppresses the upgrade notice. The "reduce
@@ -23,6 +27,7 @@ import chalk from 'chalk';
 import { logger } from './logger.js';
 import { getCodemiePath, getDirname } from './paths.js';
 import { isTipsEnabled } from './tips.js';
+import { compareVersions, isValidSemanticVersion } from './version-utils.js';
 
 /**
  * One `### Section` block inside a release entry.
@@ -98,12 +103,11 @@ export function getChangelogPath(): string | null {
 /**
  * Read release notes from the changelog.
  *
- * @param version - When given, the entry for this exact version; if there is
- *   no matching heading, falls back to the newest versioned entry (or
- *   Unreleased when that is all there is) so the once-per-upgrade notice
- *   always has something to show
+ * @param version - When given, only the entry whose heading matches this
+ *   exact version. There is no fallback to another version: notes for one
+ *   release must never be shown under another release's banner
  * @returns Parsed entries (newest first, as written), or an empty array when
- *   the changelog is missing or unparseable
+ *   the changelog is missing, unparseable, or has no section for `version`
  */
 export function getReleaseNotes(version?: string): ReleaseEntry[] {
   const changelogPath = getChangelogPath();
@@ -122,19 +126,10 @@ export function getReleaseNotes(version?: string): ReleaseEntry[] {
     }
 
     const exact = entries.filter(entry => entry.version === version);
-    if (exact.length > 0) {
-      return exact;
+    if (exact.length === 0) {
+      logger.debug(`[whatsnew] No changelog entry for ${version}`);
     }
-
-    // No heading for this exact version (changelog not updated for the
-    // release) — fall back to the newest versioned entry so the once-per-
-    // upgrade notice still shows something before the version is marked seen.
-    const fallback = entries.find(entry => entry.version !== 'Unreleased') ?? entries[0];
-    if (fallback) {
-      logger.debug(`[whatsnew] No changelog entry for ${version} — falling back to ${fallback.version}`);
-      return [fallback];
-    }
-    return [];
+    return exact;
   } catch (error) {
     logger.debug('[whatsnew] Failed to read changelog:', error);
     return [];
@@ -232,4 +227,115 @@ export function renderReleaseNotes(entries: ReleaseEntry[], options?: { maxItems
  */
 export function isWhatsNewEnabled(): boolean {
   return isTipsEnabled();
+}
+
+/** Most release entries the upgrade notice prints before pointing to `--all`. */
+const MAX_NOTICE_VERSIONS = 3;
+/** Bullet cap for each entry rendered by the upgrade notice. */
+const MAX_NOTICE_ITEMS = 6;
+/** Arguments whose invocations have their own output contract. */
+const OUTPUT_CONTRACT_ARGS = new Set(['--version', '-V', '--task', '--help']);
+
+export type UpgradeNoticeAction = 'record-silently' | 'show' | 'none';
+
+/**
+ * Decide what the upgrade notice does for an installed version and marker.
+ *
+ * - An unparseable installed version: `none` (nothing to compare or record).
+ * - No marker, or one that is not plain semver (e.g. `garbage`, a
+ *   pre-release): `record-silently` — treated as a fresh install.
+ * - Installed newer than the marker: `show`.
+ * - Same or older (a downgrade): `none` — the marker only moves forward.
+ */
+export function decideUpgradeNotice(installed: string, lastSeen: string | null): UpgradeNoticeAction {
+  if (!isValidSemanticVersion(installed)) {
+    return 'none';
+  }
+  if (lastSeen === null || !isValidSemanticVersion(lastSeen)) {
+    return 'record-silently';
+  }
+  return compareVersions(installed, lastSeen) > 0 ? 'show' : 'none';
+}
+
+/**
+ * Pick the release entries to show after an upgrade: semver headings with
+ * `lastSeen < version <= installed`, newest first, capped at three. When the
+ * installed version has no section nothing is shown — older notes are never
+ * presented as the installed version's.
+ *
+ * @returns `shown` entries and `hasMore`, true when entries were cut or the
+ *   installed version's section is missing
+ */
+export function selectUpgradeEntries(
+  entries: ReleaseEntry[],
+  lastSeen: string,
+  installed: string
+): { shown: ReleaseEntry[]; hasMore: boolean } {
+  const inRange = entries
+    .filter(entry => isValidSemanticVersion(entry.version))
+    .filter(entry => compareVersions(entry.version, lastSeen) > 0 && compareVersions(entry.version, installed) <= 0)
+    .sort((a, b) => compareVersions(b.version, a.version));
+
+  const hasInstalled = inRange.some(entry => compareVersions(entry.version, installed) === 0);
+  if (!hasInstalled) {
+    return { shown: [], hasMore: true };
+  }
+
+  return {
+    shown: inRange.slice(0, MAX_NOTICE_VERSIONS),
+    hasMore: inRange.length > MAX_NOTICE_VERSIONS
+  };
+}
+
+/**
+ * Whether the upgrade notice may run for this invocation: stdout must be a
+ * known TTY, no output-contract flag may be present, and the command (the
+ * first non-option argument, so `codemie --debug hook` counts) must not be
+ * `hook`, whose stdout belongs to the calling agent.
+ *
+ * @param argv - CLI arguments without the node and script paths
+ */
+export function shouldRunUpgradeNotice(argv: string[], isTTY: boolean | undefined): boolean {
+  if (isTTY !== true) {
+    return false;
+  }
+  if (argv.some(arg => OUTPUT_CONTRACT_ARGS.has(arg))) {
+    return false;
+  }
+  const command = argv.find(arg => !arg.startsWith('-'));
+  return command !== 'hook';
+}
+
+/**
+ * Print the once-per-upgrade notice for the installed version and record it
+ * as seen. Never throws.
+ */
+export function showUpgradeNotice(installed: string): void {
+  try {
+    if (!isWhatsNewEnabled()) {
+      return;
+    }
+
+    const lastSeen = getLastSeenVersion();
+    const action = decideUpgradeNotice(installed, lastSeen);
+    if (action === 'none') {
+      return;
+    }
+    if (action === 'record-silently' || lastSeen === null) {
+      markVersionSeen(installed);
+      return;
+    }
+
+    const { shown, hasMore } = selectUpgradeEntries(getReleaseNotes(), lastSeen, installed);
+    console.log(chalk.dim(`✨ Updated to ${installed}`));
+    for (const entry of shown) {
+      renderReleaseNotes([entry], { maxItems: MAX_NOTICE_ITEMS });
+    }
+    if (hasMore) {
+      console.log(chalk.dim('run `codemie whatsnew --all` for older release notes'));
+    }
+    markVersionSeen(installed);
+  } catch (error) {
+    logger.debug('[whatsnew] showUpgradeNotice failed (non-fatal):', error);
+  }
 }

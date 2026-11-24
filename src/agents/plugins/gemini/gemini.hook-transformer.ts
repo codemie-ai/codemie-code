@@ -17,6 +17,8 @@ interface GeminiHookEvent {
   timestamp?: string;              // ISO 8601 timestamp (ignored in transformation)
   source?: string;                 // SessionStart only: "startup", "resume", "clear"
   reason?: string;                 // SessionEnd only: "exit", "logout", "clear", etc.
+  endTimeFromActivity?: boolean;   // SessionEnd only: set by CodeMie's own synthetic end
+  endTime?: number;                // SessionEnd only: set by CodeMie's own synthetic end
   // Note: Gemini doesn't have permission_mode - we add it as default
 }
 
@@ -73,7 +75,9 @@ export class GeminiHookTransformer implements HookTransformer {
       // Optional fields (pass through if present)
       ...(geminiEvent.cwd && { cwd: geminiEvent.cwd }),
       ...(geminiEvent.source && { source: geminiEvent.source }),
-      ...(geminiEvent.reason && { reason: geminiEvent.reason })
+      ...(geminiEvent.reason && { reason: geminiEvent.reason }),
+      ...(geminiEvent.endTimeFromActivity === true && { endTimeFromActivity: true }),
+      ...(typeof geminiEvent.endTime === 'number' && { endTime: geminiEvent.endTime })
     };
 
     // Note: timestamp is intentionally omitted (not needed in internal format)

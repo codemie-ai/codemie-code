@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { checkProxyHealth } from '../health-check.js';
+import { checkProxyHealth, parseAnalyticsReply } from '../health-check.js';
 
 vi.mock('@/utils/logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -161,5 +161,76 @@ describe('checkProxyHealth', () => {
     const result = await checkProxyHealth({ port: 4001, gatewayKey: 'k', deep: true });
 
     expect(result).toEqual({ healthy: true, level: 'deep', code: 'ok' });
+  });
+
+  describe('analytics reply', () => {
+    const replyWith = (json: () => Promise<unknown>): typeof globalThis.fetch =>
+      vi.fn().mockResolvedValue({ ok: true, status: 200, json }) as unknown as typeof globalThis.fetch;
+
+    it('exposes analytics when the reply pid matches expectedPid', async () => {
+      globalThis.fetch = replyWith(async () => ({ status: 'ok', pid: 42, analytics: { credentials: 'stale' } }));
+
+      const result = await checkProxyHealth({ port: 4001, gatewayKey: 'k', expectedPid: 42 });
+
+      expect(result).toEqual({ healthy: true, level: 'shallow', code: 'ok', analytics: { credentials: 'stale' } });
+    });
+
+    it('leaves analytics unset when the reply pid differs from expectedPid', async () => {
+      globalThis.fetch = replyWith(async () => ({ pid: 7, analytics: { credentials: 'stale' } }));
+
+      const result = await checkProxyHealth({ port: 4001, gatewayKey: 'k', expectedPid: 42 });
+
+      expect(result).toEqual({ healthy: true, level: 'shallow', code: 'ok' });
+    });
+
+    it('does not read the body or set analytics when expectedPid is not passed', async () => {
+      const json = vi.fn(async () => ({ pid: 42, analytics: { credentials: 'stale' } }));
+      globalThis.fetch = replyWith(json);
+
+      const result = await checkProxyHealth({ port: 4001, gatewayKey: 'k' });
+
+      expect(result).toEqual({ healthy: true, level: 'shallow', code: 'ok' });
+      expect(json).not.toHaveBeenCalled();
+    });
+
+    it('keeps healthy/code unchanged when the body is not JSON', async () => {
+      globalThis.fetch = replyWith(async () => { throw new SyntaxError('Unexpected token <'); });
+
+      const result = await checkProxyHealth({ port: 4001, gatewayKey: 'k', expectedPid: 42 });
+
+      expect(result).toEqual({ healthy: true, level: 'shallow', code: 'ok' });
+    });
+
+    it('exposes analytics on a deep check too', async () => {
+      globalThis.fetch = vi.fn(async (url: unknown) => {
+        if (HEALTH(url)) return { ok: true, status: 200, json: async () => ({ pid: 42, analytics: { credentials: 'ok' } }) };
+        return { ok: true, status: 200, headers: mkHeaders('application/json') };
+      }) as unknown as typeof globalThis.fetch;
+
+      const result = await checkProxyHealth({ port: 4001, gatewayKey: 'k', deep: true, expectedPid: 42 });
+
+      expect(result).toEqual({ healthy: true, level: 'deep', code: 'ok', analytics: { credentials: 'ok' } });
+    });
+  });
+});
+
+describe('parseAnalyticsReply', () => {
+  it.each([
+    ['null', null],
+    ['a number', 5],
+    ['a string', 'x'],
+    ['an array', []],
+    ['missing analytics', { pid: 42 }],
+    ['null analytics', { pid: 42, analytics: null }],
+    ['unknown credentials', { pid: 42, analytics: { credentials: 'x' } }],
+    ['non-string credentials', { pid: 42, analytics: { credentials: true } }],
+    ['mismatched pid', { pid: 1, analytics: { credentials: 'ok' } }],
+    ['missing pid', { analytics: { credentials: 'ok' } }],
+  ])('returns undefined for %s', (_label, body) => {
+    expect(parseAnalyticsReply(body, 42)).toBeUndefined();
+  });
+
+  it.each(['ok', 'stale'] as const)('accepts credentials %s for a matching pid', (credentials) => {
+    expect(parseAnalyticsReply({ pid: 42, analytics: { credentials, extra: 1 } }, 42)).toEqual({ credentials });
   });
 });

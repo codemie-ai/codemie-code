@@ -1,6 +1,8 @@
 import type { ParsedSession } from '@/agents/core/session/BaseSessionAdapter.js';
 import { extractCodexDispatchEvents } from '@/agents/plugins/codex/session/codex-dispatch-extractor.js';
+import { extractPiDispatchEvents } from '@/agents/plugins/pi/session/pi-dispatch-extractor.js';
 import { isCodexFamilyAgent } from './codex-agent.js';
+import { isPiFamilyAgent } from './pi-agent.js';
 import { buildClaudeTraceIndex, normalizeClaudeTrace, type ClaudeTraceIndex } from './claude-trace.js';
 import { claudeBlocks, claudeTimestamp, type ClaudeNativeBlock, type ClaudeNativeRow } from './claude-native.js';
 import type { DispatchEventRaw } from './types.js';
@@ -136,6 +138,7 @@ function hasUnidentifiedTools(index: ClaudeTraceIndex): boolean {
 export function extractDispatchResult(parsed: ParsedSession, agentName?: string): DispatchExtraction {
   const agent = (agentName ?? parsed.agentName ?? '').toLowerCase();
   if (isCodexFamilyAgent(agent)) return { events: extractCodexDispatchEvents(parsed), complete: false };
+  if (isPiFamilyAgent(agent)) return { events: extractPiDispatchEvents(parsed), complete: false };
   const index = buildClaudeTraceIndex(parsed);
   const result: DispatchExtraction = { events: [], complete: !hasUnidentifiedTools(index) };
   extractTools(index, result);

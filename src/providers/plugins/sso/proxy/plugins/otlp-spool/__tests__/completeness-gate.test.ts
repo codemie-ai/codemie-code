@@ -6,7 +6,7 @@ import type { SpoolState, StreamState } from '../spool-state.js';
 
 const stream = (size: number): StreamState => ({ exists: size > 0, size, cursor: 0, mtimeMs: size > 0 ? 1 : null });
 
-function spool(data: { hooks?: number; logs?: number }): SpoolState {
+function spool(data: { hooks?: number; logs?: number; logsJson?: number }): SpoolState {
   return {
     sessionId: 's1',
     streams: {
@@ -14,6 +14,9 @@ function spool(data: { hooks?: number; logs?: number }): SpoolState {
       logs: stream(data.logs ?? 0),
       metrics: stream(0),
       traces: stream(0),
+      logsJson: stream(data.logsJson ?? 0),
+      metricsJson: stream(0),
+      tracesJson: stream(0),
     },
     latestWriteMs: null,
   };
@@ -32,6 +35,10 @@ describe('gateDecision', () => {
 
   it('sends when hooks and OTEL are both present', () => {
     expect(gateDecision(spool({ hooks: 1, logs: 1 }), statusWith(0))).toBe('send');
+  });
+
+  it('sends when hooks and a masked-JSON OTEL stream are both present, with no binary OTEL data', () => {
+    expect(gateDecision(spool({ hooks: 1, logsJson: 1 }), statusWith(0))).toBe('send');
   });
 
   it('is a noop when neither group is present', () => {

@@ -1,0 +1,60 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "transcript-placeholder.jsonl",
+  "cwd": "cwd-placeholder",
+  "prompt_id": "ed55ad98-fd09-47e7-8cae-a8fbb950c662",
+  "permission_mode": "acceptEdits",
+  "effort": {
+    "level": "high"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+    "description": "Capital question",
+    "prompt": "You are helping with a tiny geography check. Do not use any tools and do not read or write any files. This note only exists to make the task description longer than usual. Background: the question below is a classroom warm-up. Students are asked to name capital cities of well-known countries, and the teacher wants one short, plain sentence as the answer, nothing more. Please keep the answer neutral and factual. Avoid lists, avoid headings, avoid markdown formatting, avoid emoji, and avoid repeating the question. If you are unsure, say so briefly. The answer must be a single sentence of at most twenty words. Extra context that is not needed for the answer: capital cities are usually the seat of government, they are often the largest city of the country but not always, and some countries have more than one capital. Again, none of this should appear in your answer. The question is: what is the capital city of France? Reply with only the one-sentence answer.",
+    "subagent_type": "general-purpose",
+    "run_in_background": false
+  },
+  "tool_response": {
+    "status": "completed",
+    "prompt": "You are helping with a tiny geography check. Do not use any tools and do not read or write any files. This note only exists to make the task description longer than usual. Background: the question below is a classroom warm-up. Students are asked to name capital cities of well-known countries, and the teacher wants one short, plain sentence as the answer, nothing more. Please keep the answer neutral and factual. Avoid lists, avoid headings, avoid markdown formatting, avoid emoji, and avoid repeating the question. If you are unsure, say so briefly. The answer must be a single sentence of at most twenty words. Extra context that is not needed for the answer: capital cities are usually the seat of government, they are often the largest city of the country but not always, and some countries have more than one capital. Again, none of this should appear in your answer. The question is: what is the capital city of France? Reply with only the one-sentence answer.",
+    "agentId": "a407f25330fd9c1e0",
+    "agentType": "general-purpose",
+    "harnessNoteCount": 0,
+    "harnessTailCount": 0,
+    "harnessSectionHash": "230dee490f69edbf",
+    "content": [
+      {
+        "type": "text",
+        "text": "Paris serves as France's capital."
+      }
+    ],
+    "resolvedModel": "claude-haiku-5-5[1m]",
+    "totalDurationMs": 11731,
+    "totalTokens": 27035,
+    "totalToolUseCount": 0,
+    "usage": {
+      "output_tokens_details": {
+        "thinking_tokens": 238
+      },
+      "input_tokens": 2,
+      "cache_creation_input_tokens": 26782,
+      "cache_read_input_tokens": 0,
+      "output_tokens": 251,
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 26782,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "",
+      "iterations": [],
+      "speed": "standard"
+    }
+  },
+  "tool_use_id": "toolu_bdrk_01QT2nG1AA1JjUPyorGBY1rE",
+  "duration_ms": 11733
+}

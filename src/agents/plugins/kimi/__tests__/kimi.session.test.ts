@@ -17,14 +17,21 @@ vi.mock('../../../utils/logger.js', () => ({
   },
 }));
 
-const { mockAppendDelta, mockReadAll } = vi.hoisted(() => ({
-  mockAppendDelta: vi.fn<(delta: Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>) => Promise<string>>(),
+const { mockAppendDeltas, mockReadAll } = vi.hoisted(() => ({
+  mockAppendDeltas: vi.fn<(deltas: Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>>) => Promise<unknown>>(),
   mockReadAll: vi.fn<() => Promise<MetricDelta[]>>(),
 }));
 
+/** Every delta handed to the writer, across all batches. */
+const appendedDeltas = (): MetricDelta[] => mockAppendDeltas.mock.calls.flatMap((call) => call[0] as MetricDelta[]);
+
+vi.mock('../../../core/session/run-window.js', () => ({
+  resolveRunWindow: async () => ({ startTime: 0 }),
+}));
+
 vi.mock('../../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js', () => ({
-  MetricsWriter: vi.fn(function (this: { appendDelta: typeof mockAppendDelta; readAll: typeof mockReadAll; getFilePath: () => string; exists: () => boolean }) {
-    this.appendDelta = mockAppendDelta;
+  MetricsWriter: vi.fn(function (this: { appendDeltas: typeof mockAppendDeltas; readAll: typeof mockReadAll; getFilePath: () => string; exists: () => boolean }) {
+    this.appendDeltas = mockAppendDeltas;
     this.readAll = mockReadAll;
     this.getFilePath = vi.fn().mockReturnValue('/tmp/test-metrics.jsonl');
     this.exists = vi.fn().mockReturnValue(false);
@@ -59,7 +66,7 @@ describe('KimiSessionAdapter.parseSessionFile', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockReadAll.mockResolvedValue([]);
-    mockAppendDelta.mockImplementation(async (delta) => delta.recordId);
+    mockAppendDeltas.mockResolvedValue(undefined);
   });
 
   it('parses the sample wire.jsonl fixture', async () => {
@@ -102,7 +109,7 @@ describe('KimiSessionAdapter.parseSessionFile', () => {
     const session = await adapter.parseSessionFile(fixturePath, 'test-session-001');
     await processor.process(session, baseContext);
 
-    const deltas = mockAppendDelta.mock.calls.map((call) => call[0]);
+    const deltas = appendedDeltas();
     const allTools = deltas.reduce<Record<string, number>>((acc, delta) => {
       for (const [name, count] of Object.entries(delta.tools ?? {})) {
         acc[name] = (acc[name] || 0) + count;
@@ -122,7 +129,7 @@ describe('KimiSessionAdapter.parseSessionFile', () => {
     const session = await adapter.parseSessionFile(fixturePath, 'test-session-001');
     await processor.process(session, baseContext);
 
-    const deltas = mockAppendDelta.mock.calls.map((call) => call[0]);
+    const deltas = appendedDeltas();
     const allStatus = deltas.reduce<Record<string, { success: number; failure: number }>>((acc, delta) => {
       for (const [name, status] of Object.entries(delta.toolStatus ?? {})) {
         if (!acc[name]) acc[name] = { success: 0, failure: 0 };
@@ -144,8 +151,7 @@ describe('KimiSessionAdapter.parseSessionFile', () => {
     const session = await adapter.parseSessionFile(fixturePath, 'test-session-001');
     await processor.process(session, baseContext);
 
-    const fileOps = mockAppendDelta.mock.calls
-      .map((call) => call[0])
+    const fileOps = appendedDeltas()
       .flatMap((delta) => delta.fileOperations ?? []);
     const readOps = fileOps.filter((op) => op.type === 'read');
     const writeOps = fileOps.filter((op) => op.type === 'write');

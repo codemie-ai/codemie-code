@@ -49,7 +49,8 @@ export function normalizeModelName(modelName: string): string {
   // - region.provider.model-v1:0
   // - bedrock/region.provider.model
   // - bedrock/converse/region.provider.model-v1:0
-  const bedrockMatch = modelName.match(/^(?:bedrock\/)?(?:converse\/)?[a-z0-9-]+\.anthropic\.(claude-[a-z0-9-]+?)(?:-v\d+:\d+)?$/);
+  // Make region segment optional to match bare Bedrock ids like anthropic.claude-haiku-4-5-20251001-v1:0
+  const bedrockMatch = modelName.match(/^(?:bedrock\/)?(?:converse\/)?(?:[a-z0-9-]+\.)?anthropic\.(claude-[a-z0-9-]+?)(?:-v\d+:\d+)?$/);
   if (bedrockMatch) {
     return bedrockMatch[1]; // Returns: claude-haiku-4-5-20251001
   }

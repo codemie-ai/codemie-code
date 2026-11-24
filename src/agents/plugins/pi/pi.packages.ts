@@ -5,7 +5,6 @@ import { AgentInstallationError } from '@/utils/errors.js';
 export const REQUIRED_PI_PACKAGES: readonly string[] = [
   'git:github.com/obra/superpowers',
   'npm:pi-subagents',
-  'npm:pi-mcp-adapter',
 ];
 
 export interface InstallPiPackagesOptions {

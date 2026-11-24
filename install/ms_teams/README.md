@@ -3,6 +3,10 @@
 This guide walks you through adding an already-built CodeMie bot package to a Teams team, group
 chat, or your personal chat. 
 
+> **Warning:** The Teams bot works with the default CodeMie backend and authentication. For
+> using customer deployments and authentication, reach out to andriy_lukashchuk@epam.com for
+> guidance and support.
+
 ## Before you start
 
 - **Ask your Teams admin to enable custom app sideloading**, if it isn't already. They can do

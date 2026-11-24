@@ -1,0 +1,176 @@
+diff --git a/src/cli/commands/analytics/__tests__/native-loader.test.ts b/src/cli/commands/analytics/__tests__/native-loader.test.ts
+index da8f8bf2..f20dad30 100644
+--- a/src/cli/commands/analytics/__tests__/native-loader.test.ts
++++ b/src/cli/commands/analytics/__tests__/native-loader.test.ts
+@@ -212,6 +212,104 @@ describe('loadNativeSessions', () => {
+   });
+ });
+ 
++describe('loadNativeSessions — sessionId short-circuit', () => {
++  it('parses only the descriptor matching filter.sessionId, skipping all others', async () => {
++    const parse = vi.fn(async (_agent: string, _filePath: string, sessionId: string) =>
++      ({ sessionId, agentName: 'claude', metadata: {}, messages: [], metrics: { tools: {} } }) as never
++    );
++    const deps: NativeLoaderDeps = {
++      trackedLogPaths: () => new Set<string>(),
++      discover: async () => [
++        { agentName: 'claude', descriptor: { sessionId: 'target', filePath: '/logs/target.jsonl', createdAt: 1, agentName: 'claude' } },
++        { agentName: 'codex', descriptor: { sessionId: 'other-codex', filePath: '/logs/other.jsonl', createdAt: 1, agentName: 'codex' } },
++        { agentName: 'pi', descriptor: { sessionId: 'other-pi', filePath: '/logs/other-pi.jsonl', createdAt: 1, agentName: 'pi' } },
++      ],
++      parse,
++      realPath: (p) => p,
++      hasOwnershipMarker: () => true,
++    };
++
++    const results = await loadNativeSessions({ sessionId: 'target' }, deps);
++
++    expect(parse).toHaveBeenCalledTimes(1);
++    expect(parse).toHaveBeenCalledWith('claude', '/logs/target.jsonl', 'target');
++    expect(results).toHaveLength(1);
++  });
++
++  it('returns an empty array and calls parse zero times when no descriptor matches filter.sessionId', async () => {
++    const parse = vi.fn(async () => null);
++    const deps: NativeLoaderDeps = {
++      trackedLogPaths: () => new Set<string>(),
++      discover: async () => [
++        { agentName: 'claude', descriptor: { sessionId: 'unrelated', filePath: '/logs/unrelated.jsonl', createdAt: 1, agentName: 'claude' } },
++      ],
++      parse,
++      realPath: (p) => p,
++      hasOwnershipMarker: () => true,
++    };
++
++    const results = await loadNativeSessions({ sessionId: 'nonexistent' }, deps);
++
++    expect(parse).not.toHaveBeenCalled();
++    expect(results).toEqual([]);
++  });
++
++  it('parses every discovered descriptor when filter.sessionId is absent (no regression)', async () => {
++    const parse = vi.fn(async (_agent: string, _filePath: string, sessionId: string) =>
++      ({ sessionId, agentName: 'claude', metadata: {}, messages: [], metrics: { tools: {} } }) as never
++    );
++    const deps: NativeLoaderDeps = {
++      trackedLogPaths: () => new Set<string>(),
++      discover: async () => [
++        { agentName: 'claude', descriptor: { sessionId: 'a', filePath: '/logs/a.jsonl', createdAt: 1, agentName: 'claude' } },
++        { agentName: 'claude', descriptor: { sessionId: 'b', filePath: '/logs/b.jsonl', createdAt: 1, agentName: 'claude' } },
++      ],
++      parse,
++      realPath: (p) => p,
++      hasOwnershipMarker: () => true,
++    };
++
++    await loadNativeSessions(undefined, deps);
++
++    expect(parse).toHaveBeenCalledTimes(2);
++  });
++});
++
++describe('loadNativeSessions — windowDays', () => {
++  it('passes undefined (not 3650) to discover when filter has no fromDate', async () => {
++    const discover = vi.fn(async () => []);
++    const deps: NativeLoaderDeps = {
++      trackedLogPaths: () => new Set<string>(),
++      discover,
++      parse: async () => null,
++      realPath: (p) => p,
++      hasOwnershipMarker: () => true,
++    };
++
++    await loadNativeSessions({ sessionId: 'target' }, deps);
++
++    expect(discover).toHaveBeenCalledWith(undefined);
++  });
++
++  it('still derives a day count from filter.fromDate when it is set', async () => {
++    const discover = vi.fn(async () => []);
++    const deps: NativeLoaderDeps = {
++      trackedLogPaths: () => new Set<string>(),
++      discover,
++      parse: async () => null,
++      realPath: (p) => p,
++      hasOwnershipMarker: () => true,
++    };
++    const fromDate = new Date(Date.now() - 5 * 86_400_000);
++
++    await loadNativeSessions({ fromDate }, deps);
++
++    const calledWith = discover.mock.calls[0]?.[0] as number;
++    expect(calledWith).toBeGreaterThanOrEqual(5);
++    expect(calledWith).toBeLessThanOrEqual(7);
++  });
++});
++
+ describe('synthesizeRawSession — descendant activity envelope', () => {
+   it('extends the root end time to descendant activity after the root finishes', () => {
+     const raw = synthesizeRawSession('claude', descriptor, {
+diff --git a/src/cli/commands/analytics/native-loader.ts b/src/cli/commands/analytics/native-loader.ts
+index 5cd1f909..105e6191 100644
+--- a/src/cli/commands/analytics/native-loader.ts
++++ b/src/cli/commands/analytics/native-loader.ts
+@@ -64,7 +64,7 @@ export interface NativeLoaderDeps {
+   /** Real paths of native logs already tracked by CodeMie (skip these to avoid double counting). */
+   trackedLogPaths(): Set<string>;
+   /** Discover native sessions for discovery-capable agents within the age window. */
+-  discover(maxAgeDays: number): Promise<DiscoveredNative[]>;
++  discover(maxAgeDays?: number): Promise<DiscoveredNative[]>;
+   /** Parse a native log into a unified session. */
+   parse(agentName: string, filePath: string, sessionId: string): Promise<ParsedSession | null>;
+   /** Resolve a path to its real (symlink-free) form for dedup comparison. */
+@@ -601,13 +601,13 @@ export function synthesizeRawSession(
+   });
+ }
+ 
+-/** Number of days from a filter's fromDate to now (for the discovery window), or a wide default. */
+-function windowDays(filter?: AnalyticsFilter): number {
++/** Number of days from a filter's fromDate to now (for the discovery window), or undefined to let each adapter apply its own default. */
++function windowDays(filter?: AnalyticsFilter): number | undefined {
+   if (filter?.fromDate) {
+     const days = Math.ceil((Date.now() - filter.fromDate.getTime()) / 86_400_000);
+     return Math.max(days + 1, 1);
+   }
+-  return 3650; // no lower bound requested → effectively "all"
++  return undefined; // no lower bound requested → let each adapter apply its own default
+ }
+ 
+ /** A discovered Pi transcript, parsed once, with the fork source its own header names. */
+@@ -720,6 +720,12 @@ export async function loadNativeSessions(
+ ): Promise<RawSessionData[]> {
+   const tracked = deps.trackedLogPaths();
+   const discovered = await deps.discover(windowDays(filter));
++  // A session-scoped request needs exactly one file's content, never the rest of the window —
++  // narrow here, before any parse (including the per-family passes below), so report generation
++  // for one session never pays the memory cost of the full discovery window.
++  const scoped = filter?.sessionId
++    ? discovered.filter(({ descriptor }) => descriptor.sessionId === filter.sessionId)
++    : discovered;
+ 
+   // Parse each Codex session ONCE (cached for reuse below) and collect the child thread IDs each
+   // parent references via spawn/wait collaboration events, so those sub-agent rollouts are not
+@@ -727,7 +733,7 @@ export async function loadNativeSessions(
+   // readCodexSubagentUsage in the cost enricher).
+   const codexParsed = new Map<string, ParsedSession | null>();
+   const codexChildThreads = new Set<string>();
+-  for (const { agentName, descriptor } of discovered) {
++  for (const { agentName, descriptor } of scoped) {
+     if (!isCodexFamilyAgent(agentName)) {
+       continue;
+     }
+@@ -742,12 +748,12 @@ export async function loadNativeSessions(
+ 
+   // Same shape for Pi, one level up: parse each transcript ONCE, then drop the `/fork`
+   // continuations the adapter already folded into the transcript they grew out of.
+-  const piTranscripts = await readPiTranscripts(discovered, deps);
++  const piTranscripts = await readPiTranscripts(scoped, deps);
+   const piByRealPath = new Map(piTranscripts.map((t) => [t.realPath, t]));
+   const piForkedChildren = foldPiForkFamilies(piTranscripts);
+ 
+   const out: RawSessionData[] = [];
+-  for (const { agentName, descriptor } of discovered) {
++  for (const { agentName, descriptor } of scoped) {
+     if (isCodexFamilyAgent(agentName) && codexChildThreads.has(descriptor.sessionId)) {
+       continue; // linked sub-agent rollout — already counted inside its parent
+     }

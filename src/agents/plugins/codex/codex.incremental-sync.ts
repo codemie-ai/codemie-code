@@ -20,7 +20,9 @@ import { realpath as fsRealpath } from 'fs/promises';
 import type { AgentMetadata } from '../../core/types.js';
 import type { ProcessingContext } from '../../core/session/BaseProcessor.js';
 import { CodexSessionAdapter } from './codex.session.js';
+import { recordTranscriptCorrelation } from '../../core/session/no-transcript-correlation.js';
 import { logger } from '../../../utils/logger.js';
+import { readAnalyticsCookieAuth } from '@/providers/plugins/sso/session/cookie-auth.js';
 
 export interface StartCodexIncrementalSyncOptions {
   /** CodeMie session id (file naming key). */
@@ -37,7 +39,7 @@ export interface StartCodexIncrementalSyncOptions {
   ssoUrl?: string;
   /** Agent env (CODEMIE_PROFILE_CONFIG) for the profile-first credential lookup. */
   env?: NodeJS.ProcessEnv;
-  /** Sync API base URL for the upload context (env.CODEMIE_SYNC_API_URL ?? env.CODEMIE_BASE_URL). */
+  /** Sync API base URL for the upload context: the launch's send path; none skips the upload. */
   syncApiUrl?: string;
   /** CLI version string forwarded to the upload context. */
   cliVersion?: string;
@@ -48,6 +50,8 @@ const STARTED_AT_GRACE_MS = 10_000;
 
 const activeTimers = new Map<string, NodeJS.Timeout>();
 const tickInFlight = new Map<string, boolean>();
+/** Sessions whose rollout a tick already linked to their record */
+const linkedSessions = new Set<string>();
 
 export function startCodexIncrementalSync(options: StartCodexIncrementalSyncOptions): void {
   if (process.env.CODEMIE_CODEX_SYNC_ENABLED === 'false') {
@@ -87,6 +91,13 @@ export function startCodexIncrementalSync(options: StartCodexIncrementalSyncOpti
         if (!projectPath) continue;
         const projectReal = await safeRealpath(projectPath);
         if (projectReal !== cwdReal) continue;
+
+        // The first matching tick names the rollout on the record, so a run killed later can
+        // still be finalized over its own rollout
+        if (!linkedSessions.has(options.sessionId)
+          && await recordTranscriptCorrelation(options.sessionId, descriptor.filePath)) {
+          linkedSessions.add(options.sessionId);
+        }
 
         try {
           const result = await adapter.processSession(
@@ -154,6 +165,7 @@ export function stopCodexIncrementalSync(sessionId: string): void {
   clearInterval(timer);
   activeTimers.delete(sessionId);
   tickInFlight.delete(sessionId);
+  linkedSessions.delete(sessionId);
   logger.debug(`[codex-incremental-sync] Stopped (session=${sessionId})`);
 }
 
@@ -164,28 +176,20 @@ async function buildUploadContext(
   syncApiUrl: string,
   version = '0.0.0'
 ): Promise<ProcessingContext | null> {
-  try {
-    const { getStoredAnalyticsCredentials } = await import('../../../providers/core/codemie-auth-helpers.js');
-    const credentials = (await getStoredAnalyticsCredentials(ssoUrl, env))?.credentials;
-    if (!credentials?.cookies) {
-      logger.debug('[codex-incremental-sync] No SSO credentials available, skipping upload');
-      return null;
-    }
-    const cookies = Object.entries(credentials.cookies)
-      .map(([k, v]) => `${k}=${v}`)
-      .join('; ');
-    return {
-      apiBaseUrl: syncApiUrl,
-      cookies,
-      clientType: 'codemie-codex',
-      version,
-      dryRun: false,
-      sessionId,
-    };
-  } catch (error) {
-    logger.debug('[codex-incremental-sync] Failed to build upload context:', error);
+  const { cookies, credentialsSuperseded } = await readAnalyticsCookieAuth(ssoUrl, env);
+  if (!cookies) {
+    logger.debug('[codex-incremental-sync] No SSO credentials available, skipping upload');
     return null;
   }
+  return {
+    apiBaseUrl: syncApiUrl,
+    cookies,
+    credentialsSuperseded,
+    clientType: env?.CODEMIE_CLIENT_TYPE || 'codemie-codex',
+    version,
+    dryRun: false,
+    sessionId,
+  };
 }
 
 async function safeRealpath(p: string): Promise<string> {

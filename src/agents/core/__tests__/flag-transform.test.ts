@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { transformFlags } from '../flag-transform.js';
+import { flagValue, hasFlagBeforeSeparator, transformFlags } from '../flag-transform.js';
 import type { FlagMappings, AgentConfig } from '../types.js';
 
 describe('transformFlags', () => {
@@ -238,5 +238,27 @@ describe('transformFlags', () => {
 
       expect(result).toEqual(['-p', 'test', '--workspace', 'prod', '-t', '600', '--verbose']);
     });
+  });
+});
+
+describe('flagValue reads flags only before a bare --', () => {
+  it.each([
+    [['--', '--session', 'x'], undefined],
+    [['--session', 'x', '--'], 'x'],
+    [['--session=x'], 'x'],
+  ])('%j → %s', (args, expected) => {
+    expect(flagValue(args, ['--session'])).toBe(expected);
+  });
+});
+
+describe('hasFlagBeforeSeparator reads a boolean flag set bare or to true', () => {
+  it.each([
+    [['--continue=true'], true],
+    [['-c=true'], true],
+    [['--continue=false'], false],
+    [['--continue'], true],
+    [['--', '--continue'], false],
+  ])('%j → %s', (args, expected) => {
+    expect(hasFlagBeforeSeparator(args, ['--continue', '-c'])).toBe(expected);
   });
 });

@@ -1,0 +1,4 @@
+{"event":"lifecycle_emission","intent":"artifact_published","artifact_kind":"plan","status":"succeeded"}
+{"event":"decision.recorded","gate_id":"code-review.final","decision":"request-changes","source":"hitl"}
+{"event":"decision.recorded","gate_id":"code-review.check","decision":"approve","source":"hitl"}
+{"event":"lifecycle_emission","intent":"record_complexity_score","assessment_mode":"actual","status":"succeeded"}

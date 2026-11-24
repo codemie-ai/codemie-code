@@ -83,20 +83,98 @@ describe('ProxyWatcher', () => {
     expect(cb.onGiveUp.mock.calls[0][0]).toContain('did not recover after 3 restart attempts');
   });
 
-  it('gives up immediately on an unauthorized failure without restarting', async () => {
-    mockedHealth.mockResolvedValue(UNAUTHORIZED);
+  it('keeps checking after it gave up on restarts, restarts nothing more, and reports the next passing check healthy', async () => {
+    mockedHealth.mockResolvedValue(UPSTREAM_DOWN);
     const cb = makeCallbacks();
+    const watcher = new ProxyWatcher(
+      { port: 4001, gatewayKey: 'k', intervalMs: 1000, maxRestartAttempts: 3 },
+      cb
+    );
+
+    watcher.start();
+    for (let i = 0; i < 30; i++) {
+      await vi.advanceTimersByTimeAsync(1000);
+    }
+    expect(cb.onGiveUp).toHaveBeenCalled();
+    cb.restart.mockClear();
+
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(cb.restart).not.toHaveBeenCalled();
+
+    mockedHealth.mockResolvedValue(HEALTHY);
+    await vi.advanceTimersByTimeAsync(1000);
+    watcher.stop();
+
+    expect(cb.onHealthy).toHaveBeenCalled();
+  });
+
+  it('records an unauthorized failure once, never restarts, and keeps watching for a later sign-in', async () => {
+    mockedHealth.mockResolvedValue(UNAUTHORIZED);
+    const onUnauthorized = vi.fn().mockResolvedValue(undefined);
+    const cb = { ...makeCallbacks(), onUnauthorized };
     const watcher = new ProxyWatcher({ port: 4001, gatewayKey: 'k', intervalMs: 1000 }, cb);
 
     watcher.start();
-    await vi.advanceTimersByTimeAsync(1000);
-    // Further time must not produce more activity (watcher stopped itself).
-    await vi.advanceTimersByTimeAsync(5000);
-    watcher.stop();
+    await vi.advanceTimersByTimeAsync(3000);
 
     expect(cb.restart).not.toHaveBeenCalled();
     expect(cb.onGiveUp).toHaveBeenCalledTimes(1);
     expect(cb.onGiveUp.mock.calls[0][0]).toContain('SSO session expired');
+    expect(onUnauthorized).toHaveBeenCalledTimes(3);
+
+    // Signed in again: the next check is healthy, so the watcher is still alive and reports it.
+    mockedHealth.mockResolvedValue({ healthy: true, level: 'deep', code: 'ok' });
+    await vi.advanceTimersByTimeAsync(1000);
+    watcher.stop();
+
+    expect(cb.onHealthy).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips the deep check while the sign-in listener holds the port, and still offers the recovery hook', async () => {
+    let awaiting = true;
+    const onUnauthorized = vi.fn().mockResolvedValue(undefined);
+    const cb = { ...makeCallbacks(), onUnauthorized, isAwaitingLogin: () => awaiting };
+    const watcher = new ProxyWatcher({ port: 4001, gatewayKey: 'k', intervalMs: 1000 }, cb);
+
+    watcher.start();
+    await vi.advanceTimersByTimeAsync(3000);
+
+    // A deep check would reach the listener as an authenticated request and start a browser sign-in.
+    expect(mockedHealth).not.toHaveBeenCalled();
+    expect(onUnauthorized).toHaveBeenCalledTimes(3);
+    expect(cb.restart).not.toHaveBeenCalled();
+
+    // The real proxy is back: normal deep checks resume.
+    awaiting = false;
+    mockedHealth.mockResolvedValue(HEALTHY);
+    await vi.advanceTimersByTimeAsync(1000);
+    watcher.stop();
+
+    expect(mockedHealth).toHaveBeenCalledTimes(1);
+    expect(cb.onHealthy).toHaveBeenCalledTimes(1);
+  });
+
+  it('survives a failing recovery hook', async () => {
+    mockedHealth.mockResolvedValue(UNAUTHORIZED);
+    const onUnauthorized = vi.fn().mockRejectedValue(new Error('port busy'));
+    const watcher = new ProxyWatcher({ port: 4001, gatewayKey: 'k', intervalMs: 1000 }, { ...makeCallbacks(), onUnauthorized });
+
+    watcher.start();
+    await vi.advanceTimersByTimeAsync(2000);
+    watcher.stop();
+
+    expect(onUnauthorized).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops on unauthorized when no sign-in recovery callback is registered', async () => {
+    mockedHealth.mockResolvedValue(UNAUTHORIZED);
+    const cb = makeCallbacks();
+    const watcher = new ProxyWatcher({ port: 4001, gatewayKey: 'k', intervalMs: 1000 }, cb);
+    watcher.start();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(mockedHealth).toHaveBeenCalledTimes(1);
+    expect(cb.onGiveUp).toHaveBeenCalledTimes(1);
+    expect(cb.restart).not.toHaveBeenCalled();
   });
 
   it('recovers and resets attempts when health returns after a restart', async () => {

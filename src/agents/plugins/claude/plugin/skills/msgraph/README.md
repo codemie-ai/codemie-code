@@ -63,7 +63,7 @@ node .codemie/claude-plugin/skills/msgraph/scripts/msgraph.js <command> [options
 | Command | Key options | Description |
 |---------|-------------|-------------|
 | `me` | | Your profile |
-| `emails` | `--limit N`, `--unread`, `--search QUERY`, `--read ID`, `--send TO --subject S --body B`, `--folder NAME` | Work with Outlook emails |
+| `emails` | `--limit N`, `--unread`, `--search QUERY`, `--read ID`, `--send TO --subject S --body B`, `--draft [--to A,B] [--cc A,B] [--bcc A,B] --subject S (--body B \| --body-file F) [--html] [--attach F1,F2]`, `--folder NAME` | Work with Outlook emails |
 | `calendar` | `--limit N`, `--create TITLE --start DT --end DT`, `--availability` | Calendar events |
 | `sharepoint` | `--sites`, `--site ID [--path P]`, `--download ID` | SharePoint files |
 | `teams` | `--chats`, `--messages CHAT_ID`, `--send MSG --chat-id ID`, `--teams-list` | Teams messages |
@@ -89,6 +89,13 @@ node .codemie/claude-plugin/skills/msgraph/scripts/msgraph.js emails \
   --send colleague@company.com \
   --subject "Quick question" \
   --body "Are you free tomorrow at 2pm?"
+
+# Create a draft with attachments (saved to Drafts, never sent)
+node .codemie/claude-plugin/skills/msgraph/scripts/msgraph.js emails --draft \
+  --to colleague@company.com \
+  --subject "Monthly report" \
+  --body-file body.html \
+  --attach report.pdf,data.xlsx
 
 # Upcoming calendar events
 node .codemie/claude-plugin/skills/msgraph/scripts/msgraph.js calendar --limit 5
@@ -148,6 +155,7 @@ The script requests these Microsoft Graph scopes on first login:
 |-------|---------|
 | `User.Read` | Profile (`me`, `org`) |
 | `Mail.Read` | Reading emails |
+| `Mail.ReadWrite` | Creating drafts with attachments |
 | `Mail.Send` | Sending emails |
 | `Calendars.Read` / `Calendars.ReadWrite` | Calendar events |
 | `Files.Read` / `Files.ReadWrite` | OneDrive files |

@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "task": "Add a new \"unhealthy\" delivery-health reason that distinguishes genuinely backend-unreachable classification holds from by-design/backend-configured holds in the OTLP spool, surfaced in `codemie proxy status` / `codemie proxy analytics status`, without false-positiving on legitimate holds.",
+  "generated": "2026-11-10T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 21,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Touches 4 components across 3 layers: local evidence/session hold decision (session-project.ts + tick-processor.ts), backend-capability exposure (policy-cache.ts, which no health/status consumer reads today), delivery/forwarder false-positive fix (delivery-summary.ts / delivery-state.ts), and the CLI presentation layer's new reason (delivery-health.ts). All four flow through exhaustive, compile-time-enforced reason-keyed maps (HOLD_REASONS/LOSS_REASONS in session-project.ts, DELIVERY_REASONS in delivery-health.ts) shared across many consumers, which is a core shared utility touch."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "Core intent is clear (add an 'unhealthy' reason without false-positiving), but the technical analysis surfaces open design decisions: `publication_stopped` is not purely by-design (it also absorbs an expired, genuinely-stalled `publication_contract_unavailable` hold after 24h), `publication_contract_unavailable`/`organization_encoding_unsupported` each have two indistinguishable causes from `status.holds.session` alone, and the prior round-3 revert of a closely related `not_delivered` design carries no preserved rationale — the analysis explicitly recommends asking the user rather than re-deriving it."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "No exact precedent for reading the per-namespace policy-cache capability file from a health collector that has never read it before, or for tagging `HoldReason`s as backend-confirmed vs backend-unconfirmed; this closely related area already went through 3 rounds of HITL spec revision and one revert. Existing patterns (reason-keyed exhaustive Records, pure-decision functions in tick-processor.ts) cover much of the mechanics, but the disambiguation logic itself is new."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "3 layers touched: local evidence/session (Service), persisted `status.holds.session`/policy-cache state (DB-Persistence, with a shape extension to distinguish hold causes), and CLI presentation (`proxy status` / `proxy analytics status`). No new external integration or additional backend call is required."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L to XL: touches core shared exhaustive reason-keyed utilities (HOLD_REASONS/LOSS_REASONS in session-project.ts, DELIVERY_REASONS in delivery-health.ts) that are compile-time-enforced and read by many consumers across the spool and CLI layers."
+  ],
+  "split_recommendation": null
+}

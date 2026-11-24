@@ -301,30 +301,36 @@ describe('processEvent', () => {
       await expect(processEvent(event, config)).resolves.not.toThrow();
     });
 
-    it('should initialize logger context from config', async () => {
-      const event: BaseHookEvent = {
-        session_id: 'agent-session-id',
-        hook_event_name: 'PreCompact',
-        transcript_path: '/path/to/transcript.json',
-        permission_mode: 'default'
-      };
-
-      const config: HookProcessingConfig = {
-        agentName: 'test-agent',
-        sessionId: 'test-session-123',
-        profileName: 'test-profile'
-      };
-
+    it('logs the call with the config context and keeps the caller context for its own lines', async () => {
       const { logger } = await import('../../../utils/logger.js');
-      const setAgentNameSpy = vi.spyOn(logger, 'setAgentName');
-      const setSessionIdSpy = vi.spyOn(logger, 'setSessionId');
-      const setProfileNameSpy = vi.spyOn(logger, 'setProfileName');
+      const previous = { agent: logger.getAgentName(), session: logger.getSessionId(), debug: process.env.CODEMIE_DEBUG };
+      process.env.CODEMIE_DEBUG = 'true';
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      logger.setAgentName('claude');
+      logger.setSessionId('wrapper-session-1');
 
-      await processEvent(event, config);
+      try {
+        // A wrapper of agent "claude" processes a synthetic event of another session's "gemini" record.
+        await processEvent(
+          {
+            session_id: 'gemini-native-1',
+            hook_event_name: 'PreCompact',
+            transcript_path: '/path/to/transcript.json',
+            permission_mode: 'default',
+          },
+          { agentName: 'gemini', sessionId: 'gemini-record-1', profileName: 'record-profile' }
+        );
+        logger.debug('wrapper line after the call');
 
-      expect(setAgentNameSpy).toHaveBeenCalledWith('test-agent');
-      expect(setSessionIdSpy).toHaveBeenCalledWith('test-session-123');
-      expect(setProfileNameSpy).toHaveBeenCalledWith('test-profile');
+        const lines = consoleSpy.mock.calls.map((call) => String(call[0]));
+        expect(lines.some((line) => line.includes('[DEBUG] [gemini] [gemini-record-1] [record-profile]'))).toBe(true);
+        expect(lines.find((line) => line.includes('wrapper line after the call'))).toContain('[DEBUG] [claude] [wrapper-session-1]');
+      } finally {
+        if (previous.debug === undefined) delete process.env.CODEMIE_DEBUG;
+        else process.env.CODEMIE_DEBUG = previous.debug;
+        logger.setAgentName(previous.agent ?? '');
+        logger.setSessionId(previous.session);
+      }
     });
   });
 

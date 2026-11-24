@@ -1,0 +1,45 @@
+{
+  "decision": "request-changes",
+  "rationale": "Evidence-only check of the 1 prior blocking finding: CR-001 (decision) is unresolved. Its mapped decision record says the PR is called out as CRITICAL and a security-review sign-off is requested, but it also says the sign-off has not been given yet ('the merge waits for it'). The human security decision the finding requires is still missing, so it cannot be recorded as made. Fix evidence is bound to the reviewed HEAD e42ed319; DF-001 stays deferred and was not re-checked.",
+  "confidence": "medium",
+  "risk_flags": ["security"],
+  "business_review": [
+    { "kind": "story-ac", "item": "A session delivered by a later launch is counted under its own repository and branch", "status": "pass", "notes": "header-injection.plugin.ts skips repo/branch on /v1/metrics; MetricsApiClient sets them from metric attributes" },
+    { "kind": "story-ac", "item": "The delivering repository's row holds only its own sessions", "status": "pass", "notes": "delivered end metric keeps its own repository/branch headers" },
+    { "kind": "story-ac", "item": "X-CodeMie-Project of a delivered session is not overwritten by the launch's project", "status": "pass", "notes": "project omitted on /v1/metrics; client sets it from attributes.project" },
+    { "kind": "spec", "item": "Proxy does not inject Client/Repository/Branch/Project on /v1/metrics (with or without query)", "status": "pass", "notes": "query stripped before compare; both shapes tested" },
+    { "kind": "spec", "item": "All other headers and paths, model requests included, unchanged", "status": "pass", "notes": "only the four fields are conditional; model-request test keeps launch attribution" },
+    { "kind": "spec", "item": "MetricsApiClient sets the four headers from client type and metric attributes", "status": "pass", "notes": "pre-existing in metrics-api-client.ts; branch header asserted in contract test" },
+    { "kind": "spec", "item": "End metric uses session.gitBranch, detects at send time only when absent", "status": "pass", "notes": "session.gitBranch || detectGitBranch; end-metric.ts and DesktopSessionMetrics.ts pass it" },
+    { "kind": "spec", "item": "Start metric is unchanged", "status": "pass", "notes": "no start-metric change in the diff" },
+    { "kind": "spec", "item": "Codex tick uploads use the launch's client type", "status": "pass", "notes": "codex.incremental-sync.ts uses env CODEMIE_CLIENT_TYPE || 'codemie-codex'" },
+    { "kind": "spec", "item": "Delivered record with no client type takes its own agent's client type", "status": "pass", "notes": "recordClientType falls back to AgentRegistry ssoConfig.clientType; all callers awaited" },
+    { "kind": "spec", "item": "A delivered record's client type is used for its metrics, not the launch's", "status": "pass", "notes": "hook.session-delivery.test.ts asserts record's X-CodeMie-Client" },
+    { "kind": "spec", "item": "Usage metrics keep each delta's own branch", "status": "pass", "notes": "usage path unchanged; proxy no longer overrides the branch header" },
+    { "kind": "spec", "item": "ARCHITECTURE-PROXY.md and security-practices.md describe the /v1/metrics exception", "status": "pass", "notes": "both docs updated" },
+    { "kind": "spec", "item": "Backend is not changed; stored documents are not migrated", "status": "na", "notes": "negative scope statement; no backend or migration change" },
+    { "kind": "spec", "item": "Security-review sign-off before merge (CRITICAL change)", "status": "na", "notes": "human process gate outside the diff; not recorded in commits -> CR-001" }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "pass", "notes": "2 subjects in range, both fix(proxy): <imperative subject>; type and scope in the git-workflow.md allowed lists, under 100 chars, no ticket key in subject" },
+    { "kind": "code-quality", "status": "pass", "notes": "changed sources checked around the touched lines (send-path.ts recordClientType/recordHookConfig, header-injection.plugin.ts, stale-session-reconciliation.ts call sites, end-metric.ts, codex.incremental-sync.ts, DesktopSessionMetrics.ts): .js imports, explicit return types and JSDoc on the new/changed exports, no console.log or require; no documented code-quality rule found broken" },
+    { "kind": "security", "status": "fail", "notes": "security-practices.md 'CRITICAL: Project & User Attribution Headers' rules 1, 2 and 4: the change stops header-injection.plugin.ts injecting X-CodeMie-Client/Repository/Branch/Project on /v1/metrics, leaves MetricsApiClient as the setter of those headers there, and adds a new derivation source for the client type (AgentRegistry ssoConfig.clientType fallback in send-path.ts); the same change edits security-practices.md to add an exception that permits this; no CRITICAL callout or security-review sign-off found in the commit messages in range (PR description not visible to this audit)" }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "decision",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "src/providers/plugins/sso/proxy/plugins/header-injection.plugin.ts",
+      "line": 147,
+      "title": "Attribution change lacks security-review sign-off",
+      "problem": "On /v1/metrics the proxy no longer injects X-CodeMie-Client/Repository/Branch/Project (including the Cowork 'claude-desktop' override); MetricsApiClient (metrics-api-client.ts:167-175) becomes the sole setter, the client type gains a new derivation source (AgentRegistry ssoConfig.clientType fallback in send-path.ts:36-42), and caller-supplied x-codemie-* values pass through the local proxy unvalidated. security-practices.md rules 1, 2 and 4 make this a CRITICAL change requiring recorded security-review sign-off, and the change edits the guide itself to add the exception; no CRITICAL callout or sign-off appears in the commits.",
+      "impact": "Attribution headers back per-user/tenant accounting and analytics; the guide makes security sign-off a merge precondition, and a change that rewrites the policy to exempt itself bypasses the review it is meant to pass.",
+      "recommendation": "Mark the PR CRITICAL, fill in the security-practices.md reviewer checklist, and record security-review sign-off on the PR before merge. The reviewer decides whether (a) the new guide exception making MetricsApiClient the setter of X-CodeMie-Client/Repository/Branch/Project on /v1/metrics is accepted, or the canonical injector should instead read the per-record values through a typed contract, and (b) passing caller-supplied attribution headers through the local proxy unvalidated is an acceptable trust model. This is a human decision; no code edit resolves it on its own."
+    }
+  ],
+  "finding_status": [
+    { "id": "CR-001", "status": "unresolved", "notes": "Decision record maps to CR-001 (head e42ed319 matches): PR marked CRITICAL and sign-off requested, but the security reviewer has not signed off yet ('the merge waits for it'). The human decision is still missing." }
+  ]
+}

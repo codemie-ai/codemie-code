@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "flow": "sdlc-light",
+  "slug": "otlp-settings-backup-refresh-cleanup",
+  "branch": "EPMCDME-15375",
+  "phase": "maintenance",
+  "started_at": "2026-10-18T10:06:14Z",
+  "completed_at": "2026-10-18T11:34:05Z",
+  "last_sync_commit": "d165a93a87aac16c65854d480e28d4a1e8883f2a"
+}

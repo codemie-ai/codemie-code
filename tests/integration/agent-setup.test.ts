@@ -139,10 +139,9 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('TC-029 — codemie setup 
       const configPath = join(testHome, 'codemie-cli.config.json');
       expect(existsSync(configPath), 'config file must exist in testHome after setup').toBe(true);
 
-      // codeMieUrl and codeMieProject are repo/tooling-context fields; the
-      // decouple-provider-workspace-config migration (007) moved them out of the
-      // ProviderProfile into a scope-level `workspace` (WorkspaceConfig) object, so
-      // they are asserted against cfg.workspace, not the profile.
+      // EPMCDME-15411: a global profile owns its CodeMie identity, so setup writes
+      // codeMieUrl/codeMieProject onto the profile and leaves the shared
+      // `workspace` identity untouched.
       const cfg = JSON.parse(readFileSync(configPath, 'utf-8')) as {
         activeProfile?: string;
         profiles?: Record<string, Record<string, unknown>>;
@@ -154,12 +153,14 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('TC-029 — codemie setup 
       expect(profile!.name, 'name must match the typed profile key').toBe(TEST_PROFILE_NAME);
       expect(profile!.provider, 'provider must be ai-run-sso').toBe('ai-run-sso');
       expect(String(profile!.apiKey ?? ''), 'apiKey must be sso-provided').toBe('sso-provided');
-      expect(String(cfg.workspace?.codeMieUrl ?? ''), 'codeMieUrl must be the prod URL').toMatch(
+      expect(String(profile!.codeMieUrl ?? ''), 'profile codeMieUrl must be the prod URL').toMatch(
         /codemie\.lab\.epam\.com/,
       );
       expect(String(profile!.baseUrl ?? ''), 'baseUrl must include code-assistant-api').toMatch(
         /code-assistant-api/,
       );
+
+      expect(cfg.workspace?.codeMieProject, 'setup must not write the shared workspace project').toBeUndefined();
 
       // Step 9 verification: profile was activated
       expect(cfg.activeProfile, 'activeProfile must be set to the new profile').toBe(
@@ -167,9 +168,9 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('TC-029 — codemie setup 
       );
 
       // Verify the selected project was persisted (captured from PTY + checked in config)
-      expect(String(cfg.workspace?.codeMieProject ?? ''), 'codeMieProject must not be empty').not.toBe('');
+      expect(String(profile!.codeMieProject ?? ''), 'profile codeMieProject must not be empty').not.toBe('');
       if (selectedProject) {
-        expect(cfg.workspace?.codeMieProject, `codeMieProject must match selected "${selectedProject}"`).toBe(
+        expect(profile!.codeMieProject, `profile codeMieProject must match selected "${selectedProject}"`).toBe(
           selectedProject,
         );
       }

@@ -80,7 +80,7 @@ describe('MetricsProcessor - Full Pipeline Integration Test', () => {
       workingDirectory: '/tmp/test',
       gitBranch: 'main',
       status: 'active',
-      startTime: Date.now(),
+      startTime: 0, // before every fixture message: the run window keeps them all
       correlation: {
         status: 'matched',
         agentSessionFile: sessionFilePath,

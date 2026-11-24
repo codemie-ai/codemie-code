@@ -1,5 +1,6 @@
 import { readState } from '@/cli/commands/proxy/daemon-manager.js';
 import type { SSOCredentials } from '@/providers/core/types.js';
+import { withVerifiedOwner } from '@/providers/core/credential-owner.js';
 import { CodeMieSSO } from '@/providers/plugins/sso/sso.auth.js';
 import { logger } from '@/utils/logger.js';
 
@@ -15,6 +16,8 @@ import { logger } from '@/utils/logger.js';
  *
  * Side effect: `getStoredCredentials` clears expired SSO credentials, as it does at daemon start.
  *
+ * Carries the signed-in email (`withVerifiedOwner`) so oauth2-proxy logins have an owner.
+ *
  * Never throws; `null` makes identity fall through to the git, codemie_cli and os tiers.
  */
 export async function resolveHookCredentials(): Promise<SSOCredentials | null> {
@@ -22,10 +25,9 @@ export async function resolveHookCredentials(): Promise<SSOCredentials | null> {
     const state = await readState();
     const sso = new CodeMieSSO();
     const syncCredentials = state?.syncCodeMieUrl ? await sso.getStoredCredentials(state.syncCodeMieUrl) : null;
-    if (syncCredentials) {
-      return syncCredentials;
-    }
-    return state?.targetUrl ? await sso.getStoredCredentials(state.targetUrl) : null;
+    const credentials =
+      syncCredentials ?? (state?.targetUrl ? await sso.getStoredCredentials(state.targetUrl) : null);
+    return credentials ? await withVerifiedOwner(credentials) : null;
   } catch (error) {
     logger.debug(`[hook-credentials] credential lookup failed: ${error instanceof Error ? error.message : String(error)}`);
     return null;

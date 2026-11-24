@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated": "2026-10-21T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 19,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 27,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Touches Pi plugin session processing (dispatch extractor, file ops, named invocations, metrics processor), analytics cost pipeline (usage readers, enricher, new pi-dispatch-allocation), native loader, agent labels, report source detector and client UI." },
+    { "dimension": "file_change_estimate", "reason": "27 files changed (1417+/228-) per diffstat, including ~8 test files and 5 docs files; 16+ maps to XXL even though much is tests/docs." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

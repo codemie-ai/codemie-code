@@ -1,0 +1,166 @@
+/**
+ * awaiting-login-listener unit tests
+ * @group unit
+ */
+import { createServer } from 'node:http';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { startAwaitingLoginListener, type AwaitingLoginListener } from '../awaiting-login-listener.js';
+
+const MESSAGE = 'SSO credentials not found for https://x.example.com. Please run: codemie profile login --url https://x.example.com';
+
+describe('awaiting-login listener', () => {
+  const cleanup: Array<() => Promise<void>> = [];
+  afterEach(async () => {
+    await Promise.all(cleanup.splice(0).map((fn) => fn()));
+  });
+
+  async function start(opts: Partial<Parameters<typeof startAwaitingLoginListener>[0]> = {}): Promise<AwaitingLoginListener> {
+    const listener = await startAwaitingLoginListener({ host: '127.0.0.1', message: MESSAGE, ...opts });
+    cleanup.push(() => listener.stop());
+    return listener;
+  }
+
+  it('answers an Anthropic-shaped 401 with the sign-in message for any API request', async () => {
+    const { url } = await start();
+
+    const res = await fetch(`${url}/v1/messages`, { method: 'POST', body: '{}' });
+
+    expect(res.status).toBe(401);
+    expect(res.headers.get('content-type')).toContain('application/json');
+    expect(await res.json()).toEqual({
+      type: 'error',
+      error: { type: 'authentication_error', message: MESSAGE },
+    });
+  });
+
+  it('keeps /health alive like the real proxy so the watcher sees a live socket', async () => {
+    const { url, port } = await start();
+
+    const health = await fetch(`${url}/health`);
+    expect(health.status).toBe(200);
+    expect(await health.json()).toEqual({
+      status: 'ok',
+      port,
+      pid: process.pid,
+      analytics: { credentials: 'stale' },
+    });
+    // ...while the authenticated deep probe is rejected, which the watcher reads as "unauthorized".
+    expect((await fetch(`${url}/v1/llm_models?include_all=true`)).status).toBe(401);
+  });
+
+  it('binds the requested port and frees it on stop', async () => {
+    const probe = await start();
+    const { port } = probe;
+    await probe.stop();
+
+    const listener = await start({ port, pinnedPort: true });
+    expect(listener.port).toBe(port);
+    await listener.stop();
+
+    const reuse = createServer();
+    await new Promise<void>((resolve) => reuse.listen(port, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) => reuse.close(() => resolve()));
+  });
+
+  describe('with a gateway key and a sign-in hook', () => {
+    const KEY = 'gateway-key';
+
+    it('answers "Invalid API key" and starts no sign-in for a request without the key', async () => {
+      const onSignInRequest = vi.fn().mockResolvedValue('please sign in');
+      const { url } = await start({ gatewayKey: KEY, onSignInRequest });
+
+      const anonymous = await fetch(`${url}/anything`, { headers: { Origin: 'https://evil.example' } });
+      const wrong = await fetch(`${url}/v1/messages`, { method: 'POST', headers: { Authorization: 'Bearer nope' }, body: '{}' });
+      const unknownClient = await fetch(`${url}/v1/messages`, {
+        method: 'POST', headers: { Authorization: `Bearer ${KEY}.unknown` }, body: '{}',
+      });
+
+      for (const res of [anonymous, wrong, unknownClient]) {
+        expect(res.status).toBe(401);
+        expect(await res.json()).toEqual({
+          type: 'error',
+          error: { type: 'authentication_error', message: 'Invalid API key' },
+        });
+      }
+      expect(onSignInRequest).not.toHaveBeenCalled();
+    });
+
+    it('starts the sign-in once per request that carries the key and answers with its text', async () => {
+      const onSignInRequest = vi.fn().mockResolvedValue('A browser sign-in window has been opened.');
+      const { url } = await start({ gatewayKey: KEY, onSignInRequest });
+
+      const res = await fetch(`${url}/v1/messages`, { method: 'POST', headers: { Authorization: `Bearer ${KEY}` }, body: '{}' });
+
+      expect(onSignInRequest).toHaveBeenCalledTimes(1);
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({
+        type: 'error',
+        error: { type: 'authentication_error', message: 'A browser sign-in window has been opened.' },
+      });
+    });
+
+    it('starts the sign-in for a request with a named key and answers with its text', async () => {
+      const onSignInRequest = vi.fn().mockResolvedValue('A browser sign-in window has been opened.');
+      const { url } = await start({ gatewayKey: KEY, onSignInRequest });
+
+      const res = await fetch(`${url}/v1/responses`, {
+        method: 'POST', headers: { Authorization: `Bearer ${KEY}.codex-desktop` }, body: '{}',
+      });
+
+      expect(onSignInRequest).toHaveBeenCalled();
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({
+        type: 'error',
+        error: { type: 'authentication_error', message: 'A browser sign-in window has been opened.' },
+      });
+    });
+
+    it('falls back to the plain message when the sign-in hook rejects', async () => {
+      const onSignInRequest = vi.fn().mockRejectedValue(new Error('spawn failed'));
+      const { url } = await start({ gatewayKey: KEY, onSignInRequest });
+
+      const res = await fetch(`${url}/v1/messages`, { headers: { Authorization: `Bearer ${KEY}` } });
+
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({
+        type: 'error',
+        error: { type: 'authentication_error', message: MESSAGE },
+      });
+    });
+
+    it('answers the plain message and starts no sign-in for background analytics ingestion', async () => {
+      const onSignInRequest = vi.fn().mockResolvedValue('please sign in');
+      const { url } = await start({ gatewayKey: KEY, onSignInRequest });
+      const headers = { Authorization: `Bearer ${KEY}` };
+
+      const hook = await fetch(`${url}/v1/analytics/hooks`, { method: 'POST', headers, body: '{}' });
+      const otlp = await fetch(`${url}/v1/analytics/otlp/v1/logs?x=1`, { method: 'POST', headers, body: '{}' });
+
+      for (const res of [hook, otlp]) {
+        expect(res.status).toBe(401);
+        expect(await res.json()).toEqual({
+          type: 'error',
+          error: { type: 'authentication_error', message: MESSAGE },
+        });
+      }
+      expect(onSignInRequest).not.toHaveBeenCalled();
+    });
+
+    it('keeps /health open without the key and without a sign-in', async () => {
+      const onSignInRequest = vi.fn().mockResolvedValue('please sign in');
+      const { url } = await start({ gatewayKey: KEY, onSignInRequest });
+
+      expect((await fetch(`${url}/health`)).status).toBe(200);
+      expect(onSignInRequest).not.toHaveBeenCalled();
+    });
+  });
+
+  it('falls back to another port on the initial bind but never when pinned', async () => {
+    const holder = await start();
+
+    const fallback = await start({ port: holder.port });
+    expect(fallback.port).not.toBe(holder.port);
+
+    await expect(start({ port: holder.port, pinnedPort: true })).rejects.toMatchObject({ code: 'EADDRINUSE' });
+  }, 10000);
+});

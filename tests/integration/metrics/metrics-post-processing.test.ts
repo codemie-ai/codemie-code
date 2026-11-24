@@ -167,6 +167,30 @@ describe('Metrics Post-Processing Integration', () => {
     expect(featureMetric!.attributes.total_tool_calls).toBe(1);
   });
 
+  it('stamps the session_id the run\'s start metric was accepted under over the correlation id', () => {
+    const deltas: MetricDelta[] = [
+      {
+        recordId: 'record-1',
+        sessionId: 'test-session-id',
+        agentSessionId: 'agent-session-1',
+        timestamp: Date.now(),
+        gitBranch: 'main',
+        tools: {Read: 1},
+        syncStatus: 'pending',
+        syncAttempts: 0
+      }
+    ];
+    const resumedRun: MetricsSession = {
+      ...mockSession,
+      startMetricSessionId: 'start-metric-id',
+      correlation: {...mockSession.correlation, agentSessionId: 'linked-native-id'}
+    };
+
+    const [metric] = aggregateDeltas(deltas, resumedRun, '1.0.0', 'codemie-copilot');
+
+    expect(metric.attributes.session_id).toBe('start-metric-id');
+  });
+
   it('should handle empty project paths gracefully', () => {
     const sessionWithEmptyPath: MetricsSession = {
       ...mockSession,
@@ -302,5 +326,34 @@ describe('Metrics Post-Processing Integration', () => {
     expect(metrics).toHaveLength(1);
     // git-remote value must win over extractRepository('/Users/test/some-other-path') = 'test/some-other-path'
     expect(metrics[0].attributes.repository).toBe('codemie-ai/codemie-code');
+  });
+
+  it('selects llm_model: own models, then the branch fallback, then session.model', () => {
+    const delta = (models?: string[]): MetricDelta => ({
+      recordId: 'u-1:prompts',
+      sessionId: 'test-session-id',
+      agentSessionId: 'agent-session-1',
+      timestamp: Date.now(),
+      gitBranch: 'main',
+      userPrompts: [{count: 1, text: 'hello'}],
+      ...(models && {models}),
+      syncStatus: 'pending',
+      syncAttempts: 0
+    });
+    const llmModel = (
+      deltas: MetricDelta[],
+      session: MetricsSession,
+      fallbackModelByBranch?: (branch: string) => string | undefined
+    ) =>
+      aggregateDeltas(deltas, session, '1.0.0', 'codemie-claude', {fallbackModelByBranch})[0]
+        .attributes.llm_model;
+    const mainFallback = (branch: string) => (branch === 'main' ? 'm-z' : undefined);
+
+    expect(llmModel([delta()], {...mockSession, model: 'm-x'})).toBe('m-x');
+    expect(llmModel([delta()], mockSession)).toBe('unknown');
+    expect(llmModel([delta(['m-y'])], {...mockSession, model: 'm-x'})).toBe('m-y');
+    expect(llmModel([delta()], {...mockSession, model: 'm-x'}, mainFallback)).toBe('m-z');
+    expect(llmModel([delta(['m-y'])], {...mockSession, model: 'm-x'}, mainFallback)).toBe('m-y');
+    expect(llmModel([delta()], {...mockSession, model: 'm-x'}, () => undefined)).toBe('m-x');
   });
 });

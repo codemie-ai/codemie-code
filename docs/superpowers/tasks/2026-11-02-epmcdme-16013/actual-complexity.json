@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "generated": "2026-11-02T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 14,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 7,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "file_change_estimate", "reason": "7 files changed per diffstat (2 source files, 4 test files, 1 architecture doc), mostly test additions; maps to L on the file-count scale although the production change is concentrated in ticket-parser.ts and story-resolver.ts." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from S to M: touches core shared utility extractTicketMentions in ticket-parser.ts, consumed by the story resolver and all OTLP adapters"
+  ],
+  "split_recommendation": null
+}

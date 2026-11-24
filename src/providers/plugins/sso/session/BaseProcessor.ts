@@ -7,6 +7,7 @@
  */
 
 import type { ParsedSession } from './BaseSessionAdapter.js';
+import type { CredentialsSupersededCheck } from './cookie-auth.js';
 
 /**
  * Processing context passed to all processors.
@@ -19,6 +20,8 @@ export interface ProcessingContext {
   cookies: string;
   /** API key for localhost development (user-id header) */
   apiKey?: string;
+  /** Reports whether a newer sign-in replaced the cookies that were sent, so a rejection is not recorded */
+  credentialsSuperseded?: CredentialsSupersededCheck;
   /** Client type identifier */
   clientType: string;
   /** Client version */
@@ -39,6 +42,8 @@ export interface ProcessingContext {
   syncDeadlineMs?: number;
   /** Abort signal (e.g. SIGTERM during agent teardown) asking sync loops to stop early */
   abortSignal?: AbortSignal;
+  /** A timer run: one request, and the run ends at the first outcome that is not ok (the next tick tries again) */
+  stopAtFirstFailure?: boolean;
 }
 
 /**

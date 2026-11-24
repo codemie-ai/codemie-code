@@ -75,7 +75,8 @@ describe('SSOModelProxy.fetchModels', () => {
     expect(getStoredCredentialsMock).not.toHaveBeenCalled();
     expect(fetchCodeMieLlmModelsMock).toHaveBeenCalledWith(
       'https://codemie.example.com/code-assistant-api',
-      { codemie_access_token: 'fresh-cookie' }
+      { codemie_access_token: 'fresh-cookie' },
+      undefined
     );
   });
 
@@ -142,7 +143,7 @@ describe('SSOModelProxy.fetchModels', () => {
       const models = await new SSOModelProxy().fetchModels({ provider: 'ai-run-sso', baseUrl: P } as CodeMieConfigOptions);
 
       expect(getStoredCredentialsMock).toHaveBeenCalledWith(P);
-      expect(fetchCodeMieLlmModelsMock).toHaveBeenCalledWith(`${P}/code-assistant-api`, { s: '1' });
+      expect(fetchCodeMieLlmModelsMock).toHaveBeenCalledWith(`${P}/code-assistant-api`, { s: '1' }, undefined);
       expect(models.map(m => m.id)).toEqual(['gpt-x']);
     });
 
@@ -156,7 +157,7 @@ describe('SSOModelProxy.fetchModels', () => {
 
       expect(getStoredCredentialsMock.mock.calls.map(c => c[0])).toEqual([P, W]);
       // split host: the login stored under W was issued for the profile's API host
-      expect(fetchCodeMieLlmModelsMock).toHaveBeenCalledWith(`${P}/code-assistant-api`, { s: '1' });
+      expect(fetchCodeMieLlmModelsMock).toHaveBeenCalledWith(`${P}/code-assistant-api`, { s: '1' }, undefined);
       expect(models).toHaveLength(1);
     });
   });

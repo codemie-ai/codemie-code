@@ -74,7 +74,8 @@
           {
             "type": "command",
             "command": "codemie hook",
-            "timeout": 60
+            "timeout": 180,
+            "statusMessage": "Checking CodeMie sign-in. If a browser sign-in opened, finish it and your prompt will continue automatically"
           },
           {
             "type": "command",

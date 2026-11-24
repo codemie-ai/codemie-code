@@ -4,44 +4,84 @@ import type { Migration, MigrationHistory, MigrationRecord } from './types.js';
 import { MigrationRegistry } from './registry.js';
 import { logger } from '../utils/logger.js';
 import { getCodemiePath } from '../utils/paths.js';
+import { writeJsonFileAtomic } from '../utils/atomic-write.js';
 
 /**
  * Migration tracker
  * Manages migration history file and tracks which migrations have been applied
  */
 export class MigrationTracker {
-  private static readonly HISTORY_FILE = getCodemiePath('migrations.json');
+  private static get HISTORY_FILE(): string {
+    return getCodemiePath('migrations.json');
+  }
 
-  /**
-   * Load migration history from file
-   * Returns empty history for new installations
-   */
-  static async loadHistory(): Promise<MigrationHistory> {
-    try {
-      const content = await fs.readFile(this.HISTORY_FILE, 'utf-8');
-      const history = JSON.parse(content);
-      logger.debug(`[MigrationTracker] Loaded history: ${history.migrations.length} migration(s) recorded`);
-      return history;
-    } catch {
-      // File doesn't exist or is invalid - return empty history
-      logger.debug('[MigrationTracker] No history file found, starting fresh');
-      return {
-        version: 1,
-        migrations: []
-      };
-    }
+  /** Where an unparsable ledger is moved aside; its presence means "history unknown". */
+  static get CORRUPT_HISTORY_FILE(): string {
+    return `${this.HISTORY_FILE}.corrupt`;
   }
 
   /**
-   * Save migration history to file
+   * Load migration history from file.
+   * A missing file is a new installation (empty history). An unparsable file is
+   * moved aside to `migrations.json.corrupt` (never overwritten in place) and an
+   * empty history is returned; migrations that care ask ledgerWasUnparsable().
+   */
+  static async loadHistory(): Promise<MigrationHistory> {
+    let content: string;
+    try {
+      content = await fs.readFile(this.HISTORY_FILE, 'utf-8');
+    } catch {
+      logger.debug('[MigrationTracker] No history file found, starting fresh');
+      return { version: 1, migrations: [] };
+    }
+    try {
+      const history = JSON.parse(content) as MigrationHistory;
+      if (!history || !Array.isArray(history.migrations)) throw new Error('missing migrations array');
+      logger.debug(`[MigrationTracker] Loaded history: ${history.migrations.length} migration(s) recorded`);
+      return history;
+    } catch {
+      await this.moveAsideUnparsable();
+      return { version: 1, migrations: [] };
+    }
+  }
+
+  private static async moveAsideUnparsable(): Promise<void> {
+    try {
+      await fs.rename(this.HISTORY_FILE, this.CORRUPT_HISTORY_FILE);
+      logger.warn(`[MigrationTracker] Migration history was unreadable; moved it to ${this.CORRUPT_HISTORY_FILE}`);
+    } catch (error) {
+      // A concurrent process may have moved it already
+      logger.debug('[MigrationTracker] Could not move unparsable history aside', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /** Whether the ledger was found unparsable (now or by an earlier run) and moved aside. */
+  static async ledgerWasUnparsable(): Promise<boolean> {
+    try {
+      await fs.access(this.CORRUPT_HISTORY_FILE);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Whether the ledger holds a record of `migrationId` (successful or not). */
+  static async hasRecord(migrationId: string): Promise<boolean> {
+    const history = await this.loadHistory();
+    return history.migrations.some(m => m.id === migrationId);
+  }
+
+  /**
+   * Save migration history to file (atomic; never over an unparsable file).
    */
   static async saveHistory(history: MigrationHistory): Promise<void> {
     await fs.mkdir(path.dirname(this.HISTORY_FILE), { recursive: true });
-    await fs.writeFile(
-      this.HISTORY_FILE,
-      JSON.stringify(history, null, 2),
-      'utf-8'
-    );
+    await writeJsonFileAtomic(this.HISTORY_FILE, history, {
+      refuseUnparsable: true,
+      label: 'CodeMie migration history',
+    });
     logger.debug(`[MigrationTracker] Saved history: ${history.migrations.length} migration(s)`);
   }
 

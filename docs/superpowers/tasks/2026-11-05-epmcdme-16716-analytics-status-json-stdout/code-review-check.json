@@ -1,0 +1,25 @@
+{
+  "decision": "approve",
+  "rationale": "CR-001 is resolved: bin/codemie.js now keeps runPending's result and, under --json and not in a hook, prints one 'Warning: N migration(s) failed; see the log file for details' line to stderr, leaving stdout pure JSON; a new integration test (RED then GREEN, 20/20) pins it and the happy path asserts no spurious warning. The fix-up introduces no new high-risk issue (hook stderr untouched by the !isHookProcess guard, runPending always returns an object, EPIPE already handled), so no confirmation pass was needed.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {"kind": "story-ac", "item": "AC1: `codemie proxy analytics status --json` on a clean CODEMIE_HOME prints only valid JSON to stdout", "status": "pass", "notes": "runPending is silent when argv has --json; update check and what's-new notice skipped; regression test asserts exit 0, no 'migration(s)' in stdout and JSON.parse(stdout). Reviewer also ran the repro manually: JSON.parse OK, empty stderr."},
+    {"kind": "story-ac", "item": "AC2: The migration banner does not appear in stdout when --json is used", "status": "pass", "notes": "Every console.log in runner.ts is gated by !silent; details go to the file log ([MigrationRunner] Found ...)."},
+    {"kind": "spec", "item": "Scope is the --json flag only; version/--version control tests keep asserting the banner", "status": "pass", "notes": "Helper matches only --json and --json=...; control tests untouched and passing (19/19 in hook-stdout.test.ts)."},
+    {"kind": "spec", "item": "Hook behaviour (hook, sound) must not change", "status": "pass", "notes": "isHookProcess logic unchanged; additions are `|| isMachineOutput` / `&& !isMachineOutput` only; hook/sound tests pass."},
+    {"kind": "spec", "item": "A failed migration must never block the command; its warning stays on stderr, never stdout", "status": "partial", "notes": "Never blocks and never reaches stdout, but under --json a failure handled inside runPending (result.success=false or throw in up()) is no longer shown anywhere except the log file: runner console.log lines are gated by silent and logger.error prints only in debug mode. Previously it appeared on stdout."},
+    {"kind": "spec", "item": "Conventions: ESM, .js extensions, no console.log for debug, no any, explicit return types on exports", "status": "pass", "notes": "machine-output.ts exports isMachineOutputInvocation(argv: readonly string[]): boolean; imports use .js."},
+    {"kind": "spec", "item": "Helper wired into bin/codemie.js; migrations still run and are recorded; `--` terminator and look-alikes do not match", "status": "pass", "notes": "Integration test asserts migrations.json written and log line present; unit tests cover --, --jsonl, --no-json, -j, --json-schema."},
+    {"kind": "spec", "item": "Regression test, helper unit test and docs/COMMANDS.md updated", "status": "pass", "notes": "tests/integration/hook-stdout.test.ts, src/utils/__tests__/machine-output.test.ts, docs/COMMANDS.md."}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "pass", "notes": "Subjects use allowed type/scope (fix(cli), docs(cli)), under 100 chars; ticket in body footer."},
+    {"kind": "code-quality", "status": "pass", "notes": "ESM, .js extensions, no any, no console.log debug. bin/codemie.js is plain JS outside tsc/eslint (noted, not a violation)."},
+    {"kind": "security", "status": "pass", "notes": "No secrets, no attribution-header changes, no path or process handling touched."}
+  ],
+  "findings": [],
+  "finding_status": [
+    {"id": "CR-001", "status": "resolved", "notes": "Fix-up 29caecab: stderr warning when runPending reports failed > 0 under --json (not a hook). New test failed first (expected '' to match /1 migration\\(s\\) failed/) then passed; full hook-stdout suite 20/20. business_review/standards_review above are carried forward unchanged from code-review-final.json, so the 'partial' row reflects the final round and is the one CR-001 addressed."}
+  ]
+}

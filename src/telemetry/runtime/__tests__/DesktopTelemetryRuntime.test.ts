@@ -1,15 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import type { Session } from '@/agents/core/session/types.js';
+import { logger } from '@/utils/logger.js';
 
 const mockSendSessionStart = vi.fn().mockResolvedValue(undefined);
 const mockSendSessionEnd = vi.fn().mockResolvedValue(undefined);
 const mockSync = vi.fn().mockResolvedValue({ message: 'ok' });
-const mockIndexSessionsByExternalId = vi.fn();
-const mockFindSessionByExternalId = vi.fn().mockResolvedValue(null);
+const mockGetStoredCredentials = vi.fn();
+/** When set, MetricsSender is the real one and `fetch` is the HTTP boundary. */
+let realMetricsSender = false;
+/** When set, SessionSyncer is the real one and `fetch` is the HTTP boundary. */
+let realSessionSyncer = false;
 
-// Persisted sessions shared by every SessionStore instance, so a new runtime instance sees
-// what a previous one saved — the same as a restarted daemon reading ~/.codemie/sessions.
-const persistedSessions = new Map<string, Session>();
+/** The pid of a daemon that is gone. */
+const DEAD_PID = 999_999;
 
 // Simulated Claude Desktop transcripts: message count plus the stat() fingerprint.
 interface FakeTranscript {
@@ -28,56 +34,74 @@ vi.mock('fs/promises', async (importOriginal) => {
     stat: vi.fn(async (path: string) => {
       const transcript = transcripts.get(path);
       if (!transcript) {
-        throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' });
+        if (path.startsWith('/transcripts/')) {
+          throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' });
+        }
+        return actual.stat(path);
       }
       return { mtimeMs: transcript.mtimeMs, size: transcript.size };
+    }),
+    rename: vi.fn(actual.rename),
+    unlink: vi.fn(actual.unlink)
+  };
+});
+
+vi.mock('@/providers/plugins/sso/index.js', async () => {
+  const actual = await vi.importActual<typeof import('@/providers/plugins/sso/session/processors/metrics/metrics-api-client.js')>(
+    '@/providers/plugins/sso/session/processors/metrics/metrics-api-client.js'
+  );
+  return {
+    MetricsSender: vi.fn(function (this: Record<string, unknown>, options: ConstructorParameters<typeof actual.MetricsSender>[0]) {
+      if (realMetricsSender) return new actual.MetricsSender(options);
+      this.sendSessionStart = mockSendSessionStart;
+      this.sendSessionEnd = mockSendSessionEnd;
     })
   };
 });
 
-vi.mock('@/providers/plugins/sso/index.js', () => ({
-  MetricsSender: vi.fn(function (this: Record<string, unknown>) {
-    this.sendSessionStart = mockSendSessionStart;
-    this.sendSessionEnd = mockSendSessionEnd;
-  })
-}));
-
-vi.mock('@/agents/core/session/SessionStore.js', () => ({
-  SessionStore: vi.fn(function (this: Record<string, unknown>) {
-    this.findSessionByExternalId = mockFindSessionByExternalId;
-    this.indexSessionsByExternalId = mockIndexSessionsByExternalId;
-    this.saveSession = vi.fn(async (session: Session) => {
-      persistedSessions.set(session.sessionId, structuredClone(session));
-    });
-    this.loadSession = vi.fn(async (sessionId: string) => {
-      const session = persistedSessions.get(sessionId);
-      return session ? structuredClone(session) : null;
-    });
-  })
-}));
-
-vi.mock('@/providers/plugins/sso/session/SessionSyncer.js', () => ({
-  SessionSyncer: vi.fn(function (this: Record<string, unknown>) {
-    this.sync = mockSync;
-  })
-}));
+vi.mock('@/providers/plugins/sso/session/SessionSyncer.js', async () => {
+  const actual = await vi.importActual<typeof import('@/providers/plugins/sso/session/SessionSyncer.js')>(
+    '@/providers/plugins/sso/session/SessionSyncer.js'
+  );
+  return {
+    SessionSyncer: vi.fn(function (this: Record<string, unknown>) {
+      if (realSessionSyncer) return new actual.SessionSyncer();
+      this.sync = mockSync;
+    })
+  };
+});
 
 vi.mock('@/providers/plugins/sso/sso.auth.js', () => ({
   CodeMieSSO: vi.fn(function (this: Record<string, unknown>) {
-    this.getStoredCredentials = vi.fn().mockResolvedValue({ cookies: { session: 'abc123' } });
+    this.getStoredCredentials = mockGetStoredCredentials;
   })
 }));
 
-vi.mock('@/utils/processes.js', () => ({
-  detectGitRemoteRepo: vi.fn().mockResolvedValue('codemie-ai/codemie-code'),
-  detectGitBranch: vi.fn().mockResolvedValue('main')
+// The process table: this test process is the live daemon, every other owner is gone.
+vi.mock('@/utils/processes.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/processes.js')>()),
+  detectGitRemoteRepo: vi.fn(async (cwd: string) => `codemie-ai/${cwd.split('/').pop()}`),
+  detectGitBranch: vi.fn(async (cwd: string) => `branch-${cwd.split('/').pop()}`),
+  isOwnerAlive: vi.fn(async ({ pid }: { pid: number }) => pid === process.pid)
 }));
 
 vi.mock('@/utils/config.js', () => ({
-  ConfigLoader: { load: vi.fn().mockResolvedValue({}) }
+  ConfigLoader: { load: vi.fn(async (cwd: string) => ({ codeMieProject: `project-${cwd.split('/').pop()}` })) }
 }));
 
+import { rename, unlink } from 'fs/promises';
+import { SessionStore } from '@/agents/core/session/SessionStore.js';
+import { RECONCILE_PER_START, reconcileLockPath } from '@/agents/core/session/stale-session-reconciliation.js';
+import { acquirePidLock, PID_LOCK_WAIT_BUDGET_MS } from '@/utils/pid-lock.js';
+import { processStartedAt } from '@/utils/processes.js';
+import { clearAnalyticsAuthStatus, getAnalyticsAuthStatus, markAnalyticsAuthInvalid } from '@/utils/analytics-auth-status.js';
 import { DesktopTelemetryRuntime } from '../DesktopTelemetryRuntime.js';
+import { MetricsSender } from '@/providers/plugins/sso/index.js';
+import { MetricsRetryExhaustedError } from '@/providers/plugins/sso/session/processors/metrics/metrics-api-client.js';
+import { PROXY_STORE_READ_DEADLINE_MS, STORE_READ_DEADLINE_MS } from '@/providers/plugins/sso/session/cookie-auth.js';
+import { DesktopSessionDelivery } from '../DesktopSessionDelivery.js';
+import { DESKTOP_REDELIVERY_INTERVAL_MS, DESKTOP_REOPEN_LOCK_BUDGET_MS } from '../desktop-session.js';
+import { getClaudeDesktopBaseDir } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
 import type {
   LocalTelemetryAdapter,
   DesktopTelemetryRuntimeConfig,
@@ -94,8 +118,108 @@ const config: DesktopTelemetryRuntimeConfig = {
   provider: 'ai-run-sso',
   version: '1.0.0',
   pollIntervalMs: POLL_INTERVAL_MS,
-  inactivityTimeoutMs: INACTIVITY_TIMEOUT_MS
+  inactivityTimeoutMs: INACTIVITY_TIMEOUT_MS,
+  // Desktop connected to this daemon on every poll
+  port: 4001,
+  gatewayKey: 'codemie-proxy',
+  readDesktopGateway: async () => ({ gateway: { port: 4001, apiKey: 'codemie-proxy' }, namesGateway: true })
 };
+
+const HOUR_MS = 60 * 60 * 1000;
+
+let codemieHome: string;
+const previousCodemieHome = process.env.CODEMIE_HOME;
+
+function sessionsDir(): string {
+  return join(codemieHome, 'sessions');
+}
+
+/** Closes the logger's file under the home first: Windows cannot delete an open file. */
+async function removeCodemieHome(): Promise<void> {
+  await logger.close();
+  rmSync(codemieHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+}
+
+/** A fresh, empty ~/.codemie, as on a machine the daemon never ran on. */
+async function resetCodemieHome(): Promise<void> {
+  if (codemieHome) await removeCodemieHome();
+  codemieHome = mkdtempSync(join(tmpdir(), 'desktop-runtime-'));
+  process.env.CODEMIE_HOME = codemieHome;
+  mkdirSync(sessionsDir(), { recursive: true });
+}
+
+/** The record as on disk: its live `{id}.json`, else its `completed_{id}.json`. */
+function readRecord(sessionId: string): Session | undefined {
+  for (const name of [`${sessionId}.json`, `completed_${sessionId}.json`]) {
+    const path = join(sessionsDir(), name);
+    if (existsSync(path)) return JSON.parse(readFileSync(path, 'utf-8')) as Session;
+  }
+  return undefined;
+}
+
+function recordFiles(): string[] {
+  return readdirSync(sessionsDir()).filter(name => !name.endsWith('.lock')).sort();
+}
+
+/** Every record file of the client, live and completed. */
+function persistedRecords(): Session[] {
+  return readdirSync(sessionsDir())
+    .filter(name => name.endsWith('.json'))
+    .map(name => JSON.parse(readFileSync(join(sessionsDir(), name), 'utf-8')) as Session);
+}
+
+/** A record a previous daemon (or the CLI) left on disk for the Desktop chat `externalSessionId`. */
+function writeRecord(externalSessionId: string, fields: Partial<Session>): string {
+  const sessionId = `00000000-0000-4000-8000-${String(persistedRecords().length + 1).padStart(12, '0')}`;
+  const record: Session = {
+    sessionId,
+    agentName: 'claude-desktop',
+    provider: 'ai-run-sso',
+    startTime: T0 - HOUR_MS,
+    workingDirectory: '/Users/test/codemie-ai/codemie-code',
+    status: 'active',
+    activeDurationMs: 0,
+    correlation: {
+      status: 'matched',
+      agentSessionId: `agent-${externalSessionId}`,
+      agentSessionFile: transcriptPathFor(externalSessionId),
+      retryCount: 0
+    },
+    runtimeCheckpoint: {
+      externalSessionId,
+      transcriptPath: transcriptPathFor(externalSessionId),
+      lastDiscoveredAt: T0 - 30 * 60_000,
+      lastSeenActivityAt: T0 - 40 * 60_000
+    },
+    ...fields
+  };
+  writeFileSync(join(sessionsDir(), `${sessionId}.json`), JSON.stringify(record));
+  return sessionId;
+}
+
+/** Waits (real time) until `condition` holds; fails the test after ~5 s. */
+async function waitFor(condition: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 500; attempt++) {
+    if (condition()) return;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  throw new Error('condition not met');
+}
+
+/** Runtimes a test starts: their real poll timers would otherwise poll the next tests' state. */
+const startedRuntimes: DesktopTelemetryRuntime[] = [];
+
+/** Starts a runtime with `start()` and waits for its start-up scan and first poll. */
+async function startRuntime(
+  adapter: LocalTelemetryAdapter,
+  runtimeConfig: DesktopTelemetryRuntimeConfig = config
+): Promise<DesktopTelemetryRuntime> {
+  const runtime = new DesktopTelemetryRuntime(adapter, runtimeConfig);
+  startedRuntimes.push(runtime);
+  await runtime.start();
+  await (runtime as any).startupChain;
+  return runtime;
+}
 
 /** Every delta the fake conversations processor queued for sync, per session. */
 let sentDeltas: Array<{ externalSessionId: string; historyIndices: number[] }>;
@@ -160,7 +284,7 @@ function createAdapter(): LocalTelemetryAdapter {
     // Mirrors the conversations processor: queue only messages after lastSyncedHistoryIndex
     // and persist the advanced pointer on the session.
     processParsedSession: vi.fn(async (parsed: { sessionId: string; metadata: { externalSessionId: string } }) => {
-      const session = persistedSessions.get(parsed.sessionId)!;
+      const session = readRecord(parsed.sessionId)!;
       const lastSyncedIndex = session.sync?.conversations?.lastSyncedHistoryIndex ?? -1;
       const total = transcripts.get(transcriptPathFor(parsed.metadata.externalSessionId))!.messages;
       const historyIndices: number[] = [];
@@ -174,14 +298,14 @@ function createAdapter(): LocalTelemetryAdapter {
           ...session.sync,
           conversations: { ...session.sync?.conversations, lastSyncedHistoryIndex: total - 1 }
         };
-        persistedSessions.set(session.sessionId, session);
+        await new SessionStore().saveSession(session);
       }
 
       return { success: true, processors: {}, totalRecords: historyIndices.length, failedProcessors: [] };
     }) as never,
     // Mirrors the real baseline: messages written before the cutoff count as synced.
     applyBaseline: vi.fn(async (parsed: { sessionId: string; metadata: { externalSessionId: string } }, cutoffMs: number) => {
-      const session = persistedSessions.get(parsed.sessionId)!;
+      const session = readRecord(parsed.sessionId)!;
       const transcript = transcripts.get(transcriptPathFor(parsed.metadata.externalSessionId))!;
       const before = transcript.messageTimes.filter(time => time < cutoffMs).length;
       session.sync = {
@@ -189,14 +313,14 @@ function createAdapter(): LocalTelemetryAdapter {
         conversations: { ...session.sync?.conversations, lastSyncedHistoryIndex: before - 1 }
       };
       delete session.runtimeCheckpoint!.baselineCutoffMs;
-      persistedSessions.set(session.sessionId, session);
+      await new SessionStore().saveSession(session);
     }) as never
   };
 }
 
 function indexPersistedSessions(agentName: string): Map<string, string> {
   const index = new Map<string, string>();
-  for (const session of persistedSessions.values()) {
+  for (const session of persistedRecords()) {
     const externalSessionId = session.runtimeCheckpoint?.externalSessionId;
     if (session.agentName === agentName && externalSessionId) {
       index.set(externalSessionId, session.sessionId);
@@ -218,28 +342,39 @@ async function pollTicks(runtime: DesktopTelemetryRuntime, count: number): Promi
 }
 
 /** Starts a daemon at the current time; polling is driven manually via triggerPoll(). */
-async function startDaemon(adapter: LocalTelemetryAdapter): Promise<DesktopTelemetryRuntime> {
-  const runtime = new DesktopTelemetryRuntime(adapter, config);
+async function startDaemon(
+  adapter: LocalTelemetryAdapter,
+  runtimeConfig: DesktopTelemetryRuntimeConfig = config
+): Promise<DesktopTelemetryRuntime> {
+  const runtime = new DesktopTelemetryRuntime(adapter, runtimeConfig);
   await runtime.triggerPoll();
   return runtime;
 }
 
 describe('DesktopTelemetryRuntime', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(T0);
-    persistedSessions.clear();
+    await resetCodemieHome();
     transcripts.clear();
+    mockGetStoredCredentials.mockReset();
     sentDeltas = [];
     desktopSessions = new Map();
-    mockIndexSessionsByExternalId.mockImplementation(async (agentName: string) =>
-      indexPersistedSessions(agentName)
-    );
+    mockSendSessionStart.mockResolvedValue(undefined);
+    mockSendSessionEnd.mockResolvedValue(undefined);
+    mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
+    realMetricsSender = false;
+    realSessionSyncer = false;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    for (const runtime of startedRuntimes.splice(0)) clearInterval((runtime as any).timer);
     vi.useRealTimers();
+    vi.restoreAllMocks();
+    await removeCodemieHome();
+    if (previousCodemieHome === undefined) delete process.env.CODEMIE_HOME;
+    else process.env.CODEMIE_HOME = previousCodemieHome;
   });
 
   describe('repository attribution', () => {
@@ -262,7 +397,85 @@ describe('DesktopTelemetryRuntime', () => {
 
       expect(mockSendSessionEnd).toHaveBeenCalledOnce();
       const [sessionArg] = mockSendSessionEnd.mock.calls[0];
-      expect(sessionArg).toMatchObject({ repository: 'codemie-ai/codemie-code' });
+      expect(sessionArg).toMatchObject({ repository: 'codemie-ai/codemie-code', gitBranch: 'branch-codemie-code' });
+    });
+  });
+
+  describe('cookie auth', () => {
+    function lastSenderOptions(): { cookies: string; credentialsSuperseded?: (sent: string) => Promise<boolean> } {
+      const calls = vi.mocked(MetricsSender).mock.calls;
+      return calls[calls.length - 1][0] as never;
+    }
+
+    it('reads cookies from the SSO store for the configured URL', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      await (runtime as any).ensureSession(desktopSessions.get('ext-1'));
+
+      expect(mockGetStoredCredentials).toHaveBeenCalledWith('https://api.example.com');
+      expect(lastSenderOptions().cookies).toBe('session=abc123');
+    });
+
+    it('passes a supersession check to the session START sender', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      await (runtime as any).ensureSession(desktopSessions.get('ext-1'));
+
+      const { credentialsSuperseded } = lastSenderOptions();
+      expect(credentialsSuperseded).toBeTypeOf('function');
+      expect(await credentialsSuperseded!('session=abc123')).toBe(false);
+      mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'newer' } });
+      expect(await credentialsSuperseded!('session=abc123')).toBe(true);
+    });
+
+    it('passes a supersession check to the session END sender', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      const session = await (runtime as any).ensureSession(desktopSessions.get('ext-1'));
+      await (runtime as any).finalizeSession(session.sessionId, 'test-reason');
+
+      const { credentialsSuperseded } = lastSenderOptions();
+      expect(credentialsSuperseded).toBeTypeOf('function');
+      mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'newer' } });
+      expect(await credentialsSuperseded!('session=abc123')).toBe(true);
+    });
+
+    it('hands the supersession check to the session syncer in the context', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      const session = await (runtime as any).ensureSession(desktopSessions.get('ext-1'));
+      mockSync.mockClear();
+      await (runtime as any).finalizeSession(session.sessionId, 'test-reason');
+
+      const [, context] = mockSync.mock.calls[0];
+      expect(context.cookies).toBe('session=abc123');
+      expect(context.credentialsSuperseded).toBeTypeOf('function');
+      mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'newer' } });
+      expect(await context.credentialsSuperseded('session=abc123')).toBe(true);
+    });
+
+    it('bounds the long-lived runtime\'s store read by the longer proxy deadline', async () => {
+      const timers = vi.spyOn(globalThis, 'setTimeout');
+      openDesktopChat('ext-1', 1, T0);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      await (runtime as any).ensureSession(desktopSessions.get('ext-1'));
+
+      const delays = timers.mock.calls.map(([, delay]) => delay);
+      expect(delays).toContain(PROXY_STORE_READ_DEADLINE_MS);
+      expect(delays).not.toContain(STORE_READ_DEADLINE_MS);
+      timers.mockRestore();
+    });
+
+    it('sends no metrics when there are no stored cookies', async () => {
+      mockGetStoredCredentials.mockResolvedValue(null);
+      openDesktopChat('ext-1', 1, T0);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      const session = await (runtime as any).ensureSession(desktopSessions.get('ext-1'));
+      await (runtime as any).finalizeSession(session.sessionId, 'test-reason');
+
+      expect(MetricsSender).not.toHaveBeenCalled();
+      expect(mockSendSessionStart).not.toHaveBeenCalled();
+      expect(mockSendSessionEnd).not.toHaveBeenCalled();
     });
   });
 
@@ -333,6 +546,8 @@ describe('DesktopTelemetryRuntime', () => {
     });
 
     it('scans the session directory once per daemon instead of once per session per tick', async () => {
+      const mockIndexSessionsByExternalId = vi.spyOn(SessionStore.prototype, 'indexSessionsByExternalId');
+      const mockFindSessionByExternalId = vi.spyOn(SessionStore.prototype, 'findSessionByExternalId');
       ['ext-1', 'ext-2', 'ext-3'].forEach(chat => openDesktopChat(chat, 1, T0));
       const daemon = await startDaemon(createAdapter());
       for (let tick = 0; tick < 5; tick++) {
@@ -342,6 +557,22 @@ describe('DesktopTelemetryRuntime', () => {
 
       expect(mockIndexSessionsByExternalId).toHaveBeenCalledOnce();
       expect(mockFindSessionByExternalId).not.toHaveBeenCalled();
+    });
+
+    it('indexes the sessions before the start-up pass begins, once over several ticks', async () => {
+      const mockIndexSessionsByExternalId = vi.spyOn(SessionStore.prototype, 'indexSessionsByExternalId');
+      const mockReconcileRecords = vi.spyOn(DesktopSessionDelivery.prototype, 'reconcileRecords');
+      openDesktopChat('ext-1', 1, T0);
+      const runtime = await startRuntime(createAdapter());
+      for (let tick = 0; tick < 5; tick++) {
+        appendMessages('ext-1', 1);
+        await pollTicks(runtime, 1);
+      }
+
+      expect(mockIndexSessionsByExternalId).toHaveBeenCalledOnce();
+      expect(mockIndexSessionsByExternalId.mock.invocationCallOrder[0])
+        .toBeLessThan(mockReconcileRecords.mock.invocationCallOrder[0]);
+      await runtime.stop();
     });
 
     it('still ignores sessions idle since before the daemon started', async () => {
@@ -373,6 +604,25 @@ describe('DesktopTelemetryRuntime', () => {
       expect(sentDeltas).toEqual([{ externalSessionId: 'ext-new', historyIndices: [0, 1, 2] }]);
     });
 
+    it('saves a new record owned by the daemon from its first save', async () => {
+      const daemon = await startDaemon(createAdapter());
+      vi.setSystemTime(Date.now() + 5_000);
+      openDesktopChat('ext-new', 3, Date.now());
+      // A copy at call time: a later in-place change of the saved object must not show in the first save
+      const saved: Session[] = [];
+      const saveSession = SessionStore.prototype.saveSession;
+      vi.spyOn(SessionStore.prototype, 'saveSession').mockImplementation(function (this: SessionStore, session: Session) {
+        saved.push(structuredClone(session));
+        return saveSession.call(this, session);
+      });
+
+      await pollTicks(daemon, 1);
+
+      const owner = { ownerPid: process.pid, ownerStartedAt: processStartedAt(), status: 'active' };
+      expect(saved[0]).toMatchObject({ sessionId: sessionIdFor('ext-new'), ...owner });
+      expect(readRecord(sessionIdFor('ext-new')!)).toMatchObject(owner);
+    });
+
     it('does not backfill a pre-existing chat never seen before, but syncs what is written after start', async () => {
       openDesktopChat('ext-old', 4, T0 - 3_600_000);
       const adapter = createAdapter();
@@ -400,7 +650,7 @@ describe('DesktopTelemetryRuntime', () => {
       appendMessages('ext-old', 1);
       await pollTicks(daemon, 1);
 
-      expect(persistedSessions.get(sessionIdFor('ext-old')!)!.startTime).toBe(T0);
+      expect(readRecord(sessionIdFor('ext-old')!)!.startTime).toBe(T0);
       const [startMetric] = mockSendSessionStart.mock.calls[0];
       expect(startMetric).toMatchObject({ startTime: T0 });
     });
@@ -413,8 +663,8 @@ describe('DesktopTelemetryRuntime', () => {
       // The daemon dies after persisting the new session but before the baseline lands.
       vi.mocked(firstAdapter.applyBaseline!).mockRejectedValueOnce(new Error('killed'));
       vi.setSystemTime(Date.now() + POLL_INTERVAL_MS);
-      await expect(firstDaemon.triggerPoll()).rejects.toThrow('killed');
-      expect(persistedSessions.get(sessionIdFor('ext-old')!)!.runtimeCheckpoint!.baselineCutoffMs).toBe(T0);
+      await firstDaemon.triggerPoll();
+      expect(readRecord(sessionIdFor('ext-old')!)!.runtimeCheckpoint!.baselineCutoffMs).toBe(T0);
 
       vi.setSystemTime(Date.now() + 60_000);
       touchDesktopChat('ext-old');
@@ -423,6 +673,27 @@ describe('DesktopTelemetryRuntime', () => {
 
       expect(restartedAdapter.applyBaseline).toHaveBeenCalledOnce();
       expect(sentDeltas).toEqual([{ externalSessionId: 'ext-old', historyIndices: [4] }]);
+    });
+
+    it('keeps a pending baseline while a subagent transcript of the parsed session is unreadable', async () => {
+      openDesktopChat('ext-old', 4, T0 - 3_600_000);
+      const adapter = createAdapter();
+      vi.mocked(adapter.parseSession).mockImplementation(async (discovered, sessionId) => ({
+        sessionId,
+        agentName: 'claude-desktop',
+        metadata: { externalSessionId: discovered.externalSessionId },
+        messages: [],
+        subagentsIncomplete: true
+      }) as never);
+      // The real baseline keeps its marker on an incomplete parse.
+      vi.mocked(adapter.applyBaseline!).mockResolvedValue(undefined);
+      const runtime = new DesktopTelemetryRuntime(adapter, config);
+      const discovered = desktopSessions.get('ext-old')!;
+      const session = await (runtime as any).ensureSession(discovered);
+
+      await (runtime as any).delivery.processSession(session, discovered, true);
+
+      expect(session.runtimeCheckpoint.baselineCutoffMs).toBe(T0);
     });
   });
 
@@ -443,24 +714,37 @@ describe('DesktopTelemetryRuntime', () => {
       expect(adapter.parseSession).not.toHaveBeenCalled();
     });
 
-    it('retries processing on the next tick when processing fails', async () => {
-      openDesktopChat('ext-1', 2, T0);
+    it('goes on with the other sessions when one fails, and retries the failed one on the next tick', async () => {
+      ['ext-1', 'ext-2', 'ext-3'].forEach(chat => openDesktopChat(chat, 2, T0));
       const adapter = createAdapter();
       const daemon = await startDaemon(adapter);
       sentDeltas = [];
       vi.clearAllMocks();
 
-      appendMessages('ext-1', 1);
-      vi.mocked(adapter.processParsedSession).mockRejectedValueOnce(new Error('disk full'));
+      ['ext-1', 'ext-2', 'ext-3'].forEach(chat => appendMessages(chat, 1));
+      const processParsed = vi.mocked(adapter.processParsedSession);
+      const realProcess = processParsed.getMockImplementation()!;
+      processParsed.mockImplementation((async (parsed: { metadata: { externalSessionId: string } }, context: never) => {
+        if (parsed.metadata.externalSessionId === 'ext-2') throw new Error('disk full');
+        return realProcess(parsed as never, context);
+      }) as never);
       vi.setSystemTime(Date.now() + POLL_INTERVAL_MS);
-      await expect(daemon.triggerPoll()).rejects.toThrow('disk full');
+      await daemon.triggerPoll();
+      expect(sentDeltas).toEqual([
+        { externalSessionId: 'ext-1', historyIndices: [2] },
+        { externalSessionId: 'ext-3', historyIndices: [2] }
+      ]);
 
       // Transcript unchanged since the failed attempt: it must not be treated as handled.
-      touchDesktopChat('ext-1');
+      processParsed.mockImplementation(realProcess);
+      ['ext-1', 'ext-2', 'ext-3'].forEach(touchDesktopChat);
       await pollTicks(daemon, 1);
 
-      expect(mockSync).toHaveBeenCalledOnce();
-      expect(sentDeltas).toEqual([{ externalSessionId: 'ext-1', historyIndices: [2] }]);
+      expect(sentDeltas).toEqual([
+        { externalSessionId: 'ext-1', historyIndices: [2] },
+        { externalSessionId: 'ext-3', historyIndices: [2] },
+        { externalSessionId: 'ext-2', historyIndices: [2] }
+      ]);
     });
 
     it('processes the session when the transcript cannot be stat-ed', async () => {
@@ -489,7 +773,7 @@ describe('DesktopTelemetryRuntime', () => {
       await pollTicks(daemon, INACTIVITY_TIMEOUT_MS / POLL_INTERVAL_MS + 1);
 
       expect(mockSendSessionEnd).toHaveBeenCalledOnce();
-      const session = persistedSessions.get(sessionIdFor('ext-1')!)!;
+      const session = readRecord(sessionIdFor('ext-1')!)!;
       expect(session.status).toBe('completed');
       expect(session.reason).toBe('desktop-inactive-timeout');
     });
@@ -509,6 +793,32 @@ describe('DesktopTelemetryRuntime', () => {
       expect(mockSendSessionEnd).not.toHaveBeenCalled();
     });
 
+    it('keeps tracking a session whose finalize meets a held lock, finalizes the others, and completes it next poll', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      openDesktopChat('ext-2', 1, T0);
+      const daemon = await startDaemon(createAdapter());
+      const [first, second] = [sessionIdFor('ext-1')!, sessionIdFor('ext-2')!];
+      const held = (await acquirePidLock(reconcileLockPath(first), { mode: 'try' }))!;
+
+      vi.setSystemTime(Date.now() + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+      let settled = false;
+      const polling = daemon.triggerPoll().finally(() => { settled = true; });
+      // The lock budget runs on the faked clock: step it past the reopen budget until the poll gives up
+      await waitFor(() => {
+        if (!settled) vi.setSystemTime(Date.now() + 1_000);
+        return settled;
+      });
+      await polling;
+
+      expect(readRecord(first)!.status).toBe('active');
+      expect(readRecord(second)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+
+      await held.release();
+      await pollTicks(daemon, 1);
+
+      expect(readRecord(first)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+    });
+
     it('reopens the same session when activity resumes after the timeout', async () => {
       openDesktopChat('ext-1', 2, T0);
       const daemon = await startDaemon(createAdapter());
@@ -523,8 +833,2325 @@ describe('DesktopTelemetryRuntime', () => {
       await pollTicks(daemon, 1);
 
       expect(mockSendSessionStart).not.toHaveBeenCalled();
-      expect(persistedSessions.get(sessionId!)!.status).toBe('active');
+      expect(readRecord(sessionId!)!.status).toBe('active');
       expect(sentDeltas).toEqual([{ externalSessionId: 'ext-1', historyIndices: [3] }]);
+    });
+  });
+
+  describe('the Cowork producer', () => {
+    it('keeps the session loop, finalization and the poll timer when its run rejects', async () => {
+      openDesktopChat('ext-1', 2, T0);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config, {
+        run: async () => { throw new Error('cowork failed'); }
+      });
+      startedRuntimes.push(runtime);
+
+      await runtime.start();
+      await (runtime as any).startupChain;
+      vi.setSystemTime(T0 + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+      await runtime.triggerPoll();
+
+      expect((runtime as any).timer).toBeDefined();
+      expect(sentDeltas).toEqual([{ externalSessionId: 'ext-1', historyIndices: [0, 1] }]);
+      expect(readRecord(sessionIdFor('ext-1')!)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+    });
+
+    it('keeps polling past a run that never resolves, starts no second run, and stops without waiting for it', async () => {
+      const runs: number[] = [];
+      openDesktopChat('ext-1', 2, T0);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config, {
+        run: (now: number) => {
+          runs.push(now);
+          return new Promise<void>(() => {});
+        }
+      });
+
+      await runtime.triggerPoll();
+      appendMessages('ext-1', 1);
+      await pollTicks(runtime, 1);
+      vi.setSystemTime(Date.now() + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+      await runtime.triggerPoll();
+      await runtime.stop();
+
+      expect(runs).toEqual([T0]);
+      expect(sentDeltas).toEqual([
+        { externalSessionId: 'ext-1', historyIndices: [0, 1] },
+        { externalSessionId: 'ext-1', historyIndices: [2] }
+      ]);
+      expect(readRecord(sessionIdFor('ext-1')!)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+    });
+
+    it('warns once about a run still in flight 5 minutes after its start', async () => {
+      const warn = vi.spyOn(logger, 'warn');
+      const overdue = () => warn.mock.calls.filter(([message]) => String(message).includes('Cowork producer run still in flight'));
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config, { run: () => new Promise<void>(() => {}) });
+
+      await runtime.triggerPoll();
+      vi.setSystemTime(T0 + 5 * 60_000 - 1);
+      await runtime.triggerPoll();
+      const beforeFiveMinutes = overdue();
+      vi.setSystemTime(T0 + 5 * 60_000);
+      await runtime.triggerPoll();
+      await pollTicks(runtime, 2);
+      await runtime.stop();
+
+      expect(beforeFiveMinutes).toEqual([]);
+      expect(overdue()).toEqual([[
+        '[desktop-telemetry] Cowork producer run still in flight after 5 minutes; no new run starts until it ends',
+        { startedAt: '2026-09-29T10:00:00.000Z' },
+      ]]);
+    });
+  });
+
+  describe('a failure never stops the daemon', () => {
+    it('resolves start() and keeps polling when the first poll fails', async () => {
+      const adapter = createAdapter();
+      vi.mocked(adapter.discoverSessions).mockRejectedValueOnce(new Error('EACCES'));
+      const runtime = new DesktopTelemetryRuntime(adapter, { ...config, pollIntervalMs: 20 });
+      startedRuntimes.push(runtime);
+
+      await expect(runtime.start()).resolves.toBeUndefined();
+      // The timer is armed: the next ticks poll again (real 20 ms interval)
+      await waitFor(() => vi.mocked(adapter.discoverSessions).mock.calls.length >= 3);
+      await runtime.stop();
+    });
+
+    it('resolves start() when the session index fails, and builds the index at the first poll', async () => {
+      const mockIndexSessionsByExternalId = vi.spyOn(SessionStore.prototype, 'indexSessionsByExternalId')
+        .mockRejectedValueOnce(new Error('EIO'));
+      const restarted = writeRecord('ext-old', { ownerPid: DEAD_PID, ownerStartedAt: T0 - 2 * HOUR_MS });
+      openDesktopChat('ext-1', 1, T0);
+
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      startedRuntimes.push(runtime);
+      await expect(runtime.start()).resolves.toBeUndefined();
+      await (runtime as any).startupChain;
+
+      expect(readRecord(restarted)).toMatchObject({ status: 'completed', reason: 'desktop-daemon-restart' });
+      expect(mockIndexSessionsByExternalId).toHaveBeenCalledTimes(2);
+      await expect(mockIndexSessionsByExternalId.mock.results[1].value).resolves.toBeInstanceOf(Map);
+      expect(sessionIdFor('ext-1')).toBeDefined();
+      await runtime.stop();
+    });
+
+    it('builds the index at the first poll only after the start-up pass has resolved', async () => {
+      let passResolved = false;
+      let resolvePass: (() => void) | undefined;
+      vi.spyOn(DesktopSessionDelivery.prototype, 'reconcileRecords').mockImplementationOnce(() => new Promise<string[]>(resolve => {
+        resolvePass = () => {
+          passResolved = true;
+          resolve([]);
+        };
+      }));
+      const passResolvedAtIndex: boolean[] = [];
+      const indexSessionsByExternalId = SessionStore.prototype.indexSessionsByExternalId;
+      vi.spyOn(SessionStore.prototype, 'indexSessionsByExternalId')
+        .mockImplementationOnce(async () => {
+          passResolvedAtIndex.push(passResolved);
+          throw new Error('EIO');
+        })
+        .mockImplementation(function (this: SessionStore, ...args) {
+          passResolvedAtIndex.push(passResolved);
+          return indexSessionsByExternalId.apply(this, args);
+        });
+      openDesktopChat('ext-1', 1, T0);
+
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config);
+      startedRuntimes.push(runtime);
+      await runtime.start();
+      // The start-up index has failed and the pass is still pending: a poll asked for now waits for the pass
+      await waitFor(() => resolvePass !== undefined);
+      const polled = runtime.triggerPoll();
+      resolvePass!();
+      await polled;
+      await (runtime as any).startupChain;
+
+      expect(passResolvedAtIndex).toEqual([false, true]);
+      expect(sessionIdFor('ext-1')).toBeDefined();
+      await runtime.stop();
+    });
+
+    it('keeps one record for a conversation whose START metric failed', async () => {
+      const daemon = await startDaemon(createAdapter());
+      mockSendSessionStart.mockRejectedValueOnce(new Error('HTTP 503'));
+      vi.setSystemTime(Date.now() + 5_000);
+      openDesktopChat('ext-new', 1, Date.now());
+
+      await pollTicks(daemon, 1);
+      appendMessages('ext-new', 1);
+      await pollTicks(daemon, 2);
+
+      expect(persistedRecords()).toHaveLength(1);
+      expect(sessionIdFor('ext-new')).toBeDefined();
+      expect(mockSendSessionStart).toHaveBeenCalledOnce();
+    });
+
+    it('finalizes the other sessions on stop() when one finalization fails', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      openDesktopChat('ext-2', 1, T0);
+      const daemon = await startDaemon(createAdapter());
+      const [first, second] = [sessionIdFor('ext-1')!, sessionIdFor('ext-2')!];
+      // Another process holds the first record past the lock's wait budget
+      const held = (await acquirePidLock(reconcileLockPath(first), { mode: 'try' }))!;
+
+      const stopping = daemon.stop();
+      await new Promise(resolve => setTimeout(resolve, 50));
+      vi.setSystemTime(Date.now() + PID_LOCK_WAIT_BUDGET_MS + 1);
+      await stopping;
+      await held.release();
+
+      expect(readRecord(first)!.status).toBe('active');
+      expect(readRecord(second)).toMatchObject({ status: 'completed', reason: 'desktop-daemon-stop' });
+    });
+  });
+
+  describe('end at the last activity', () => {
+    it('ends an idle session at its last activity, not at the finalize moment', async () => {
+      const daemon = await startDaemon(createAdapter());
+      vi.setSystemTime(T0 + 20_000);
+      openDesktopChat('ext-1', 1, T0 + 20_000);
+      await pollTicks(daemon, 1);
+      const sessionId = sessionIdFor('ext-1')!;
+      // Desktop reports activity with no transcript write: newer in memory than on disk
+      vi.setSystemTime(T0 + 90_000);
+      touchDesktopChat('ext-1');
+      await pollTicks(daemon, 1);
+
+      await pollTicks(daemon, INACTIVITY_TIMEOUT_MS / POLL_INTERVAL_MS + 1);
+
+      const record = readRecord(sessionId)!;
+      expect(record.runtimeCheckpoint!.lastSeenActivityAt).toBe(T0 + 20_000);
+      expect(record).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout', endTime: T0 + 90_000 });
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      const [, , , durationMs, , , endTime] = mockSendSessionEnd.mock.calls[0];
+      expect(durationMs).toBe(T0 + 90_000 - record.startTime);
+      expect(endTime).toBe(T0 + 90_000);
+    });
+
+    it('ends a session at its in-memory activity on stop', async () => {
+      const daemon = await startDaemon(createAdapter());
+      vi.setSystemTime(T0 + 20_000);
+      openDesktopChat('ext-1', 1, T0 + 20_000);
+      await pollTicks(daemon, 1);
+      const sessionId = sessionIdFor('ext-1')!;
+      // Desktop reports activity with no transcript write: newer in memory than on disk
+      vi.setSystemTime(T0 + 90_000);
+      touchDesktopChat('ext-1');
+      await pollTicks(daemon, 1);
+
+      await daemon.stop();
+
+      const record = readRecord(sessionId)!;
+      expect(record.runtimeCheckpoint!.lastSeenActivityAt).toBe(T0 + 20_000);
+      expect(record).toMatchObject({ status: 'completed', reason: 'desktop-daemon-stop', endTime: T0 + 90_000 });
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      const [, , , durationMs, , , endTime] = mockSendSessionEnd.mock.calls[0];
+      expect(endTime).toBe(T0 + 90_000);
+      expect(durationMs).toBe(70_000);
+    });
+
+    it('reports a reopened stretch alone in its end metric, keeping the record\'s start', async () => {
+      openDesktopChat('ext-1', 2, T0);
+      const daemon = await startDaemon(createAdapter());
+      const sessionId = sessionIdFor('ext-1')!;
+      vi.setSystemTime(T0 + 20_000);
+      appendMessages('ext-1', 1);
+      await pollTicks(daemon, 1 + INACTIVITY_TIMEOUT_MS / POLL_INTERVAL_MS + 1);
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      const [firstSession, , , firstDurationMs] = mockSendSessionEnd.mock.calls[0];
+      expect(firstDurationMs).toBe(20_000);
+      expect(firstSession.startTime).toBe(T0);
+
+      vi.setSystemTime(T0 + 1_000_000);
+      appendMessages('ext-1', 1);
+      await pollTicks(daemon, 1);
+      vi.setSystemTime(T0 + 1_030_000);
+      appendMessages('ext-1', 1);
+      await pollTicks(daemon, 1 + INACTIVITY_TIMEOUT_MS / POLL_INTERVAL_MS + 1);
+
+      expect(mockSendSessionEnd).toHaveBeenCalledTimes(2);
+      const [secondSession, , , secondDurationMs, , , secondEndTime] = mockSendSessionEnd.mock.calls[1];
+      expect(secondEndTime).toBe(T0 + 1_030_000);
+      expect(secondDurationMs).toBe(30_000);
+      expect(secondSession.startTime).toBe(T0 + 1_000_000);
+      expect(readRecord(sessionId)).toMatchObject({ startTime: T0, stretchStartTime: T0 + 1_000_000 });
+    });
+
+    it('starts a new stretch when a completed record without an owner reopens', async () => {
+      openDesktopChat('ext-1', 2, T0 - HOUR_MS);
+      const sessionId = writeRecord('ext-1', {
+        status: 'completed',
+        reason: 'desktop-inactive-timeout',
+        endTime: T0 - 40 * 60_000
+      });
+      const daemon = await startDaemon(createAdapter());
+
+      vi.setSystemTime(T0 + 1_000_000);
+      appendMessages('ext-1', 1);
+      await pollTicks(daemon, 1);
+      expect(readRecord(sessionId)).toMatchObject({
+        status: 'active',
+        stretchStartTime: T0 + 1_000_000,
+        codemieUrl: 'https://api.example.com'
+      });
+      vi.setSystemTime(T0 + 1_030_000);
+      appendMessages('ext-1', 1);
+      await pollTicks(daemon, 1 + INACTIVITY_TIMEOUT_MS / POLL_INTERVAL_MS + 1);
+
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      const [session, , , durationMs, , , endTime] = mockSendSessionEnd.mock.calls[0];
+      expect(session.startTime).toBe(T0 + 1_000_000);
+      expect(durationMs).toBe(30_000);
+      expect(endTime).toBe(T0 + 1_030_000);
+    });
+
+    it('covers the earlier stretch in the next end metric when its own end metric never left', async () => {
+      openDesktopChat('ext-1', 2, T0);
+      const daemon = await startDaemon(createAdapter());
+      const sessionId = sessionIdFor('ext-1')!;
+      mockSendSessionEnd.mockRejectedValueOnce(new Error('ECONNRESET'));
+      vi.setSystemTime(T0 + 20_000);
+      appendMessages('ext-1', 1);
+      await pollTicks(daemon, 1 + INACTIVITY_TIMEOUT_MS / POLL_INTERVAL_MS + 1);
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      const closed = readRecord(sessionId)!;
+      expect(closed.status).toBe('completed');
+      expect(closed.endMetricSentAt).toBeUndefined();
+
+      vi.setSystemTime(T0 + 1_000_000);
+      appendMessages('ext-1', 1);
+      await pollTicks(daemon, 1);
+      vi.setSystemTime(T0 + 1_030_000);
+      appendMessages('ext-1', 1);
+      await pollTicks(daemon, 1 + INACTIVITY_TIMEOUT_MS / POLL_INTERVAL_MS + 1);
+
+      expect(mockSendSessionEnd).toHaveBeenCalledTimes(2);
+      const [secondSession, , , secondDurationMs, , , secondEndTime] = mockSendSessionEnd.mock.calls[1];
+      expect(secondEndTime).toBe(T0 + 1_030_000);
+      expect(secondSession.startTime).toBe(T0);
+      expect(secondDurationMs).toBe(1_030_000);
+      const saved = readRecord(sessionId)!;
+      expect(saved.stretchStartTime).toBeUndefined();
+      expect(saved.endMetricSentAt).toBeDefined();
+    });
+
+    it('ends a record without a saved activity at its last discovery, else at its start', async () => {
+      const discoveredOnly = writeRecord('ext-a', {
+        ownerPid: DEAD_PID,
+        runtimeCheckpoint: { externalSessionId: 'ext-a', transcriptPath: transcriptPathFor('ext-a'), lastDiscoveredAt: T0 - 50 * 60_000 }
+      });
+      const startOnly = writeRecord('ext-b', {
+        ownerPid: DEAD_PID,
+        runtimeCheckpoint: undefined
+      });
+
+      await startRuntime(createAdapter());
+
+      expect(readRecord(discoveredOnly)).toMatchObject({ endTime: T0 - 50 * 60_000 });
+      expect(readRecord(startOnly)).toMatchObject({ endTime: T0 - HOUR_MS });
+      const durations = mockSendSessionEnd.mock.calls.map(call => call[3]).sort((a, b) => a - b);
+      expect(durations).toEqual([0, 10 * 60_000]);
+    });
+  });
+
+  describe('records a previous daemon left', () => {
+    it('finalizes a gone daemon\'s active record at its last activity, delivers it once and renames it', async () => {
+      const sessionId = writeRecord('ext-1', { ownerPid: DEAD_PID, ownerStartedAt: T0 - 2 * HOUR_MS });
+
+      await startRuntime(createAdapter());
+
+      expect(readRecord(sessionId)).toMatchObject({
+        status: 'completed',
+        reason: 'desktop-daemon-restart',
+        endTime: T0 - 40 * 60_000
+      });
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      expect(mockSendSessionEnd.mock.calls[0][6]).toBe(T0 - 40 * 60_000);
+      expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+    });
+
+    it('leaves a live daemon\'s record and a young legacy record untouched', async () => {
+      const live = writeRecord('ext-1', { ownerPid: process.pid, ownerStartedAt: processStartedAt() });
+      const legacy = writeRecord('ext-2', {});
+
+      await startRuntime(createAdapter());
+
+      expect(readRecord(live)!.status).toBe('active');
+      expect(readRecord(legacy)!.status).toBe('active');
+      expect(mockSendSessionEnd).not.toHaveBeenCalled();
+      expect(recordFiles()).toEqual([`${live}.json`, `${legacy}.json`].sort());
+    });
+
+    it('reopens a completed_* set as one live set owned by this daemon, and ends the resumed stretch again', async () => {
+      openDesktopChat('ext-1', 2, T0);
+      const firstDaemon = await startDaemon(createAdapter());
+      appendMessages('ext-1', 1);
+      await pollTicks(firstDaemon, 1);
+      const sessionId = sessionIdFor('ext-1')!;
+      await pollTicks(firstDaemon, INACTIVITY_TIMEOUT_MS / POLL_INTERVAL_MS + 1);
+      expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+      const { startTime } = readRecord(sessionId)!;
+      // The CLI or an earlier attempt left counters; the resumed stretch starts clean
+      const completedPath = join(sessionsDir(), `completed_${sessionId}.json`);
+      writeFileSync(completedPath, JSON.stringify({ ...readRecord(sessionId), ownerPid: DEAD_PID, localFinalizeFailures: 2, droppedAt: T0, droppedReason: 'retry budget exhausted', deliveryFailingSince: T0 - HOUR_MS, deliveryRealAttempts: 2, deliveryAttemptedAt: T0 }));
+      writeFileSync(join(sessionsDir(), `completed_${sessionId}_metrics.jsonl`), '');
+
+      const daemon = await startDaemon(createAdapter());
+      appendMessages('ext-1', 1);
+      await pollTicks(daemon, 1);
+
+      expect(recordFiles()).toEqual([`${sessionId}.json`, `${sessionId}_metrics.jsonl`]);
+      const reopened = readRecord(sessionId)!;
+      expect(reopened).toMatchObject({ status: 'active', ownerPid: process.pid, ownerStartedAt: processStartedAt(), startTime });
+      for (const field of ['endMetricSentAt', 'endMetricSkipped', 'deliveryAttempts', 'localFinalizeFailures', 'droppedAt', 'droppedReason', 'deliveryFailingSince', 'deliveryRealAttempts', 'deliveryAttemptedAt', 'endTime', 'reason']) {
+        expect(reopened).not.toHaveProperty(field);
+      }
+
+      mockSendSessionEnd.mockClear();
+      await pollTicks(daemon, INACTIVITY_TIMEOUT_MS / POLL_INTERVAL_MS + 1);
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+    });
+
+    it.each(['rename', 'unlink'] as const)(
+      'restores each line of a completed_* set once when the %s after the merge fails and the reopen reruns',
+      async (failingStep) => {
+        const sessionId = writeRecord('ext-1', {
+          status: 'completed',
+          reason: 'desktop-inactive-timeout',
+          endTime: T0 - 40 * 60_000,
+          endMetricSentAt: T0 - 40 * 60_000,
+          ownerPid: DEAD_PID
+        });
+        const dir = sessionsDir();
+        renameSync(join(dir, `${sessionId}.json`), join(dir, `completed_${sessionId}.json`));
+        writeFileSync(join(dir, `completed_${sessionId}_metrics.jsonl`), '{"line":1}\n{"line":2}\n');
+        writeFileSync(join(dir, `${sessionId}_metrics.jsonl`), '{"line":3}\n');
+        openDesktopChat('ext-1', 2, T0);
+        const livePath = join(dir, `${sessionId}_metrics.jsonl`);
+        const completedPath = join(dir, `completed_${sessionId}_metrics.jsonl`);
+        const actualRename = vi.mocked(rename).getMockImplementation()!;
+        const actualUnlink = vi.mocked(unlink).getMockImplementation()!;
+        // The process dies at that step once: the next poll reruns the reopen
+        let crashed = false;
+        const crashOnce = (hit: boolean) => {
+          if (crashed || !hit) return false;
+          crashed = true;
+          return true;
+        };
+        const crash = () => Promise.reject(Object.assign(new Error('EIO: crash'), { code: 'EIO' }));
+        vi.mocked(rename).mockImplementation(async (from, to) => (
+          crashOnce(failingStep === 'rename' && String(to) === livePath) ? crash() : actualRename(from, to)
+        ));
+        vi.mocked(unlink).mockImplementation(async (path) => (
+          crashOnce(failingStep === 'unlink' && String(path) === completedPath) ? crash() : actualUnlink(path)
+        ));
+
+        try {
+          const daemon = await startDaemon(createAdapter());
+          expect(crashed).toBe(true);
+          appendMessages('ext-1', 1);
+          await pollTicks(daemon, 1);
+        } finally {
+          vi.mocked(rename).mockImplementation(actualRename);
+          vi.mocked(unlink).mockImplementation(actualUnlink);
+        }
+
+        expect(readFileSync(livePath, 'utf-8')).toBe('{"line":1}\n{"line":2}\n{"line":3}\n');
+        expect(existsSync(completedPath)).toBe(false);
+        expect(readRecord(sessionId)).toMatchObject({ status: 'active', ownerPid: process.pid });
+      }
+    );
+
+    it.each([
+      ['live sidecars with lines of their own', '{"metric":3}\n', '{"line":3}\n', false],
+      ['a completed_<id>.json beside the live one', '{"metric":3}\n', '{"line":3}\n', true]
+    ])('restores the completed_* sidecars of a reopened record whose .json stayed live (%s)', async (_case, liveMetrics, liveConversation, completedRecord) => {
+      const sessionId = writeRecord('ext-1', {
+        status: 'completed',
+        reason: 'desktop-inactive-timeout',
+        endTime: T0 - 40 * 60_000,
+        endMetricSentAt: T0 - 40 * 60_000,
+        ownerPid: DEAD_PID
+      });
+      const dir = sessionsDir();
+      writeFileSync(join(dir, `completed_${sessionId}_metrics.jsonl`), '{"metric":1}\n{"metric":2}\n');
+      writeFileSync(join(dir, `completed_${sessionId}_conversation.jsonl`), '{"line":1}\n{"line":2}\n');
+      if (liveMetrics) writeFileSync(join(dir, `${sessionId}_metrics.jsonl`), liveMetrics);
+      if (liveConversation) writeFileSync(join(dir, `${sessionId}_conversation.jsonl`), liveConversation);
+      // An earlier generation's record: a copy of the same generation would make the live save drop the live one
+      const completedRecordPath = join(dir, `completed_${sessionId}.json`);
+      const completedRecordText = JSON.stringify({ ...readRecord(sessionId), startTime: T0 - 2 * HOUR_MS });
+      if (completedRecord) writeFileSync(completedRecordPath, completedRecordText);
+      openDesktopChat('ext-1', 2, T0);
+
+      const daemon = await startDaemon(createAdapter());
+      appendMessages('ext-1', 1);
+      await pollTicks(daemon, 1);
+
+      expect(recordFiles()).toEqual([
+        `${sessionId}.json`,
+        `${sessionId}_conversation.jsonl`,
+        `${sessionId}_metrics.jsonl`,
+        ...(completedRecord ? [`completed_${sessionId}.json`] : [])
+      ]);
+      if (completedRecord) expect(readFileSync(completedRecordPath, 'utf-8')).toBe(completedRecordText);
+      expect(readFileSync(join(dir, `${sessionId}_metrics.jsonl`), 'utf-8')).toBe(`{"metric":1}\n{"metric":2}\n${liveMetrics}`);
+      expect(readFileSync(join(dir, `${sessionId}_conversation.jsonl`), 'utf-8')).toBe(`{"line":1}\n{"line":2}\n${liveConversation}`);
+      // One record, not two concatenated
+      expect(JSON.parse(readFileSync(join(dir, `${sessionId}.json`), 'utf-8'))).toMatchObject({ sessionId, status: 'active' });
+    });
+
+    it('leaves the CLI wrapper\'s records of another agent alone at start and in a re-delivery pass', async () => {
+      const desktop = writeRecord('ext-1', { ownerPid: DEAD_PID, ownerStartedAt: T0 - 2 * HOUR_MS });
+      const wrapperOwner = { agentName: 'claude', ownerPid: DEAD_PID, ownerStartedAt: T0 - 2 * HOUR_MS };
+      const wrapperActive = writeRecord('ext-c1', { ...wrapperOwner });
+      const wrapperCompleted = writeRecord('ext-c2', {
+        ...wrapperOwner,
+        status: 'completed',
+        reason: 'interrupted',
+        endTime: T0 - 40 * 60_000,
+        deliveryRealAttempts: 1
+      });
+      const wrapperFiles = [wrapperActive, wrapperCompleted].map(id => join(sessionsDir(), `${id}.json`));
+      const before = wrapperFiles.map(path => readFileSync(path, 'utf-8'));
+
+      const runtime = await startRuntime(createAdapter());
+      await pollTicks(runtime, DESKTOP_REDELIVERY_INTERVAL_MS / POLL_INTERVAL_MS);
+      await (runtime as any).redeliveryPass;
+      await runtime.stop();
+
+      // The Desktop record beside them was delivered: the passes ran
+      expect(readRecord(desktop)).toMatchObject({ status: 'completed', reason: 'desktop-daemon-restart' });
+      expect(mockSendSessionEnd.mock.calls.map(([session]) => session.sessionId)).toEqual(['agent-ext-1']);
+      expect(mockSync.mock.calls.map(([sessionId]) => sessionId)).not.toContain(wrapperActive);
+      expect(mockSync.mock.calls.map(([sessionId]) => sessionId)).not.toContain(wrapperCompleted);
+      expect(wrapperFiles.map(path => readFileSync(path, 'utf-8'))).toEqual(before);
+      expect(readRecord(wrapperActive)).toMatchObject({ status: 'active' });
+      expect(readRecord(wrapperCompleted)).toMatchObject({ status: 'completed', deliveryRealAttempts: 1 });
+    });
+
+    it('finalizes an ownerless record idle past 72 h locally, sending nothing; a 71 h one stays', async () => {
+      const old = writeRecord('ext-1', {
+        runtimeCheckpoint: { externalSessionId: 'ext-1', transcriptPath: transcriptPathFor('ext-1'), lastDiscoveredAt: T0 - 74 * HOUR_MS, lastSeenActivityAt: T0 - 73 * HOUR_MS }
+      });
+      const young = writeRecord('ext-2', {
+        runtimeCheckpoint: { externalSessionId: 'ext-2', transcriptPath: transcriptPathFor('ext-2'), lastDiscoveredAt: T0 - 72 * HOUR_MS, lastSeenActivityAt: T0 - 71 * HOUR_MS }
+      });
+
+      await startRuntime(createAdapter());
+
+      expect(readRecord(old)).toMatchObject({ status: 'completed', reason: 'interrupted', endTime: T0 - 73 * HOUR_MS });
+      expect(readRecord(young)!.status).toBe('active');
+      expect(mockSendSessionEnd).not.toHaveBeenCalled();
+      expect(mockSync).not.toHaveBeenCalled();
+      expect(recordFiles()).toEqual([`completed_${old}.json`, `${young}.json`].sort());
+    });
+
+    it('lets a daemon restarted with --force find nothing stranded after the old one stopped', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const oldDaemon = await startDaemon(createAdapter());
+      vi.setSystemTime(T0 + 30_000);
+      appendMessages('ext-1', 1);
+      await pollTicks(oldDaemon, 1);
+      const sessionId = sessionIdFor('ext-1')!;
+
+      vi.setSystemTime(T0 + 120_000);
+      await oldDaemon.stop();
+      await startRuntime(createAdapter());
+
+      expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-daemon-stop', endTime: T0 + 30_000 });
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+    });
+  });
+
+  describe('delivery after a failure', () => {
+    it('keeps an idle session whose END metric failed and delivers it within one re-delivery interval', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const daemon = await startDaemon(createAdapter());
+      appendMessages('ext-1', 1);
+      await pollTicks(daemon, 1);
+      const sessionId = sessionIdFor('ext-1')!;
+      mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+
+      await expect(pollTicks(daemon, INACTIVITY_TIMEOUT_MS / POLL_INTERVAL_MS + 1)).resolves.toBeUndefined();
+
+      expect(recordFiles()).toEqual([`${sessionId}.json`]);
+      // A failure no server verdict explains spends nothing
+      expect(readRecord(sessionId)).toMatchObject({ status: 'completed', deliveryRealAttempts: 0 });
+      expect(readRecord(sessionId)).not.toHaveProperty('endMetricSentAt');
+      const failedSends = mockSendSessionEnd.mock.calls.length;
+      await pollTicks(daemon, 2);
+      expect(mockSendSessionEnd).toHaveBeenCalledTimes(failedSends);
+
+      mockSendSessionEnd.mockResolvedValue(undefined);
+      await pollTicks(daemon, DESKTOP_REDELIVERY_INTERVAL_MS / POLL_INTERVAL_MS);
+      await (daemon as any).redeliveryPass;
+
+      expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+      const delivered = readRecord(sessionId)!;
+      expect(delivered.endMetricSentAt).toEqual(expect.any(Number));
+      expect(delivered.deliveryRealAttempts).toBe(0);
+    });
+
+    it('spends no real attempt per daemon start on a failure no server verdict explains, and never drops the record for it', async () => {
+      const sessionId = writeRecord('ext-1', {
+        status: 'completed',
+        reason: 'desktop-inactive-timeout',
+        endTime: T0 - 40 * 60_000,
+        ownerPid: DEAD_PID
+      });
+      mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+
+      for (let start = 1; start <= 4; start++) {
+        const runtime = await startRuntime(createAdapter());
+        await runtime.stop();
+        expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(0);
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+      }
+
+      vi.setSystemTime(T0 + 25 * HOUR_MS);
+      const runtime = await startRuntime(createAdapter());
+      await runtime.stop();
+
+      expect(recordFiles()).toEqual([`${sessionId}.json`]);
+      expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
+    });
+
+    it('an end metric the server refuses for good (a JSON 400) is terminal: skipped as rejected, stamped dropped, and the record leaves the queue', async () => {
+      const sessionId = writeRecord('ext-1', {
+        status: 'completed',
+        reason: 'desktop-inactive-timeout',
+        endTime: T0 - 40 * 60_000,
+        ownerPid: DEAD_PID
+      });
+      mockSendSessionEnd.mockRejectedValue(
+        new MetricsRetryExhaustedError(0, Object.assign(new Error('API returned 400: bad request'), { outcome: 'rejected' }))
+      );
+
+      const runtime = await startRuntime(createAdapter());
+      await runtime.stop();
+
+      expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+      expect(readRecord(sessionId)).toMatchObject({
+        endMetricSkipped: 'rejected',
+        droppedReason: 'rejected by the server',
+        droppedAt: expect.any(Number)
+      });
+      expect(readRecord(sessionId)).not.toHaveProperty('endMetricSentAt');
+      const refusals = mockSendSessionEnd.mock.calls.length;
+
+      // Never re-sent: a later start finds the record out of the queue
+      const next = await startRuntime(createAdapter());
+      await next.stop();
+      expect(mockSendSessionEnd).toHaveBeenCalledTimes(refusals);
+    });
+
+    it('never re-delivers a completed record without an owner', async () => {
+      const sessionId = writeRecord('ext-1', { status: 'completed', reason: 'desktop-daemon-stop', endTime: T0 - HOUR_MS });
+
+      const runtime = await startRuntime(createAdapter());
+      await pollTicks(runtime, DESKTOP_REDELIVERY_INTERVAL_MS / POLL_INTERVAL_MS);
+      await (runtime as any).redeliveryPass;
+
+      expect(mockSendSessionEnd).not.toHaveBeenCalled();
+      expect(readRecord(sessionId)).not.toHaveProperty('deliveryRealAttempts');
+      expect(recordFiles()).toEqual([`${sessionId}.json`]);
+    });
+
+    describe('a record of another CodeMie host', () => {
+      const DAEMON_URL = 'https://codemie.lab.epam.com';
+      const hostConfig: DesktopTelemetryRuntimeConfig = { ...config, syncCodeMieUrl: DAEMON_URL };
+
+      it('closes a gone daemon\'s active record locally, sending nothing and keeping its owner', async () => {
+        const sessionId = writeRecord('ext-1', {
+          ownerPid: DEAD_PID,
+          ownerStartedAt: T0 - 2 * HOUR_MS,
+          codemieUrl: 'https://other.example.com'
+        });
+
+        await startRuntime(createAdapter(), hostConfig);
+
+        expect(readRecord(sessionId)).toMatchObject({
+          status: 'completed',
+          reason: 'desktop-daemon-gone',
+          endTime: T0 - 40 * 60_000,
+          ownerPid: DEAD_PID
+        });
+        expect(readRecord(sessionId)).not.toHaveProperty('deliveryRealAttempts');
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+        expect(mockSync).not.toHaveBeenCalled();
+        expect(mockSendSessionEnd).not.toHaveBeenCalled();
+      });
+
+      it('leaves a completed record as it is at start and in a re-delivery pass, delivering one of this host', async () => {
+        const completed = { status: 'completed' as const, reason: 'desktop-inactive-timeout', endTime: T0 - 40 * 60_000, ownerPid: DEAD_PID };
+        const foreign = writeRecord('ext-1', { ...completed, codemieUrl: 'https://other.example.com', deliveryRealAttempts: 1 });
+        const own = writeRecord('ext-2', { ...completed, codemieUrl: `${DAEMON_URL}/` });
+        const foreignFile = join(sessionsDir(), `${foreign}.json`);
+        const before = readFileSync(foreignFile, 'utf-8');
+
+        const runtime = await startRuntime(createAdapter(), hostConfig);
+        await pollTicks(runtime, DESKTOP_REDELIVERY_INTERVAL_MS / POLL_INTERVAL_MS);
+        await (runtime as any).redeliveryPass;
+
+        expect(recordFiles()).toEqual([`${foreign}.json`, `completed_${own}.json`].sort());
+        expect(readFileSync(foreignFile, 'utf-8')).toBe(before);
+        expect(mockSync.mock.calls.map(([sessionId]) => sessionId)).not.toContain(foreign);
+        expect(mockSendSessionEnd.mock.calls.map(([session]) => session.sessionId)).toEqual(['agent-ext-2']);
+        await runtime.stop();
+      });
+
+      it.each([
+        ['its syncCodeMieUrl', { syncCodeMieUrl: DAEMON_URL }, DAEMON_URL],
+        ['its targetApiUrl when syncCodeMieUrl is unset', {}, config.targetApiUrl]
+      ])('stamps a new session with this daemon\'s CodeMie URL: %s', async (_, fields, expected) => {
+        openDesktopChat('ext-1', 1, T0);
+
+        await startDaemon(createAdapter(), { ...config, ...fields });
+
+        expect(readRecord(sessionIdFor('ext-1')!)!.codemieUrl).toBe(expected);
+      });
+
+      /** A delivered `completed_*` set of the chat `ext-1`, owned by a gone daemon of `codemieUrl`. */
+      function writeCompletedSet(codemieUrl: string): string {
+        const sessionId = writeRecord('ext-1', {
+          status: 'completed',
+          reason: 'desktop-inactive-timeout',
+          endTime: T0 - 40 * 60_000,
+          endMetricSentAt: T0 - 40 * 60_000,
+          ownerPid: DEAD_PID,
+          codemieUrl
+        });
+        renameSync(join(sessionsDir(), `${sessionId}.json`), join(sessionsDir(), `completed_${sessionId}.json`));
+        writeFileSync(join(sessionsDir(), `completed_${sessionId}_metrics.jsonl`), '{"line":1}\n');
+        return sessionId;
+      }
+
+      it('gives a resumed conversation a new record of this host, leaving the other host\'s completed set untouched', async () => {
+        const foreign = writeCompletedSet('https://other.example.com');
+        const foreignFiles = [`completed_${foreign}.json`, `completed_${foreign}_metrics.jsonl`];
+        const before = foreignFiles.map(name => readFileSync(join(sessionsDir(), name), 'utf-8'));
+        openDesktopChat('ext-1', 2, T0);
+
+        const runtime = await startRuntime(createAdapter(), hostConfig);
+        appendMessages('ext-1', 1);
+        await pollTicks(runtime, 1);
+
+        const created = persistedRecords().filter(record => record.sessionId !== foreign);
+        expect(created).toHaveLength(1);
+        expect(created[0]).toMatchObject({ status: 'active', codemieUrl: DAEMON_URL });
+        expect(mockSendSessionStart).toHaveBeenCalledOnce();
+        expect(recordFiles()).toEqual([...foreignFiles, `${created[0].sessionId}.json`].sort());
+        expect(foreignFiles.map(name => readFileSync(join(sessionsDir(), name), 'utf-8'))).toEqual(before);
+        await runtime.stop();
+      });
+
+      it('re-tracks this host\'s record after a restart beside the other host\'s record of the same chat', async () => {
+        const mockIndexSessionsByExternalId = vi.spyOn(SessionStore.prototype, 'indexSessionsByExternalId');
+        const foreign = writeCompletedSet('https://other.example.com');
+        const own = writeCompletedSet(`${DAEMON_URL}/`);
+        openDesktopChat('ext-1', 2, T0);
+
+        const runtime = await startRuntime(createAdapter(), hostConfig);
+        const keep = mockIndexSessionsByExternalId.mock.calls[0][1]!;
+        expect(keep(readRecord(foreign)!)).toBe(false);
+        expect(keep(readRecord(own)!)).toBe(true);
+        expect((await mockIndexSessionsByExternalId.mock.results[0].value).get('ext-1')).toBe(own);
+        appendMessages('ext-1', 1);
+        await pollTicks(runtime, 1);
+
+        expect(persistedRecords().map(record => record.sessionId).sort()).toEqual([foreign, own]);
+        expect(readRecord(own)).toMatchObject({ status: 'active', ownerPid: process.pid, codemieUrl: `${DAEMON_URL}/` });
+        expect(readRecord(foreign)).toMatchObject({ status: 'completed', ownerPid: DEAD_PID });
+        expect(mockSendSessionStart).not.toHaveBeenCalled();
+        await runtime.stop();
+      });
+
+      it('gives a chat a new record of this host when its known record turns out to be the other host\'s', async () => {
+        const foreign = writeCompletedSet('https://other.example.com');
+        const foreignFiles = [`completed_${foreign}.json`, `completed_${foreign}_metrics.jsonl`];
+        const before = foreignFiles.map(name => readFileSync(join(sessionsDir(), name), 'utf-8'));
+
+        const runtime = await startRuntime(createAdapter(), hostConfig);
+        (runtime as any).knownSessionIds.set('ext-1', foreign);
+        const info = vi.spyOn(logger, 'info');
+        const foreignHostLines = () =>
+          info.mock.calls.filter(([message]) => String(message).includes('Record of another CodeMie host'));
+        openDesktopChat('ext-1', 2, T0);
+        appendMessages('ext-1', 1);
+        await pollTicks(runtime, 1);
+
+        const created = persistedRecords().filter(record => record.sessionId !== foreign);
+        expect(created).toHaveLength(1);
+        expect((runtime as any).knownSessionIds.get('ext-1')).toBe(created[0].sessionId);
+        expect(foreignHostLines()).toHaveLength(1);
+        (runtime as any).trackedSessions.clear();
+        appendMessages('ext-1', 1);
+        await pollTicks(runtime, 1);
+        expect(foreignHostLines()).toHaveLength(1);
+        expect(persistedRecords().filter(record => record.sessionId !== foreign)).toHaveLength(1);
+        expect(created[0]).toMatchObject({ status: 'active', codemieUrl: DAEMON_URL });
+        expect(foreignFiles.map(name => readFileSync(join(sessionsDir(), name), 'utf-8'))).toEqual(before);
+        expect(mockSendSessionStart).toHaveBeenCalledOnce();
+        await runtime.stop();
+      });
+    });
+
+    it('skips a record another process holds during the start-up pass', async () => {
+      const sessionId = writeRecord('ext-1', {
+        status: 'completed',
+        reason: 'desktop-inactive-timeout',
+        endTime: T0 - 40 * 60_000,
+        ownerPid: DEAD_PID,
+        deliveryRealAttempts: 1
+      });
+      const held = (await acquirePidLock(reconcileLockPath(sessionId), { mode: 'try' }))!;
+      const debug = vi.spyOn(logger, 'debug');
+
+      await startRuntime(createAdapter());
+      await held.release();
+
+      expect(mockSync).not.toHaveBeenCalled();
+      expect(mockSendSessionEnd).not.toHaveBeenCalled();
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(1);
+      expect(recordFiles()).toEqual([`${sessionId}.json`]);
+      expect(debug).toHaveBeenCalledWith('[desktop-telemetry] Record held by another process; skipped', { sessionId });
+    });
+
+    it('re-checks a listed record under its lock: one reopened meanwhile is not delivered', async () => {
+      const sessionId = writeRecord('ext-1', {
+        status: 'completed',
+        reason: 'desktop-inactive-timeout',
+        endTime: T0 - 40 * 60_000,
+        ownerPid: DEAD_PID
+      });
+      const prototype = DesktopSessionDelivery.prototype as unknown as {
+        classifyRecord(record: Session, atStart: boolean): Promise<unknown>;
+      };
+      const classifyRecord = prototype.classifyRecord;
+      // This daemon reopens the record between the pass's listing and its lock
+      vi.spyOn(prototype, 'classifyRecord').mockImplementationOnce(async function (this: unknown, record, atStart) {
+        const kind = await classifyRecord.call(this, record, atStart);
+        const { endTime: _endTime, reason: _reason, ...live } = record;
+        writeFileSync(join(sessionsDir(), `${sessionId}.json`), JSON.stringify({
+          ...live,
+          status: 'active',
+          ownerPid: process.pid,
+          ownerStartedAt: processStartedAt()
+        }));
+        return kind;
+      });
+
+      await startRuntime(createAdapter());
+
+      expect(mockSendSessionEnd).not.toHaveBeenCalled();
+      expect(readRecord(sessionId)!.status).toBe('active');
+      expect(recordFiles()).toEqual([`${sessionId}.json`]);
+    });
+
+    it('flushes a record the CLI closed locally once, then delivers it', async () => {
+      openDesktopChat('ext-1', 3, T0 - HOUR_MS);
+      const sessionId = writeRecord('ext-1', {
+        status: 'completed',
+        reason: 'desktop-daemon-gone',
+        endTime: T0 - 40 * 60_000,
+        ownerPid: DEAD_PID
+      });
+      const adapter = createAdapter();
+      vi.mocked(adapter.discoverSessions).mockImplementation(async () => [{ ...desktopSessions.get('ext-1')! }]);
+
+      await startRuntime(adapter);
+
+      expect(adapter.processParsedSession).toHaveBeenCalledOnce();
+      expect(sentDeltas).toEqual([{ externalSessionId: 'ext-1', historyIndices: [0, 1, 2] }]);
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+    });
+
+    it('counts a matched record with an unsent conversation as delivered when sync is off', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const daemon = new DesktopTelemetryRuntime(createAdapter(), { ...config, provider: 'litellm' });
+      await daemon.triggerPoll();
+      const sessionId = sessionIdFor('ext-1')!;
+      writeFileSync(join(sessionsDir(), `${sessionId}_conversation.jsonl`), '{"status":"pending"}\n');
+
+      await pollTicks(daemon, INACTIVITY_TIMEOUT_MS / POLL_INTERVAL_MS + 1);
+      await pollTicks(daemon, DESKTOP_REDELIVERY_INTERVAL_MS / POLL_INTERVAL_MS);
+      await (daemon as any).redeliveryPass;
+
+      expect(recordFiles()).toEqual([`completed_${sessionId}.json`, `completed_${sessionId}_conversation.jsonl`]);
+      const record = readRecord(sessionId)!;
+      expect(record).toMatchObject({ status: 'completed' });
+      expect(record).not.toHaveProperty('droppedAt');
+    });
+
+    it('keeps polling while a re-delivery pass hangs, and starts no second pass meanwhile', async () => {
+      for (const externalSessionId of ['ext-1', 'ext-2']) {
+        writeRecord(externalSessionId, {
+          status: 'completed',
+          reason: 'desktop-inactive-timeout',
+          endTime: T0 - 40 * 60_000,
+          ownerPid: DEAD_PID
+        });
+      }
+      let releaseSends!: () => void;
+      const sendsHang = new Promise<void>(resolve => { releaseSends = resolve; });
+      mockSendSessionEnd.mockImplementation(() => sendsHang);
+      const daemon = await startDaemon(createAdapter());
+
+      vi.setSystemTime(Date.now() + DESKTOP_REDELIVERY_INTERVAL_MS);
+      // Not awaited: on a poll that awaits the pass, this tick never ends
+      const passTick = daemon.triggerPoll();
+      await waitFor(() => mockSendSessionEnd.mock.calls.length > 0);
+      openDesktopChat('ext-3', 1, Date.now());
+      await pollTicks(daemon, 1);
+
+      expect(mockSendSessionStart.mock.calls.map(([session]) => session.sessionId)).toContain('agent-ext-3');
+
+      vi.setSystemTime(Date.now() + DESKTOP_REDELIVERY_INTERVAL_MS);
+      touchDesktopChat('ext-3');
+      await daemon.triggerPoll();
+      // The hung pass holds the first record's lock; a second pass would go on to the other record
+      expect(new Set(mockSendSessionEnd.mock.calls.map(([session]) => session.sessionId)).size).toBe(1);
+
+      releaseSends();
+      await passTick;
+      await (daemon as any).redeliveryPass;
+    });
+  });
+
+  describe('delivery credentials', () => {
+    const API_URL = config.targetApiUrl;
+    const unauthorized = () => new Response(JSON.stringify({ message: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' }
+    });
+    const loginPage = () => new Response('<html><body>Sign in</body></html>', {
+      status: 200,
+      headers: { 'content-type': 'text/html' }
+    });
+
+    function undeliveredRecord(fields: Partial<Session> = {}): string {
+      return writeRecord('ext-1', {
+        status: 'completed',
+        reason: 'desktop-inactive-timeout',
+        endTime: T0 - 40 * 60_000,
+        ownerPid: DEAD_PID,
+        ...fields
+      });
+    }
+
+    /** The end metric goes through the real MetricsSender, its `fetch` answered with `response`. */
+    function answerEndMetricWith(response: () => Response) {
+      realMetricsSender = true;
+      const fetchMock = vi.fn(async () => response());
+      vi.stubGlobal('fetch', fetchMock);
+      return fetchMock;
+    }
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('makes no request and spends no attempt at start while the analytics auth is marked invalid', async () => {
+      await markAnalyticsAuthInvalid('HTTP 401: Unauthorized', API_URL);
+      const undelivered = undeliveredRecord({ deliveryRealAttempts: 1 });
+      const gone = writeRecord('ext-2', { ownerPid: DEAD_PID, ownerStartedAt: T0 - 2 * HOUR_MS });
+
+      await startRuntime(createAdapter());
+
+      expect(mockSync).not.toHaveBeenCalled();
+      expect(mockSendSessionEnd).not.toHaveBeenCalled();
+      expect(readRecord(undelivered)).toMatchObject({ status: 'completed', deliveryRealAttempts: 1 });
+      expect(readRecord(gone)).toMatchObject({
+        status: 'completed',
+        reason: 'desktop-daemon-restart',
+        endTime: T0 - 40 * 60_000
+      });
+      expect(readRecord(gone)).not.toHaveProperty('deliveryRealAttempts');
+      expect(recordFiles()).toEqual([`${undelivered}.json`, `${gone}.json`].sort());
+    });
+
+    it('closes an inactive session without a request or an attempt while the analytics auth is marked invalid', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const daemon = await startDaemon(createAdapter());
+      const sessionId = sessionIdFor('ext-1')!;
+      await markAnalyticsAuthInvalid('HTTP 401: Unauthorized', API_URL);
+      mockSync.mockClear();
+
+      await pollTicks(daemon, INACTIVITY_TIMEOUT_MS / POLL_INTERVAL_MS + 1);
+
+      expect(mockSync).not.toHaveBeenCalled();
+      expect(mockSendSessionEnd).not.toHaveBeenCalled();
+      expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+      expect(readRecord(sessionId)).not.toHaveProperty('deliveryRealAttempts');
+      expect(recordFiles()).toEqual([`${sessionId}.json`]);
+    });
+
+    it.each([
+      ['401', unauthorized],
+      ['an SSO login page on 200', loginPage]
+    ])('gives back the attempt whose end metric was answered with %s and marks the auth invalid', async (_, response) => {
+      const fetchMock = answerEndMetricWith(response);
+      const sessionId = undeliveredRecord({ deliveryRealAttempts: 1 });
+
+      await startRuntime(createAdapter());
+
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(1);
+      expect(await getAnalyticsAuthStatus()).toMatchObject({ status: 'invalid', baseUrl: API_URL });
+      expect(recordFiles()).toEqual([`${sessionId}.json`]);
+    });
+
+    it('never renames a record whose attempt at the cap meets rejected credentials', async () => {
+      const fetchMock = answerEndMetricWith(unauthorized);
+      const sessionId = undeliveredRecord({ deliveryRealAttempts: 2 });
+
+      for (let start = 1; start <= 3; start++) {
+        // A re-login the server rejects again
+        await clearAnalyticsAuthStatus();
+        const runtime = await startRuntime(createAdapter());
+        await runtime.stop();
+      }
+
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(2);
+      expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
+      expect(recordFiles()).toEqual([`${sessionId}.json`]);
+    });
+
+    it('sends nothing in a re-delivery pass while the mark is set, and delivers uncounted once it is cleared', async () => {
+      const sessionId = undeliveredRecord({ deliveryRealAttempts: 1 });
+      await markAnalyticsAuthInvalid('HTTP 401: Unauthorized', API_URL);
+      const daemon = await startDaemon(createAdapter());
+
+      await pollTicks(daemon, DESKTOP_REDELIVERY_INTERVAL_MS / POLL_INTERVAL_MS);
+      await (daemon as any).redeliveryPass;
+
+      expect(mockSync).not.toHaveBeenCalled();
+      expect(mockSendSessionEnd).not.toHaveBeenCalled();
+      expect(recordFiles()).toEqual([`${sessionId}.json`]);
+
+      await clearAnalyticsAuthStatus();
+      await pollTicks(daemon, DESKTOP_REDELIVERY_INTERVAL_MS / POLL_INTERVAL_MS);
+      await (daemon as any).redeliveryPass;
+
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(1);
+      expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+    });
+
+    describe('the delivery budget on a live re-delivery pass (EPMCDME-17068)', () => {
+      const FAILING_SINCE = T0 - 25 * HOUR_MS;
+
+      it('drops a record after a counted failure at 25 h with 3 real attempts, marked retry budget exhausted', async () => {
+        // A JSON 404: the application's own verdict, a counted failure
+        const fetchMock = answerEndMetricWith(() => new Response(JSON.stringify({ message: 'not found' }), { status: 404, headers: { 'content-type': 'application/json' } }));
+        const daemon = await startDaemon(createAdapter());
+        const sessionId = undeliveredRecord({ deliveryRealAttempts: 2, deliveryFailingSince: FAILING_SINCE });
+
+        await pollTicks(daemon, DESKTOP_REDELIVERY_INTERVAL_MS / POLL_INTERVAL_MS);
+        await (daemon as any).redeliveryPass;
+
+        expect(fetchMock).toHaveBeenCalled();
+        expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+        expect(readRecord(sessionId)).toMatchObject({ droppedReason: 'retry budget exhausted', deliveryRealAttempts: 3 });
+        expect(readRecord(sessionId)!.droppedAt).toEqual(expect.any(Number));
+      });
+
+      it('keeps a record under 3 real attempts after a counted failure at 25 h, counting the pass', async () => {
+        answerEndMetricWith(() => new Response(JSON.stringify({ message: 'not found' }), { status: 404, headers: { 'content-type': 'application/json' } }));
+        const daemon = await startDaemon(createAdapter());
+        const sessionId = undeliveredRecord({ deliveryRealAttempts: 1, deliveryFailingSince: FAILING_SINCE });
+
+        await pollTicks(daemon, DESKTOP_REDELIVERY_INTERVAL_MS / POLL_INTERVAL_MS);
+        await (daemon as any).redeliveryPass;
+
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+        expect(readRecord(sessionId)).toMatchObject({ deliveryRealAttempts: 2 });
+        expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
+      });
+
+      it('never drops a record whose end metric is answered 503, however old its failing clock', async () => {
+        const fetchMock = answerEndMetricWith(() => new Response(JSON.stringify({ message: 'unavailable' }), {
+          status: 503,
+          headers: { 'content-type': 'application/json' }
+        }));
+        const daemon = await startDaemon(createAdapter());
+        const sessionId = undeliveredRecord({ deliveryRealAttempts: 2, deliveryFailingSince: FAILING_SINCE });
+
+        await pollTicks(daemon, DESKTOP_REDELIVERY_INTERVAL_MS / POLL_INTERVAL_MS);
+        await (daemon as any).redeliveryPass;
+
+        expect(fetchMock).toHaveBeenCalled();
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+        expect(readRecord(sessionId)).toMatchObject({ deliveryRealAttempts: 2 });
+        expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
+        expect(readRecord(sessionId)).not.toHaveProperty('droppedReason');
+      }, 60_000);
+    });
+
+    describe('a separate sync path', () => {
+      const SYNC_API_URL = 'https://sync-api.example.com';
+      const SYNC_CODEMIE_URL = 'https://codemie.example.com';
+      const syncConfig: DesktopTelemetryRuntimeConfig = { ...config, syncApiUrl: SYNC_API_URL, syncCodeMieUrl: SYNC_CODEMIE_URL };
+
+      it.each([
+        ['syncApiUrl', SYNC_API_URL],
+        ['syncCodeMieUrl', SYNC_CODEMIE_URL]
+      ])('sends nothing and spends no attempt while the analytics auth of its %s is marked invalid', async (_, baseUrl) => {
+        await markAnalyticsAuthInvalid('HTTP 401: Unauthorized', baseUrl);
+        const sessionId = undeliveredRecord({ deliveryRealAttempts: 1 });
+
+        const runtime = await startRuntime(createAdapter(), syncConfig);
+        await pollTicks(runtime, DESKTOP_REDELIVERY_INTERVAL_MS / POLL_INTERVAL_MS);
+        await (runtime as any).redeliveryPass;
+
+        expect(mockSync).not.toHaveBeenCalled();
+        expect(mockSendSessionEnd).not.toHaveBeenCalled();
+        expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(1);
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+        await runtime.stop();
+      });
+
+      it('looks up the cookies by the sync CodeMie URL, not the target API', async () => {
+        const sessionId = undeliveredRecord();
+
+        await startRuntime(createAdapter(), syncConfig);
+
+        expect(mockGetStoredCredentials).toHaveBeenCalledWith(SYNC_CODEMIE_URL);
+        expect(mockGetStoredCredentials).not.toHaveBeenCalledWith(config.targetApiUrl);
+        expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+      });
+    });
+
+    it('makes no request and spends no attempt without stored cookies', async () => {
+      mockGetStoredCredentials.mockResolvedValue(null);
+      const sessionId = undeliveredRecord({ deliveryRealAttempts: 1 });
+
+      await startRuntime(createAdapter());
+
+      expect(mockSync).not.toHaveBeenCalled();
+      expect(mockSendSessionEnd).not.toHaveBeenCalled();
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(1);
+      expect(recordFiles()).toEqual([`${sessionId}.json`]);
+    });
+
+    it('gives back the attempt whose sync of pending data was answered with 401 and marks the auth invalid', async () => {
+      realSessionSyncer = true;
+      const fetchMock = vi.fn(async () => unauthorized());
+      vi.stubGlobal('fetch', fetchMock);
+      const sessionId = undeliveredRecord({ deliveryRealAttempts: 1, endMetricSentAt: T0 - 30 * 60_000 });
+      writeFileSync(join(sessionsDir(), `${sessionId}_metrics.jsonl`), JSON.stringify({
+        recordId: 'record-1',
+        sessionId,
+        agentSessionId: 'agent-ext-1',
+        timestamp: T0 - 45 * 60_000,
+        gitBranch: 'main',
+        syncStatus: 'pending',
+        syncAttempts: 0
+      }) + '\n');
+
+      await startRuntime(createAdapter());
+
+      expect(fetchMock).toHaveBeenCalled();
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(1);
+      expect(await getAnalyticsAuthStatus()).toMatchObject({ status: 'invalid', baseUrl: API_URL });
+      expect(recordFiles()).toEqual([`${sessionId}.json`, `${sessionId}_metrics.jsonl`]);
+    });
+
+    it('keeps a record that spent its attempts while there are no stored cookies, and delivers it once they are back', async () => {
+      mockGetStoredCredentials.mockResolvedValue(null);
+      const sessionId = undeliveredRecord({ deliveryRealAttempts: 3, deliveryFailingSince: T0 - 25 * HOUR_MS });
+
+      const gated = await startRuntime(createAdapter());
+      await gated.stop();
+
+      expect(mockSync).not.toHaveBeenCalled();
+      expect(mockSendSessionEnd).not.toHaveBeenCalled();
+      expect(recordFiles()).toEqual([`${sessionId}.json`]);
+      expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
+      expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(3);
+
+      mockGetStoredCredentials.mockResolvedValue({ cookies: { session: 'abc123' } });
+      await clearAnalyticsAuthStatus();
+      const runtime = await startRuntime(createAdapter());
+      await runtime.stop();
+
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+      expect(readRecord(sessionId)).not.toHaveProperty('droppedAt');
+    });
+
+    it('flushes a gone daemon\'s record locally while the analytics auth is marked invalid, and sends it once cleared', async () => {
+      const fetchMock = vi.fn(async () => unauthorized());
+      vi.stubGlobal('fetch', fetchMock);
+      await markAnalyticsAuthInvalid('HTTP 401: Unauthorized', API_URL);
+      openDesktopChat('ext-1', 3, T0 - HOUR_MS);
+      const sessionId = writeRecord('ext-1', { ownerPid: DEAD_PID, ownerStartedAt: T0 - 2 * HOUR_MS });
+      const adapter = createAdapter();
+      vi.mocked(adapter.discoverSessions).mockImplementation(async () => [{ ...desktopSessions.get('ext-1')! }]);
+
+      const runtime = await startRuntime(adapter);
+
+      expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-daemon-restart' });
+      expect(readRecord(sessionId)).not.toHaveProperty('deliveryRealAttempts');
+      expect(mockSync).not.toHaveBeenCalled();
+      expect(mockSendSessionEnd).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(adapter.processParsedSession).toHaveBeenCalledOnce();
+      expect(sentDeltas).toEqual([{ externalSessionId: 'ext-1', historyIndices: [0, 1, 2] }]);
+
+      await clearAnalyticsAuthStatus();
+      await pollTicks(runtime, DESKTOP_REDELIVERY_INTERVAL_MS / POLL_INTERVAL_MS);
+      await (runtime as any).redeliveryPass;
+
+      expect(mockSync).toHaveBeenCalledWith(sessionId, expect.objectContaining({ sessionId }));
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+    });
+  });
+
+  describe('a reopen and a delivery never interleave', () => {
+    /** The next poll reaches the record only once a start-up or re-delivery pass holds its lock. */
+    function adapterAfterLock(sessionId: string): LocalTelemetryAdapter {
+      const adapter = createAdapter();
+      const discover = vi.mocked(adapter.discoverSessions).getMockImplementation()!;
+      vi.mocked(adapter.discoverSessions).mockImplementationOnce(async (sinceMs: number) => {
+        await waitFor(() => existsSync(reconcileLockPath(sessionId)));
+        return discover(sinceMs);
+      });
+      return adapter;
+    }
+
+    /** The END metric takes 300 ms, so the lock stays held across the poll's reopen. */
+    function slowEndMetric(): void {
+      mockSendSessionEnd.mockImplementation(() => new Promise(resolve => setTimeout(resolve, 300)));
+    }
+
+    it('reopens an undelivered record after the re-delivery pass that holds it, 5 runs of 5', async () => {
+      for (let run = 0; run < 5; run++) {
+        await resetCodemieHome();
+        transcripts.clear();
+        desktopSessions = new Map();
+        mockSendSessionEnd.mockClear();
+        openDesktopChat('ext-1', 2, T0 - HOUR_MS);
+        const sessionId = writeRecord('ext-1', {
+          status: 'completed',
+          reason: 'desktop-inactive-timeout',
+          endTime: T0 - 40 * 60_000,
+          ownerPid: DEAD_PID
+        });
+        slowEndMetric();
+        const runtime = new DesktopTelemetryRuntime(adapterAfterLock(sessionId), config);
+        startedRuntimes.push(runtime);
+        // A new line in the conversation once the re-delivery is due
+        vi.setSystemTime(Date.now() + DESKTOP_REDELIVERY_INTERVAL_MS);
+        appendMessages('ext-1', 1);
+
+        (runtime as any).startRedeliveryIfDue(Date.now());
+        await runtime.triggerPoll();
+        await (runtime as any).redeliveryPass;
+
+        expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+        expect(readRecord(sessionId)).toMatchObject({ status: 'active', ownerPid: process.pid });
+        // The reopened stretch is not marked sent by the delivery of the one before it
+        expect(readRecord(sessionId)).not.toHaveProperty('endMetricSentAt');
+        await runtime.stop();
+        vi.setSystemTime(T0);
+      }
+    });
+
+    it('reopens a record after the start-up finalization that holds it', async () => {
+      openDesktopChat('ext-1', 2, T0 - HOUR_MS);
+      const sessionId = writeRecord('ext-1', { ownerPid: DEAD_PID });
+      slowEndMetric();
+      const runtime = new DesktopTelemetryRuntime(adapterAfterLock(sessionId), config);
+      startedRuntimes.push(runtime);
+      const T1 = T0 + 1_000;
+      vi.setSystemTime(T1);
+      appendMessages('ext-1', 1);
+
+      // The first poll finalizes the record in its start-up pass, then reopens it once the pass released its lock
+      await runtime.start();
+      await (runtime as any).startupChain;
+
+      expect(readRecord(sessionId)!.stretchStartTime).toBe(T1);
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      expect(mockSendSessionEnd.mock.calls[0][2]).toMatchObject({ reason: 'desktop-daemon-restart' });
+      expect(recordFiles()).toEqual([`${sessionId}.json`]);
+      expect(readRecord(sessionId)).toMatchObject({ status: 'active', ownerPid: process.pid });
+      // The reopened stretch is not marked sent by the finalization of the one before it
+      expect(readRecord(sessionId)).not.toHaveProperty('endMetricSentAt');
+      await runtime.stop();
+    });
+
+    it('leaves a record whose lock stays held past the reopen budget to the next poll, creating no second record', async () => {
+      const sessionId = writeRecord('ext-1', {
+        status: 'completed',
+        reason: 'desktop-inactive-timeout',
+        endTime: T0 - 40 * 60_000,
+        endMetricSentAt: T0 - 40 * 60_000,
+        ownerPid: DEAD_PID
+      });
+      const dir = sessionsDir();
+      renameSync(join(dir, `${sessionId}.json`), join(dir, `completed_${sessionId}.json`));
+      openDesktopChat('ext-1', 2, T0);
+      const daemon = new DesktopTelemetryRuntime(createAdapter(), config);
+      const held = (await acquirePidLock(reconcileLockPath(sessionId), { mode: 'try' }))!;
+
+      const pollStart = Date.now();
+      let settledAt: number | undefined;
+      const polling = daemon.triggerPoll().finally(() => { settledAt = Date.now(); });
+      // The lock budget runs on the faked clock: step it until the poll gives up
+      await waitFor(() => {
+        if (settledAt === undefined) vi.setSystemTime(Date.now() + 1_000);
+        return settledAt !== undefined;
+      });
+      await polling;
+
+      expect(settledAt! - pollStart).toBeGreaterThanOrEqual(DESKTOP_REOPEN_LOCK_BUDGET_MS);
+      expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+      expect(mockSendSessionStart).not.toHaveBeenCalled();
+
+      await held.release();
+      appendMessages('ext-1', 1);
+      await pollTicks(daemon, 1);
+
+      expect(recordFiles()).toEqual([`${sessionId}.json`]);
+      expect(readRecord(sessionId)).toMatchObject({ status: 'active', ownerPid: process.pid });
+      expect(mockSendSessionStart).not.toHaveBeenCalled();
+    });
+
+    it('re-reads the window of a poll whose reopen lock wait failed, with no new write', async () => {
+      const sessionId = writeRecord('ext-1', {
+        status: 'completed',
+        reason: 'desktop-inactive-timeout',
+        endTime: T0 - 40 * 60_000,
+        endMetricSentAt: T0 - 40 * 60_000,
+        ownerPid: DEAD_PID
+      });
+      openDesktopChat('ext-1', 2, T0 - HOUR_MS);
+      const daemon = new DesktopTelemetryRuntime(createAdapter(), config);
+      vi.setSystemTime(T0 + 5_000);
+      appendMessages('ext-1', 1);
+      const held = (await acquirePidLock(reconcileLockPath(sessionId), { mode: 'try' }))!;
+
+      // The activity is older than this poll's start minus the poll interval
+      vi.setSystemTime(T0 + 60_000);
+      let settled = false;
+      const polling = daemon.triggerPoll().finally(() => { settled = true; });
+      await waitFor(() => {
+        if (!settled) vi.setSystemTime(Date.now() + 1_000);
+        return settled;
+      });
+      await polling;
+      expect(readRecord(sessionId)!.status).toBe('completed');
+
+      await held.release();
+      await pollTicks(daemon, 1);
+
+      expect(readRecord(sessionId)).toMatchObject({ status: 'active', ownerPid: process.pid });
+    });
+
+    it.each([
+      { lastActivity: 'a transcript write', touchAt: undefined },
+      { lastActivity: 'a touch only', touchAt: T0 + 10_000 }
+    ])('does not reopen a record finalized idle while the discovery window is held back, last activity $lastActivity', async ({ touchAt }) => {
+      const lockedId = writeRecord('ext-1', {
+        status: 'completed',
+        reason: 'desktop-inactive-timeout',
+        endTime: T0 - 40 * 60_000,
+        endMetricSentAt: T0 - 40 * 60_000,
+        ownerPid: DEAD_PID
+      });
+      openDesktopChat('ext-1', 2, T0 - HOUR_MS);
+      const daemon = new DesktopTelemetryRuntime(createAdapter(), config);
+      vi.setSystemTime(T0 + 5_000);
+      openDesktopChat('ext-x', 1, T0 + 5_000);
+      await daemon.triggerPoll();
+      const sessionId = sessionIdFor('ext-x')!;
+      if (touchAt !== undefined) {
+        // Desktop reports the chat active with no transcript write: the activity lives only in memory
+        vi.setSystemTime(touchAt);
+        touchDesktopChat('ext-x');
+        await daemon.triggerPoll();
+      }
+      const lastActivityAt = touchAt ?? T0 + 5_000;
+      appendMessages('ext-1', 1);
+      const held = (await acquirePidLock(reconcileLockPath(lockedId), { mode: 'try' }))!;
+      /** A poll whose reopen lock wait for ext-1 fails: the lock budget runs on the faked clock. */
+      const pollHeldBack = async () => {
+        let settled = false;
+        const polling = daemon.triggerPoll().finally(() => { settled = true; });
+        await waitFor(() => {
+          if (!settled) vi.setSystemTime(Date.now() + 1_000);
+          return settled;
+        });
+        await polling;
+      };
+
+      vi.setSystemTime(lastActivityAt + INACTIVITY_TIMEOUT_MS);
+      await pollHeldBack();
+      const finalized = readRecord(sessionId)!;
+      expect(finalized).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout', endTime: lastActivityAt });
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      const recordFile = join(sessionsDir(), `completed_${sessionId}.json`);
+      const finalizedBytes = readFileSync(recordFile);
+
+      await pollHeldBack();
+
+      expect(readRecord(lockedId)!.status).toBe('completed');
+      expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout', endTime: lastActivityAt });
+      expect((daemon as any).trackedSessions.has('ext-x')).toBe(false);
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      expect(readFileSync(recordFile).equals(finalizedBytes)).toBe(true);
+      await held.release();
+    });
+  });
+
+  describe('daemon profile project (EPMCDME-15411, AC12)', () => {
+    it('resolves the project of the daemon\'s own profile by name, not the active profile', async () => {
+      const { ConfigLoader } = await import('@/utils/config.js');
+      vi.mocked(ConfigLoader.load).mockClear();
+      openDesktopChat('ext-1', 2, T0);
+      await startDaemon(createAdapter(), { ...config, profile: 'daemon-profile' });
+      expect(vi.mocked(ConfigLoader.load)).toHaveBeenCalledWith(expect.any(String), { name: 'daemon-profile' });
+    });
+  });
+
+  describe('folder switch', () => {
+    it('takes over the switched transcript and folder with its repository and project, keeping the start', async () => {
+      openDesktopChat('ext-1', 2, T0);
+      const daemon = await startDaemon(createAdapter());
+      const sessionId = sessionIdFor('ext-1')!;
+      const { startTime } = readRecord(sessionId)!;
+
+      // Desktop moves the conversation to folder B (a new transcript under B's slug, a new cwd); the user writes there
+      const switchedPath = '/transcripts/folder-b/ext-1.jsonl';
+      const previous = transcripts.get(transcriptPathFor('ext-1'))!;
+      vi.setSystemTime(Date.now() + 5_000);
+      transcripts.set(switchedPath, { ...previous, mtimeMs: Date.now(), size: previous.size + 100 });
+      Object.assign(desktopSessions.get('ext-1')!, {
+        transcriptPath: switchedPath,
+        workingDirectory: '/Users/test/codemie-ai/codemie-docs'
+      });
+      touchDesktopChat('ext-1');
+      await pollTicks(daemon, 1);
+
+      expect(readRecord(sessionId)).toMatchObject({
+        correlation: { agentSessionFile: switchedPath },
+        workingDirectory: '/Users/test/codemie-ai/codemie-docs',
+        gitBranch: 'branch-codemie-docs',
+        repository: 'codemie-ai/codemie-docs',
+        project: 'project-codemie-docs',
+        startTime
+      });
+    });
+  });
+
+  describe('collection while Desktop is connected to this daemon', () => {
+    const PORT = 4001;
+    /** The value Desktop writes over the key at its start; only Desktop opens it. */
+    const SEALED_KEY = '__sealed__:v1:QUJD';
+    /** The Desktop connection changes the runtime told the daemon of. */
+    let notices: Array<string | undefined>;
+    let desktopHome: string;
+    /** The real config reader over a temp Desktop base directory. */
+    const collecting: DesktopTelemetryRuntimeConfig = {
+      ...config,
+      readDesktopGateway: undefined,
+      onDesktopConnectedChange: async (since) => { notices.push(since); }
+    };
+
+    /** Desktop's applied config: a gateway at `url` with `key`, or none at all. */
+    function desktopPointsAt(url: string | null, key = 'codemie-proxy'): void {
+      const library = join(getClaudeDesktopBaseDir(), 'configLibrary');
+      rmSync(library, { recursive: true, force: true });
+      if (url === null) return;
+      mkdirSync(library, { recursive: true });
+      writeFileSync(join(library, '_meta.json'), JSON.stringify({ appliedId: 'a' }));
+      writeFileSync(join(library, 'a.json'), JSON.stringify({
+        inferenceProvider: 'gateway', inferenceGatewayBaseUrl: url, inferenceGatewayApiKey: key
+      }));
+    }
+
+    const startedSessions = () => mockSendSessionStart.mock.calls.map(([session]) => session.sessionId);
+
+    beforeEach(() => {
+      notices = [];
+      desktopHome = mkdtempSync(join(tmpdir(), 'desktop-runtime-home-'));
+      vi.stubEnv('HOME', desktopHome);
+      vi.stubEnv('USERPROFILE', desktopHome);
+      vi.stubEnv('XDG_CONFIG_HOME', join(desktopHome, '.config'));
+      vi.stubEnv('LOCALAPPDATA', join(desktopHome, 'AppData', 'Local'));
+      desktopPointsAt(`http://127.0.0.1:${PORT}`);
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      rmSync(desktopHome, { recursive: true, force: true });
+    });
+
+    it('connected: sessions are discovered and collected', async () => {
+      openDesktopChat('ext-1', 1, T0);
+
+      await startDaemon(createAdapter(), collecting);
+
+      expect(startedSessions()).toEqual(['agent-ext-1']);
+      expect(notices).toEqual([new Date(T0).toISOString()]);
+    });
+
+    it.each([
+      ['the config removed', () => desktopPointsAt(null), true],
+      ['another port', () => desktopPointsAt('http://127.0.0.1:4005'), false],
+      ['another key', () => desktopPointsAt(`http://127.0.0.1:${PORT}`, 'sk-user-own'), false],
+      ['a non-loopback URL', () => desktopPointsAt(`https://gateway.example.com:${PORT}`), false],
+      ['a sealed key on another port', () => desktopPointsAt('http://127.0.0.1:4005', SEALED_KEY), false],
+    ])('not connected (%s) at two polls in a row: the second takes no new session and reconciles nothing, discovers only to follow a tracked session while the config names no gateway, and starts a not-connected Cowork run, and a tracked session is still finalized', async (_case, disconnect, follows) => {
+      openDesktopChat('ext-1', 1, T0);
+      const adapter = createAdapter();
+      const run = vi.fn(async (_now: number, _connected?: boolean) => undefined);
+      // Idle long enough for a re-delivery to fall due before the session's inactivity does
+      const inactivityTimeoutMs = 2 * DESKTOP_REDELIVERY_INTERVAL_MS;
+      const runtime = new DesktopTelemetryRuntime(adapter, { ...collecting, inactivityTimeoutMs }, { run });
+      startedRuntimes.push(runtime);
+      await runtime.start();
+      await (runtime as any).startupChain;
+      const sessionId = sessionIdFor('ext-1')!;
+      await (runtime as any).cowork.inFlight;
+      disconnect();
+      // The first not-connected read works as a connected poll
+      vi.setSystemTime(T0 + POLL_INTERVAL_MS);
+      await runtime.triggerPoll();
+      await (runtime as any).cowork.inFlight;
+      expect(notices).toEqual([new Date(T0).toISOString()]);
+      expect(run).toHaveBeenLastCalledWith(T0 + POLL_INTERVAL_MS, true);
+      const starts = startedSessions().length;
+      vi.mocked(adapter.discoverSessions).mockClear();
+      run.mockClear();
+      const reconcile = vi.spyOn(DesktopSessionDelivery.prototype, 'reconcileRecords');
+      const index = vi.spyOn(SessionStore.prototype, 'indexSessionsByExternalId');
+
+      vi.setSystemTime(T0 + DESKTOP_REDELIVERY_INTERVAL_MS + POLL_INTERVAL_MS);
+      openDesktopChat('ext-2', 1, Date.now());
+      await runtime.triggerPoll();
+      await (runtime as any).cowork.inFlight;
+
+      expect(vi.mocked(adapter.discoverSessions).mock.calls.length > 0).toBe(follows);
+      expect(sessionIdFor('ext-2')).toBeUndefined();
+      expect(startedSessions()).toHaveLength(starts);
+      expect(run.mock.calls).toEqual([[T0 + DESKTOP_REDELIVERY_INTERVAL_MS + POLL_INTERVAL_MS, false]]);
+      expect(reconcile).not.toHaveBeenCalled();
+      expect(index).not.toHaveBeenCalled();
+      expect(notices).toEqual([new Date(T0).toISOString(), undefined]);
+
+      // The tracked session is still finalized on inactivity (its final flush rediscovers its own transcript)
+      run.mockClear();
+      vi.setSystemTime(T0 + inactivityTimeoutMs + POLL_INTERVAL_MS);
+      await runtime.triggerPoll();
+      await (runtime as any).cowork.inFlight;
+      expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+      expect(run.mock.calls).toEqual([[T0 + inactivityTimeoutMs + POLL_INTERVAL_MS, false]]);
+      expect(reconcile).not.toHaveBeenCalled();
+
+      // Connected again: the next poll starts a connected run
+      desktopPointsAt(`http://127.0.0.1:${PORT}`);
+      vi.setSystemTime(T0 + inactivityTimeoutMs + 2 * POLL_INTERVAL_MS);
+      await runtime.triggerPoll();
+      await (runtime as any).cowork.inFlight;
+      expect(run).toHaveBeenLastCalledWith(T0 + inactivityTimeoutMs + 2 * POLL_INTERVAL_MS, true);
+    });
+
+    it('connected with a sealed key on the daemon\'s port: collecting, the connection told, a session collected', async () => {
+      desktopPointsAt(`http://127.0.0.1:${PORT}`, SEALED_KEY);
+      const info = vi.spyOn(logger, 'info');
+      openDesktopChat('ext-1', 1, T0);
+
+      await startDaemon(createAdapter(), collecting);
+
+      expect(info).toHaveBeenCalledWith('[desktop-telemetry] Claude Desktop connected; collecting', { since: new Date(T0).toISOString() });
+      expect(notices).toEqual([new Date(T0).toISOString()]);
+      expect(startedSessions()).toEqual(['agent-ext-1']);
+    });
+
+    it('the named key turning sealed between two polls reads no "not connected" and keeps the activity gate', async () => {
+      desktopPointsAt(`http://127.0.0.1:${PORT}`, 'codemie-proxy.claude-desktop');
+      const adapter = createAdapter();
+      const runtime = await startDaemon(adapter, collecting);
+      const info = vi.spyOn(logger, 'info');
+
+      desktopPointsAt(`http://127.0.0.1:${PORT}`, SEALED_KEY);
+      await pollTicks(runtime, 2);
+      vi.setSystemTime(T0 + 30_000);
+      openDesktopChat('ext-1', 1, Date.now());
+      await pollTicks(runtime, 1);
+
+      expect(info.mock.calls.filter(([message]) => String(message).includes('not connected'))).toEqual([]);
+      expect(notices).toEqual([new Date(T0).toISOString()]);
+      expect(startedSessions()).toEqual(['agent-ext-1']);
+    });
+
+    it('a daemon started not connected reads no record until the first connected poll, which runs the start-up pass once', async () => {
+      desktopPointsAt(null);
+      const first = writeRecord('ext-1', { ownerPid: DEAD_PID, ownerStartedAt: T0 - 2 * HOUR_MS });
+      const index = vi.spyOn(SessionStore.prototype, 'indexSessionsByExternalId');
+      const run = vi.fn(async (_now: number, _connected?: boolean) => undefined);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), collecting, { run });
+      startedRuntimes.push(runtime);
+      await runtime.start();
+      await (runtime as any).startupChain;
+      await (runtime as any).cowork.inFlight;
+      // The first read, with no connected state before, already counts: its poll starts a not-connected run
+      expect(run.mock.calls).toEqual([[T0, false]]);
+      await pollTicks(runtime, 2);
+
+      expect(index).not.toHaveBeenCalled();
+      expect(readRecord(first)).toMatchObject({ status: 'active', ownerPid: DEAD_PID });
+      expect(notices).toEqual([]);
+
+      desktopPointsAt(`http://127.0.0.1:${PORT}`);
+      await pollTicks(runtime, 1);
+      expect(index).toHaveBeenCalled();
+      expect(readRecord(first)).toMatchObject({ status: 'completed', reason: 'desktop-daemon-restart' });
+
+      // A dead daemon's record that appears later is no start-up pass's: the pass ran once
+      const later = writeRecord('ext-2', { ownerPid: DEAD_PID, ownerStartedAt: T0 - 2 * HOUR_MS });
+      await pollTicks(runtime, 2);
+      expect(readRecord(later)).toMatchObject({ status: 'active', ownerPid: DEAD_PID });
+    });
+
+    it('connected again: a session idle since before skipped, a new one collected, one continued from before sent from the gate on', async () => {
+      const runtime = await startDaemon(createAdapter(), collecting);
+      desktopPointsAt(null);
+      await pollTicks(runtime, 2);
+      vi.setSystemTime(T0 + 25_000);
+      openDesktopChat('ext-old', 1, Date.now());
+      openDesktopChat('ext-cont', 2, Date.now());
+
+      desktopPointsAt(`http://127.0.0.1:${PORT}`);
+      vi.setSystemTime(T0 + 30_000);
+      await runtime.triggerPoll();
+      const gate = T0 + 30_000;
+      vi.setSystemTime(T0 + 35_000);
+      appendMessages('ext-cont', 1);
+      openDesktopChat('ext-new', 1, Date.now());
+      vi.setSystemTime(T0 + 40_000);
+      await runtime.triggerPoll();
+
+      expect(startedSessions().sort()).toEqual(['agent-ext-cont', 'agent-ext-new']);
+      expect(readRecord(sessionIdFor('ext-cont')!)).toMatchObject({ startTime: gate });
+      expect(sentDeltas.filter(delta => delta.externalSessionId === 'ext-cont')).toEqual([{ externalSessionId: 'ext-cont', historyIndices: [2] }]);
+      expect(notices).toEqual([new Date(T0).toISOString(), undefined, new Date(gate).toISOString()]);
+    });
+
+    it('connected from the first poll: a session updated between the daemon\'s start and that poll is collected', async () => {
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), collecting);
+      vi.setSystemTime(T0 + 5_000);
+      openDesktopChat('ext-1', 1, T0 - HOUR_MS);
+      touchDesktopChat('ext-1');
+      vi.setSystemTime(T0 + 8_000);
+
+      await runtime.triggerPoll();
+
+      expect(startedSessions()).toEqual(['agent-ext-1']);
+    });
+
+    it('edge: a reader that throws counts as not connected and the poll goes on', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const adapter = createAdapter();
+      const runtime = new DesktopTelemetryRuntime(adapter, {
+        ...collecting,
+        readDesktopGateway: async () => { throw new Error('EACCES'); }
+      });
+
+      await expect(runtime.triggerPoll()).resolves.toBeUndefined();
+
+      expect(adapter.discoverSessions).not.toHaveBeenCalled();
+    });
+
+    it('edge: stop() before the first connected poll builds no index, discovers nothing and does not throw', async () => {
+      desktopPointsAt(null);
+      const adapter = createAdapter();
+      const index = vi.spyOn(SessionStore.prototype, 'indexSessionsByExternalId');
+      const runtime = new DesktopTelemetryRuntime(adapter, collecting);
+
+      await expect(runtime.stop()).resolves.toBeUndefined();
+
+      expect(index).not.toHaveBeenCalled();
+      expect(adapter.discoverSessions).not.toHaveBeenCalled();
+    });
+
+    it('edge: stop() while not connected starts no Cowork run', async () => {
+      desktopPointsAt(null);
+      const run = vi.fn(async (_now: number, _connected?: boolean) => undefined);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), collecting, { run });
+      startedRuntimes.push(runtime);
+      await runtime.start();
+      await (runtime as any).startupChain;
+      await (runtime as any).cowork.inFlight;
+      expect(run.mock.calls).toEqual([[T0, false]]);
+      run.mockClear();
+
+      await runtime.stop();
+
+      expect(run).not.toHaveBeenCalled();
+    });
+
+    it('edge: the config flips while a session is being finalized: the finalization completes, the next poll discovers nothing', async () => {
+      openDesktopChat('ext-1', 1, T0);
+      const adapter = createAdapter();
+      const runtime = await startDaemon(adapter, collecting);
+      const sessionId = sessionIdFor('ext-1')!;
+      let releaseEnd!: () => void;
+      mockSendSessionEnd.mockImplementationOnce(() => new Promise<void>(resolve => { releaseEnd = resolve; }));
+
+      vi.setSystemTime(T0 + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+      const finalizing = runtime.triggerPoll();
+      await waitFor(() => mockSendSessionEnd.mock.calls.length === 1);
+      desktopPointsAt(null);
+      releaseEnd();
+      await finalizing;
+      expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+
+      // the first poll after the flip still collects; the second in a row is not connected
+      await pollTicks(runtime, 1);
+      vi.mocked(adapter.discoverSessions).mockClear();
+      await pollTicks(runtime, 1);
+      expect(adapter.discoverSessions).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['reads no gateway', 'none'],
+      ['throws', 'throw'],
+    ] as const)('one poll whose reader %s between two connected ones changes nothing', async (_case, miss) => {
+      let read: 'connected' | 'none' | 'throw' = 'connected';
+      const adapter = createAdapter();
+      const runtime = await startDaemon(adapter, {
+        ...collecting,
+        readDesktopGateway: async () => {
+          if (read === 'throw') throw new Error('EACCES');
+          return read === 'none' ? { gateway: null, namesGateway: false } : { gateway: { port: PORT, apiKey: 'codemie-proxy' }, namesGateway: true };
+        }
+      });
+      vi.setSystemTime(T0 + 5_000);
+      openDesktopChat('ext-1', 1, Date.now());
+
+      read = miss;
+      await pollTicks(runtime, 1);
+      read = 'connected';
+      await pollTicks(runtime, 1);
+
+      expect(adapter.discoverSessions).toHaveBeenCalledTimes(3);
+      expect(notices).toEqual([new Date(T0).toISOString()]);
+      expect(startedSessions()).toEqual(['agent-ext-1']);
+    });
+
+    it('edge: a connected read between two not-connected ones resets the count', async () => {
+      let read: 'connected' | 'none' = 'connected';
+      const adapter = createAdapter();
+      const runtime = await startDaemon(adapter, {
+        ...collecting,
+        readDesktopGateway: async () => (read === 'none' ? { gateway: null, namesGateway: false } : { gateway: { port: PORT, apiKey: 'codemie-proxy' }, namesGateway: true })
+      });
+
+      for (const next of ['none', 'connected', 'none'] as const) {
+        read = next;
+        await pollTicks(runtime, 1);
+      }
+
+      expect(adapter.discoverSessions).toHaveBeenCalledTimes(4);
+      expect(notices).toEqual([new Date(T0).toISOString()]);
+    });
+
+    /** A daemon tracking `ext-1` (opened at T0), then Desktop disconnected (its config removed) for two polls (T0 + 10 s, T0 + 20 s). */
+    async function trackedThenDisconnected(
+      chats = ['ext-1'],
+      disconnect = () => desktopPointsAt(null)
+    ): Promise<{ runtime: DesktopTelemetryRuntime; adapter: LocalTelemetryAdapter }> {
+      for (const chat of chats) openDesktopChat(chat, 1, T0);
+      const adapter = createAdapter();
+      const runtime = await startDaemon(adapter, collecting);
+      disconnect();
+      await pollTicks(runtime, 2);
+      return { runtime, adapter };
+    }
+
+    async function pollAt(runtime: DesktopTelemetryRuntime, time: number): Promise<void> {
+      vi.setSystemTime(time);
+      await runtime.triggerPoll();
+      await (runtime as any).redeliveryPass;
+    }
+
+    describe('a send that failed while not connected', () => {
+      /** The first poll at which a chat last active at T0 is past the inactivity timeout: there its END fails. */
+      const FAILED_AT = T0 + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS;
+
+      it('is re-delivered by id one re-delivery interval after its END failed, with no listing, and once only', async () => {
+        const { runtime } = await trackedThenDisconnected();
+        const sessionId = sessionIdFor('ext-1')!;
+        const reconcile = vi.spyOn(DesktopSessionDelivery.prototype, 'reconcileRecords');
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+
+        await pollAt(runtime, FAILED_AT);
+        expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+        const failedSends = mockSendSessionEnd.mock.calls.length;
+
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS - POLL_INTERVAL_MS);
+        expect(mockSendSessionEnd).toHaveBeenCalledTimes(failedSends);
+
+        mockSendSessionEnd.mockResolvedValue(undefined);
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+        expect(readRecord(sessionId)!.endMetricSentAt).toEqual(expect.any(Number));
+        const deliveredSends = mockSendSessionEnd.mock.calls.length;
+
+        // Delivered, the id left the memory: the next interval re-delivers nothing
+        byId.mockClear();
+        await pollAt(runtime, FAILED_AT + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(byId).not.toHaveBeenCalled();
+        expect(mockSendSessionEnd).toHaveBeenCalledTimes(deliveredSends);
+        expect(reconcile).not.toHaveBeenCalled();
+      });
+
+      it('a session finalized on inactivity long after the daemon\'s start, its END failing, waits one interval for its re-delivery by id', async () => {
+        const { runtime } = await trackedThenDisconnected();
+        const sessionId = sessionIdFor('ext-1')!;
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        // The first poll after the disconnect ones: more than one interval since the start, no pass started since
+        const failedAt = T0 + DESKTOP_REDELIVERY_INTERVAL_MS + POLL_INTERVAL_MS;
+
+        await pollAt(runtime, failedAt);
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+        expect(byId).not.toHaveBeenCalled();
+        await pollAt(runtime, failedAt + DESKTOP_REDELIVERY_INTERVAL_MS - POLL_INTERVAL_MS);
+        expect(byId).not.toHaveBeenCalled();
+
+        mockSendSessionEnd.mockResolvedValue(undefined);
+        await pollAt(runtime, failedAt + DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(byId.mock.calls).toEqual([[[sessionId]]]);
+        expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+      });
+
+      it('edge: an id remembered while an earlier one is still remembered: the pass one interval after the earlier is given both', async () => {
+        const { runtime } = await trackedThenDisconnected(['ext-1', 'ext-2']);
+        const first = sessionIdFor('ext-1')!;
+        const second = sessionIdFor('ext-2')!;
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        // ext-2 kept active past the poll that finalizes ext-1
+        vi.setSystemTime(T0 + 300_000);
+        appendMessages('ext-2', 1);
+
+        await pollAt(runtime, FAILED_AT);
+        expect(recordFiles()).toEqual([`${first}.json`, `${second}.json`].sort());
+        expect(readRecord(second)).toMatchObject({ status: 'active' });
+        await pollAt(runtime, T0 + 700_000);
+        expect(readRecord(second)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+        expect(byId).not.toHaveBeenCalled();
+
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(byId.mock.calls).toEqual([[[second, first]]]);
+      });
+
+      it('edge: an id remembered more than one interval after a by-id pass that delivered everything waits one interval from its remembering', async () => {
+        const { runtime } = await trackedThenDisconnected(['ext-1', 'ext-2']);
+        const first = sessionIdFor('ext-1')!;
+        const second = sessionIdFor('ext-2')!;
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        // ext-2 kept active past the poll that finalizes ext-1 and past the pass that delivers it
+        vi.setSystemTime(T0 + 300_000);
+        appendMessages('ext-2', 1);
+        await pollAt(runtime, FAILED_AT);
+        mockSendSessionEnd.mockResolvedValue(undefined);
+        vi.setSystemTime(FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS - POLL_INTERVAL_MS);
+        appendMessages('ext-2', 1);
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(byId.mock.calls).toEqual([[[first]]]);
+        expect(recordFiles()).toEqual([`completed_${first}.json`, `${second}.json`].sort());
+        expect(readRecord(second)).toMatchObject({ status: 'active' });
+
+        byId.mockClear();
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        const rememberedAt = FAILED_AT + 2 * DESKTOP_REDELIVERY_INTERVAL_MS + POLL_INTERVAL_MS;
+        await pollAt(runtime, rememberedAt);
+        expect(readRecord(second)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+        expect(byId).not.toHaveBeenCalled();
+        await pollAt(runtime, rememberedAt + DESKTOP_REDELIVERY_INTERVAL_MS - POLL_INTERVAL_MS);
+        expect(byId).not.toHaveBeenCalled();
+
+        await pollAt(runtime, rememberedAt + DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(byId.mock.calls).toEqual([[[second]]]);
+      });
+
+      it('edge: an id remembered again during the by-id pass that took it stays remembered though the pass delivered it', async () => {
+        const { runtime } = await trackedThenDisconnected();
+        const sessionId = sessionIdFor('ext-1')!;
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        await pollAt(runtime, FAILED_AT);
+        let releasePass!: () => void;
+        const passHeld = new Promise<void>(resolve => { releasePass = resolve; });
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById').mockImplementationOnce(async () => {
+          await passHeld;
+          return [];
+        });
+
+        vi.setSystemTime(FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+        await runtime.triggerPoll();
+        expect(byId.mock.calls).toEqual([[[sessionId]]]);
+        (runtime as any).redelivery.remember([sessionId]);
+        releasePass();
+        await (runtime as any).redeliveryPass;
+
+        await pollAt(runtime, FAILED_AT + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(byId.mock.calls).toEqual([[[sessionId]], [[sessionId]]]);
+      });
+
+      it('edge: the less recently remembered of two ids, remembered again during the by-id pass that left both undelivered, leads the next batch', async () => {
+        const { runtime } = await trackedThenDisconnected(['ext-1', 'ext-2']);
+        // ext-1 is the first tracked, so the first finalized and remembered
+        const older = sessionIdFor('ext-1')!;
+        const newer = sessionIdFor('ext-2')!;
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        await pollAt(runtime, FAILED_AT);
+        let releasePass!: () => void;
+        const passHeld = new Promise<void>(resolve => { releasePass = resolve; });
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById').mockImplementationOnce(async () => {
+          await passHeld;
+          return [older, newer];
+        });
+
+        vi.setSystemTime(FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+        await runtime.triggerPoll();
+        expect(byId.mock.calls).toEqual([[[newer, older]]]);
+        (runtime as any).redelivery.remember([older]);
+        releasePass();
+        await (runtime as any).redeliveryPass;
+
+        await pollAt(runtime, FAILED_AT + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(byId.mock.calls[1][0][0]).toBe(older);
+      });
+
+      it('edge: an END that failed while connected, Desktop disconnected before the next listing pass, is delivered by a not-connected poll', async () => {
+        openDesktopChat('ext-1', 1, T0);
+        const runtime = await startDaemon(createAdapter(), collecting);
+        const sessionId = sessionIdFor('ext-1')!;
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        await pollAt(runtime, FAILED_AT);
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+
+        desktopPointsAt(null);
+        const reconcile = vi.spyOn(DesktopSessionDelivery.prototype, 'reconcileRecords');
+        await pollTicks(runtime, 2);
+        mockSendSessionEnd.mockResolvedValue(undefined);
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+        expect(reconcile).not.toHaveBeenCalled();
+      });
+
+      it('edge: a predecessor\'s active record the start-up pass finalized while the END was failing is delivered by a not-connected poll', async () => {
+        const sessionId = writeRecord('ext-1', { ownerPid: DEAD_PID, ownerStartedAt: T0 - 2 * HOUR_MS });
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        const runtime = await startRuntime(createAdapter(), collecting);
+        expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-daemon-restart' });
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+
+        desktopPointsAt(null);
+        await pollTicks(runtime, 2);
+        mockSendSessionEnd.mockResolvedValue(undefined);
+        await pollAt(runtime, T0 + DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+      });
+
+      it('edge: a send failed while connected, delivered by a listing pass of a connected poll, Desktop disconnected afterwards: no re-delivery by id', async () => {
+        openDesktopChat('ext-1', 1, T0);
+        const runtime = await startDaemon(createAdapter(), collecting);
+        const sessionId = sessionIdFor('ext-1')!;
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        await pollAt(runtime, T0 + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+        mockSendSessionEnd.mockResolvedValue(undefined);
+        await pollAt(runtime, T0 + DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+
+        desktopPointsAt(null);
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+        await pollTicks(runtime, 2);
+        await pollAt(runtime, T0 + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+        await pollAt(runtime, T0 + 2 * DESKTOP_REDELIVERY_INTERVAL_MS + POLL_INTERVAL_MS);
+
+        expect(byId).not.toHaveBeenCalled();
+      });
+
+      it('edge: more than RECONCILE_PER_START failed sends: the first pass delivers the RECONCILE_PER_START most recently remembered, the next interval the oldest', async () => {
+        const chats = Array.from({ length: RECONCILE_PER_START + 1 }, (_, index) => `ext-${index + 1}`);
+        const { runtime } = await trackedThenDisconnected(chats);
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        await pollAt(runtime, FAILED_AT);
+        expect(recordFiles().filter(name => name.startsWith('completed_'))).toEqual([]);
+
+        mockSendSessionEnd.mockReset();
+        mockSendSessionEnd.mockResolvedValue(undefined);
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(mockSendSessionEnd).toHaveBeenCalledTimes(RECONCILE_PER_START);
+        // ext-1 is the first tracked, so the first finalized and remembered
+        expect(recordFiles()).toEqual(chats.map(chat => (
+          chat === 'ext-1' ? `${sessionIdFor(chat)}.json` : `completed_${sessionIdFor(chat)}.json`
+        )).sort());
+
+        await pollAt(runtime, FAILED_AT + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(mockSendSessionEnd).toHaveBeenCalledTimes(RECONCILE_PER_START + 1);
+        expect(recordFiles()).toEqual(chats.map(chat => `completed_${sessionIdFor(chat)}.json`).sort());
+      });
+
+      it('edge: more than RECONCILE_PER_START remembered records whose END keeps failing: the second by-id pass is given the id the first did not take', async () => {
+        const chats = Array.from({ length: RECONCILE_PER_START + 1 }, (_, index) => `ext-${index + 1}`);
+        const { runtime } = await trackedThenDisconnected(chats);
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        await pollAt(runtime, FAILED_AT);
+        // ext-1 is the first tracked, so the first finalized and remembered
+        const oldest = sessionIdFor('ext-1')!;
+
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(byId.mock.calls[0][0]).not.toContain(oldest);
+        await pollAt(runtime, FAILED_AT + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(byId.mock.calls[1][0]).toContain(oldest);
+      });
+
+      it('edge: a remembered record whose reconcile lock another process holds during a by-id pass stays remembered and is delivered by the next interval', async () => {
+        const { runtime } = await trackedThenDisconnected();
+        const sessionId = sessionIdFor('ext-1')!;
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        await pollAt(runtime, FAILED_AT);
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+        mockSendSessionEnd.mockResolvedValue(undefined);
+
+        const held = (await acquirePidLock(reconcileLockPath(sessionId), { mode: 'try' }))!;
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+        await held.release();
+        expect(byId.mock.calls).toEqual([[[sessionId]]]);
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+
+        await pollAt(runtime, FAILED_AT + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(byId.mock.calls).toEqual([[[sessionId]], [[sessionId]]]);
+        expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+      });
+
+      it('edge: a record only a listing pass of a connected poll handled, its END failing at that pass, is re-delivered by id once Desktop is disconnected', async () => {
+        const runtime = await startDaemon(createAdapter(), collecting);
+        const sessionId = writeRecord('ext-1', {
+          status: 'completed',
+          reason: 'desktop-inactive-timeout',
+          endTime: T0 - 40 * 60_000,
+          ownerPid: DEAD_PID
+        });
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        await pollAt(runtime, T0 + DESKTOP_REDELIVERY_INTERVAL_MS);
+        expect(mockSendSessionEnd).toHaveBeenCalled();
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+
+        desktopPointsAt(null);
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+        await pollTicks(runtime, 2);
+        mockSendSessionEnd.mockResolvedValue(undefined);
+        await pollAt(runtime, T0 + 2 * DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(byId).toHaveBeenCalledWith([sessionId]);
+        expect(recordFiles()).toEqual([`completed_${sessionId}.json`]);
+      });
+
+      it('edge: nothing remembered: an interval of not-connected polls runs no re-delivery by id', async () => {
+        const { runtime } = await trackedThenDisconnected();
+        const byId = vi.spyOn(DesktopSessionDelivery.prototype, 'redeliverById');
+
+        await pollAt(runtime, T0 + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+        expect(recordFiles()).toEqual([`completed_${sessionIdFor('ext-1')}.json`]);
+        await pollAt(runtime, T0 + DESKTOP_REDELIVERY_INTERVAL_MS);
+        await pollAt(runtime, T0 + DESKTOP_REDELIVERY_INTERVAL_MS + POLL_INTERVAL_MS);
+
+        expect(byId).not.toHaveBeenCalled();
+      });
+
+      it('edge: the by-id pass without usable credentials sends nothing and spends no attempt', async () => {
+        const { runtime } = await trackedThenDisconnected();
+        const sessionId = sessionIdFor('ext-1')!;
+        mockSendSessionEnd.mockRejectedValue(new Error('HTTP 503'));
+        await pollAt(runtime, FAILED_AT);
+        await markAnalyticsAuthInvalid('HTTP 401: Unauthorized', config.targetApiUrl);
+        mockSendSessionEnd.mockResolvedValue(undefined);
+        const sends = mockSendSessionEnd.mock.calls.length;
+
+        await pollAt(runtime, FAILED_AT + DESKTOP_REDELIVERY_INTERVAL_MS);
+
+        expect(mockSendSessionEnd).toHaveBeenCalledTimes(sends);
+        expect(readRecord(sessionId)!.deliveryRealAttempts).toBe(0);
+        expect(recordFiles()).toEqual([`${sessionId}.json`]);
+      });
+    });
+
+    describe('a tracked session followed while not connected', () => {
+      it('stays active while the chat is appended to and is finalized after a quiet timeout at its last append', async () => {
+        const { runtime } = await trackedThenDisconnected();
+        const sessionId = sessionIdFor('ext-1')!;
+        // Appends 4 min apart, under the 5 min timeout, for 12 min in total
+        let lastAppendAt = 0;
+        for (let step = 1; step <= 3; step++) {
+          lastAppendAt = T0 + 20_000 + step * 240_000;
+          vi.setSystemTime(lastAppendAt);
+          appendMessages('ext-1', 1);
+          await pollAt(runtime, lastAppendAt + POLL_INTERVAL_MS);
+        }
+        expect(readRecord(sessionId)).toMatchObject({ status: 'active' });
+
+        await pollAt(runtime, lastAppendAt + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+
+        expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout', endTime: lastAppendAt });
+      });
+
+      it.each([
+        ['the entry file removed and _meta.json rewritten without appliedId', () => {
+          const library = join(getClaudeDesktopBaseDir(), 'configLibrary');
+          rmSync(join(library, 'a.json'));
+          writeFileSync(join(library, '_meta.json'), JSON.stringify({ entries: [] }));
+        }],
+        ['the applied entry rewritten without its inference keys, _meta.json unchanged', () => {
+          writeFileSync(join(getClaudeDesktopBaseDir(), 'configLibrary', 'a.json'), JSON.stringify({ managedMcpServers: '[]' }));
+        }],
+      ])('edge: what a disconnect leaves (%s): followed, and active while appended to past the timeout', async (_case, disconnect) => {
+        const { runtime, adapter } = await trackedThenDisconnected(['ext-1'], disconnect);
+        const sessionId = sessionIdFor('ext-1')!;
+        vi.mocked(adapter.discoverSessions).mockClear();
+        for (let step = 1; step <= 3; step++) {
+          const appendAt = T0 + 20_000 + step * 240_000;
+          vi.setSystemTime(appendAt);
+          appendMessages('ext-1', 1);
+          await pollAt(runtime, appendAt + POLL_INTERVAL_MS);
+        }
+
+        expect(adapter.discoverSessions).toHaveBeenCalled();
+        expect(readRecord(sessionId)).toMatchObject({ status: 'active' });
+      });
+
+      it('edge: activity without a transcript write keeps it from finalizing', async () => {
+        const { runtime } = await trackedThenDisconnected();
+        const sessionId = sessionIdFor('ext-1')!;
+        let lastTouchAt = 0;
+        for (let step = 1; step <= 3; step++) {
+          lastTouchAt = T0 + 20_000 + step * 240_000;
+          vi.setSystemTime(lastTouchAt);
+          touchDesktopChat('ext-1');
+          await pollAt(runtime, lastTouchAt + POLL_INTERVAL_MS);
+        }
+        expect(readRecord(sessionId)).toMatchObject({ status: 'active' });
+
+        await pollAt(runtime, lastTouchAt + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+
+        expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout', endTime: lastTouchAt });
+      });
+
+      it('edge: its record removed while not connected: no new record, no START, and it is no longer followed', async () => {
+        const { runtime, adapter } = await trackedThenDisconnected();
+        const sessionId = sessionIdFor('ext-1')!;
+        const starts = startedSessions().length;
+        rmSync(join(sessionsDir(), `${sessionId}.json`));
+        vi.setSystemTime(T0 + 30_000);
+        appendMessages('ext-1', 1);
+
+        await pollAt(runtime, T0 + 40_000);
+
+        expect(sessionIdFor('ext-1')).toBeUndefined();
+        expect(startedSessions()).toHaveLength(starts);
+        vi.mocked(adapter.discoverSessions).mockClear();
+        await pollTicks(runtime, 2);
+        expect(adapter.discoverSessions).not.toHaveBeenCalled();
+      });
+
+      it('edge: Desktop pointed at another port: not followed, finalized one timeout after the last connected poll at that poll\'s activity', async () => {
+        openDesktopChat('ext-1', 1, T0);
+        const adapter = createAdapter();
+        const runtime = await startDaemon(adapter, collecting);
+        const sessionId = sessionIdFor('ext-1')!;
+        vi.setSystemTime(T0 + 5_000);
+        appendMessages('ext-1', 1);
+        desktopPointsAt('http://127.0.0.1:4005');
+        // The first not-connected read works as a connected poll: the last one that collects
+        await pollAt(runtime, T0 + POLL_INTERVAL_MS);
+        vi.mocked(adapter.discoverSessions).mockClear();
+        await pollAt(runtime, T0 + 2 * POLL_INTERVAL_MS);
+        vi.setSystemTime(T0 + 200_000);
+        appendMessages('ext-1', 1);
+        await pollAt(runtime, T0 + 210_000);
+        expect(adapter.discoverSessions).not.toHaveBeenCalled();
+        expect(readRecord(sessionId)).toMatchObject({ status: 'active' });
+
+        await pollAt(runtime, T0 + 5_000 + INACTIVITY_TIMEOUT_MS);
+
+        expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout', endTime: T0 + 5_000 });
+      });
+
+      it('edge: a discovery that rejects is logged, the poll goes on and a session past its timeout is still finalized', async () => {
+        const { runtime, adapter } = await trackedThenDisconnected();
+        const sessionId = sessionIdFor('ext-1')!;
+        vi.mocked(adapter.discoverSessions).mockRejectedValue(new Error('EIO'));
+
+        vi.setSystemTime(T0 + INACTIVITY_TIMEOUT_MS + POLL_INTERVAL_MS);
+        await expect(runtime.triggerPoll()).resolves.toBeUndefined();
+
+        expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-inactive-timeout' });
+      });
+
+      it('edge: a stop while not connected finalizes it at the append made since the last poll', async () => {
+        const { runtime } = await trackedThenDisconnected();
+        const sessionId = sessionIdFor('ext-1')!;
+        vi.setSystemTime(T0 + 60_000);
+        appendMessages('ext-1', 1);
+        vi.setSystemTime(T0 + 70_000);
+
+        await runtime.stop();
+
+        expect(readRecord(sessionId)).toMatchObject({ status: 'completed', reason: 'desktop-daemon-stop', endTime: T0 + 60_000 });
+      });
+    });
+  });
+
+  describe('the Claude analytics switch', () => {
+    const setSwitch = (enabled: boolean): void => {
+      writeFileSync(join(codemieHome, 'claude-analytics.json'), JSON.stringify({ enabled }));
+    };
+    const sendsSoFar = () => ({
+      starts: mockSendSessionStart.mock.calls.length,
+      ends: mockSendSessionEnd.mock.calls.length,
+      syncs: mockSync.mock.calls.length
+    });
+
+    it('off: nothing is discovered, recorded or sent, the Cowork producer still runs, and stop() sends no end metric', async () => {
+      setSwitch(false);
+      openDesktopChat('ext-1', 2, T0);
+      const run = vi.fn(async (_now: number, _connected?: boolean) => undefined);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config, { run });
+
+      await runtime.triggerPoll();
+      await pollTicks(runtime, 3);
+      await (runtime as any).cowork.inFlight;
+      await runtime.stop();
+
+      expect(sendsSoFar()).toEqual({ starts: 0, ends: 0, syncs: 0 });
+      expect(persistedRecords()).toEqual([]);
+      expect(run).toHaveBeenCalled();
+      expect(run.mock.calls.every(([, connected]) => connected === true)).toBe(true);
+    });
+
+    it('sends what a tracked chat gained while off once analytics are enabled', async () => {
+      openDesktopChat('ext-1', 2, T0);
+      const adapter = createAdapter();
+      const daemon = await startDaemon(adapter);
+      expect(sentDeltas).toEqual([{ externalSessionId: 'ext-1', historyIndices: [0, 1] }]);
+      sentDeltas.length = 0;
+
+      setSwitch(false);
+      appendMessages('ext-1', 1);
+      await pollTicks(daemon, 2);
+      expect(sentDeltas).toEqual([]);
+
+      setSwitch(true);
+      await pollTicks(daemon, 1);
+
+      expect(sentDeltas).toEqual([{ externalSessionId: 'ext-1', historyIndices: [2] }]);
+      expect(adapter.applyBaseline).not.toHaveBeenCalled();
+    });
+
+    it('sends a chat opened while off in full once analytics are enabled', async () => {
+      const adapter = createAdapter();
+      const daemon = await startDaemon(adapter);
+
+      setSwitch(false);
+      vi.setSystemTime(Date.now() + 1_000);
+      openDesktopChat('ext-1', 3, Date.now());
+      await pollTicks(daemon, 2);
+      expect(sendsSoFar()).toEqual({ starts: 0, ends: 0, syncs: 0 });
+      expect(sentDeltas).toEqual([]);
+
+      setSwitch(true);
+      await pollTicks(daemon, 1);
+
+      expect(mockSendSessionStart).toHaveBeenCalledOnce();
+      expect(sentDeltas).toEqual([{ externalSessionId: 'ext-1', historyIndices: [0, 1, 2] }]);
+      expect(adapter.applyBaseline).not.toHaveBeenCalled();
+    });
+
+    it('stop() while off sends nothing and leaves the chat\'s record to be delivered after enable', async () => {
+      openDesktopChat('ext-1', 2, T0);
+      const daemon = await startDaemon(createAdapter());
+      const sessionId = sessionIdFor('ext-1')!;
+      mockSendSessionEnd.mockClear();
+
+      setSwitch(false);
+      await daemon.stop();
+
+      expect(mockSendSessionEnd).not.toHaveBeenCalled();
+      expect(existsSync(join(sessionsDir(), `${sessionId}.json`))).toBe(true);
+
+      setSwitch(true);
+      await startRuntime(createAdapter());
+
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      expect(existsSync(join(sessionsDir(), `${sessionId}.json`))).toBe(false);
+    });
+
+    it('a corrupt file sends nothing and warns once; collection resumes when it reads valid again', async () => {
+      const warn = vi.spyOn(logger, 'warn');
+      const daemon = await startDaemon(createAdapter());
+
+      writeFileSync(join(codemieHome, 'claude-analytics.json'), '{not json');
+      vi.setSystemTime(Date.now() + 1_000);
+      openDesktopChat('ext-1', 1, Date.now());
+      await pollTicks(daemon, 2);
+      expect(sendsSoFar()).toEqual({ starts: 0, ends: 0, syncs: 0 });
+      expect(warn.mock.calls.filter(([message]) => String(message).includes('preferences file unreadable'))).toHaveLength(1);
+
+      setSwitch(true);
+      await pollTicks(daemon, 1);
+
+      expect(sendsSoFar().starts).toBe(1);
+      expect(sentDeltas).toEqual([{ externalSessionId: 'ext-1', historyIndices: [0] }]);
+    });
+
+    it('reopens a chat finalized before the pause and sends what it gained while off', async () => {
+      openDesktopChat('ext-1', 2, T0);
+      const daemon = await startDaemon(createAdapter());
+      const sessionId = sessionIdFor('ext-1')!;
+      await pollTicks(daemon, INACTIVITY_TIMEOUT_MS / POLL_INTERVAL_MS + 1);
+      expect(readRecord(sessionId)!.status).toBe('completed');
+      sentDeltas.length = 0;
+      mockSendSessionStart.mockClear();
+
+      setSwitch(false);
+      appendMessages('ext-1', 1);
+      await pollTicks(daemon, 2);
+      expect(sentDeltas).toEqual([]);
+
+      setSwitch(true);
+      await pollTicks(daemon, 1);
+
+      expect(mockSendSessionStart).not.toHaveBeenCalled();
+      expect(readRecord(sessionId)!.status).toBe('active');
+      expect(sentDeltas).toEqual([{ externalSessionId: 'ext-1', historyIndices: [2] }]);
     });
   });
 });

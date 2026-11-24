@@ -1,0 +1,182 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "request-changes",
+  "gate_decision": {
+    "gate": "code-review.final",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "Fix-up 5aad2365 closes CR-002..CR-006; CR-001 disposed; original repro now sends nothing"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "Fix CR-002..CR-006; CR-001 disposed (squash-merge, PR title governs)"
+    },
+    {
+      "gate": "code-review.final",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "Fix-up 5aad2365 closes CR-002..CR-006; CR-001 disposed; original repro now sends nothing"
+    }
+  ],
+  "reviewed_head": "5aad23654629da2d7bb965f22f6ee96864ab8669",
+  "rounds": [
+    "final"
+  ],
+  "rationale": "No spec, so acceptance was skipped (no-spec mode, confidence low); blind, edge-case and verification-gap ran and reachability was checked for every candidate. 6 blocking findings: 2 gate defects that permanently drop metrics of consented sessions (CR-005 is ambiguous about intent, so it is kept as a patch), 1 unvalidated spool-path input, 2 test gaps and the ticket key in commit subjects. 1 deferred (conversation sync is not gated, pre-existing and outside the /v1/metrics scope; see code-review-deferred.local.md), and 12 filtered as noise, including the style-only standards rows (JSDoc, type-vs-interface, relative imports).",
+  "confidence": "low",
+  "check_confidence": null,
+  "risk_flags": [
+    "security"
+  ],
+  "open": 0,
+  "closed": {
+    "fixed": 5,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 1
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "commits 5179cd1a, a6d5d344, bf0a0957",
+      "title": "Ticket key in commit subjects",
+      "problem": "All three commit subjects ('fix(analytics): EPMCDME-17054 ...') put the ticket key in the subject. The git-workflow.md Anti-Patterns table forbids this when the scope already conveys context.",
+      "impact": "Commit format is a documented blocking standard. After squash, the PR title becomes the main-branch commit message and would repeat the anti-pattern.",
+      "recommendation": "Drop EPMCDME-17054 from the commit subjects and the PR/squash title; reference the ticket in the commit body footer instead (git-workflow.md Anti-Patterns).",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "User decision: repo uses Squash-and-Merge, so the PR title (scope+subject) is what lands on main; branch commit subjects are kept as is, ticket key also matches the author's prior branch convention.",
+        "source": "hitl"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/session/SessionStore.ts",
+      "line": 50,
+      "title": "Consent merge in SessionStore untested",
+      "problem": "Regression gap: mergeCompleted now keeps legacyMetricsConsent from the other copy, but no SessionStore merge test seeds legacyMetricsConsent on either copy. The SessionStore.save.test.ts merge tests check only endMetricSentAt and deliveryAttempts.",
+      "impact": "If the merge line is dropped, a completed save from a copy that lacks the field overwrites the frozen consent in completed_. Every later verdict from sendSessionEndMetrics on delivery retry then returns no-work-consent and withholds metrics for a consented session, and no test fails.",
+      "recommendation": "In SessionStore.save.test.ts, next to 'merges a completed save into completed_ written meanwhile', write completed_ with legacyMetricsConsent, save a completed copy without it, and expect completed.legacyMetricsConsent to equal the frozen value.",
+      "status": "fixed",
+      "fix": {
+        "change": "Regression test: a completed save without legacyMetricsConsent merged into completed_ keeps the frozen consent",
+        "test": "src/agents/core/session/__tests__/SessionStore.save.test.ts > keeps the legacy-metrics consent frozen in completed_ ..."
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/session/__tests__/legacy-metrics-gate.test.ts",
+      "title": "Spool holds clause has no test",
+      "problem": "Regression gap: the destinationHeld clause that treats a spool status with non-empty holds as destination-held is never exercised. The spool-status test sets only stopIntent and lastDiscard, and hook test (c) uses a notice marker, which hasMarker catches before readStatus runs.",
+      "impact": "If the holds clause breaks, an anthropic-subscription session the new pipeline is holding keeps publishing start, end and usage deltas through legacy /v1/metrics. The affected callers are sendSessionEndMetrics (end-metric.ts:104) and MetricsSyncProcessor, and no test catches the break.",
+      "recommendation": "Add a case that writes a session status carrying a non-empty `holds` entry (no stopIntent, lastDiscard or marker) for the native id and expects legacyMetricsVerdict to return { publish: false, reason: 'destination-held' }.",
+      "status": "fixed",
+      "fix": {
+        "change": "Test for the spool holds clause: a non-empty holds entry withholds (now transiently) and publishes once cleared",
+        "test": "src/agents/core/session/__tests__/legacy-metrics-gate.test.ts > a non-empty spool holds entry is a transient destination-pending ..."
+      }
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/session/legacy-metrics-gate.ts",
+      "line": 50,
+      "title": "Unvalidated native id reaches spool path",
+      "problem": "destinationHeld passes session.correlation.agentSessionId, which comes from the hook event, straight to readStatus(). statusFile() in otlp-spool/spool-paths.ts:57 runs join(spoolRoot(), sessionId + STATUS_EXT) with no validation, while the other spool callers check isSafeSessionId first. This violates the input-validation and path-check rules in security-practices.md.",
+      "impact": "An id containing path separators or '..' makes the gate read a status file outside the spool directory, which can flip the publish verdict. Reachability is unconfirmed: the id comes from the local agent's hook stdin.",
+      "recommendation": "Before recordKey/readStatus, check isSafeSessionId(nativeId) from @/agents/core/session-id.js; on failure treat the session as held (fail closed), matching the other spool callers.",
+      "status": "fixed",
+      "fix": {
+        "change": "destinationState validates the native id with isSafeSessionId before any marker/spool path; unsafe id -> transient verdict-unavailable",
+        "test": "src/agents/core/session/__tests__/legacy-metrics-gate.test.ts > an unsafe native session id never reaches a spool or marker path"
+      }
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/session/legacy-metrics-gate.ts",
+      "line": 54,
+      "title": "Recoverable holds withhold legacy metrics permanently",
+      "problem": "destinationHeld returns held for any marker file, including a notice-only marker (stop: false, a hold that can recover) that takeNotice has already acknowledged, and for any non-empty spool holds entry. If that is present at SessionEnd, sendSessionEndMetrics persists 'destination-held' as endMetricSkipped. isLegacyGateSkip then removes the deltas from pending data (delivery.ts, stale-session-reconciliation.ts), so the record counts as delivered. Mid-session, MetricsSyncProcessor leaves the same deltas pending for a retry, so the two paths disagree on whether the hold is final.",
+      "impact": "A consented session that hits a temporary hold (e.g. hold_project_unavailable) never gets its legacy end metric or usage deltas, even after the hold clears and the new pipeline publishes. Notice markers are never removed during the session, so one notice withholds the session for good.",
+      "recommendation": "Distinguish recoverable from final holds: treat only stop markers (isStopped) and lastDiscard/stopIntent as final; for notice markers and spool holds return a transient reason that end-metric.ts does not persist as endMetricSkipped (leave the end metric unmarked so delivery retries once the hold clears). The intended behaviour after a hold clears is ambiguous (no spec), so confirm it with the ticket owner.",
+      "status": "fixed",
+      "fix": {
+        "change": "Only stop markers, spool lastDiscard/stopIntent are final destination-held; notice markers and spool holds return transient destination-pending, which end-metric.ts does not persist",
+        "test": "hook.legacy-metrics-gate.test.ts (c), (c2), (f); legacy-metrics-gate.test.ts notice/holds cases"
+      }
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/session/legacy-metrics-gate.ts",
+      "line": 72,
+      "title": "Transient gate errors permanently drop metrics",
+      "problem": "legacyMetricsVerdict's catch-all maps any error (consent-store lock timeout, EACCES, a failed dynamic import) to 'destination-held'. hasMarker also returns true on any non-ENOENT error. sendSessionEndMetrics (end-metric.ts:104-110) saves that reason as endMetricSkipped, and isLegacyGateSkip then marks the session delivered without its deltas.",
+      "impact": "A one-off fault during SessionEnd permanently drops the end metric and every pending usage delta of a consented session. Nothing distinguishes this from a real hold, so retry and reconciliation never recover it.",
+      "recommendation": "Return a distinct transient outcome from the catch-all (e.g. { publish: false, reason: 'destination-held', transient: true } or a separate reason outside LEGACY_GATE_SKIPS); in sendSessionEndMetrics, skip without calling markEndMetric for a transient verdict so delivery retries. Keep the processor's leave-pending behaviour.",
+      "status": "fixed",
+      "fix": {
+        "change": "Catch-all and unreadable marker (markerState 'unknown', replacing hasMarker) return transient verdict-unavailable; end metric stays unmarked",
+        "test": "hook.legacy-metrics-gate.test.ts (e); legacy-metrics-gate.test.ts error/unreadable-marker cases"
+      }
+    }
+  ],
+  "deferred": [
+    {
+      "id": "DF-001",
+      "severity": "major",
+      "file": "src/cli/commands/hook/delivery.ts",
+      "line": 97,
+      "title": "Conversation sync ungated for unconsented sessions",
+      "problem": "Conversation payloads keep syncing, and keep counting as pending, for anthropic-subscription sessions without work consent after a legacy-gate skip.",
+      "preexisting": "The conversation sync predates this change; the original task limits the fix to the legacy /v1/metrics senders."
+    }
+  ],
+  "coverage_graded_at": "final",
+  "business_review": [],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "partial",
+      "notes": "git-workflow.md: subjects pass commitlint but embed ticket key EPMCDME-17054, listed as an Anti-Pattern; remedy is to reference it in the body footer"
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "code-quality.md: isLegacyGatedProvider lacks JSDoc; GateInput is a type alias not interface; new imports in end-metric.ts:104 and delivery.ts:101 use deep '../../../' paths"
+    },
+    {
+      "kind": "security",
+      "status": "partial",
+      "notes": "security-practices.md: no secrets/log leaks; destinationHeld passes agentSessionId unvalidated to readStatus path join, unlike other spool callers using isSafeSessionId"
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "No spec, so acceptance was skipped (no-spec mode, confidence low); blind, edge-case and verification-gap ran and reachability was checked for every candidate. 6 blocking findings: 2 gate defects that permanently drop metrics of consented sessions (CR-005 is ambiguous about intent, so it is kept as a patch), 1 unvalidated spool-path input, 2 test gaps and the ticket key in commit subjects. 1 deferred (conversation sync is not gated, pre-existing and outside the /v1/metrics scope; see code-review-deferred.local.md), and 12 filtered as noise, including the style-only standards rows (JSDoc, type-vs-interface, relative imports).",
+    "confidence": "low",
+    "risk_flags": [
+      "security"
+    ]
+  }
+}

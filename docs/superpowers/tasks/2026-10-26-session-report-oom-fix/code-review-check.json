@@ -1,0 +1,16 @@
+{
+  "decision": "approve",
+  "rationale": "CR-001 is resolved: the fix-up always folds over the full discovered Pi set (readPiTranscripts(discovered, ...)) instead of the sessionId-scoped subset, and bypasses the forked-child suppression check when a sessionId filter is active so a direct lookup for a fork's own session still returns its own data. Two new regression tests pin both directions (root scope still folds the fork's extra turn; fork scope still returns the fork itself, unsuppressed) and pass, alongside the full existing native-loader/pi/family-bounds/session-report/sessions-source suite (74/74). Lint and typecheck are clean. No new high-risk issue is evident in this small, targeted fix-up, so no confirmation pass was run.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    { "kind": "commit-format", "status": "pass", "notes": "Commit 'fix(analytics): preserve Pi fork-family folding under sessionId scoping' follows Conventional Commits and references EPMCDME-16400." },
+    { "kind": "code-quality", "status": "pass", "notes": "Explicit types preserved; new tests follow existing fixture patterns (familyDeps, piParsed) in the same file." },
+    { "kind": "security", "status": "na", "notes": "No security-relevant surface touched." }
+  ],
+  "findings": [],
+  "finding_status": [
+    { "id": "CR-001", "status": "resolved", "notes": "Fold input widened to the full discovered Pi set; suppression bypassed under sessionId scoping. Verified by two new tests plus the full regression suite (74/74 passing)." }
+  ]
+}

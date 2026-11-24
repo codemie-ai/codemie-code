@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "task": "Confirm analytics collection when the CodeMie proxy starts, with Project as the default persisted scope, a Project or Global choice during setup or reconfiguration, an Enter-to-confirm prompt, decline or cancel leaving analytics disabled for that start, silent mode skipping the prompt, and updated docs and regression coverage.",
+  "generated": "2026-10-26T13:21:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 23,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Setup and reconfiguration, proxy start, effective-configuration display, and the Claude Code OTLP connector must share one persisted Project/Global scope. ConfigLoader is the persistence point. The hook and daemon start paths (proxy start, connect ensure, ensureOtlpProxy) can bypass a prompt that lives on only one of them. Base L for those components plus shared config; bumped to XL because the change crosses several CLI workflows."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "Seven acceptance criteria define default scope, persistence, Enter-to-confirm, decline, cancel, silent mode, docs, and regression coverage. Still open: the ticket's sample options say Enable analytics / Decline while the criteria say Confirm, and the Project sample omits the project name the criteria require. Where a decline is stored for one proxy start is unmade, because each hook is a new process and a live daemon returns before any prompt. Vocabulary already uses Global/Local for storage and user/project for the allowlist."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Closest patterns are inquirer confirm (default true, Enter confirms) and the raw-mode storage-scope chooser. Neither covers this gate: storage-scope maps ESC and Ctrl+C to Global, an empty CODEMIE_ANALYTICS_PROJECT_FILTER tracks every project (the opposite of a Project default), agent --silent is not on proxy start or the hook command, and an in-memory decline does not survive the next hook. No injection, auth, or secret-handling gap, and proxy tests already mock stdin and stdout, so those floors were not applied. Agrees with the project L anchor profile-provider-decoupling (technical risk L, total 23) and is well above the bundle M REST-endpoint example (total 15, established pattern)."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "About 8–10 modified files and 2 new ones across proxy commands, setup, config types, ConfigLoader, profile status, the OTLP connector, existing proxy tests, COMMANDS.md, and the project-config guide, plus a confirmation prompt module and a regression test. That is the top of L. Hook, daemon-state, and extra architecture docs stay optional until the prompt placement is decided."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "CLI prompts (UI), proxy start and setup command surface (API), the daemon ensure gate (Service), and a new persisted scope on the effective configuration (persistence). Claude settings and the analytics API stay the existing integration; this does not add a new external service."
+    },
+    {
+      "dimension": "dependencies",
+      "reason": "No new packages; inquirer and unused @clack/prompts are already dependencies. Scored S for a new persisted scope key. Disagrees with profile-provider-decoupling and epmcdme-10401-add-provider-with-configuration-ui, which scored dependencies XS for larger config-schema work with no new packages; the rubric's S line matches a config addition more closely than XS."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L to XL: affects multiple workflows (setup and reconfiguration, proxy start confirmation, effective-configuration display, and the hook or daemon start path)."
+  ],
+  "split_recommendation": null
+}

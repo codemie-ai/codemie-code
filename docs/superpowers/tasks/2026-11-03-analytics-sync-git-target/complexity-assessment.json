@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "task": "Add a team git repository delivery target to `codemie analytics sync` beside the webhook: prompt-free clone/commit/push with the developer's own credentials, rebase-retry, per-target markers, configurable branch/path, and status/uninstall/bootstrap support.",
+  "generated": "2026-11-03T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 5, "label": "XL" }
+  },
+  "total": 27,
+  "size": "XL",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "split-required",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Every sync runner (install, run-sync, status, uninstall), the settings store, types, marker and run-log grammar assume one webhook target and one marker by documented design; all must generalize to N targets, plus a new git target abstraction (clone/commit/rebase/push, persistent working copy under the CodeMie home), CLI wiring and sync error classes. Base L, bumped for integration with a new external system (team git remote)." },
+    { "dimension": "requirements_clarity", "reason": "AC are detailed, but two AC depend on code absent from this branch and from origin: the `bootstrap` command (EPMCDME-16487) and the flattened OTel export format (EPMCDME-16561). Per-target marker/window design versus collector-compatible single marker is an open design decision, as is the multi-target run-log grammar consumed by status." },
+    { "dimension": "technical_risk", "reason": "Closest pattern is `skills/add.ts` non-interactive git (GIT_TERMINAL_PROMPT, GCM_INTERACTIVE env + timeout); it covers HTTPS prompts only, not SSH passphrase / unknown host-key prompts (BatchMode, StrictHostKeyChecking), credential redaction of `user:token@` URLs (redactSecrets strips only `sig=`), or cross-platform credential helpers. Rebase-retry concurrency, dirty-clone recovery and bounded git timeouts under schedulers without time limits are novel. Base L, bumped for credential/security sensitivity." },
+    { "dimension": "file_change_estimate", "reason": "About 12 modified source/doc files (types, config-store, marker, run-sync, status, install, uninstall, format, redact, analytics/index.ts, utils/errors.ts, docs/ANALYTICS-REPORT.md) plus 6+ existing test files (run-sync, install, status, uninstall, config-store, CLI surface), and 3-4 new files (git target, git command helper, their tests): 16+ modified -> XXL." },
+    { "dimension": "affected_layers", "reason": "CLI surface, Service (runners), Persistence (settings schema with optional webhook, per-target marker layout, run log), Infrastructure (scheduled job behavior, working copy under ~/.codemie), External (developer git binary, credential helpers, SSH agent, remote host). Base L, bumped for the new external integration." },
+    { "dimension": "calibration", "reason": "Project L anchor profile-provider-decoupling (23) had similar file breadth but no external integration or security-sensitive novelty; bundle XL anchor epmcdme-10303 (27, new external service with credentials) matches this task's profile. Raw total lands exactly on the 26/27 boundary; Technical Risk and Component Scope are both XL, so it leans higher." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L to XL: integration with a new external system (team git remote via developer's git binary)",
+    "Affected Layers bumped from L to XL: integration with a new external system",
+    "Technical Risk bumped from L to XL: security-sensitive credential handling (prompt-free git auth, never storing tokens, redacting credentials in URLs) with no existing pattern covering SSH/host-key prompts or URL credential redaction"
+  ],
+  "split_recommendation": {
+    "strategy": "by-dependency",
+    "secondary_strategy": null,
+    "ordering_note": "All work is in the codemie repo; land the multi-target foundation first, then the git target on top. The bootstrap AC (EPMCDME-16487) and OTel-format file naming AC (EPMCDME-16561) have no code on this branch; defer them to follow-ups after those stories merge rather than building them here.",
+    "slices": [
+      {
+        "title": "Multi-target sync foundation",
+        "slice_slug": "multi-target-foundation",
+        "component": "codemie",
+        "feature": "analytics-sync-git-target",
+        "scope": "Generalize analytics sync from one webhook to a list of targets: optional webhook in settings and validation, per-target last-sent markers and windows (keeping the collector-compatible webhook marker), a per-target run-log grammar that status still parses, and status/uninstall that iterate targets. Webhook remains the only implemented target; behaviour unchanged for existing installs.",
+        "depends_on": null
+      },
+      {
+        "title": "Git repository delivery target",
+        "slice_slug": "git-target",
+        "component": "codemie",
+        "feature": "analytics-sync-git-target",
+        "scope": "Add the git target: install flags for repository, branch and relative path with a test push before scheduling, prompt-free clone/commit/rebase-retry/push using the developer's own credentials with bounded timeouts, report file under the developer's email-slug folder, credential-redacted status for the repository, and uninstall removal of the local working copy.",
+        "depends_on": "Multi-target sync foundation"
+      }
+    ]
+  }
+}

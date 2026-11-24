@@ -1,0 +1,25 @@
+{
+  "decision": "request-changes",
+  "rationale": "No story/spec artifact exists for this sdlc-light run, so this is a genuine no-spec round (confidence forced low per schema). Blind and edge-case lenses both ran. The edge-case lens found one real, testable gap: scoping loadNativeSessions() to filter.sessionId before readPiTranscripts/foldPiForkFamilies silently drops Pi /fork continuation data when the requested sessionId is the fork root, since the continuation (a different sessionId) is filtered out of `scoped` before the fold pass can see it. One additional low-confidence, low-likelihood finding (sessionId collision across agents) is deferred — Claude/Codex/Pi/etc. session IDs are UUID-derived filenames, making a real collision implausible; not blocking. The blind lens's other two concerns (windowDays() returning undefined being a breaking contract, and widening the discovery window increasing memory pressure) were verified against the actual adapter code and discoverSessions() implementations and found to be non-issues: every adapter already falls back to its own `?? 30` default when maxAgeDays is undefined, and discoverSessions() only does readdir/stat (no file-content reads), so widening the window does not reintroduce the OOM. 1 finding emitted (patch), 1 deferred, 0 dismissed.",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    { "kind": "commit-format", "status": "pass", "notes": "Commit 'fix(analytics): short-circuit native session discovery and fix unbounded window' follows Conventional Commits and references EPMCDME-16400 per .ai-run/guides/standards/git-workflow.md." },
+    { "kind": "code-quality", "status": "pass", "notes": "Explicit return types, no `any`, ES module conventions, DI seam preserved per .ai-run/guides/standards/code-quality.md." },
+    { "kind": "security", "status": "na", "notes": "Change touches only in-memory file-discovery/filtering logic; no credentials, sanitization, or path-validation surface per .ai-run/guides/security/security-practices.md." }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/native-loader.ts",
+      "line": 726,
+      "title": "Session-scoped report silently drops Pi fork-continuation data when filter.sessionId targets a fork root",
+      "problem": "`scoped = discovered.filter(d => d.descriptor.sessionId === filter.sessionId)` is computed before `readPiTranscripts(scoped, deps)` / `foldPiForkFamilies(piTranscripts)` run. When the requested sessionId is the ROOT of a Pi `/fork` family, the fork continuation (which carries a different sessionId and holds all post-fork turns) is excluded from `scoped` before the fold pass ever sees it — unlike the existing 'orphaned fork kept standalone' safety net, there is no equivalent here; the continuation's data is dropped outright, not folded or kept standalone.",
+      "impact": "A single-session analytics report for a Pi session that was later forked silently undercounts turns/duration/spend for that session, with no error or warning — the exact kind of quiet data-loss this ticket is trying to eliminate, just for Pi forks specifically. Untested: native-loader-pi.test.ts's fork-family tests only call loadNativeSessions(undefined, ...), never with a sessionId filter.",
+      "recommendation": "Before narrowing to `scoped`, when `filter.sessionId` is set, also include any Pi descriptor whose parsed `parentSession` chain resolves to the matched descriptor (or vice versa) so `readPiTranscripts`/`foldPiForkFamilies` still see the full family for fold purposes, then filter the *output* down to the requested session's synthesized record. Add a test scoping `loadNativeSessions({ sessionId: <fork-root> })` over a discovered root + fork pair asserting the folded result still carries the fork's turns."
+    }
+  ]
+}

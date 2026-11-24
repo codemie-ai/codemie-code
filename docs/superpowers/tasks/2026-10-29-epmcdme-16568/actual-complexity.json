@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "generated": "2026-10-29T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 22,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 24,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Touches the SSO detached-login lock (new succeeded/failed stamping and waitForDetachedSsoLogin poller), the shared SSO auth gate (new ensureCodeMieSsoAuthOrWait), the sso-login bin, the SSO session-expiry proxy plugin, the `codemie hook` CLI command, the claude-code-otlp proxy connector, three OTLP adapters (claude-code-otlp, copilot-chat-otlp, copilot-cli-otlp) and Claude/Gemini hook configs. Base L (3-4+ components across provider/CLI/agent layers with a shared utility), bumped for affecting multiple agents/workflows." },
+    { "dimension": "technical_risk", "reason": "Closest pattern is the existing detached sign-in lock (acquireLock/cooldown); the change extends it with cross-process polling on a lock file, mid-write race tolerance and auth-gate re-checks after another profile's login. Base M, bumped to L because it sits on the authentication path (prompt gating on SSO credentials)." },
+    { "dimension": "file_change_estimate", "reason": "24 files changed (749+/65-) per diffstat, which maps to XXL under the 16+ actual-mode band; roughly half are tests (2 new SSO test files, new hook auth-gate-wait and prompt-hook-timeouts tests), spanning src/providers, src/cli, src/agents, src/bin and tests/integration." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L (4) to XL (5): affects multiple workflows/agents (Claude, Gemini, claude-code-otlp, copilot-chat-otlp, copilot-cli-otlp hook paths).",
+    "Technical Risk bumped from M (3) to L (4): affects authentication (SSO prompt gate waits on and re-validates sign-in)."
+  ],
+  "split_recommendation": null
+}

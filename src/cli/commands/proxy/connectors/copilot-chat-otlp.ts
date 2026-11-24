@@ -1,0 +1,390 @@
+/**
+ * Writes/removes CodeMie's hooks-only wiring for VS Code Copilot Chat (Local harness):
+ * a CodeMie-owned hook-definitions file plus a `chat.hookFilesLocations` entry in VS Code's
+ * `settings.json`, and this connector's project scope record (`copilot-connector-scope.ts`).
+ *
+ * v1 scope: hooks-only, Stable/default profile only (no `--insiders`), no OTel settings, no new
+ * route. The hook-file JSON shape below (event name -> array of `{matcher, hooks}` groups,
+ * mirroring Claude's `.claude/settings.json` hooks block) follows the "field names mirror Claude
+ * Code's hook input" convention.
+ */
+
+import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { isAbsolute, join, relative, sep } from 'node:path';
+import {
+  applyEdits,
+  modify,
+  parse,
+  printParseErrorCode,
+  type FormattingOptions,
+  type ParseError,
+} from 'jsonc-parser';
+import { ConfigurationError } from '@/utils/errors.js';
+import { logger } from '@/utils/logger.js';
+import { sanitizeLogArgs } from '@/utils/security.js';
+import { getCodemiePath, getDirname } from '@/utils/paths.js';
+import { parseHookCommandHead } from '@/utils/hook-command.js';
+import { resolveProjectRoot } from '@/utils/project-root.js';
+import {
+  isCopilotProjectTracked,
+  readCopilotConnectorScope,
+  readKeptCopilotConnectorScope,
+  writeCopilotConnectorScope,
+  type CopilotConnectorScope,
+} from '@/agents/core/copilot-connector-scope.js';
+import { addProjectPath, removeProjectPath } from '@/agents/core/project-allowlist.js';
+import { CHAT_HOOK_EVENT_NAMES } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.types.js';
+import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
+import { getVsCodeProductDir, removeFileThroughLink, writeAtomically } from './vscode.js';
+
+const HOOK_FILE_LOCATIONS_KEY = 'chat.hookFilesLocations';
+const USE_HOOKS_KEY = 'chat.useHooks';
+export const CHAT_HOOK_TIMEOUT_SECONDS = 30;
+
+export interface WriteCopilotChatOtlpOptions {
+  scope?: 'user' | 'project';
+  /** With no `scope`: an enabled project-scope record is written back as it is, anything else is scope `user`. */
+  keepProjectList?: boolean;
+}
+
+export interface WriteCopilotChatOtlpResult {
+  settingsPath: string;
+  hookFilePath: string;
+  hookEvents: number;
+  /** Tracked project roots; empty means all projects. */
+  allowlist: string[];
+}
+
+export interface RemoveCopilotChatOtlpOptions {
+  scope?: 'user' | 'project';
+}
+
+export interface RemoveCopilotChatOtlpResult {
+  removed: boolean;
+  mode: 'entry-removed' | 'full' | 'noop';
+  settingsPath: string;
+  reason?: string;
+  allowlist?: string[];
+}
+
+/** Stable/default-profile Local `settings.json` — v1 scope excludes Insiders and other profiles. */
+export function getVsCodeChatSettingsPath(): string {
+  return join(getVsCodeProductDir(false), 'User', 'settings.json');
+}
+
+export function getCopilotChatHookFilePath(): string {
+  return getCodemiePath('hooks', 'copilot-chat-hooks.json');
+}
+
+/** Hook-file path relative to the home directory with `/` separators, or undefined outside the home. */
+function hookFilePathUnderHome(): string | undefined {
+  const relativeToHome = relative(homedir(), getCopilotChatHookFilePath());
+  if (relativeToHome === '' || relativeToHome.startsWith('..') || isAbsolute(relativeToHome)) return undefined;
+  return relativeToHome.split(sep).join('/');
+}
+
+/**
+ * The `chat.hookFilesLocations` key for the hook file. VS Code accepts workspace-relative paths and
+ * `~/` home-relative paths; it skips absolute ones, including a leading `/` ("glob patterns and
+ * absolute paths not supported"). A file outside the home directory can only be addressed absolutely,
+ * which VS Code will not load, so that fallback is reported by `writeCopilotChatOtlpConfig`.
+ */
+export function getCopilotChatHookFileLocationKey(): string {
+  const underHome = hookFilePathUnderHome();
+  return underHome === undefined ? getCopilotChatHookFilePath() : `~/${underHome}`;
+}
+
+/** Keys earlier CodeMie versions wrote (absolute path, then `/`-prefixed home-relative); VS Code loads neither. */
+function getLegacyHookFileLocationKeys(): string[] {
+  const underHome = hookFilePathUnderHome();
+  return [getCopilotChatHookFilePath(), ...(underHome === undefined ? [] : [`/${underHome}`])]
+    .filter((key) => key !== getCopilotChatHookFileLocationKey());
+}
+
+interface SettingsReadResult {
+  settings: Record<string, unknown>;
+  raw: string;
+}
+
+async function readSettings(configPath: string): Promise<SettingsReadResult> {
+  if (!existsSync(configPath)) return { settings: {}, raw: '' };
+
+  let raw: string;
+  try {
+    raw = await readFile(configPath, 'utf-8');
+  } catch (error) {
+    throw new ConfigurationError(
+      `Failed to read VS Code settings at ${configPath}: ` +
+      `${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  if (raw.trim().length === 0) return { settings: {}, raw: '' };
+
+  const errors: ParseError[] = [];
+  const parsed: unknown = parse(raw, errors, { allowTrailingComma: true });
+  if (errors.length > 0) {
+    throw new ConfigurationError(
+      `VS Code settings at ${configPath} could not be read: ` +
+      `${printParseErrorCode(errors[0].error)} at offset ${errors[0].offset}. The file was not changed.`
+    );
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new ConfigurationError(`VS Code settings must contain a JSON object: ${configPath}`);
+  }
+  return { settings: parsed as Record<string, unknown>, raw };
+}
+
+function detectFormattingOptions(raw: string): FormattingOptions {
+  const eol = raw.includes('\r\n') ? '\r\n' : '\n';
+  const indentMatch = raw.match(/\r?\n([ \t]+)\S/);
+  const indent = indentMatch?.[1] ?? '  ';
+  const insertSpaces = !indent.startsWith('\t');
+  return { insertSpaces, tabSize: insertSpaces ? indent.length : 4, eol };
+}
+
+/**
+ * Returns the existing `chat.hookFilesLocations` map (path -> enabled). VS Code defines this
+ * setting as an object; a legacy array (written by older CodeMie versions, ignored by VS Code)
+ * is converted to the object form. Any other value is refused rather than overwritten.
+ */
+function readHookFileLocations(existing: unknown): Record<string, boolean> {
+  if (existing === undefined) return {};
+  if (Array.isArray(existing)) {
+    return Object.fromEntries(existing.filter((v): v is string => typeof v === 'string').map((v) => [v, true]));
+  }
+  if (typeof existing !== 'object' || existing === null) {
+    throw new ConfigurationError(
+      `VS Code setting "${HOOK_FILE_LOCATIONS_KEY}" is not an object and was not changed. ` +
+      'Convert it to an object of paths (or remove it) and retry.'
+    );
+  }
+  return { ...(existing as Record<string, boolean>) };
+}
+
+/** Adds `entry` to `chat.hookFilesLocations`, enabled. */
+function upsertHookFileLocation(existing: unknown, entry: string): Record<string, boolean> {
+  return { ...readHookFileLocations(existing), [entry]: true };
+}
+
+function removeHookFileLocations(existing: unknown, entries: string[]): Record<string, boolean> {
+  const current = readHookFileLocations(existing);
+  for (const entry of entries) delete current[entry];
+  return current;
+}
+
+function buildHookFileContent(hookCommand: string): Record<string, unknown> {
+  const hooks: Record<string, unknown> = {};
+  for (const eventName of CHAT_HOOK_EVENT_NAMES) {
+    hooks[eventName] = [{ type: 'command', command: hookCommand, timeout: CHAT_HOOK_TIMEOUT_SECONDS }];
+  }
+  return { hooks };
+}
+
+/**
+ * The `bin/codemie.js` the Copilot Chat hook file's codemie commands run (the script of the first
+ * `"<node>" "<script>" hook …` command, unquoted the way the writer quoted it), or null: no file, an unreadable
+ * one, no such command. Never throws, writes nothing.
+ */
+export async function readCopilotChatHookInstall(): Promise<string | null> {
+  try {
+    const parsed = JSON.parse(await readFile(getCopilotChatHookFilePath(), 'utf-8')) as { hooks?: unknown };
+    const hooks = parsed.hooks;
+    if (!hooks || typeof hooks !== 'object') return null;
+    for (const entries of Object.values(hooks)) {
+      for (const entry of Array.isArray(entries) ? entries : []) {
+        const command: unknown = (entry as { command?: unknown } | null)?.command;
+        const head = typeof command === 'string' ? parseHookCommandHead(command) : null;
+        if (head && head.paths.length === 2 && /^\s+hook\b/.test(head.rest)) {
+          return unescapeHookPath(head.paths[1]);
+        }
+      }
+    }
+    return null;
+  } catch (error) {
+    logger.debug('[proxy] Copilot Chat hook file not readable', ...sanitizeLogArgs({ error: String(error) }));
+    return null;
+  }
+}
+
+/**
+ * A path of a hook command as the writer was given it: the writer quotes with `JSON.stringify`, so its escapes are
+ * undone; a path that is not the content of a JSON string is taken as written.
+ */
+function unescapeHookPath(path: string): string {
+  try {
+    return JSON.parse(`"${path}"`) as string;
+  } catch {
+    return path;
+  }
+}
+
+/** `codemie hook --agent copilot-chat-otlp`, as an absolute command — VS Code's hook
+ * execution environment may not inherit the shell PATH. */
+function resolveAbsoluteHookCommand(): string {
+  // dist/cli/commands/proxy/connectors/copilot-chat-otlp.js -> ../../../../../bin/codemie.js (repo root's bin/)
+  const cliEntry = join(getDirname(import.meta.url), '../../../../../bin/codemie.js');
+  return `${JSON.stringify(process.execPath)} ${JSON.stringify(cliEntry)} hook --agent ${COPILOT_CHAT_OTLP_AGENT_NAME}`;
+}
+
+async function resolveScope(opts: WriteCopilotChatOtlpOptions): Promise<CopilotConnectorScope> {
+  if (opts.scope === undefined && opts.keepProjectList) {
+    return readKeptCopilotConnectorScope(COPILOT_CHAT_OTLP_AGENT_NAME);
+  }
+  if (opts.scope !== 'project') {
+    return { enabled: true, scope: 'user' };
+  }
+  const existing = await readCopilotConnectorScope(COPILOT_CHAT_OTLP_AGENT_NAME);
+  const currentPaths = existing.kind === 'ok' && existing.value.enabled && existing.value.scope === 'project'
+    ? existing.value.paths
+    : [];
+  const paths = await addProjectPath(currentPaths, resolveProjectRoot());
+  return { enabled: true, scope: 'project', paths };
+}
+
+export async function writeCopilotChatOtlpConfig(
+  opts: WriteCopilotChatOtlpOptions = {}
+): Promise<WriteCopilotChatOtlpResult> {
+  const settingsPath = getVsCodeChatSettingsPath();
+  const hookFilePath = getCopilotChatHookFilePath();
+
+  const { settings, raw } = await readSettings(settingsPath);
+  if (settings[USE_HOOKS_KEY] === false) {
+    throw new ConfigurationError(
+      `VS Code setting "${USE_HOOKS_KEY}" is disabled in ${settingsPath}. ` +
+      'Enable it manually before connecting Copilot Chat analytics; CodeMie will not change this setting.'
+    );
+  }
+  // Drop the keys older versions wrote; VS Code skips them.
+  const locationKey = getCopilotChatHookFileLocationKey();
+  const hookFileLocations = upsertHookFileLocation(
+    removeHookFileLocations(settings[HOOK_FILE_LOCATIONS_KEY], getLegacyHookFileLocationKeys()),
+    locationKey
+  );
+  if (hookFilePathUnderHome() === undefined) {
+    logger.warn(
+      '[proxy] The Copilot Chat hook file is outside the home directory; VS Code loads only workspace-relative or ~/ hook paths, so Copilot Chat hooks will not run',
+      ...sanitizeLogArgs({ hookFilePath })
+    );
+  }
+
+  await writeAtomically(hookFilePath, `${JSON.stringify(buildHookFileContent(resolveAbsoluteHookCommand()), null, 2)}\n`);
+
+  let nextText: string;
+  if (raw.trim().length === 0) {
+    nextText = `${JSON.stringify(
+      { ...settings, [HOOK_FILE_LOCATIONS_KEY]: hookFileLocations },
+      null,
+      '\t'
+    )}\n`;
+  } else {
+    const formattingOptions = detectFormattingOptions(raw);
+    nextText = applyEdits(raw, modify(raw, [HOOK_FILE_LOCATIONS_KEY], hookFileLocations, { formattingOptions }));
+  }
+
+  try {
+    await writeAtomically(settingsPath, nextText);
+  } catch (error) {
+    throw new ConfigurationError(
+      `Failed to update VS Code settings at ${settingsPath}: ` +
+      `${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  const scope = await resolveScope(opts);
+  await writeCopilotConnectorScope(COPILOT_CHAT_OTLP_AGENT_NAME, scope);
+
+  const allowlist = scope.enabled && scope.scope === 'project' ? scope.paths : [];
+  logger.info(
+    '[proxy] Configured Copilot Chat hooks-only analytics',
+    ...sanitizeLogArgs({ settingsPath, hookFilePath, hookEvents: CHAT_HOOK_EVENT_NAMES.length, allowlist })
+  );
+
+  return { settingsPath, hookFilePath, hookEvents: CHAT_HOOK_EVENT_NAMES.length, allowlist };
+}
+
+export async function removeCopilotChatOtlpConfig(
+  opts: RemoveCopilotChatOtlpOptions = {}
+): Promise<RemoveCopilotChatOtlpResult> {
+  const settingsPath = getVsCodeChatSettingsPath();
+  const hookFilePath = getCopilotChatHookFilePath();
+
+  if (opts.scope === 'project') {
+    const existing = await readCopilotConnectorScope(COPILOT_CHAT_OTLP_AGENT_NAME);
+    if (existing.kind !== 'ok' || !existing.value.enabled || existing.value.scope !== 'project') {
+      return {
+        removed: false,
+        mode: 'noop',
+        settingsPath,
+        reason: existing.kind === 'corrupt'
+          ? 'connector scope config is corrupt; fix it manually or disconnect without --scope project'
+          : 'connector is not scoped to specific projects',
+      };
+    }
+    const projectRoot = resolveProjectRoot();
+    const remaining = await removeProjectPath(existing.value.paths, projectRoot);
+    if (remaining.length === existing.value.paths.length) {
+      return { removed: false, mode: 'noop', settingsPath, reason: 'current project is not tracked' };
+    }
+    if (remaining.length > 0) {
+      await writeCopilotConnectorScope(COPILOT_CHAT_OTLP_AGENT_NAME, {
+        enabled: true,
+        scope: 'project',
+        paths: remaining,
+      });
+      logger.info(
+        '[proxy] Removed project from Copilot Chat analytics scope',
+        ...sanitizeLogArgs({ remaining })
+      );
+      return { removed: true, mode: 'entry-removed', settingsPath, allowlist: remaining };
+    }
+    // Last tracked project removed: fall through to full removal below.
+  }
+
+  if (!existsSync(settingsPath)) {
+    await writeCopilotConnectorScope(COPILOT_CHAT_OTLP_AGENT_NAME, { enabled: false });
+    return { removed: false, mode: 'noop', settingsPath, reason: 'no VS Code settings file found' };
+  }
+
+  const { settings, raw } = await readSettings(settingsPath);
+  const currentLocations = readHookFileLocations(settings[HOOK_FILE_LOCATIONS_KEY]);
+  const codemieKeys = [getCopilotChatHookFileLocationKey(), ...getLegacyHookFileLocationKeys()];
+  const hadEntry = codemieKeys.some((key) => key in currentLocations);
+
+  if (!hadEntry) {
+    await writeCopilotConnectorScope(COPILOT_CHAT_OTLP_AGENT_NAME, { enabled: false });
+    return { removed: false, mode: 'noop', settingsPath, reason: 'no CodeMie entries found' };
+  }
+
+  const remainingLocations = removeHookFileLocations(settings[HOOK_FILE_LOCATIONS_KEY], codemieKeys);
+  const formattingOptions = detectFormattingOptions(raw);
+  const nextText = Object.keys(remainingLocations).length > 0
+    ? applyEdits(raw, modify(raw, [HOOK_FILE_LOCATIONS_KEY], remainingLocations, { formattingOptions }))
+    : applyEdits(raw, modify(raw, [HOOK_FILE_LOCATIONS_KEY], undefined, { formattingOptions }));
+
+  await writeAtomically(settingsPath, nextText);
+
+  if (existsSync(hookFilePath)) {
+    await removeFileThroughLink(hookFilePath);
+  }
+  await writeCopilotConnectorScope(COPILOT_CHAT_OTLP_AGENT_NAME, { enabled: false });
+
+  logger.info('[proxy] Removed Copilot Chat analytics hooks', ...sanitizeLogArgs({ settingsPath, hookFilePath }));
+  return { removed: true, mode: 'full', settingsPath };
+}
+
+/** Allowlist read used by `codemie proxy status`. */
+export async function describeCopilotChatScope(): Promise<string> {
+  const scope = await readCopilotConnectorScope(COPILOT_CHAT_OTLP_AGENT_NAME);
+  if (scope.kind === 'corrupt') return 'corrupt (fix manually or reconnect)';
+  if (!scope.value.enabled) return 'disabled';
+  if (scope.value.scope === 'user') return 'all projects';
+  return scope.value.paths.join(', ') || 'no projects tracked';
+}
+
+/** Exposed for tests / `isTracked()` parity checks only; not part of the write path above. */
+export async function isCopilotChatCwdTracked(cwd: string | undefined): Promise<boolean> {
+  return isCopilotProjectTracked(cwd, await readCopilotConnectorScope(COPILOT_CHAT_OTLP_AGENT_NAME));
+}

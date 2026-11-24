@@ -273,6 +273,15 @@ describe('Path Utilities - Cross-Platform', () => {
       it('should handle Windows-style paths', () => {
         expect(extractRepository('C:\\Users\\alice\\projects\\codemie-code')).toBe('projects/codemie-code');
       });
+
+      it.each([
+        ['C:\\Repositories', 'Repositories'],
+        ['C:/Repositories', 'Repositories'],
+        ['C:\\Repositories\\codemie', 'Repositories/codemie'],
+        ['C:\\', 'unknown'],
+      ])('should drop the drive letter segment: %s', (input, expected) => {
+        expect(extractRepository(input)).toBe(expected);
+      });
     });
 
     describe('Claude Desktop sandbox paths — return Cowork', () => {

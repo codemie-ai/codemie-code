@@ -11,6 +11,8 @@ import { ProxyContext } from '../proxy-types.js';
 import { SSOCredentials } from '../../../../core/types.js';
 import { logger } from '../../../../../utils/logger.js';
 import { AuthenticationError } from '../proxy-errors.js';
+import { CredentialRefresher } from './credential-refresh.js';
+import { buildCookieHeader, droppedCookieKeys } from '../../session/cookie-auth.js';
 
 export class SSOAuthPlugin implements ProxyPlugin {
   id = '@codemie/proxy-sso-auth';
@@ -19,12 +21,14 @@ export class SSOAuthPlugin implements ProxyPlugin {
   priority = 10;
 
   async createInterceptor(context: PluginContext): Promise<ProxyInterceptor> {
-    // Guard: skip if credentials are JWT (not SSO)
-    if (!context.credentials || !('cookies' in context.credentials)) {
+    // Guard: skip if credentials are JWT (not SSO). `credentialRefresher` may also wrap JWT
+    // credentials (the model-catalogue fetch needs it either way), so check the underlying
+    // credential type rather than just whether a refresher exists (PR #661 review).
+    if (!context.credentials || !('cookies' in context.credentials) || !context.credentialRefresher) {
       return new NoOpInterceptor('sso-auth');
     }
 
-    return new SSOAuthInterceptor(context.credentials as SSOCredentials);
+    return new SSOAuthInterceptor(context.credentialRefresher as CredentialRefresher<SSOCredentials>);
   }
 }
 
@@ -39,33 +43,14 @@ class NoOpInterceptor implements ProxyInterceptor {
 class SSOAuthInterceptor implements ProxyInterceptor {
   name = 'sso-auth';
 
-  constructor(private credentials: SSOCredentials) {}
-
-  private hasInvalidHeaderChars(value: string): boolean {
-    // RFC 7230 field-vchar / obs-text; disallow control chars except HTAB.
-    for (let i = 0; i < value.length; i++) {
-      const code = value.charCodeAt(i);
-      if ((code <= 0x1f && code !== 0x09) || code === 0x7f) {
-        return true;
-      }
-    }
-    return false;
-  }
+  constructor(private readonly credentials: CredentialRefresher<SSOCredentials>) {}
 
   async onRequest(context: ProxyContext): Promise<void> {
-    const invalidCookieKeys: string[] = [];
-    const cookiePairs: string[] = [];
+    const current = await this.credentials.refresh();
 
-    for (const [key, value] of Object.entries(this.credentials.cookies)) {
-      const safeKey = String(key).trim();
-      const safeValue = String(value);
-      if (!safeKey || this.hasInvalidHeaderChars(safeKey) || this.hasInvalidHeaderChars(safeValue)) {
-        invalidCookieKeys.push(safeKey || '<empty>');
-        continue;
-      }
-      cookiePairs.push(`${safeKey}=${safeValue}`);
-    }
+    const cookieHeader = buildCookieHeader(current.cookies);
 
+    const invalidCookieKeys = droppedCookieKeys(current.cookies);
     if (invalidCookieKeys.length > 0) {
       logger.warn(`[${this.name}] Ignoring invalid cookie entries`, {
         invalidCookieCount: invalidCookieKeys.length,
@@ -73,20 +58,18 @@ class SSOAuthInterceptor implements ProxyInterceptor {
       });
     }
 
-    if (cookiePairs.length === 0) {
+    if (!cookieHeader) {
       throw new AuthenticationError(
         'Stored SSO session cookies are invalid. Run `codemie profile login` and reconnect the proxy.'
       );
     }
 
-    const cookieHeader = cookiePairs.join('; ');
-
     // Use lowercase 'cookie' to match Node.js HTTP header conventions
     context.headers['cookie'] = cookieHeader;
 
     logger.debug(`[${this.name}] Injected SSO cookies:`, {
-      cookieCount: Object.keys(this.credentials.cookies).length,
-      cookieNames: Object.keys(this.credentials.cookies),
+      cookieCount: Object.keys(current.cookies).length,
+      cookieNames: Object.keys(current.cookies),
       headerLength: cookieHeader.length
     });
   }

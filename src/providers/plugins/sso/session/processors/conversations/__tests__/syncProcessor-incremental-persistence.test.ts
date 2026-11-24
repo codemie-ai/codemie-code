@@ -120,6 +120,30 @@ describe('createSyncProcessor — incremental persistence and deferral', () => {
     expect(readStatuses()).toEqual(['success', 'success', 'pending', 'pending', 'pending']);
   });
 
+  it('keeps a payload whose request the abort stopped mid-flight pending: no attempt, no error', async () => {
+    writePayloads(3);
+    const { SyncStoppedError } = await import('@/agents/core/session/BaseProcessor.js');
+    let calls = 0;
+    upsertConversation.mockImplementation(async (conversationId: string) => {
+      calls++;
+      if (calls === 2) throw new SyncStoppedError('aborted');
+      return { success: true, message: 'ok', conversation_id: conversationId, new_messages: 1, total_messages: 1 };
+    });
+
+    const { createSyncProcessor } = await import('../syncProcessor.js');
+    const result = await createSyncProcessor().process(
+      { sessionId: SESSION_ID, agentName: 'claude' } as never,
+      makeContext() as never,
+    );
+
+    expect(result.message).toMatch(/Sync deferred: 2 items remaining/);
+    const records = readFileSync(conversationsFile, 'utf8').trim().split('\n')
+      .map((line) => JSON.parse(line) as { status: string; syncAttempts?: number; error?: string });
+    expect(records.map((r) => r.status)).toEqual(['success', 'pending', 'pending']);
+    expect(records[1].syncAttempts).toBeUndefined();
+    expect(records[1].error).toBeUndefined();
+  });
+
   it('does not re-send payloads already marked success by a killed previous run', async () => {
     writePayloads(5);
     const controller = new AbortController();
