@@ -285,9 +285,9 @@ describe('promptAnalyticsConfirmation', () => {
     };
 
     it.each([
-      ['project', 'Send analytics from personal Claude subscriptions in this repository?'],
-      ['user', 'Send analytics from personal Claude subscriptions in any repository?'],
-    ] as const)('asks a Confirm / Decline list first for %s scope, Confirm preselected, then the unchanged main question', async (scope, text) => {
+      ['project', "Include analytics from personal Claude subscriptions in this repository?"],
+      ['user', "Include analytics from personal Claude subscriptions in any repository?"],
+    ] as const)('asks the unchanged main question first, then a Confirm / Decline list for %s scope, Confirm preselected', async (scope, text) => {
       answers(true, true);
 
       await promptAnalyticsConfirmation(options({ kind: 'absent' }, { workConsentQuestion: { scope } }));
@@ -295,8 +295,7 @@ describe('promptAnalyticsConfirmation', () => {
       expect(promptMock).toHaveBeenCalledTimes(2);
       expect(promptMock.mock.calls[0][0][0]).toMatchObject({
         type: 'list',
-        message: text,
-        default: true,
+        message: 'Enable Claude Code analytics?',
         choices: [
           { name: 'Confirm', value: true },
           { name: 'Decline', value: false },
@@ -304,7 +303,8 @@ describe('promptAnalyticsConfirmation', () => {
       });
       expect(promptMock.mock.calls[1][0][0]).toMatchObject({
         type: 'list',
-        message: 'Enable Claude Code analytics?',
+        message: text,
+        default: true,
         choices: [
           { name: 'Confirm', value: true },
           { name: 'Decline', value: false },
@@ -323,10 +323,8 @@ describe('promptAnalyticsConfirmation', () => {
     });
 
     it.each([
-      ['Confirm then Confirm', [true, true], 'enable-with-consent'],
-      ['Decline then Confirm', [false, true], 'enable'],
-      ['Confirm then Decline', [true, false], 'cancel'],
-      ['Decline then Decline', [false, false], 'cancel'],
+      ['main Confirm then consent Confirm', [true, true], 'enable-with-consent'],
+      ['main Confirm then consent Decline', [true, false], 'enable'],
     ] as const)('%s resolves %s', async (_name, replies, expected) => {
       answers(...replies);
 
@@ -335,7 +333,16 @@ describe('promptAnalyticsConfirmation', () => {
       ).resolves.toBe(expected);
     });
 
-    it.each(['ExitPromptError', 'AbortPromptError'])('a closed first question (%s) cancels without asking the main question', async (name) => {
+    it('a declined main question cancels without asking the consent question', async () => {
+      answers(false);
+
+      await expect(
+        promptAnalyticsConfirmation(options({ kind: 'absent' }, { workConsentQuestion: { scope: 'project' } })),
+      ).resolves.toBe('cancel');
+      expect(promptMock).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['ExitPromptError', 'AbortPromptError'])('a closed main question (%s) cancels without asking the consent question', async (name) => {
       const error = new Error('closed');
       error.name = name;
       promptMock.mockRejectedValueOnce(error);
@@ -346,7 +353,7 @@ describe('promptAnalyticsConfirmation', () => {
       expect(promptMock).toHaveBeenCalledTimes(1);
     });
 
-    it('a closed main question cancels', async () => {
+    it('a closed consent question cancels', async () => {
       const error = new Error('closed');
       error.name = 'ExitPromptError';
       promptMock.mockResolvedValueOnce({ enable: true }).mockRejectedValueOnce(error);

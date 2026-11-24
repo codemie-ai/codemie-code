@@ -24,8 +24,8 @@ export interface AnalyticsConfirmationOptions {
    */
   routedClients?: string[];
   /**
-   * When set, a Confirm / Decline question about sending analytics from personal Claude subscriptions comes before the
-   * main question; the wording follows the scope. It names no repository or project.
+   * When set, a Confirm / Decline question about including personal Claude subscriptions comes after the main question
+   * is confirmed; the wording follows the scope. It names no repository or project.
    */
   workConsentQuestion?: { scope: AllowlistScope };
 }
@@ -35,7 +35,7 @@ const INVALID_ALLOWLIST_NOTE = 'The project list in Claude Code settings cannot 
 /**
  * Show the analytics confirmation and wait for the user's decision. The details
  * are printed first, then the same inquirer list used by `codemie setup` asks
- * Confirm / Decline, preceded by the work-consent Confirm / Decline question when `workConsentQuestion` is set.
+ * Confirm / Decline, followed by the work-consent Confirm / Decline question when `workConsentQuestion` is set.
  * A closed prompt resolves to `cancel` so the caller leaves the allowlist and daemon untouched. Callers must gate
  * on an interactive terminal.
  */
@@ -43,18 +43,16 @@ export async function promptAnalyticsConfirmation(
   options: AnalyticsConfirmationOptions,
 ): Promise<AnalyticsConfirmationResult> {
   console.log(buildAnalyticsConfirmationMessage(options));
-  let withConsent = false;
-  if (options.workConsentQuestion) {
-    const answer = await askConfirm(workConsentQuestionText(options.workConsentQuestion.scope));
-    if (answer === undefined) return 'cancel';
-    withConsent = answer;
-  }
   if (!(await promptConfirmDecline('Enable Claude Code analytics?'))) return 'cancel';
-  return withConsent ? 'enable-with-consent' : 'enable';
+  if (!options.workConsentQuestion) return 'enable';
+  const answer = await askConfirm(workConsentQuestionText(options.workConsentQuestion.scope));
+  if (answer === undefined) return 'cancel';
+  return answer ? 'enable-with-consent' : 'enable';
 }
 
 function workConsentQuestionText(scope: AllowlistScope): string {
-  return `Send analytics from personal Claude subscriptions in ${scope === 'project' ? 'this repository' : 'any repository'}?`;
+  const where = scope === 'project' ? 'this repository' : 'any repository';
+  return `Include analytics from personal Claude subscriptions in ${where}?`;
 }
 
 /** `confirm` drops the project list; `cancel` covers Decline and a closed prompt. */

@@ -1951,7 +1951,7 @@ The allowlist in `~/.claude/settings.json` is the only source of truth. An empty
 
 #### Personal subscriptions
 
-Sessions billed to a personal Claude subscription are sent only with work consent. `--include-personal-subscriptions` (needs `--claude-otlp`) records it after the setup succeeds: for this repository with `--scope project`, for any repository with `--scope user` or no `--scope`. Without the flag, an interactive run asks `Send analytics from personal Claude subscriptions in this repository?` (or `... in any repository?`) before `Enable Claude Code analytics?`; `Decline` records nothing and prints the command to enable it later. With `--yes` nothing is asked and consent is recorded only with the flag.
+Sessions billed to a personal Claude subscription are sent only with work consent. `--include-personal-subscriptions` (needs `--claude-otlp`) records it after the setup succeeds: for this repository with `--scope project`, for any repository with `--scope user` or no `--scope`. Without the flag, an interactive run asks `Include analytics from personal Claude subscriptions in this repository?` (or `... in any repository?`) after `Enable Claude Code analytics?` is confirmed; `Decline` records nothing and prints the command to enable it later. With `--yes` nothing is asked and consent is recorded only with the flag.
 
 The same consent is managed with `codemie proxy analytics consent grant [path] [--all]`, `consent revoke [path] [--all]` and `consent list`. `--all` covers any repository (shown as `any repository`), cannot be combined with a path or `--project`, and `revoke --all` leaves per-path consents alone.
 

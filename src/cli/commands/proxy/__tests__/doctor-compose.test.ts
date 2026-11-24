@@ -549,7 +549,7 @@ describe('composeProxyDoctor', () => {
         [
           'Unsent data: 16.26 KB (all sessions on this machine), 16.26 KB of it on hold',
           '      On hold: personal Claude subscription sessions need work consent',
-          '      Fix: run in the repository: codemie proxy analytics consent grant (applies to new sessions only)',
+          '      Fix: codemie proxy analytics consent grant (run in this repository, or add --all for every repository; applies to new sessions only)',
         ].join('\n'),
       ]);
     });
@@ -568,7 +568,7 @@ describe('composeProxyDoctor', () => {
           [
             'Unsent data: 20.00 KB (all sessions on this machine), 20.00 KB of it on hold',
             '      On hold: personal Claude subscription sessions need work consent',
-            '      Fix: run in the repository: codemie proxy analytics consent grant (applies to new sessions only)',
+            '      Fix: codemie proxy analytics consent grant (run in this repository, or add --all for every repository; applies to new sessions only)',
             '      On hold: second reason text',
             '      Fix: second fix text',
           ].join('\n'),
