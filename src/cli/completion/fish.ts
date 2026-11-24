@@ -67,6 +67,10 @@ export function emitFish(model: NodeModel, version: string): string {
       }
     }
 
+    if (node.subs.length === 0) {
+      for (const ch of node.positionalChoices) rules.push(`${c} ${at(String(id))} -f -a ${arg(ch)}`);
+    }
+
     for (const opt of effectiveOptions(model, node)) {
       rules.push(`${c} ${at(String(id))} ${optionFlags(opt)} -d ${q(opt.description)}`);
       if (opt.takesValue !== 'required') continue;
@@ -93,6 +97,9 @@ export function emitFish(model: NodeModel, version: string): string {
     '    while test $i -le $n',
     '        set -l w $toks[$i]',
     '        switch $w',
+    "            case '--'",
+    '                echo end',
+    '                return',
     "            case '-*'",
     '                set -l key',
     '                switch "$node:$w"',

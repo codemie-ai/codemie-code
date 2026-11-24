@@ -12,6 +12,9 @@ function __tool_state
     while test $i -le $n
         set -l w $toks[$i]
         switch $w
+            case '--'
+                echo end
+                return
             case '-*'
                 set -l key
                 switch "$node:$w"
@@ -98,6 +101,9 @@ complete -c tool -n 'test (__tool_state) = \\'3\\'' -a 'help' -d 'display help f
 complete -c tool -n 'test (__tool_state) = \\'3\\'' -l 'help' -s 'h' -d 'display help for command'
 complete -c tool -n 'test (__tool_state) = \\'3\\'' -l 'version' -s 'V' -d 'output the version number'
 complete -c tool -n 'test (__tool_state) = \\'3\\'' -l 'task' -d 'Run a task'
+complete -c tool -n 'test (__tool_state) = \\'4\\'' -f -a 'red'
+complete -c tool -n 'test (__tool_state) = \\'4\\'' -f -a 'green'
+complete -c tool -n 'test (__tool_state) = \\'4\\'' -f -a 'two\\\\ words'
 complete -c tool -n 'test (__tool_state) = \\'4\\'' -l 'deep' -d 'Deep'
 complete -c tool -n 'test (__tool_state) = \\'4\\'' -l 'help' -s 'h' -d 'display help for command'
 complete -c tool -n 'test (__tool_state) = \\'4\\'' -l 'version' -s 'V' -d 'output the version number'

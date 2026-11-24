@@ -132,6 +132,14 @@ describe('completion stdout purity', () => {
     });
   }
 
+  it('an error path still surfaces on stderr, with stdout empty and a non-zero exit', async () => {
+    const home = freshHome();
+    const res = await run(home, ['completion', 'powershell'], { CODEMIE_DEBUG: 'true' });
+    expect(res.code).not.toBe(0);
+    expect(res.stdout).toBe('');
+    expect(res.stderr).toMatch(/bash/);
+  });
+
   it('the bash output passes bash -n under the same conditions', async () => {
     const home = freshHome();
     const res = await run(home, ['completion', 'bash'], { CODEMIE_DEBUG: 'true' });

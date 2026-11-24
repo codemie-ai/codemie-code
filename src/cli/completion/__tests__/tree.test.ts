@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Command, Option } from 'commander';
+import { Argument, Command, Option } from 'commander';
 import { markHidden } from '@/cli/hidden.js';
 import { buildModel, effectiveOptions } from '../tree.js';
 
@@ -73,6 +73,18 @@ describe('buildModel', () => {
     const c = sub(sub(sub(model, 'a'), 'b'), 'c');
     expect(c.subs).toEqual([]);
     expect(c.options.some(o => o.long === '--deep')).toBe(true);
+  });
+
+  it('models the first positional argument choices; none otherwise', () => {
+    const root = new Command('tool');
+    root.command('pick').addArgument(new Argument('<what>').choices(['x', 'y']));
+    root.command('plain').argument('<free>');
+    const m = buildModel(root);
+    const get = (n: string) => m.subs.find(s => s.name === n)!;
+    expect(get('pick').positionalChoices).toEqual(['x', 'y']);
+    expect(get('plain').positionalChoices).toEqual([]);
+    expect(get('help').positionalChoices).toEqual([]);
+    expect(m.positionalChoices).toEqual([]);
   });
 });
 

@@ -5,6 +5,8 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { buildModel } from '@/cli/completion/tree.js';
 import { emitZsh } from '@/cli/completion/zsh.js';
+import { createProgram } from '@/cli/program.js';
+import { generate } from '@/cli/completion/index.js';
 import { buildFixtureRoot } from '../../helpers/completion-fixtures.js';
 import { startZsh, type ZshSession } from '../../helpers/zsh-pty.js';
 
@@ -27,6 +29,7 @@ suite('zsh completion (real zsh)', () => {
   let script: string;
   let src: ZshSession;
   let auto: ZshSession;
+  let real: ZshSession;
   beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), 'zshcomp-'));
     script = join(dir, 'tool.zsh');
@@ -34,10 +37,14 @@ suite('zsh completion (real zsh)', () => {
     writeFileSync(join(dir, 'alpha.txt'), '');
     src = await startZsh({ script, name: 'tool', cwd: dir, mode: 'source' });
     auto = await startZsh({ script, name: 'tool', cwd: dir, mode: 'autoload' });
+    const realScript = join(dir, 'codemie.zsh');
+    writeFileSync(realScript, generate('zsh', createProgram()));
+    real = await startZsh({ script: realScript, name: 'codemie', cwd: dir, mode: 'source' });
   }, 60000);
   afterAll(() => {
     src?.close();
     auto?.close();
+    real?.close();
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -116,9 +123,36 @@ suite('zsh completion (real zsh)', () => {
     expect(await complete('tool list --task ')).toEqual([]);
   });
 
+  it('treats -- as end-of-options: nothing is offered after it', async () => {
+    expect(await complete('tool list -- ')).toEqual([]);
+    expect(await complete('tool list -- -')).toEqual([]);
+    expect(await complete('tool -- a ')).toEqual([]);
+    expect(await complete('tool -- l')).toEqual([]);
+  });
+
+  it('a valued option still consumes a -- that is its value', async () => {
+    expect(await complete('tool list --name -- -')).toEqual(
+      sorted(['-v', '--verbose', '--format', '--out', '--cfg', '--name', ...ROOT_OPTS])
+    );
+  });
+
+  it('offers positional choices at a leaf, along with its options', async () => {
+    expect(await complete('tool a b c ')).toEqual(sorted(['red', 'green', 'two words', '--deep', ...ROOT_OPTS]));
+    expect(await complete('tool a b c r')).toEqual(['red']);
+  });
+
+  it('does not offer positional choices at nodes that have subcommands', async () => {
+    expect(await complete('tool a b ')).not.toContain('red');
+  });
+
   it('never offers hidden names anywhere', async () => {
     for (const w of ['tool ', 'tool list ', 'tool a ']) {
       expect((await complete(w)).join(' ')).not.toMatch(/internal|secret|zz/);
     }
+  });
+
+  it('the real CLI offers exactly bash zsh fish for `codemie completion <Tab>`', async () => {
+    const got = (await real.complete('codemie completion ')).filter(n => !n.startsWith('-')).sort();
+    expect(got).toEqual(['bash', 'fish', 'zsh']);
   });
 });

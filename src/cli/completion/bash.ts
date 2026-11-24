@@ -69,6 +69,7 @@ export function emitBash(model: NodeModel, version: string): string {
     const words = new Set<string>();
     for (const sub of node.subs) [sub.name, ...sub.aliases].forEach(n => words.add(n));
     for (const opt of opts) optionNames(opt).forEach(n => words.add(n));
+    if (node.subs.length === 0) node.positionalChoices.forEach(ch => words.add(ch));
     wordCases.push(`      ${id}) words=${qList([...words])};;`);
   }
 
@@ -82,6 +83,7 @@ export function emitBash(model: NodeModel, version: string): string {
     '  while [ "$i" -lt "$COMP_CWORD" ]; do',
     '    w="${COMP_WORDS[i]}"',
     '    case "$w" in',
+    '      --) vmode=x; break;;',
     '      -*)',
     '        kind=',
     '        case "$node:$w" in',
@@ -107,7 +109,7 @@ export function emitBash(model: NodeModel, version: string): string {
     '      COMPREPLY=( $(compgen -f -- "$cur") )',
     '      type compopt >/dev/null 2>&1 && compopt -o filenames 2>/dev/null',
     '      ;;',
-    '    n) COMPREPLY=();;',
+    '    n|x) COMPREPLY=();;',
     '    *)',
     '      case "$node" in',
     ...wordCases.map(w => `  ${w}`),

@@ -5,6 +5,8 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { buildModel } from '@/cli/completion/tree.js';
 import { emitBash } from '@/cli/completion/bash.js';
+import { createProgram } from '@/cli/program.js';
+import { generate } from '@/cli/completion/index.js';
 import { buildFixtureRoot } from '../../helpers/completion-fixtures.js';
 
 const bashPath = process.platform === 'win32' ? undefined : spawnSync('bash', ['--version']).status === 0 ? 'bash' : undefined;
@@ -117,10 +119,44 @@ suite('bash completion (real bash)', () => {
     expect(complete(['tool', 'list', '--task', ''])).toEqual([]);
   });
 
+  it('treats -- as end-of-options: nothing is offered after it', () => {
+    expect(complete(['tool', 'list', '--', ''])).toEqual([]);
+    expect(complete(['tool', 'list', '--', '-'])).toEqual([]);
+    expect(complete(['tool', '--', 'a', ''])).toEqual([]);
+    expect(complete(['tool', '--', 'l'])).toEqual([]);
+  });
+
+  it('a valued option still consumes a -- that is its value', () => {
+    expect(complete(['tool', 'list', '--name', '--', '-'])).toEqual(
+      sorted(['-v', '--verbose', '--format', '--out', '--cfg', '--name', ...ROOT_OPTS])
+    );
+  });
+
+  it('offers positional choices at a leaf, along with its options', () => {
+    expect(complete(['tool', 'a', 'b', 'c', ''])).toEqual(sorted(['red', 'green', 'two words', '--deep', ...ROOT_OPTS]));
+    expect(complete(['tool', 'a', 'b', 'c', 'r'])).toEqual(['red']);
+  });
+
+  it('does not offer positional choices at nodes that have subcommands', () => {
+    expect(complete(['tool', 'a', 'b', ''])).not.toContain('red');
+  });
+
   it('never offers hidden names anywhere', () => {
     for (const w of [['tool', ''], ['tool', 'list', ''], ['tool', 'a', '']]) {
       const got = complete(w).join(' ');
       expect(got).not.toMatch(/internal|secret|zz/);
     }
+  });
+
+  it('the real CLI offers exactly bash zsh fish for `codemie completion <Tab>`', () => {
+    const real = join(dir, 'codemie.bash');
+    writeFileSync(real, generate('bash', createProgram()));
+    const r = spawnSync('bash', ['-c', HARNESS, 'harness', real, '_codemie', '2', 'codemie', 'completion', ''], {
+      cwd: dir,
+      encoding: 'utf8',
+    });
+    expect(r.status, r.stderr).toBe(0);
+    const got = r.stdout.split('\n').filter(l => l !== '' && !l.startsWith('-')).sort();
+    expect(got).toEqual(['bash', 'fish', 'zsh']);
   });
 });

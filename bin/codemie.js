@@ -27,10 +27,15 @@ const invocation = getInvocationContext({ argv: process.argv });
 const isHookProcess = invocation.hook;
 // `codemie completion <shell>`: stdout is a script that gets eval'ed or redirected into a
 // file, so nothing but the script may reach it (not even debug logging). Like a hook, no
-// migrations, update check or what's-new notice run; unlike a hook, errors still print.
+// migrations, update check or what's-new notice run; unlike a hook, errors still print
+// (the logger console goes to stderr, never stdout).
 const isCompletion = invocation.completion;
-if (isHookProcess || isCompletion) {
+if (isHookProcess) {
   logger.setConsoleStream(null);
+} else if (isCompletion) {
+  // The logger console writes both of its streams to the target, so routing it to stderr keeps
+  // stdout pure while a failure the logger reports still reaches the user.
+  logger.setConsoleStream(process.stderr);
 }
 
 // The daily OS scheduler job for `analytics sync run` invokes this script

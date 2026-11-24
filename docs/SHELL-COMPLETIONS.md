@@ -2,7 +2,7 @@
 
 `codemie completion <bash|zsh|fish>` prints a static completion script to stdout. The script is generated from the CLI's own command tree, so it lists the real commands and options of the installed version.
 
-Startup work (migrations, update check, what's-new) is skipped for `codemie completion`. Output is one stdout write; errors go to stderr with exit code 1.
+Startup work (migrations, update check, what's-new) is skipped for `codemie completion`. Output is one stdout write; stdout carries nothing but the script. Errors go to stderr with a non-zero exit code: the logger console is routed to stderr for this command (it is silenced only for hook processes), and if the CLI version cannot be read from `package.json` for the script header, the command fails with `Cannot determine codemie version for the completion header: <reason>` instead of printing a script with a made-up version.
 
 ## What gets completed
 
@@ -10,7 +10,11 @@ Startup work (migrations, update check, what's-new) is skipped for `codemie comp
 - Options, including the root options (`--task`, `-V`, `--version`). The CLI accepts root options after a subcommand (for example `codemie list --version`), so completion offers them at every node.
 - Option values: the declared choices when an option has them, file paths for every other valued option.
 - bash and zsh offer commands and options at every position. fish offers options only once the typed word starts with `-`.
+- Positional choices: a leaf command (no subcommands) whose first argument declares choices offers them in place of a free word, for example `codemie completion <Tab>` offers `bash`, `zsh` and `fish`. Only the first registered argument is modeled, and it keeps being offered at later positions of that command.
+- `--` ends option processing: words after it are positionals, never options or subcommands, and nothing is suggested after it.
 - Alias handling exists in the generator but is forward-looking: the CLI has no real command aliases today.
+
+Known limitation: `codemie help <Tab>` does not complete command names. `help` is offered as a subcommand, but its argument is a free-form command name that is not a declared choice list, so it is not modeled.
 
 ## Keeping the script current
 

@@ -12,13 +12,19 @@ export type CompletionShell = 'bash' | 'zsh' | 'fish';
 export const COMPLETION_SHELLS: readonly CompletionShell[] = ['bash', 'zsh', 'fish'];
 
 function readVersion(): string {
+  const fail = (reason: string): Error =>
+    new Error(`Cannot determine codemie version for the completion header: ${reason}`);
+  let packageJson: { version?: unknown };
   try {
     const packageJsonPath = join(getDirname(import.meta.url), '../../../package.json');
-    const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8')) as { version: string };
-    return packageJson.version;
-  } catch {
-    return '1.0.0';
+    packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8')) as { version?: unknown };
+  } catch (error) {
+    throw fail(error instanceof Error ? error.message : String(error));
   }
+  if (typeof packageJson?.version !== 'string' || packageJson.version === '') {
+    throw fail('package.json has no version string');
+  }
+  return packageJson.version;
 }
 
 /** Generate the static completion script for `shell` from the live command tree. */

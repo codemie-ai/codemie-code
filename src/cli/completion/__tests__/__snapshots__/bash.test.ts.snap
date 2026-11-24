@@ -10,6 +10,7 @@ _tool() {
   while [ "$i" -lt "$COMP_CWORD" ]; do
     w="\${COMP_WORDS[i]}"
     case "$w" in
+      --) vmode=x; break;;
       -*)
         kind=
         case "$node:$w" in
@@ -53,7 +54,7 @@ two words';;
       COMPREPLY=( $(compgen -f -- "$cur") )
       type compopt >/dev/null 2>&1 && compopt -o filenames 2>/dev/null
       ;;
-    n) COMPREPLY=();;
+    n|x) COMPREPLY=();;
     *)
       case "$node" in
         0) words='list
@@ -95,7 +96,10 @@ help
 -h
 --version
 -V
---task';;
+--task
+red
+green
+two words';;
         5) words='--help
 -h
 --version

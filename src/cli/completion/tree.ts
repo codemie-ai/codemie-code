@@ -29,6 +29,8 @@ export interface NodeModel {
   aliases: string[];
   description: string;
   options: OptionModel[];
+  /** Choices of the first registered positional argument (`.choices([...])`); empty when none. */
+  positionalChoices: string[];
   subs: NodeModel[];
 }
 
@@ -70,11 +72,21 @@ function buildNode(cmd: Command): NodeModel {
       aliases: [],
       description: 'display help for command',
       options: [{ ...HELP_OPTION }],
+      positionalChoices: [],
       subs: [],
     });
   }
 
-  return { name: cmd.name(), aliases: cmd.aliases(), description: cmd.description(), options, subs };
+  const positionalChoices = [...(cmd.registeredArguments[0]?.argChoices ?? [])];
+
+  return {
+    name: cmd.name(),
+    aliases: cmd.aliases(),
+    description: cmd.description(),
+    options,
+    positionalChoices,
+    subs,
+  };
 }
 
 export function buildModel(root: Command): NodeModel {

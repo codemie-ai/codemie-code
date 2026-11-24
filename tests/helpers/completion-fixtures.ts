@@ -1,4 +1,4 @@
-import { Command, Option } from 'commander';
+import { Argument, Command, Option } from 'commander';
 import { markHidden } from '@/cli/hidden.js';
 
 /**
@@ -9,7 +9,7 @@ import { markHidden } from '@/cli/hidden.js';
  *     internal (hidden)
  *     a
  *       b
- *         c [--deep]
+ *         c [--deep] <mode: red|green|two words>
  *       zz (hidden)
  */
 export function buildFixtureRoot(): Command {
@@ -26,6 +26,9 @@ export function buildFixtureRoot(): Command {
   markHidden(root.command('internal'));
   const a = root.command('a').description('Group a');
   markHidden(a.command('zz'));
-  a.command('b').command('c').option('--deep', 'Deep');
+  a.command('b')
+    .command('c')
+    .option('--deep', 'Deep')
+    .addArgument(new Argument('<mode>', 'Mode').choices(['red', 'green', 'two words']));
   return root;
 }

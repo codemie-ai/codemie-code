@@ -83,7 +83,8 @@ export function emitZsh(model: NodeModel, version: string): string {
     for (const opt of opts) {
       for (const n of optionNames(opt)) optItems.push(describeItem(n, opt.description));
     }
-    itemCases.push(`    ${id}) cmds=(${cmds.join(' ')}); opts=(${optItems.join(' ')});;`);
+    const pos = node.subs.length === 0 ? node.positionalChoices.map(ch => describeItem(ch, '')) : [];
+    itemCases.push(`    ${id}) cmds=(${cmds.join(' ')}); opts=(${optItems.join(' ')}); pos=(${pos.join(' ')});;`);
   }
 
   const lines = [
@@ -92,11 +93,12 @@ export function emitZsh(model: NodeModel, version: string): string {
     `# Install: eval "$(${model.name} completion zsh)"  (or save as _${model.name} on your fpath)`,
     `${fn}() {`,
     '  local node w i kind vmode',
-    '  local -a vals cmds opts',
+    '  local -a vals cmds opts pos',
     '  node=0; vmode=; vals=(); i=2',
     '  while (( i < CURRENT )); do',
     '    w="${words[i]}"',
     '    case "$w" in',
+    '      --) vmode=x; break;;',
     '      -*)',
     '        kind=',
     '        case "$node:$w" in',
@@ -118,13 +120,14 @@ export function emitZsh(model: NodeModel, version: string): string {
     '  case "$vmode" in',
     '    c) compadd -- "${vals[@]}"; return;;',
     '    f) _files; return;;',
-    '    n) return 1;;',
+    '    n|x) return 1;;',
     '  esac',
     '  case "$node" in',
     ...itemCases,
     '  esac',
     "  (( $#cmds )) && _describe 'command' cmds",
     "  (( $#opts )) && _describe 'option' opts",
+    "  (( $#pos )) && _describe 'argument' pos",
     '  return 0',
     '}',
     `if [ "$funcstack[1]" = "${fn}" ]; then`,

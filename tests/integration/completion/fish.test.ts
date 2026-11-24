@@ -5,6 +5,8 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { buildModel } from '@/cli/completion/tree.js';
 import { emitFish } from '@/cli/completion/fish.js';
+import { createProgram } from '@/cli/program.js';
+import { generate } from '@/cli/completion/index.js';
 import { buildFixtureRoot } from '../../helpers/completion-fixtures.js';
 
 const fishPath = process.platform === 'win32' ? undefined : spawnSync('fish', ['--version']).status === 0 ? 'fish' : undefined;
@@ -118,9 +120,53 @@ suite('fish completion (real fish)', () => {
     expect(complete('tool list --task ')).toEqual([]);
   });
 
+  it('treats -- as end-of-options: nothing is offered after it', () => {
+    expect(complete('tool list -- ')).toEqual([]);
+    expect(complete('tool list -- -')).toEqual([]);
+    expect(complete('tool -- a ')).toEqual([]);
+    expect(complete('tool -- l')).toEqual([]);
+  });
+
+  it('a valued option still consumes a -- that is its value (walker state)', () => {
+    // fish itself suppresses option completion after a literal `--`, so check the walker directly.
+    const state = (words: string[]): string => {
+      const r = spawnSync(
+        'fish',
+        ['--no-config', '-c', 'source $argv[1]; set -g WORDS $argv[2..-1]; function commandline; printf "%s\\n" $WORDS; end; __tool_state', script, ...words],
+        { cwd: dir, encoding: 'utf8' }
+      );
+      expect(r.status, r.stderr).toBe(0);
+      return r.stdout.trim();
+    };
+    expect(state(['tool', 'list', '--name', '--'])).toBe('1');
+    expect(state(['tool', 'list', '--'])).toBe('end');
+    expect(state(['tool', '--', 'a'])).toBe('end');
+  });
+
+  it('offers positional choices at a leaf, along with its options', () => {
+    expect(complete('tool a b c ')).toEqual(sorted(['red', 'green', 'two words']));
+    expect(complete('tool a b c r')).toEqual(['red']);
+  });
+
+  it('does not offer positional choices at nodes that have subcommands', () => {
+    expect(complete('tool a b ')).not.toContain('red');
+  });
+
   it('never offers hidden names anywhere', () => {
     for (const w of ['tool ', 'tool list ', 'tool a ']) {
       expect(complete(w).join(' ')).not.toMatch(/internal|secret|zz/);
     }
+  });
+
+  it('the real CLI offers exactly bash zsh fish for `codemie completion <Tab>`', () => {
+    const real = join(dir, 'codemie.fish');
+    writeFileSync(real, generate('fish', createProgram()));
+    const r = spawnSync('fish', ['--no-config', '-c', 'source $argv[1]; complete -C $argv[2]', real, 'codemie completion '], {
+      cwd: dir,
+      encoding: 'utf8',
+    });
+    expect(r.status, r.stderr).toBe(0);
+    const got = r.stdout.split('\n').filter(l => l !== '').map(l => l.split('\t')[0]).sort();
+    expect(got).toEqual(['bash', 'fish', 'zsh']);
   });
 });
