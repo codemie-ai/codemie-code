@@ -1,8 +1,8 @@
 ---
 task: EPMCDME-17667
-reviewed_head: 15349a74966037422a642fa30c7c64ac363cba46
-reviewed_tree: faa05a1af286c41f3bd347104b117f70511201db
-base: 7d25a0342bb583ad193bc92a12b5ad7c821aed15
+reviewed_head: b5afb0913710020583f6e7b04f3b52feb5c54e00
+reviewed_tree: bfff598445b1323c7424cc45c302104f84163eeb
+base: 782709353a0573b7349530c4694254537b92154e
 verdict: approve-after-resolution
 ---
 
@@ -39,3 +39,17 @@ verdict: approve-after-resolution
 
 No open findings. Deferred: none. Dismissed: 3 edge-case candidates (see local
 `code-review-dismissed.local.md`).
+
+## Post-rebase review and follow-up
+
+- `git range-diff` confirmed the original reviewed fix (`15349a74`) and its rebased
+  commit (`12250766`) have the same patch. The skill review provenance above
+  records the original run.
+- The current implementation delta was checked through `b5afb091` on base
+  `78270935`. The follow-up preserves a user-selected CodeMie source plugin by
+  its manifest name and retains installed-extension injection for unrelated
+  plugins. The provider regression test also covers a trailing slash with
+  no manifest required to establish path equivalence.
+- All 74 targeted tests passed after the manifest change (`76ab7477`).
+  The provider-core suite passed 37 tests after the path-equivalence test
+  (`b5afb091`). The standalone skill was not rerun for this follow-up.
