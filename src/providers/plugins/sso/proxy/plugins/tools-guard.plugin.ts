@@ -14,17 +14,31 @@
 
 import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
-import { logger } from '../../../../../utils/logger.js';
+import { logger } from '@/utils/logger.js';
 import { CLAUDE_DESKTOP, VSCODE_CLAUDE_CODE } from '../proxy-clients.js';
 import { applyToolsGuard } from './claude-tools-guard.js';
 
 const ALLOWED_AGENTS: readonly string[] = [
   'codemie-code',
   'codemie-claude',
+  'codemie-claude-acp',
+  'codemie-opencode',
+  'codemie-opencode-acp',
   'codemie-copilot',
   CLAUDE_DESKTOP,
   VSCODE_CLAUDE_CODE,
 ];
+
+/**
+ * Generation endpoints only (Anthropic Messages, OpenAI Chat Completions, OpenAI Responses).
+ * Token-count and other auxiliary endpoints are left untouched so their results match what was sent.
+ */
+const GENERATION_PATH_PATTERN = /\/(?:messages|chat\/completions|responses)\/?$/;
+
+function isGenerationEndpoint(url: string): boolean {
+  const path = url.split('?', 1)[0];
+  return GENERATION_PATH_PATTERN.test(path);
+}
 
 export class ToolsGuardPlugin implements ProxyPlugin {
   id = '@codemie/proxy-tools-guard';
@@ -42,7 +56,11 @@ class ToolsGuardInterceptor implements ProxyInterceptor {
   name = 'tools-guard';
 
   async onRequest(context: ProxyContext): Promise<void> {
-    if (!context.requestBody || !context.headers['content-type']?.includes('application/json')) {
+    if (
+      !context.requestBody ||
+      !context.headers['content-type']?.includes('application/json') ||
+      !isGenerationEndpoint(context.url)
+    ) {
       return;
     }
 
