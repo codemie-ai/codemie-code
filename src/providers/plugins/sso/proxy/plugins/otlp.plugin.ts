@@ -13,7 +13,7 @@ import { sweepSpool } from './otlp-spool/sweep.js';
 import { processSessionTick } from './otlp-spool/tick-processor.js';
 import { appendSpool, recordStampLoss } from './otlp-spool/spool-io.js';
 import { hookEventProjectNames } from './otlp-spool/session-project.js';
-import { scheduleCopilotUsageEnrichment } from './otlp-spool/copilot-usage-enrichment.js';
+import { recoverMissingSessionEnds, scheduleCopilotUsageEnrichment } from './otlp-spool/copilot-usage-enrichment.js';
 import { sendIntervalMs, sweepIntervalMs } from './otlp-spool/spool-config.js';
 import { processPendingOwner } from './otlp-spool/owner-pending-replay.js';
 import { CREDENTIAL_REFRESH_INTERVAL_MS } from './credential-refresh.js';
@@ -177,6 +177,8 @@ class OtlpInterceptor implements ProxyInterceptor {
     }
 
     const sessionIds = await listSessionIds();
+    // Copilot may abort sessionEnd on /exit: end such sessions from their transcript's shutdown record.
+    await recoverMissingSessionEnds(sessionIds);
 
     // Different sessions are independent (per-session locking happens inside
     // processSessionTick), so they are processed concurrently.

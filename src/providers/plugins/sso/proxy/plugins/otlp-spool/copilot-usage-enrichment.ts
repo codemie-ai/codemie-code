@@ -7,7 +7,7 @@ import { logger } from '../../../../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../../../../utils/security.js';
 import { getDefaultCopilotSessionStateRoot } from '../../../../../../agents/plugins/copilot-cli/copilot-cli.paths.js';
 import type { CopilotEvent } from '../../../../../../agents/plugins/copilot-cli/copilot-cli-event-types.js';
-import { buildDeferredUsageEvents, type DeferredUsageOptions } from '../../../../../../agents/plugins/copilot-cli-otlp/copilot-cli-otlp.usage.js';
+import { buildDeferredUsageEvents, stableEventId, TEMPLATE_FIELDS, type DeferredUsageOptions } from '../../../../../../agents/plugins/copilot-cli-otlp/copilot-cli-otlp.usage.js';
 import { readTranscriptFromAsync } from '../../../../../../agents/plugins/copilot-cli-otlp/copilot-cli-otlp.transcript.js';
 import { deleteSessionStateFiles, readSessionState } from '../../../../../../agents/plugins/copilot-cli-otlp/copilot-cli-otlp.state.js';
 import { appendSpool } from './spool-io.js';
@@ -39,6 +39,7 @@ const scheduled = new Set<string>();
 
 export function resetScheduledForTests(): void {
   scheduled.clear();
+  inspected.clear();
 }
 
 function isInside(root: string, candidate: string): boolean {
@@ -171,6 +172,69 @@ export async function enrichSessionUsage(
   }
 }
 
+
+/** A transcript this quiet has stopped growing: a hook still racing the shutdown has had its chance. */
+export const RECOVERY_SETTLE_MS = 15_000;
+
+const START_TYPE = 'agent.session.start';
+
+/** Transcript signature last inspected per session, so an idle session is parsed once, not every tick. */
+const inspected = new Map<string, string>();
+
+/**
+ * Copilot can abort `sessionEnd` on an interactive /exit, so no `agent.session.end` ever reaches the
+ * spool and the enrichment above never starts, although `events.jsonl` records `session.shutdown`.
+ * For each spooled Copilot session whose latest start has no end after it, a shutdown at or after that
+ * start (and quiet for `RECOVERY_SETTLE_MS`) proves the run is over: append the end event the hook
+ * never sent (identity fields copied from the session's own last record, so source attribution is
+ * kept) and run the normal deferred enrichment for it. A resumed run starts again, so only its own
+ * shutdown counts. Everything has a stable id, so a late real `sessionEnd` adds no usage, summary or tools.
+ */
+export async function recoverMissingSessionEnds(
+  sessionIds: readonly string[],
+  now: () => number = Date.now
+): Promise<void> {
+  for (const sessionId of sessionIds) {
+    try {
+      if (!isSafeSessionId(sessionId)) continue;
+      const path = join(resolveStateRoot(sessionId), sessionId, 'events.jsonl');
+      const info = await stat(path).catch(() => undefined);
+      if (!info || now() - info.mtimeMs < RECOVERY_SETTLE_MS) continue;
+      const signature = `${info.size}:${info.mtimeMs}`;
+      if (inspected.get(sessionId) === signature) continue;
+
+      const records = await listHookRecords(sessionId);
+      const lastStart = records.filter((r) => r['type'] === START_TYPE).pop();
+      const startMs = Date.parse(String(lastStart?.['timestamp'] ?? ''));
+      const template = records[records.length - 1];
+      if (!lastStart || !template || !Number.isFinite(startMs) || !String(template['platform'] ?? '').startsWith('copilot')) {
+        continue;
+      }
+      if (records.some((r) => r['type'] === SESSION_END_TYPE && Date.parse(String(r['timestamp'] ?? '')) >= startMs)) {
+        inspected.set(sessionId, signature);
+        continue;
+      }
+
+      const { events } = await readEvents(sessionId);
+      const shutdown = events.filter((e) => e.type === 'session.shutdown').pop();
+      const endedMs = shutdown?.timestamp ? Date.parse(shutdown.timestamp) : NaN;
+      inspected.set(sessionId, signature);
+      if (!shutdown?.timestamp || !Number.isFinite(endedMs) || endedMs < startMs) continue;
+
+      const end = {
+        ...Object.fromEntries(TEMPLATE_FIELDS.filter((k) => template[k] !== undefined).map((k) => [k, template[k]])),
+        session_id: sessionId,
+        type: SESSION_END_TYPE,
+        timestamp: shutdown.timestamp,
+        event_id: stableEventId(SESSION_END_TYPE, sessionId, shutdown.timestamp),
+      };
+      await appendSpool(sessionId, 'hooks', JSON.stringify({ agentName: COPILOT_CLI_OTLP_AGENT, hookEvent: JSON.stringify(end) }) + '\n');
+      scheduleCopilotUsageEnrichment(COPILOT_CLI_OTLP_AGENT, [end]);
+    } catch (err) {
+      logger.debug('[otlp-ingest] copilot session end recovery error', ...sanitizeLogArgs({ sessionId, err: err instanceof Error ? err.message : String(err) }));
+    }
+  }
+}
 
 /** Fire-and-forget scheduling for the events of one accepted hook batch. */
 export function scheduleCopilotUsageEnrichment(agentName: string, events: Record<string, unknown>[]): void {
