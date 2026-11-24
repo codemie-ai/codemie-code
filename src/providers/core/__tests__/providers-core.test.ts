@@ -10,6 +10,9 @@
  * abstract bases without any real HTTP.
  */
 
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
@@ -412,8 +415,18 @@ describe('defaultAgentHooks', () => {
 
     it('keeps a user --plugin-dir and still passes the extension once', () => {
       process.env.CODEMIE_CLAUDE_EXTENSION_DIR = '/plugins/here';
-      const result = claudeHooks.enrichArgs!(['--plugin-dir', '/other', 'chat'], {} as AgentConfig);
-      expect(result).toEqual(['--plugin-dir', '/plugins/here', '--plugin-dir', '/other', 'chat']);
+      const userPlugin = mkdtempSync(join(tmpdir(), 'codemie-user-plugin-'));
+      try {
+        const manifestDir = join(userPlugin, '.claude-plugin');
+        mkdirSync(manifestDir);
+        writeFileSync(join(manifestDir, 'plugin.json'), JSON.stringify({ name: 'unrelated-plugin' }));
+
+        const args = ['--plugin-dir', userPlugin, 'chat'];
+        const result = claudeHooks.enrichArgs!(args, {} as AgentConfig);
+        expect(result).toEqual(['--plugin-dir', '/plugins/here', ...args]);
+      } finally {
+        rmSync(userPlugin, { recursive: true, force: true });
+      }
     });
 
     it('does not duplicate the extension when the user already passed it (either flag form)', () => {
