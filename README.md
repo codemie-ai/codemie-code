@@ -203,6 +203,8 @@ codemie --help
 codemie doctor
 ```
 
+Tab completion for bash, zsh and fish: `codemie completion <bash|zsh|fish>`. See [Shell Completions](docs/SHELL-COMPLETIONS.md).
+
 ## Usage
 
 The CodeMie CLI provides two ways to interact with AI agents:
@@ -869,6 +871,7 @@ Comprehensive guides are available in the `docs/` directory:
 - **[Configuration](docs/CONFIGURATION.md)** - Setup wizard, environment variables, multi-provider profiles, manual configuration
   - `CODEMIE_INSECURE=1` — disable SSL verification for self-signed certs or local dev environments (SSL is on by default)
 - **[Commands](docs/COMMANDS.md)** - Complete command reference including analytics and workflow commands
+- **[Shell Completions](docs/SHELL-COMPLETIONS.md)** - Tab completion for bash, zsh and fish
 - **[Proxy and Analytics Commands](docs/PROXY-AND-ANALYTICS.md)** - Command groups, worked use cases (setup, diagnosis, scopes, consent, disconnect, team sync) and the deprecation table
 - **[Analytics Report](docs/ANALYTICS-REPORT.md)** - HTML dashboard: all 8 views, filters, session drill-down, cost and efficiency metrics
 - **[Agents](docs/AGENTS.md)** - Per-agent detail (built-in, Claude Code, Claude Code ACP, Gemini, OpenCode; Pi and Kimi are documented in this README)

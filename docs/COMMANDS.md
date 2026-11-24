@@ -20,6 +20,7 @@ codemie uninstall [agent]        # Uninstall an agent
 codemie update [agent]           # Update installed agents
 codemie self-update              # Update CodeMie CLI itself
 codemie doctor [options]         # Health check and diagnostics
+codemie completion <shell>       # Print a bash, zsh or fish completion script (see SHELL-COMPLETIONS.md)
 codemie plugin <command>         # Manage native plugins
 codemie mcp <command>            # Manage MCP servers registered with Claude Code
 codemie mcp-proxy <url>          # Stdio-to-HTTP MCP proxy with OAuth support
