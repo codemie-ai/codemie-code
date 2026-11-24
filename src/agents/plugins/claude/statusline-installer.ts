@@ -9,10 +9,11 @@ import { ConfigurationError } from '@/utils/errors.js';
 
 export const STATUSLINE_NAME = 'statusline';
 export const STATUSLINE_DISPLAY_NAME = 'CodeMie Statusline';
-// Describes what buildStatusLine actually renders. The budget segment was removed; SCRIPT_FILENAME
-// deliberately still reads 'codemie-budget-status.js' because renaming it would orphan the
-// statusLine command in every existing ~/.claude/settings.json.
-export const STATUSLINE_DESCRIPTION = 'Project, branch, model, context usage, session cost & duration for Claude Code';
+// Describes what buildStatusLine actually renders. The budget segment shows the project CLI budget
+// for the current session (with a fallback to the personal CLI budget). SCRIPT_FILENAME deliberately
+// still reads 'codemie-budget-status.js' because renaming it would orphan the statusLine command
+// in every existing ~/.claude/settings.json.
+export const STATUSLINE_DESCRIPTION = 'Project, branch, model, context usage, session cost & duration, and CLI budget for Claude Code';
 
 const SCRIPT_FILENAME = 'codemie-budget-status.js';
 const LEGACY_SCRIPT_FILENAME = 'codemie-statusline.mjs';
