@@ -1,0 +1,38 @@
+{
+  "decision": "request-changes",
+  "rationale": "Acceptance did not run (no spec) and blind/verification lenses are not part of the balanced profile; no standards coverage gap. Blocking: commit-format standards failure (ticket key in both commit subjects). 1 advisory (unbounded agent_id); 2 edge findings dismissed as already-handled (Tier B/shutdown rows are always scope main). 0 deferred.",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    { "kind": "commit-format", "status": "fail", "notes": "2 subjects use valid type, allowed scope (analytics) and are under 100 chars, but both embed the ticket key EPMCDME-16573 in the subject, which git-workflow.md Anti-Patterns lists as to avoid (reference it in the body footer instead)" },
+    { "kind": "code-quality", "status": "pass", "notes": "1 changed file (copilot-cli-otlp.request-usage.ts): interface used for shapes, explicit return type on new helper, new function under 50 lines, why-comment present, no console.log, no any" },
+    { "kind": "security", "status": "pass", "notes": "no credentials, logging, paths or X-CodeMie-* header injection touched; agent_id is an added analytics event field built from trimmed string input only" }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "unknown",
+      "title": "Commit subjects embed ticket key",
+      "problem": "Both commits in the review range ('feat(analytics): EPMCDME-16573 carry Copilot sub-agent id on agent.usage.request' and 'fix(analytics): EPMCDME-16573 attribute agent_id only to sub-agent requests') put the ticket key in the subject, which git-workflow.md Anti-Patterns lists as to avoid.",
+      "impact": "Documented commit-format convention is broken in every commit of the review range; blocks the workflow.",
+      "recommendation": "Reword both commits to '<type>(analytics): <subject>' without the ticket key and add 'EPMCDME-16573' in the body footer."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.request-usage.ts",
+      "line": 151,
+      "title": "Sub-agent id copied unbounded",
+      "problem": "recordAgentId trims but does not length-bound or sanitize the Copilot-supplied agentId before it is written to agent_id.",
+      "impact": "Only a pathological or hostile Copilot event stream triggers it; the value is analytics-only metadata, so the consequence is an oversized row. Reachability of an oversized id not confirmed.",
+      "recommendation": "Cap length, e.g. candidate.trim().slice(0, 128), matching the hook path's bounding."
+    }
+  ],
+  "deferred": []
+}
