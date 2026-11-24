@@ -69,6 +69,7 @@ vi.mock('../connectors/desktop.js', async (importOriginal) => ({
   writeDesktopConfig: vi.fn(),
   getDesktopBaseDir: vi.fn().mockReturnValue('/mock/desktop/base'),
   getDesktopConfigPath: vi.fn(async () => '/mock/desktop/base/configLibrary/applied.json'),
+  getCodeMieDesktopConfigPath: vi.fn(async () => '/mock/desktop/base/configLibrary/codemie.json'),
   mapCanonicalToDesktop: vi.fn().mockReturnValue([]),
   summarizeManagedOauthShapes: vi.fn().mockReturnValue({ oauthConfigured: 0, oauthFlagged: 0, noAuth: 0 }),
   describeManagedSettingsOverride: vi.fn().mockReturnValue(null),
@@ -1154,6 +1155,36 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
     expect(process.exitCode).toBe(0);
     expect(stopDaemon).not.toHaveBeenCalled();
     expect(console_.log()).not.toHaveBeenCalledWith(expect.stringContaining('Targets configured'));
+  });
+
+  it('says when it switched Claude Desktop to the CodeMie configuration, before the restart line', async () => {
+    await withFreshDaemon();
+    const { writeDesktopConfig } = await import('../connectors/desktop.js');
+    vi.mocked(writeDesktopConfig).mockResolvedValue({
+      configPath: '/desktop/config.json', activated: true, switchedFrom: 'QA Other Gateway',
+    });
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { claudeDesktop: true } });
+
+    const lines = vi.mocked(console_.log()).mock.calls.map((call) => String(call[0]));
+    const switched = lines.findIndex((line) => line.includes(
+      '  Switched Claude Desktop\'s active configuration from "QA Other Gateway" to "CodeMie Proxy".'
+    ));
+    const restart = lines.findIndex((line) => line.includes('Restart Claude Desktop to apply changes.'));
+    expect(switched).toBeGreaterThanOrEqual(0);
+    expect(switched).toBeLessThan(restart);
+  });
+
+  it('prints no switch line when the CodeMie configuration was already active', async () => {
+    await withFreshDaemon();
+    const { writeDesktopConfig } = await import('../connectors/desktop.js');
+    vi.mocked(writeDesktopConfig).mockResolvedValue({ configPath: '/desktop/config.json', activated: false });
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { claudeDesktop: true } });
+
+    expect(console_.log()).not.toHaveBeenCalledWith(expect.stringContaining('Switched Claude Desktop'));
   });
 
   it('logs the named key it wrote into the Desktop config, not the shared one', async () => {

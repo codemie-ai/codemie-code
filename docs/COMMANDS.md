@@ -92,7 +92,7 @@ codemie proxy status             # Show daemon status
 codemie proxy connect --vscode   # Configure VS Code BYOK to use the local proxy
 codemie proxy connect --claude-desktop    # Configure Claude Desktop (3P) to use the local proxy
 codemie proxy connect --codex-desktop     # Configure the Codex desktop app to use the local proxy
-codemie proxy disconnect --claude-desktop       # Remove the CodeMie gateway config from Claude Desktop
+codemie proxy disconnect --claude-desktop       # Remove the CodeMie gateway config from Claude Desktop's "CodeMie Proxy" configuration only, whichever one is active
 codemie proxy disconnect --vscode          # Remove the CodeMie provider from VS Code BYOK (your own models stay)
 codemie proxy disconnect --vscode-claude-code   # Remove the CodeMie env vars from the VS Code Claude Code extension
 codemie proxy disconnect --all             # Disconnect everything `proxy clients` shows as connected (then `codemie proxy stop` stops the daemon)
@@ -254,6 +254,8 @@ Behavior:
 | macOS | `~/Library/Application Support/Claude-3p/configLibrary/` |
 | Windows | `%LOCALAPPDATA%\Claude-3p\configLibrary\` |
 | Linux | `$XDG_CONFIG_HOME/Claude-3p/configLibrary/`, else `~/.config/Claude-3p/configLibrary/` |
+
+The command updates the `CodeMie Proxy` configuration and makes it the active one, even when you had switched Claude Desktop to another configuration; that configuration is left untouched, and the command prints `Switched Claude Desktop's active configuration from "<name>" to "CodeMie Proxy".` when it changed which one is active.
 
 On Linux this requires Claude Desktop's Ubuntu/Debian beta. If `/etc/claude-desktop/managed-settings.json` is present, the command warns that the write **may** have no effect: Claude Desktop applies a managed (MDM) source in preference to local configuration. The check is presence-only — the file is never read.
 
