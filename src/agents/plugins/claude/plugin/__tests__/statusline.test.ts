@@ -65,6 +65,14 @@ describe('selectBudgetRow', () => {
   it('AC5: shared-limit row selected when project matches', () => {
     expect(selectBudgetRow(rows, 'shared-proj', 'user@epam.com')).toBe(sharedRow);
   });
+
+  it('AC5a: shared-pot project with personal override → returns email override row', () => {
+    const overrideRow = { project_name: 'member@example.com (cli)', current_spending: 2, total: 1,
+      budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 50, is_default: false, is_shared_limit: false };
+    const sharedRowLocal = { project_name: 'shared-proj (cli)', current_spending: 13, total: 11,
+      budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 200, is_default: false, is_shared_limit: true };
+    expect(selectBudgetRow([sharedRowLocal, overrideRow], 'shared-proj', 'member@example.com')).toBe(overrideRow);
+  });
 });
 
 describe('formatBudgetSegment', () => {
@@ -502,6 +510,26 @@ describe('resolveBudget', () => {
       workspace: { codeMieUrl: 'https://x' },
       profiles: { default: { baseUrl: 'https://x/api', codeMieProject: null } },
     });
+    const fetchImpl = vi.fn();
+    const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl: vi.fn() });
+    expect(result).toEqual({ budget: null, budgetError: null });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('AC9: profile with codeMieProject === null → budget is null even when cache is fresh', async () => {
+    // The early-return guard must fire before the cache is consulted — a stale cache entry
+    // written by a prior no-project session on the same profile must not be served once the
+    // profile is explicitly opted out of CodeMie (codeMieProject: null).
+    const readFile = readFileFor(
+      {
+        activeProfile: 'default',
+        userEmail: 'me@x.com',
+        workspace: { codeMieUrl: 'https://x' },
+        profiles: { default: { baseUrl: 'https://x/api', codeMieProject: null } },
+      },
+      // Fresh cache with matching project:''; would hit if the guard didn't fire first.
+      { schema: 3, profile: 'default', project: '', ts: Date.now(), value: { text: 'stale budget', pct: 5 } }
+    );
     const fetchImpl = vi.fn();
     const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl: vi.fn() });
     expect(result).toEqual({ budget: null, budgetError: null });

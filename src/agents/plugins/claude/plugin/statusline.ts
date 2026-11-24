@@ -98,7 +98,20 @@ export function selectBudgetRow(rows: BudgetRow[], project: string | null | unde
   if (project) {
     const target = `${project.trim().toLowerCase()} (cli)`;
     const projectRow = rows.find(r => r.project_name?.trim().toLowerCase() === target);
-    if (projectRow) return projectRow;
+    if (projectRow) {
+      // For shared-pot projects the member may have a personal override row (email (cli)).
+      // Prefer that — the member should see their own spend and limit, not the team aggregate.
+      // Only a non-default email row qualifies as a personal override; the is_default row is
+      // the global personal fallback, not a project-specific allocation.
+      if (projectRow.is_shared_limit && userEmail) {
+        const emailTarget = `${userEmail.trim().toLowerCase()} (cli)`;
+        const overrideRow = rows.find(
+          r => r.project_name?.trim().toLowerCase() === emailTarget && !r.is_default
+        );
+        if (overrideRow) return overrideRow;
+      }
+      return projectRow;
+    }
   }
 
   // No project is selected, or the selected project has no CLI budget — show
@@ -775,6 +788,10 @@ export async function resolveBudget({
   } else if (typeof config.workspace?.codeMieProject === 'string' && config.workspace.codeMieProject) {
     activeProject = config.workspace.codeMieProject;
   }
+
+  // Explicitly opted out of CodeMie — skip budget entirely; don't let a stale cache
+  // from a prior no-project session on the same profile bypass this guard.
+  if (earlyProfile?.codeMieProject === null) return { budget: null, budgetError: null };
 
   // Fast path: fresh cache, skip the network. Discard any entry that isn't this schema version
   // (e.g. a pre-upgrade string-shaped value), that was written for a different profile, or that
