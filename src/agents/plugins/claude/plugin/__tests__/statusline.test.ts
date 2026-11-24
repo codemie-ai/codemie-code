@@ -440,6 +440,73 @@ describe('resolveBudget', () => {
     const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl: vi.fn(), getAuthHeadersImpl });
     expect(result).toEqual({ budget: null, budgetError: 'keychain locked' });
   });
+
+  it('AC1: CODEMIE_PROJECT env var selects the project row over personal row', async () => {
+    // env: CODEMIE_PROJECT='my-project'; profile has no codeMieProject
+    const projectRow = { project_name: 'my-project (cli)', current_spending: 5, total: 4, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 120, is_default: false };
+    const personalRow = { project_name: 'me@x.com (cli)', current_spending: 1.78, total: 1.19, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 150, is_default: true };
+    const readFile = readFileFor({
+      activeProfile: 'default',
+      userEmail: 'me@x.com',
+      workspace: { codeMieUrl: 'https://x' },
+      profiles: { default: { baseUrl: 'https://x/api' } },
+    });
+    const getAuthHeadersImpl = vi.fn().mockResolvedValue({ cookie: 'a=b' });
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ data: { rows: [projectRow, personalRow] } }),
+    });
+    const prevProject = process.env.CODEMIE_PROJECT;
+    process.env.CODEMIE_PROJECT = 'my-project';
+    try {
+      const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl });
+      expect(result.budgetError).toBeNull();
+      expect(result.budget?.text).toContain('$5.00');
+    } finally {
+      if (prevProject === undefined) delete process.env.CODEMIE_PROJECT;
+      else process.env.CODEMIE_PROJECT = prevProject;
+    }
+  });
+
+  it('AC4: no CODEMIE_PROJECT, no profile.codeMieProject → is_default row selected', async () => {
+    const projectRow = { project_name: 'some-project (cli)', current_spending: 5, total: 4, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 120, is_default: false };
+    const personalRow = { project_name: 'me@x.com (cli)', current_spending: 1.78, total: 1.19, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 150, is_default: true };
+    const readFile = readFileFor({
+      activeProfile: 'default',
+      userEmail: 'me@x.com',
+      workspace: { codeMieUrl: 'https://x' },
+      profiles: { default: { baseUrl: 'https://x/api' } },
+    });
+    const getAuthHeadersImpl = vi.fn().mockResolvedValue({ cookie: 'a=b' });
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ data: { rows: [projectRow, personalRow] } }),
+    });
+    const prevProject = process.env.CODEMIE_PROJECT;
+    delete process.env.CODEMIE_PROJECT;
+    try {
+      const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl });
+      expect(result.budgetError).toBeNull();
+      expect(result.budget?.text).toContain('$1.78');
+    } finally {
+      if (prevProject !== undefined) process.env.CODEMIE_PROJECT = prevProject;
+    }
+  });
+
+  it('AC9: profile with codeMieProject === null → budget is null (off CodeMie path unchanged)', async () => {
+    const readFile = readFileFor({
+      activeProfile: 'default',
+      userEmail: 'me@x.com',
+      workspace: { codeMieUrl: 'https://x' },
+      profiles: { default: { baseUrl: 'https://x/api', codeMieProject: null } },
+    });
+    const fetchImpl = vi.fn();
+    const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl: vi.fn() });
+    expect(result).toEqual({ budget: null, budgetError: null });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
 });
 
 describe('isMainModule', () => {

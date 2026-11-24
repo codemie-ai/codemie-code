@@ -785,6 +785,24 @@ export async function resolveBudget({
     return { budget: null, budgetError: null }; // no CodeMie profile configured → skip silently
   }
 
+  // Resolve the project this session is running under. Env var is preferred over config because
+  // it represents the project the CLI session was actually launched with; the config's active
+  // profile can be repointed mid-session by another process (same reason CODEMIE_PROFILE_NAME is
+  // preferred above). A null codeMieProject is an explicit "off CodeMie" signal — not "unset" —
+  // and must not be overridden by the env var. Source: ConfigLoader.resolveProfileIdentity().
+  let activeProject: string | null = null;
+  if (profile.codeMieProject === null) {
+    // Explicitly off CodeMie — no project. (sessionCodeMieUrl would have returned undefined and
+    // the guard above would have fired before reaching here, but be explicit for clarity.)
+    activeProject = null;
+  } else if (process.env.CODEMIE_PROJECT?.trim()) {
+    activeProject = process.env.CODEMIE_PROJECT.trim();
+  } else if (typeof profile.codeMieProject === 'string' && profile.codeMieProject) {
+    activeProject = profile.codeMieProject;
+  } else if (typeof config.workspace?.codeMieProject === 'string' && config.workspace.codeMieProject) {
+    activeProject = config.workspace.codeMieProject;
+  }
+
   // The stored credentials belong to `codeMieUrl`; send them nowhere else. A profile on another
   // backend (an Anthropic subscription, a LiteLLM gateway, a local stack) has no CodeMie budget API,
   // and posting the CodeMie cookie/JWT to its baseUrl would hand it to a third party.
@@ -824,7 +842,7 @@ export async function resolveBudget({
     if (!contentType.includes('json')) return { budget: null, budgetError: null };
 
     const json = await res.json() as { data?: { rows?: unknown[] } };
-    const row = selectBudgetRow(json?.data?.rows as BudgetRow[], null, userEmail);
+    const row = selectBudgetRow(json?.data?.rows as BudgetRow[], activeProject, userEmail);
     if (!row) throw new Error('budget row not found');
 
     const budget = formatBudgetSegment(row);
