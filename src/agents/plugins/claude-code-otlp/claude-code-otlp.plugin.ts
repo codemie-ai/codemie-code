@@ -337,9 +337,10 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
   protected buildEventId(
     event: Record<string, unknown>,
     payload: Record<string, unknown>,
-    timestamp: string
+    timestamp: string,
+    options?: { reduced: boolean }
   ): string {
-    return buildClaudeEventId(event, payload, timestamp);
+    return buildClaudeEventId(event, payload, timestamp, options);
   }
 
   protected async evaluate(hookInput: HookInput): Promise<ClaudeForwardDecision> {

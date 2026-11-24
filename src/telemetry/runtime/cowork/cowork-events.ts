@@ -337,7 +337,7 @@ export function stampCoworkEvent(event: WireEvent, envelope: CoworkEnvelope, fal
     masked['prompt_body'] = boundedText(masked['prompt_body'], TEXT_FIELD_LIMITS['prompt']);
   }
   const payload = Object.fromEntries(Object.keys(own).map((key) => [key, masked[key]]));
-  const id = typeof ownId === 'string' ? ownId : buildClaudeEventId(masked, payload, String(masked['timestamp']));
+  const id = typeof ownId === 'string' ? ownId : buildClaudeEventId(masked, payload, String(masked['timestamp']), { reduced: false });
   const branch = envelope.branch ? String(maskSecretsDeep(envelope.branch)) : '';
   delete masked['branch_counts'];
   delete masked['branch_dominant'];
