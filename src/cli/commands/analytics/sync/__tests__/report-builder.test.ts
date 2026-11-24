@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const reductionOnMock = vi.fn();
+vi.mock('@/utils/analytics-reduction-setting.js', () => ({ isReductionOn: (...a: unknown[]) => reductionOnMock(...a) }));
 
 import type { MetricDelta } from '../../../../../agents/core/metrics/types.js';
 import type { RawSessionData } from '../../data-loader.js';
@@ -81,6 +84,29 @@ class StubSource implements AnalyticsSource {
 }
 
 describe('buildSyncReport', () => {
+  beforeEach(() => {
+    reductionOnMock.mockReset();
+    reductionOnMock.mockResolvedValue(false);
+  });
+
+  it('reduces branches in the synced report when reduction is on (no unreduced override)', async () => {
+    reductionOnMock.mockResolvedValue(true);
+    const now = new Date('2026-10-29T12:34:56.000Z');
+    const source = new StubSource({ rawSessions: [session('s1')], cost: cost('s1') });
+    const report = await buildSyncReport({ source, window: dailyWindow(now, null, 7), email: EMAIL, includeExternal: false, now });
+    const payload = JSON.parse(report!.bytes.toString('utf-8'));
+    expect(payload.sessions[0].branch).toBe('REDACTED:BRANCH');
+    expect(payload.sessions[0].agentSessionFile).toBeUndefined();
+  });
+
+  it('leaves the synced report unchanged when reduction is off', async () => {
+    const now = new Date('2026-10-29T12:34:56.000Z');
+    const source = new StubSource({ rawSessions: [session('s1')], cost: cost('s1') });
+    const report = await buildSyncReport({ source, window: dailyWindow(now, null, 7), email: EMAIL, includeExternal: false, now });
+    const payload = JSON.parse(report!.bytes.toString('utf-8'));
+    expect(payload.sessions[0].branch).toBe('main');
+  });
+
   it('returns null when the source has zero sessions', async () => {
     const now = new Date('2026-10-29T00:00:00.000Z');
     const window = dailyWindow(now, null, 7);

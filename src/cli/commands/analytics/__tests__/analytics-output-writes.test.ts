@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ConfigLoader } from '../../../../utils/config.js';
@@ -28,6 +28,9 @@ vi.mock('../../../utils/logger.js', () => ({
 vi.mock('../formatter.js', () => ({
   AnalyticsFormatter: class { displayRoot = vi.fn(); displayProjects = vi.fn(); displayCost = vi.fn(); },
 }));
+
+const reductionOnMock = vi.fn();
+vi.mock('@/utils/analytics-reduction-setting.js', () => ({ isReductionOn: (...a: unknown[]) => reductionOnMock(...a) }));
 
 const enrichCostsMock = vi.fn();
 vi.mock('../cost/cost-enricher.js', () => ({ enrichCosts: (...a: unknown[]) => enrichCostsMock(...a), realDeps: {} }));
@@ -71,6 +74,7 @@ describe('runAnalytics explicit -o writes (unify-analytics-cost-command CR-010)'
 
   beforeEach(() => {
     vi.clearAllMocks();
+    reductionOnMock.mockResolvedValue(false);
     enrichCostsMock.mockResolvedValue(enrichResult);
     aggregateMock.mockReturnValue(analyticsResult);
     buildPayloadMock.mockReturnValue(payloadResult as never);
@@ -103,5 +107,51 @@ describe('runAnalytics explicit -o writes (unify-analytics-cost-command CR-010)'
     expect(generateReportJsonSpy).toHaveBeenCalledWith(payloadResult, outputPath);
     expect(writeReportWithFallbackSpy).not.toHaveBeenCalled();
     expect(existsSync(outputPath)).toBe(true);
+  });
+
+  describe('prompt reduction (EPMCDME-17748)', () => {
+    const fullPayload = {
+      meta: { ...payloadResult.meta, projectFilter: 'all' },
+      sessions: [{
+        sessionId: 's1', agentName: 'claude', provider: 'native', project: '/home/dev/repo',
+        branch: 'feature/EPMCDME-123-secret-topic', title: 'fix the secret billing bug in acme', models: ['m'],
+      }],
+    };
+
+    async function runJson(extra: Record<string, unknown>): Promise<{ sessions: Array<Record<string, unknown>> }> {
+      buildPayloadMock.mockReturnValue(structuredClone(fullPayload) as never);
+      const { runAnalytics } = await import('../index.js');
+      const outputPath = join(tmpDir, 'r.json');
+      await runAnalytics({ export: 'json', output: outputPath, ...extra } as never, mockSource() as never);
+      return JSON.parse(readFileSync(outputPath, 'utf-8'));
+    }
+
+    it('writes reduced titles and branches in --output when reduction is on', async () => {
+      reductionOnMock.mockResolvedValue(true);
+      const out = await runJson({});
+      expect(out.sessions[0].title).toBe('REDACTED:PROMPT');
+      expect(out.sessions[0].branch).toBe('EPMCDME-123');
+    });
+
+    it('--unreduced keeps the full local titles even when reduction is on', async () => {
+      reductionOnMock.mockResolvedValue(true);
+      const out = await runJson({ unreduced: true });
+      expect(out.sessions[0].title).toBe(fullPayload.sessions[0].title);
+      expect(out.sessions[0].branch).toBe(fullPayload.sessions[0].branch);
+    });
+
+    it('--redact with reduction on gives the reduce result', async () => {
+      reductionOnMock.mockResolvedValue(true);
+      const out = await runJson({ redact: true });
+      expect(out.sessions[0].title).toBe('REDACTED:PROMPT');
+      expect(out.sessions[0].branch).toBe('EPMCDME-123');
+    });
+
+    it('--redact with reduction off behaves as before', async () => {
+      const out = await runJson({ redact: true });
+      expect(out.sessions[0].title).toBe('');
+      expect(out.sessions[0].branch).toBe('feature/EPMCDME-123-secret-topic');
+      expect(out.sessions[0].project).toBe('repo');
+    });
   });
 });

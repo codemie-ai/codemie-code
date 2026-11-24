@@ -15,7 +15,28 @@
  * Pure: returns a new payload and never mutates its input.
  */
 
+import { reduceBranch, reducePrompt, reduceRecord } from '@/agents/core/analytics-reduction.js';
+import { isReductionOn } from '@/utils/analytics-reduction-setting.js';
+import { findNearestConfigDir } from '@/agents/core/event-fields/identity-fields.js';
+import type { KeepList } from '@/agents/core/analytics-reduction.js';
 import type { ReportPayload, ReportSessionRecord } from './types.js';
+
+/** `redact` is the `--redact` allowlist-by-omission; `reduce` is the prompt-reduction keep-list. `reduce` wins. */
+export type ReportPrivacyMode = 'redact' | 'reduce';
+
+/**
+ * Session fields kept verbatim in `reduce` mode: ids, type names (agent, tool, skill, command),
+ * metrics and per-model figures. `title` and `branch` are reduced explicitly and `agentSessionFile`
+ * is dropped; any string field not listed here becomes `REDACTED:<FIELD>`.
+ */
+export const REPORT_SESSION_KEEP_LIST: KeepList = {
+  keep: new Set([
+    'sessionId', 'agentName', 'provider', 'project', 'models', 'languages', 'tools',
+    'skillInvocations', 'agentInvocations', 'commandInvocations', 'sessionSource', 'tokens',
+    'perModelCost', 'costSeries', 'modelTimeline', 'dispatches', 'costSource', 'costBasis',
+    'rootOwnTokens', 'unlinkedTokens', 'unlinkedAgentIds', 'usageUnavailableReason',
+  ]),
+};
 
 /** Value substituted for a `--project` filter that may have been a full path. */
 export const REDACTED_PROJECT_FILTER = '<redacted>';
@@ -36,13 +57,42 @@ function redactSession(session: ReportSessionRecord): ReportSessionRecord {
   };
 }
 
-export function redactPayload(payload: ReportPayload): ReportPayload {
+function reduceSession(session: ReportSessionRecord): ReportSessionRecord {
+  const { agentSessionFile: _agentSessionFile, title, branch, ...rest } = session;
+  const reduced = reduceRecord({ ...rest, project: projectBasename(session.project) }, REPORT_SESSION_KEEP_LIST);
+  return {
+    ...(reduced as Omit<ReportSessionRecord, 'title' | 'branch' | 'agentSessionFile'>),
+    title: title ? reducePrompt(title) : '',
+    branch: branch ? (reduceBranch(branch) ?? '') : '',
+  };
+}
+
+export function redactPayload(payload: ReportPayload, mode: ReportPrivacyMode): ReportPayload {
   const { projectFilter } = payload.meta;
   return {
     meta: {
       ...payload.meta,
       projectFilter: projectFilter === 'all' ? projectFilter : REDACTED_PROJECT_FILTER,
     },
-    sessions: payload.sessions.map(redactSession),
+    sessions: payload.sessions.map(mode === 'reduce' ? reduceSession : redactSession),
   };
+}
+
+/**
+ * Privacy mode for the local report. Reduction on and not `--unreduced` gives `reduce`; else
+ * `--redact` gives `redact`; else `undefined` (unchanged). Read per run, never cached.
+ */
+export async function resolveReportPrivacyMode(
+  options: { redact?: boolean; unreduced?: boolean },
+  cwd: string = process.cwd()
+): Promise<ReportPrivacyMode | undefined> {
+  if (!options.unreduced && (await isReportReductionOn(cwd))) {
+    return 'reduce';
+  }
+  return options.redact ? 'redact' : undefined;
+}
+
+/** True when the global or nearest project setting turns prompt reduction on (unreadable counts as on). */
+export async function isReportReductionOn(cwd: string = process.cwd()): Promise<boolean> {
+  return isReductionOn({ configDirs: [await findNearestConfigDir(cwd)] });
 }

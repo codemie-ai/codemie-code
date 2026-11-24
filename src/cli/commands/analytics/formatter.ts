@@ -2,6 +2,7 @@
  * Console output formatter for analytics
  */
 
+import { reduceBranch } from '@/agents/core/analytics-reduction.js';
 import chalk from 'chalk';
 import { agentLabel } from './agent-labels.js';
 import type {
@@ -18,8 +19,11 @@ import type { CostSummary } from './cost/types.js';
 export class AnalyticsFormatter {
   private verbose: boolean;
 
-  constructor(verbose = false) {
+  private readonly reduced: boolean;
+
+  constructor(verbose = false, reduced = false) {
     this.verbose = verbose;
+    this.reduced = reduced;
   }
 
   /**
@@ -148,7 +152,7 @@ export class AnalyticsFormatter {
    */
   private displayBranch(branch: BranchAnalytics): void {
     console.log(chalk.bold.magenta(`\n  ${'+'.repeat(56)}`));
-    console.log(chalk.bold.magenta(`  BRANCH: ${branch.branchName}`));
+    console.log(chalk.bold.magenta(`  BRANCH: ${this.reduced ? (reduceBranch(branch.branchName) ?? branch.branchName) : branch.branchName}`));
     console.log(chalk.bold.magenta(`  ${'+'.repeat(56)}`));
 
     this.displayStats(branch, '    ');

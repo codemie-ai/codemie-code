@@ -254,6 +254,8 @@ export interface AnalyticsOptions {
    * and reduces absolute project paths to their basename; native log paths are dropped.
    */
   redact?: boolean;
+  /** When true (via --unreduced), the local report ignores prompt reduction. Never affects sync. */
+  unreduced?: boolean;
   /** When true (via --include-external), also count native sessions CodeMie did not launch. */
   includeExternal?: boolean;
 }

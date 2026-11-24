@@ -9,6 +9,7 @@
 import { loadAnalytics } from '../analytics-core.js';
 import type { AnalyticsSource } from '../sources/types.js';
 import { buildPayload } from '../report/payload-builder.js';
+import { redactPayload, isReportReductionOn } from '../report/redact.js';
 import { emailSlug } from '../report/report-generator.js';
 import type { SyncReport } from './types.js';
 import type { SyncWindow } from './window.js';
@@ -50,7 +51,7 @@ export async function buildSyncReport(opts: BuildSyncReportOptions): Promise<Syn
   const { analytics, costResult } = loaded;
   const { index: costIndex, summary } = costResult;
 
-  const payload = buildPayload(analytics, costIndex, summary, {
+  const builtPayload = buildPayload(analytics, costIndex, summary, {
     rangeLabel: window.label,
     projectFilter: 'all',
     generatedAt: now.toISOString(),
@@ -58,6 +59,10 @@ export async function buildSyncReport(opts: BuildSyncReportOptions): Promise<Syn
     periodStart: window.from.toISOString(),
     periodEnd: window.to.toISOString(),
   });
+
+  // Sync is always reduced when reduction is on; there is no unreduced override.
+  const reduced = await isReportReductionOn();
+  const payload = reduced ? redactPayload(builtPayload, 'reduce') : builtPayload;
 
   // Lowercase is applied here only (sync's attachment name), never in the shared `emailSlug`
   // helper or the interactive export path, so two differently-cased emails for the same
