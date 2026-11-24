@@ -431,6 +431,12 @@ describe('defaultAgentHooks', () => {
       expect(claudeHooks.enrichArgs!(args, {} as AgentConfig)).toBe(args);
     });
 
+    it('does not inject the same extension when the explicit path has a trailing slash', () => {
+      process.env.CODEMIE_CLAUDE_EXTENSION_DIR = '/plugins/here';
+      const args = ['--plugin-dir', '/plugins/here/', 'chat'];
+      expect(claudeHooks.enrichArgs!(args, {} as AgentConfig)).toBe(args);
+    });
+
     it('ignores --plugin-dir text after the -- boundary', () => {
       process.env.CODEMIE_CLAUDE_EXTENSION_DIR = '/plugins/here';
       const result = claudeHooks.enrichArgs!(['--', '--plugin-dir', '/plugins/here'], {} as AgentConfig);
