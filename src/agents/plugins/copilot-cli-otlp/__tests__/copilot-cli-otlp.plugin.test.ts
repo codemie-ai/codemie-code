@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,6 +20,7 @@ import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
 import { logger } from '@/utils/logger.js';
 import { evaluateCopilotAnalyticsGate } from '@/agents/core/copilot-analytics-gate.js';
+import { resetEventKeyCache } from '@/agents/core/analytics-event-key.js';
 import { CopilotCliOtlpPlugin } from '../copilot-cli-otlp.plugin.js';
 import { readSessionState, toolsStatePath } from '../copilot-cli-otlp.state.js';
 
@@ -642,5 +644,33 @@ describe('CopilotCliOtlpPlugin sessionEnd without a session', () => {
     await plugin.processOtlpEvent(hookInput({ sessionId: 'end-no-state', codemieEventName: 'sessionEnd' }), deps);
 
     expect(readSessionState('end-no-state')).toEqual({});
+  });
+});
+
+describe('CopilotCliOtlpPlugin.buildEventId under prompt reduction', () => {
+  const plugin = new CopilotCliOtlpPlugin();
+  const build = (reduced: boolean): string =>
+    (plugin as unknown as {
+      buildEventId(e: Record<string, unknown>, p: Record<string, unknown>, t: string, o: { reduced: boolean }): string;
+    }).buildEventId({ type: 'agent.x', session_id: 'sid-1' }, { prompt: 'hello' }, '2026-01-02T03:04:05.000Z', { reduced });
+
+  beforeEach(() => {
+    resetEventKeyCache();
+  });
+
+  it('keys the id when reduced, differently from the unreduced id', () => {
+    expect(build(true)).not.toBe(build(false));
+    expect(build(true)).toMatch(/^agent\.x:sid-1:[0-9a-f]{64}$/);
+  });
+
+  it('is stable across calls when reduced', () => {
+    expect(build(true)).toBe(build(true));
+  });
+
+  it('keeps the unreduced id as the plain SHA-256 of the content', () => {
+    const digest = createHash('sha256')
+      .update(JSON.stringify({ prompt: 'hello', timestamp: '2026-01-02T03:04:05.000Z' }))
+      .digest('hex');
+    expect(build(false)).toBe(`agent.x:sid-1:${digest}`);
   });
 });

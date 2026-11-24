@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { createHash } from 'node:crypto';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 vi.mock('@/providers/plugins/sso/sso.auth-gate.js', () => ({ ensureCodeMieSsoAuth: vi.fn() }));
 vi.mock('@/agents/core/hook-auth-profile.js', () => ({ resolveHookAuthProfile: vi.fn(async () => ({})) }));
@@ -24,6 +28,7 @@ import {
   isCopilotAnalyticsProjectExcluded,
   readCopilotAnalyticsPreferences,
 } from '@/agents/core/copilot-analytics-preferences.js';
+import { resetEventKeyCache } from '@/agents/core/analytics-event-key.js';
 import { CopilotChatOtlpPlugin } from '../copilot-chat-otlp.plugin.js';
 
 function hookInput(overrides: Record<string, unknown> = {}): string {
@@ -359,5 +364,35 @@ describe('CopilotChatOtlpPlugin', () => {
         stopReason: expect.stringContaining('identity or working directory is missing'),
       });
     });
+  });
+});
+
+describe('CopilotChatOtlpPlugin.buildEventId under prompt reduction', () => {
+  const plugin = new CopilotChatOtlpPlugin();
+  const build = (reduced: boolean): string =>
+    (plugin as unknown as {
+      buildEventId(e: Record<string, unknown>, p: Record<string, unknown>, t: string, o: { reduced: boolean }): string;
+    }).buildEventId({ type: 'agent.x', session_id: 'sid-1' }, { prompt: 'hello' }, '2026-01-02T03:04:05.000Z', { reduced });
+
+  // the key file lives under a temp home so the real ~/.codemie is never touched
+  beforeEach(() => {
+    process.env.CODEMIE_HOME = mkdtempSync(join(tmpdir(), 'chat-evid-'));
+    resetEventKeyCache();
+  });
+
+  it('keys the id when reduced, differently from the unreduced id', () => {
+    expect(build(true)).not.toBe(build(false));
+    expect(build(true)).toMatch(/^agent\.x:sid-1:[0-9a-f]{64}$/);
+  });
+
+  it('is stable across calls when reduced', () => {
+    expect(build(true)).toBe(build(true));
+  });
+
+  it('keeps the unreduced id as the plain SHA-256 of the content', () => {
+    const digest = createHash('sha256')
+      .update(JSON.stringify({ prompt: 'hello', timestamp: '2026-01-02T03:04:05.000Z' }))
+      .digest('hex');
+    expect(build(false)).toBe(`agent.x:sid-1:${digest}`);
   });
 });
