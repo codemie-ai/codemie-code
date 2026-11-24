@@ -1157,6 +1157,19 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
     expect(console_.log()).not.toHaveBeenCalledWith(expect.stringContaining('Targets configured'));
   });
 
+  it('writes the Claude Desktop config the provider-settings gate inspected', async () => {
+    await withFreshDaemon();
+    const { writeDesktopConfig, getCodeMieDesktopConfigPath } = await import('../connectors/desktop.js');
+    vi.mocked(getCodeMieDesktopConfigPath).mockClear();
+    vi.mocked(writeDesktopConfig).mockResolvedValue({ configPath: '/desktop/config.json', activated: false });
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { claudeDesktop: true } });
+
+    expect(getCodeMieDesktopConfigPath).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(writeDesktopConfig).mock.calls[0][6]).toBe('/mock/desktop/base/configLibrary/codemie.json');
+  });
+
   it('says when it switched Claude Desktop to the CodeMie configuration, before the restart line', async () => {
     await withFreshDaemon();
     const { writeDesktopConfig } = await import('../connectors/desktop.js');

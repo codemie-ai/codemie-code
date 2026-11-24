@@ -48,6 +48,7 @@ import {
   mapCanonicalToDesktop,
   mergeManagedMcpServers,
   moveDesktopToNamedKey,
+  readCodeMieDesktopGateway,
   readDesktopGateway,
   reconcileManagedMcpServers,
   removeDesktopConfig,
@@ -725,6 +726,24 @@ describe('writeDesktopConfig', () => {
     expect(result).toEqual({ configPath: join(libDir, `${existingId}.json`), activated: false });
     const meta = JSON.parse(await readFile(metaPath, 'utf-8'));
     expect(meta).toEqual({ appliedId: existingId, entries: [{ id: existingId, name: 'Default' }] });
+  });
+
+  it('writes the entry the connect gate resolved, even when this key would pick another', async () => {
+    await mkdir(libDir, { recursive: true });
+    await writeFile(metaPath, JSON.stringify({ appliedId: 'm', entries: [{ id: 'm', name: 'Default' }] }), 'utf-8');
+    await writeFile(join(libDir, 'm.json'), LOOPBACK_GATEWAY_CONFIG, 'utf-8');
+    const gatePath = join(libDir, 'gate-resolved.json');
+
+    const result = await writeDesktopConfig(
+      'http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath, undefined, gatePath
+    );
+
+    expect(result).toEqual({ configPath: gatePath, activated: true, switchedFrom: 'Default' });
+    expect(await readFile(join(libDir, 'm.json'), 'utf-8')).toBe(LOOPBACK_GATEWAY_CONFIG);
+    expect(JSON.parse(await readFile(metaPath, 'utf-8'))).toEqual({
+      appliedId: 'gate-resolved',
+      entries: [{ id: 'm', name: 'Default' }, { id: 'gate-resolved', name: 'CodeMie Proxy' }],
+    });
   });
 
   describe('while another config is applied', () => {
@@ -1642,6 +1661,20 @@ describe('removeDesktopConfig', () => {
     });
   });
 
+  it('falls back to the applied local-proxy entry when the CodeMie Proxy entry has no file', async () => {
+    await writeFile(metaPath, JSON.stringify({
+      appliedId: 'm',
+      entries: [{ id: 'c', name: 'CodeMie Proxy' }, { id: 'm', name: 'My CodeMie' }],
+    }), 'utf-8');
+    await writeFile(join(libDir, 'm.json'), LOOPBACK_GATEWAY_CONFIG, 'utf-8');
+
+    const result = await removeDesktopConfig(baseDir, statePath);
+
+    expect(result).toEqual({ removed: true, configPath: join(libDir, 'm.json'), deletedConfigFile: true });
+    expect(existsSync(join(libDir, 'm.json'))).toBe(false);
+    expect(JSON.parse(await readFile(metaPath, 'utf-8'))).toEqual({ entries: [{ id: 'c', name: 'CodeMie Proxy' }] });
+  });
+
   it('removes an emptied applied entry whose file is gone before the link check', async () => {
     await writeFile(metaPath, JSON.stringify({ appliedId: 'a', entries: [{ id: 'a', name: 'CodeMie Proxy' }] }), 'utf-8');
     await writeFile(join(libDir, 'a.json'), LOOPBACK_GATEWAY_CONFIG, 'utf-8');
@@ -1994,6 +2027,14 @@ describe('resolveCodeMieDesktopConfig', () => {
     expect(target.configId).toMatch(/^[0-9a-f-]{36}$/);
   });
 
+  it.each([42, null, { first: 'x' }])('gives no previous name when the applied entry name is %j', async (name) => {
+    const meta = { appliedId: 'A', entries: [{ id: 'A', name }, { id: 'C', name: CODEMIE_DESKTOP_CONFIG_NAME }] };
+
+    const target = await resolveCodeMieDesktopConfig(libDir, meta as never, LOCAL_KEY);
+
+    expect(target).toEqual({ configId: 'C', isNew: false, appliedId: 'A', previousAppliedName: undefined });
+  });
+
   it('getCodeMieDesktopConfigPath returns the CodeMie Proxy entry path', async () => {
     await writeFile(join(libDir, '_meta.json'), JSON.stringify({
       appliedId: 'A', entries: [{ id: 'A', name: 'QA Other' }, { id: 'C', name: 'CodeMie Proxy' }],
@@ -2010,6 +2051,66 @@ describe('resolveCodeMieDesktopConfig', () => {
 
     expect(path.startsWith(libDir)).toBe(true);
     expect(path).toMatch(/[0-9a-f-]{36}\.json$/);
+  });
+});
+
+describe('readCodeMieDesktopGateway', () => {
+  let baseDir: string;
+  let libDir: string;
+  const noState = () => join(baseDir, 'no-state.json');
+  const FOREIGN = JSON.stringify({
+    inferenceProvider: 'gateway',
+    inferenceGatewayBaseUrl: 'https://qa-gateway.example.com',
+    inferenceGatewayApiKey: 'qa-key',
+  });
+
+  beforeEach(async () => {
+    baseDir = join(tmpdir(), `desktop-codemie-gw-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    libDir = join(baseDir, 'configLibrary');
+    await mkdir(libDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(baseDir, { recursive: true, force: true });
+  });
+
+  async function writeMeta(meta: unknown): Promise<void> {
+    await writeFile(join(libDir, '_meta.json'), JSON.stringify(meta), 'utf-8');
+  }
+
+  it('reads the CodeMie Proxy entry while a foreign config is applied', async () => {
+    await writeMeta({ appliedId: 'other', entries: [{ id: 'other', name: 'QA Other' }, { id: 'c', name: 'CodeMie Proxy' }] });
+    await writeFile(join(libDir, 'other.json'), FOREIGN, 'utf-8');
+    await writeFile(join(libDir, 'c.json'), LOOPBACK_GATEWAY_CONFIG, 'utf-8');
+
+    await expect(readDesktopGateway(baseDir, noState())).resolves.toBeNull();
+    await expect(readCodeMieDesktopGateway(baseDir, noState())).resolves.toEqual({ port: 4001 });
+  });
+
+  it('is null when the CodeMie Proxy entry is a gateway of another key', async () => {
+    await writeMeta({ appliedId: 'other', entries: [{ id: 'other', name: 'QA Other' }, { id: 'c', name: 'CodeMie Proxy' }] });
+    await writeFile(join(libDir, 'other.json'), FOREIGN, 'utf-8');
+    await writeFile(join(libDir, 'c.json'), JSON.stringify({ ...JSON.parse(LOOPBACK_GATEWAY_CONFIG), inferenceGatewayApiKey: 'ollama' }), 'utf-8');
+
+    await expect(readCodeMieDesktopGateway(baseDir, noState())).resolves.toBeNull();
+  });
+
+  it('falls back to the applied local-proxy entry when the CodeMie Proxy entry has no file', async () => {
+    await writeMeta({ appliedId: 'm', entries: [{ id: 'c', name: 'CodeMie Proxy' }, { id: 'm', name: 'My CodeMie' }] });
+    await writeFile(join(libDir, 'm.json'), LOOPBACK_GATEWAY_CONFIG, 'utf-8');
+
+    await expect(readCodeMieDesktopGateway(baseDir, noState())).resolves.toEqual({ port: 4001 });
+  });
+
+  it.each([
+    ['no _meta.json', undefined],
+    ['a corrupt _meta.json', '{oops'],
+    ['no CodeMie entry', JSON.stringify({ appliedId: 'other', entries: [{ id: 'other', name: 'QA Other' }] })],
+  ])('is null with %s', async (_label, meta) => {
+    if (meta !== undefined) await writeFile(join(libDir, '_meta.json'), meta, 'utf-8');
+    await writeFile(join(libDir, 'other.json'), FOREIGN, 'utf-8');
+
+    await expect(readCodeMieDesktopGateway(baseDir, noState())).resolves.toBeNull();
   });
 });
 

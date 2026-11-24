@@ -1,6 +1,6 @@
 import { readFile, writeFile, mkdir, rename, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import {
   getClaudeDesktopBaseDir,
@@ -749,12 +749,14 @@ async function readConfigEntry(configPath: string): Promise<unknown> {
  * Picks the Claude Desktop config entry CodeMie owns, whichever entry is applied: (a) the entry named
  * {@link CODEMIE_DESKTOP_CONFIG_NAME} (the applied one of several, else the first), even when its file is missing;
  * (b) the applied entry when its file already points at the local proxy of `localKey`; (c) a new UUID. Entries
- * whose id is not a safe file name are skipped. Read-only.
+ * whose id is not a safe file name are skipped. A safe `pinnedId` (the entry an earlier resolve chose) replaces the
+ * three rules. Read-only.
  */
 export async function resolveCodeMieDesktopConfig(
   libDir: string,
   meta: ConfigMeta,
-  localKey: string
+  localKey: string,
+  pinnedId?: string
 ): Promise<CodeMieDesktopConfigTarget> {
   const appliedId = appliedConfigId(meta);
   const entries = Array.isArray(meta.entries) ? meta.entries : [];
@@ -762,17 +764,47 @@ export async function resolveCodeMieDesktopConfig(
     (entry) => entry?.name === CODEMIE_DESKTOP_CONFIG_NAME && typeof entry.id === 'string' && isSafeSessionId(entry.id)
   );
 
-  let configId: string | undefined =
-    named.find((entry) => entry.id === appliedId)?.id ?? named[0]?.id;
-  if (!configId && appliedId) {
-    const applied = await readConfigEntry(join(libDir, `${appliedId}.json`));
-    if (isDesktopPointedAtLocalProxy(desktopGatewayOfEntry(applied), localKey)) configId = appliedId;
+  let configId: string | undefined;
+  let isNew: boolean;
+  if (pinnedId !== undefined && isSafeSessionId(pinnedId)) {
+    configId = pinnedId;
+    isNew = !entries.some((entry) => entry?.id === pinnedId);
+  } else {
+    configId = named.find((entry) => entry.id === appliedId)?.id ?? named[0]?.id;
+    if (!configId && appliedId) {
+      const applied = await readConfigEntry(join(libDir, `${appliedId}.json`));
+      if (isDesktopPointedAtLocalProxy(desktopGatewayOfEntry(applied), localKey)) configId = appliedId;
+    }
+    isNew = configId === undefined;
   }
-  const isNew = configId === undefined;
   const resolvedId = configId ?? randomUUID();
-  const previousAppliedName =
+  const appliedName =
     appliedId && appliedId !== resolvedId ? entries.find((entry) => entry?.id === appliedId)?.name : undefined;
+  const previousAppliedName = typeof appliedName === 'string' ? appliedName : undefined;
   return { configId: resolvedId, isNew, appliedId, previousAppliedName };
+}
+
+/**
+ * The id of the CodeMie entry ({@link resolveCodeMieDesktopConfig}) when its file exists. A named entry without a
+ * file gives way to the applied entry when that one points at the local proxy of `localKey`. Read-only.
+ */
+async function findCodeMieConfigOnDisk(libDir: string, meta: ConfigMeta, localKey: string): Promise<string | undefined> {
+  const target = await resolveCodeMieDesktopConfig(libDir, meta, localKey);
+  if (target.isNew) return undefined;
+  if (existsSync(join(libDir, `${target.configId}.json`))) return target.configId;
+  const { appliedId } = target;
+  if (!appliedId || appliedId === target.configId) return undefined;
+  const applied = await readConfigEntry(join(libDir, `${appliedId}.json`));
+  return isDesktopPointedAtLocalProxy(desktopGatewayOfEntry(applied), localKey) ? appliedId : undefined;
+}
+
+/** The safe config id of `configPath` when it is a `<id>.json` directly under `libDir`, else undefined. */
+function configIdOfPath(libDir: string, configPath: string | undefined): string | undefined {
+  if (configPath === undefined || resolve(dirname(configPath)) !== resolve(libDir)) return undefined;
+  const file = basename(configPath);
+  if (!file.endsWith('.json')) return undefined;
+  const id = file.slice(0, -'.json'.length);
+  return isSafeSessionId(id) ? id : undefined;
 }
 
 async function readConfigMeta(metaPath: string): Promise<ConfigMeta> {
@@ -819,6 +851,10 @@ export interface WriteDesktopConfigResult {
  *
  * Preserves unrelated keys in the existing config file and unknown `_meta.json` fields; `_meta.json`
  * is rewritten only when the entry was added or was not applied yet.
+ *
+ * `targetConfigPath` is the entry an earlier {@link getCodeMieDesktopConfigPath} chose (the connect gate inspected
+ * it), so the write lands on the same file whichever gateway key each side read; a path outside the library is
+ * ignored and the entry is resolved here.
  */
 export async function writeDesktopConfig(
   proxyUrl: string,
@@ -826,7 +862,8 @@ export async function writeDesktopConfig(
   baseDir: string = getDesktopBaseDir(),
   orgMcpServers: ManagedMcpServerEntry[] | null = null,
   managedStatePath: string = getManagedMcpStatePath(),
-  project?: string
+  project?: string,
+  targetConfigPath?: string
 ): Promise<WriteDesktopConfigResult> {
   const libDir = join(baseDir, 'configLibrary');
   if (!existsSync(libDir)) {
@@ -837,7 +874,7 @@ export async function writeDesktopConfig(
   const metaPath = join(libDir, '_meta.json');
   const meta = await readConfigMeta(metaPath);
 
-  const target = await resolveCodeMieDesktopConfig(libDir, meta, gatewayKey);
+  const target = await resolveCodeMieDesktopConfig(libDir, meta, gatewayKey, configIdOfPath(libDir, targetConfigPath));
   const { configId } = target;
   const configPath = join(libDir, `${configId}.json`);
 
@@ -1066,6 +1103,27 @@ export async function readDesktopGateway(baseDir?: string, stateFile?: string): 
 }
 
 /**
+ * The local gateway Claude Desktop's CodeMie entry points at ({@link findCodeMieConfigOnDisk}), whichever config is
+ * applied, or null when there is no such entry, it is not pointed at the local proxy, or anything is unreadable. What
+ * `disconnect` asks to decide whether there is a CodeMie entry to clean; what Desktop uses is {@link readDesktopGateway}.
+ * The local key is the one the daemon state file names, else the default key. Read-only; never throws.
+ */
+export async function readCodeMieDesktopGateway(baseDir?: string, stateFile?: string): Promise<{ port: number } | null> {
+  try {
+    const libDir = join(baseDir ?? getDesktopBaseDir(), 'configLibrary');
+    const meta = await readConfigMeta(join(libDir, '_meta.json'));
+    const localKey = (await readState(stateFile))?.gatewayKey ?? DEFAULT_GATEWAY_KEY;
+    const configId = await findCodeMieConfigOnDisk(libDir, meta, localKey);
+    if (!configId) return null;
+    const gateway = desktopGatewayOfEntry(await readConfigEntry(join(libDir, `${configId}.json`)));
+    return gateway && isDesktopPointedAtLocalProxy(gateway, localKey) ? { port: gateway.port } : null;
+  } catch (error) {
+    logger.debug('[proxy] Claude Desktop CodeMie config not readable', ...sanitizeLogArgs(error));
+    return null;
+  }
+}
+
+/**
  * Reverse {@link writeDesktopConfig}: strip the CodeMie gateway settings and managed MCP
  * servers from the CodeMie `configLibrary/<UUID>.json` ({@link resolveCodeMieDesktopConfig}),
  * whichever config is applied, so Claude Desktop returns to its normal login. Never creates an
@@ -1100,12 +1158,11 @@ export async function removeDesktopConfig(
   }
 
   const localKey = (await readState())?.gatewayKey ?? DEFAULT_GATEWAY_KEY;
-  const target = await resolveCodeMieDesktopConfig(libDir, meta, localKey);
-  const { configId } = target;
-  const configPath = join(libDir, `${configId}.json`);
-  if (target.isNew || !existsSync(configPath)) {
+  const configId = await findCodeMieConfigOnDisk(libDir, meta, localKey);
+  if (!configId) {
     return { removed: false, deletedConfigFile: false, reason: 'no CodeMie Claude Desktop config' };
   }
+  const configPath = join(libDir, `${configId}.json`);
 
   let existing: Record<string, unknown>;
   try {
