@@ -1,3 +1,14 @@
+// Only the daemon's recovery append can be made to fail: the test's own seeding goes straight through.
+const faults = vi.hoisted(() => ({ append: false }));
+vi.mock('../spool-io.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../spool-io.js')>();
+  return {
+    ...actual,
+    appendSpool: (...args: Parameters<typeof actual.appendSpool>) =>
+      faults.append ? Promise.reject(new Error('EIO')) : actual.appendSpool(...args),
+  };
+});
+
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -9,12 +20,14 @@ vi.mock('@/utils/logger.js', () => ({
 
 import {
   COPILOT_CLI_OTLP_AGENT,
+  lateSessionEndSkip,
   RECOVERY_SETTLE_MS,
   recoverMissingSessionEnds,
   resetScheduledForTests,
   scheduleCopilotUsageEnrichment,
 } from '../copilot-usage-enrichment.js';
 import { appendSpool } from '../spool-io.js';
+import { updateSessionState } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.state.js';
 
 /**
  * Real spool files and the real transcript reader: a hook batch is appended exactly as the daemon's
@@ -53,6 +66,12 @@ const saved = { home: process.env.CODEMIE_HOME, copilot: process.env.COPILOT_HOM
 
 async function spool(events: Record<string, unknown>[]): Promise<void> {
   await appendSpool(SID, 'hooks', events.map((e) => JSON.stringify({ agentName: COPILOT_CLI_OTLP_AGENT, hookEvent: JSON.stringify(e) })).join('\n') + '\n');
+}
+
+/** A hook-ingest append of one native end, guarded the way the daemon's handler guards it. */
+async function appendHook(event: Record<string, unknown>): Promise<boolean> {
+  return appendSpool(SID, 'hooks', JSON.stringify({ agentName: COPILOT_CLI_OTLP_AGENT, hookEvent: JSON.stringify(event) }) + '\n', undefined, undefined,
+    lateSessionEndSkip(COPILOT_CLI_OTLP_AGENT, SID, [event]));
 }
 
 async function spooled(): Promise<Record<string, unknown>[]> {
@@ -156,9 +175,9 @@ describe('recoverMissingSessionEnds', () => {
     const first = await spooled();
 
     await recoverMissingSessionEnds([SID], () => NOW); // repeated tick
-    // The late hook finally lands: spooled by the handler, then schedules the usual enrichment.
+    // The late hook finally lands: appended as the ingest handler does, then it schedules the usual enrichment.
     const late = hook('agent.session.end', 4_900);
-    await spool([late]);
+    await appendHook(late);
     scheduleCopilotUsageEnrichment(COPILOT_CLI_OTLP_AGENT, [late]);
     await new Promise((resolve) => setTimeout(resolve, 400));
 
@@ -166,7 +185,68 @@ describe('recoverMissingSessionEnds', () => {
     for (const type of ['agent.session.summary', 'agent.usage.request', 'agent.tool.start', 'agent.tool.end']) {
       expect(count(after, type)).toBe(count(first, type));
     }
-    expect(count(after, 'agent.session.end')).toBe(2);
+    expect(count(after, 'agent.session.end')).toBe(1); // the late hook end was skipped, not stored
+  });
+
+  it('a late real sessionEnd is not appended after the recovered end; a hook end that races the recovery leaves exactly one end', async () => {
+    await spool([hook('agent.session.start', 0)]);
+    await writeTranscript(runLines(0, 5_000));
+    await recover();
+    const late = hook('agent.session.end', 4_900);
+    expect(await appendHook(late)).toBe(false);
+    expect(count(await spooled(), 'agent.session.end')).toBe(1);
+
+    // Same session, fresh spool: the hook end and the recovery run concurrently, in either order.
+    await rm(join(dir, 'codemie'), { recursive: true, force: true });
+    resetScheduledForTests();
+    await spool([hook('agent.session.start', 0)]);
+    await Promise.all([recoverMissingSessionEnds([SID], () => NOW), appendHook(late)]);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(count(await spooled(), 'agent.session.end')).toBe(1);
+  });
+
+  it('retries after a failed append: nothing is remembered, the next tick ends the session', async () => {
+    await spool([hook('agent.session.start', 0)]);
+    await writeTranscript(runLines(0, 5_000));
+    faults.append = true;
+    await recoverMissingSessionEnds([SID], () => NOW);
+    faults.append = false;
+    expect(count(await spooled(), 'agent.session.end')).toBe(0);
+
+    await recover();
+
+    const events = await spooled();
+    expect(count(events, 'agent.session.end')).toBe(1);
+    expect(count(events, 'agent.session.summary')).toBe(1);
+  });
+
+  it('retries the enrichment when the end is spooled but its summary never was (failure, or daemon restart)', async () => {
+    await spool([hook('agent.session.start', 0), hook('agent.session.end', 4_000)]); // end persisted, then the daemon died
+    await writeTranscript(runLines(0, 5_000));
+
+    await recover();
+
+    const events = await spooled();
+    expect(count(events, 'agent.session.end')).toBe(1);
+    expect(count(events, 'agent.session.summary')).toBe(1);
+    expect(toolIds(events, 'agent.tool.start').filter((id) => String(id).startsWith('ra-'))).toEqual(['ra-1-0', 'ra-2-0']);
+    resetScheduledForTests(); // restart again: finished, so nothing more is written
+    await recoverMissingSessionEnds([SID], () => NOW);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(await spooled()).toHaveLength(events.length);
+  });
+
+  it('finds the transcript under the session-state root the start hook recorded (custom COPILOT_HOME)', async () => {
+    const customRoot = join(dir, 'custom-home', 'session-state');
+    await mkdir(join(customRoot, SID), { recursive: true });
+    await updateSessionState(SID, { sessionStateRoot: customRoot });
+    await spool([hook('agent.session.start', 0)]);
+    eventsFile = join(customRoot, SID, 'events.jsonl');
+    await writeTranscript(runLines(0, 5_000));
+
+    await recover();
+
+    expect(count(await spooled(), 'agent.session.end')).toBe(1);
   });
 
   it('a resumed run with the same session id gets its own end; the first run is not re-ended', async () => {

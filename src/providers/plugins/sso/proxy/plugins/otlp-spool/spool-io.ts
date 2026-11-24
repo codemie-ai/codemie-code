@@ -271,10 +271,16 @@ export async function appendSpool(
    * appended only when the pending hooks range is empty or entirely carried (so they stay its head) and fewer than
    * `MAX_AGE_SEGMENTS` ranges are tracked; otherwise nothing is written and `false` is returned (the caller keeps the data).
    */
-  carriedSince?: number
+  carriedSince?: number,
+  /** Decided under the session lock, so a check-then-append (a duplicate end) cannot race another writer; true = write nothing. */
+  skipIf?: () => Promise<boolean>
 ): Promise<boolean> {
   let appended = true;
   await withSessionLock(sessionId, async () => {
+    if (skipIf && (await skipIf())) {
+      appended = false;
+      return;
+    }
     // The epoch exists before this version writes any session status: a new session is never pre-epoch.
     await readOrCreateEpoch();
     await mkdir(spoolRoot(), { recursive: true, mode: 0o700 });

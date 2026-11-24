@@ -11,7 +11,7 @@ import { buildDeferredUsageEvents, stableEventId, TEMPLATE_FIELDS, type Deferred
 import { readTranscriptFromAsync } from '../../../../../../agents/plugins/copilot-cli-otlp/copilot-cli-otlp.transcript.js';
 import { deleteSessionStateFiles, readSessionState } from '../../../../../../agents/plugins/copilot-cli-otlp/copilot-cli-otlp.state.js';
 import { appendSpool } from './spool-io.js';
-import { listHookRecords } from './copilot-usage-spool.js';
+import { listHookRecords, readHookRecordsLocked } from './copilot-usage-spool.js';
 
 /**
  * Deferred usage for Copilot CLI sessions (native and managed), owned by the persistent proxy daemon.
@@ -181,14 +181,53 @@ const START_TYPE = 'agent.session.start';
 /** Transcript signature last inspected per session, so an idle session is parsed once, not every tick. */
 const inspected = new Map<string, string>();
 
+const timeOf = (record: Record<string, unknown>): number => Date.parse(String(record['timestamp'] ?? ''));
+/** The id a recovered end carries: deterministic per shutdown, and how the hook path recognises it. */
+const recoveredEndId = (sessionId: string, shutdownAt: string): string => stableEventId(SESSION_END_TYPE, sessionId, shutdownAt);
+
+/** An end of the run that started last (a resumed run starts again, so an earlier run's end does not count). */
+function endOfLastRun(records: Record<string, unknown>[], startMs: number): Record<string, unknown> | undefined {
+  return records.filter((r) => r['type'] === SESSION_END_TYPE && timeOf(r) >= startMs).pop();
+}
+
+/** A recovered end at or after a hook end with no new start between them: the same run, so the hook end adds nothing. */
+function recoveredEndCovers(sessionId: string, records: Record<string, unknown>[], hookEndMs: number): boolean {
+  return records.some((r) =>
+    r['type'] === SESSION_END_TYPE &&
+    r['event_id'] === recoveredEndId(sessionId, String(r['timestamp'])) &&
+    timeOf(r) >= hookEndMs &&
+    !records.some((s) => s['type'] === START_TYPE && timeOf(s) > hookEndMs && timeOf(s) <= timeOf(r)));
+}
+
+/**
+ * For the hook-ingest append: a batch made only of `agent.session.end` events that a recovered end already
+ * covers is skipped (decided under the session lock, so it cannot race the recovery's own append).
+ * `undefined` = nothing to check, append as usual.
+ */
+export function lateSessionEndSkip(
+  agentName: string,
+  sessionId: string,
+  events: Record<string, unknown>[]
+): (() => Promise<boolean>) | undefined {
+  if (agentName !== COPILOT_CLI_OTLP_AGENT || events.length === 0) return undefined;
+  if (!events.every((e) => typeof e === 'object' && e !== null && e['type'] === SESSION_END_TYPE)) return undefined;
+  return async () => {
+    const records = await readHookRecordsLocked(sessionId);
+    return events.every((e) => recoveredEndCovers(sessionId, records, timeOf(e)));
+  };
+}
+
 /**
  * Copilot can abort `sessionEnd` on an interactive /exit, so no `agent.session.end` ever reaches the
  * spool and the enrichment above never starts, although `events.jsonl` records `session.shutdown`.
- * For each spooled Copilot session whose latest start has no end after it, a shutdown at or after that
- * start (and quiet for `RECOVERY_SETTLE_MS`) proves the run is over: append the end event the hook
- * never sent (identity fields copied from the session's own last record, so source attribution is
- * kept) and run the normal deferred enrichment for it. A resumed run starts again, so only its own
- * shutdown counts. Everything has a stable id, so a late real `sessionEnd` adds no usage, summary or tools.
+ * For each spooled Copilot session whose latest `agent.session.start` is followed by a settled
+ * (`RECOVERY_SETTLE_MS`) transcript holding a shutdown at or after that start, the run is over:
+ *  - no end after that start: append the end the hook never sent (identity fields copied from the session's
+ *    own last record, so source attribution is kept), unless a real one lands first (checked under the
+ *    spool lock), and schedule the normal enrichment;
+ *  - an end but no final summary for that shutdown (enrichment failed, or the daemon restarted first):
+ *    schedule the enrichment again. It is idempotent: stable event ids, summary keyed by `ended_at`.
+ * Nothing is remembered before it has happened, so a failed append or enrichment is retried next tick.
  */
 export async function recoverMissingSessionEnds(
   sessionIds: readonly string[],
@@ -205,31 +244,39 @@ export async function recoverMissingSessionEnds(
 
       const records = await listHookRecords(sessionId);
       const lastStart = records.filter((r) => r['type'] === START_TYPE).pop();
-      const startMs = Date.parse(String(lastStart?.['timestamp'] ?? ''));
+      const startMs = lastStart ? timeOf(lastStart) : NaN;
       const template = records[records.length - 1];
       if (!lastStart || !template || !Number.isFinite(startMs) || !String(template['platform'] ?? '').startsWith('copilot')) {
-        continue;
-      }
-      if (records.some((r) => r['type'] === SESSION_END_TYPE && Date.parse(String(r['timestamp'] ?? '')) >= startMs)) {
-        inspected.set(sessionId, signature);
         continue;
       }
 
       const { events } = await readEvents(sessionId);
       const shutdown = events.filter((e) => e.type === 'session.shutdown').pop();
       const endedMs = shutdown?.timestamp ? Date.parse(shutdown.timestamp) : NaN;
-      inspected.set(sessionId, signature);
-      if (!shutdown?.timestamp || !Number.isFinite(endedMs) || endedMs < startMs) continue;
+      if (!shutdown?.timestamp || !Number.isFinite(endedMs) || endedMs < startMs) {
+        inspected.set(sessionId, signature); // no shutdown of this run: re-examined only when the file changes
+        continue;
+      }
+
+      const existing = endOfLastRun(records, startMs);
+      if (existing) {
+        if (await alreadyEnriched(sessionId, shutdown.timestamp)) inspected.set(sessionId, signature);
+        else scheduleCopilotUsageEnrichment(COPILOT_CLI_OTLP_AGENT, [existing]);
+        continue;
+      }
 
       const end = {
         ...Object.fromEntries(TEMPLATE_FIELDS.filter((k) => template[k] !== undefined).map((k) => [k, template[k]])),
         session_id: sessionId,
         type: SESSION_END_TYPE,
         timestamp: shutdown.timestamp,
-        event_id: stableEventId(SESSION_END_TYPE, sessionId, shutdown.timestamp),
+        event_id: recoveredEndId(sessionId, shutdown.timestamp),
       };
-      await appendSpool(sessionId, 'hooks', JSON.stringify({ agentName: COPILOT_CLI_OTLP_AGENT, hookEvent: JSON.stringify(end) }) + '\n');
-      scheduleCopilotUsageEnrichment(COPILOT_CLI_OTLP_AGENT, [end]);
+      const line = JSON.stringify({ agentName: COPILOT_CLI_OTLP_AGENT, hookEvent: JSON.stringify(end) }) + '\n';
+      const written = await appendSpool(sessionId, 'hooks', line, undefined, undefined, async () =>
+        endOfLastRun(await readHookRecordsLocked(sessionId), startMs) !== undefined);
+      // A real end that won the race is enriched by its own hook batch (or by the next tick).
+      if (written) scheduleCopilotUsageEnrichment(COPILOT_CLI_OTLP_AGENT, [end]);
     } catch (err) {
       logger.debug('[otlp-ingest] copilot session end recovery error', ...sanitizeLogArgs({ sessionId, err: err instanceof Error ? err.message : String(err) }));
     }

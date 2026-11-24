@@ -13,7 +13,7 @@ import { sweepSpool } from './otlp-spool/sweep.js';
 import { processSessionTick } from './otlp-spool/tick-processor.js';
 import { appendSpool, recordStampLoss } from './otlp-spool/spool-io.js';
 import { hookEventProjectNames } from './otlp-spool/session-project.js';
-import { recoverMissingSessionEnds, scheduleCopilotUsageEnrichment } from './otlp-spool/copilot-usage-enrichment.js';
+import { lateSessionEndSkip, recoverMissingSessionEnds, scheduleCopilotUsageEnrichment } from './otlp-spool/copilot-usage-enrichment.js';
 import { sendIntervalMs, sweepIntervalMs } from './otlp-spool/spool-config.js';
 import { processPendingOwner } from './otlp-spool/owner-pending-replay.js';
 import { CREDENTIAL_REFRESH_INTERVAL_MS } from './credential-refresh.js';
@@ -314,7 +314,9 @@ class OtlpInterceptor implements ProxyInterceptor {
     }
 
     try {
-      await appendSpool(sessionId, 'hooks', lines.join('\n') + '\n', projectNames);
+      // A late native sessionEnd of a run the daemon already ended from its shutdown adds no second end.
+      await appendSpool(sessionId, 'hooks', lines.join('\n') + '\n', projectNames, undefined,
+        lateSessionEndSkip(batch.agentName, sessionId, batch.hookEvents as Record<string, unknown>[]));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn('[otlp-ingest] hooks disk write error', ...sanitizeLogArgs({ sessionId, err: msg }));
