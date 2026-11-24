@@ -1,5 +1,9 @@
 // Only the daemon's recovery append can be made to fail: the test's own seeding goes straight through.
-const faults = vi.hoisted(() => ({ append: false }));
+const faults = vi.hoisted(() => ({ append: false, reads: 0 }));
+vi.mock('@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.transcript.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.transcript.js')>();
+  return { ...actual, readTranscriptFromAsync: (...args: Parameters<typeof actual.readTranscriptFromAsync>) => { faults.reads += 1; return actual.readTranscriptFromAsync(...args); } };
+});
 vi.mock('../spool-io.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../spool-io.js')>();
   return {
@@ -236,6 +240,38 @@ describe('recoverMissingSessionEnds', () => {
     expect(await spooled()).toHaveLength(events.length);
   });
 
+
+  it('a truncated transcript (never a final summary) is parsed again only when the file changes, not every tick', async () => {
+    await spool([hook('agent.session.start', 0), hook('agent.session.end', 4_000)]);
+    const filler = JSON.stringify({ type: 'assistant.message', timestamp: at(0), data: { content: 'x'.repeat(8_000) } });
+    await writeTranscript([...Array.from({ length: 1_100 }, () => filler), ...runLines(0, 5_000)]); // > 8 MiB: tail only
+    faults.reads = 0;
+
+    await recoverMissingSessionEnds([SID], () => NOW);
+    await vi.waitFor(async () => {
+      if (count(await spooled(), 'agent.usage.request') === 0) throw new Error('enrichment pending');
+    });
+    expect(count(await spooled(), 'agent.session.summary')).toBe(0); // truncated: intentionally none
+    const afterFirst = faults.reads;
+    expect(afterFirst).toBeGreaterThan(0);
+
+    for (let i = 0; i < 3; i++) await recoverMissingSessionEnds([SID], () => NOW);
+    expect(faults.reads).toBe(afterFirst);
+  });
+
+  it('a failed enrichment is looked at again on the next tick even though the transcript is unchanged', async () => {
+    await spool([hook('agent.session.start', 0), hook('agent.session.end', 4_000)]);
+    await writeTranscript(runLines(0, 5_000));
+    faults.append = true; // the enrichment's spool append fails: outcome 'error'
+    await recoverMissingSessionEnds([SID], () => NOW);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    faults.append = false;
+    expect(count(await spooled(), 'agent.session.summary')).toBe(0);
+
+    await recover();
+
+    expect(count(await spooled(), 'agent.session.summary')).toBe(1);
+  });
   it('finds the transcript under the session-state root the start hook recorded (custom COPILOT_HOME)', async () => {
     const customRoot = join(dir, 'custom-home', 'session-state');
     await mkdir(join(customRoot, SID), { recursive: true });

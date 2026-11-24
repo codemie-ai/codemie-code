@@ -18,6 +18,7 @@ import { credentialFingerprint } from '@/providers/core/credential-owner.js';
 import { isSSOCredentials, type JWTCredentials, type SSOCredentials } from '@/providers/core/types.js';
 import { heldRetentionMs } from './spool-config.js';
 import { appendSpool, recordStampLoss } from './spool-io.js';
+import { lateSessionEndSkip } from './copilot-usage-enrichment.js';
 import { hookEventProjectNames } from './session-project.js';
 
 const STALE_TMP_MS = 60 * 60_000;
@@ -118,8 +119,13 @@ async function replayEntry(path: string, fp: string, api: string, email: string)
   // Hook-time facts stay as captured; only identity comes from the verified login (never git/OS/config values).
   const events = entry.events.map((event) => ({ ...event, user_email: email, developer_name: email, identity_source: 'jwt' }));
   const lines = events.map((event) => JSON.stringify({ agentName: entry.agentName, hookEvent: JSON.stringify(event), evidence_v: 1 }));
-  const appended = await appendSpool(entry.session_id, 'hooks', lines.join('\n') + '\n', events.flatMap((event) => hookEventProjectNames(event)), entry.first_at);
-  if (!appended) return false; // not the head of the pending range, or too many ranges: stays queued with its original age
+  // A held native Copilot end of a run the daemon already ended from its shutdown is not appended again (decided under the
+  // spool lock, after the scope check above). That is a consumed entry, unlike a refusal, which retries.
+  const covered = lateSessionEndSkip(entry.agentName, entry.session_id, events);
+  let deduplicated = false;
+  const skipIf = covered && (async (): Promise<boolean> => (deduplicated = await covered()));
+  const appended = await appendSpool(entry.session_id, 'hooks', lines.join('\n') + '\n', events.flatMap((event) => hookEventProjectNames(event)), entry.first_at, skipIf);
+  if (!appended && !deduplicated) return false; // not the head of the pending range, or too many ranges: stays queued with its original age
   await rename(path, path.replace(/\.json$/, '.done'));
   await unlink(path.replace(/\.json$/, '.done')).catch(() => undefined);
   return true;

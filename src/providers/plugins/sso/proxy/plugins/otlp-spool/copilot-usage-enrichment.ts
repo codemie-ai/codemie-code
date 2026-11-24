@@ -260,8 +260,10 @@ export async function recoverMissingSessionEnds(
 
       const existing = endOfLastRun(records, startMs);
       if (existing) {
-        if (await alreadyEnriched(sessionId, shutdown.timestamp)) inspected.set(sessionId, signature);
-        else scheduleCopilotUsageEnrichment(COPILOT_CLI_OTLP_AGENT, [existing]);
+        // An end without a final summary is enriched; this signature is then done with until the file changes
+        // (a failed enrichment clears it). A truncated transcript never gets a summary, so it is not re-parsed every tick.
+        if (!(await alreadyEnriched(sessionId, shutdown.timestamp))) scheduleCopilotUsageEnrichment(COPILOT_CLI_OTLP_AGENT, [existing]);
+        inspected.set(sessionId, signature);
         continue;
       }
 
@@ -276,7 +278,10 @@ export async function recoverMissingSessionEnds(
       const written = await appendSpool(sessionId, 'hooks', line, undefined, undefined, async () =>
         endOfLastRun(await readHookRecordsLocked(sessionId), startMs) !== undefined);
       // A real end that won the race is enriched by its own hook batch (or by the next tick).
-      if (written) scheduleCopilotUsageEnrichment(COPILOT_CLI_OTLP_AGENT, [end]);
+      if (written) {
+        scheduleCopilotUsageEnrichment(COPILOT_CLI_OTLP_AGENT, [end]);
+        inspected.set(sessionId, signature);
+      }
     } catch (err) {
       logger.debug('[otlp-ingest] copilot session end recovery error', ...sanitizeLogArgs({ sessionId, err: err instanceof Error ? err.message : String(err) }));
     }
@@ -297,9 +302,15 @@ export function scheduleCopilotUsageEnrichment(agentName: string, events: Record
     void enrichSessionUsage(event)
       .then((outcome) => {
         // Only a finished enrichment is final; anything else may be retried by a later sessionEnd batch.
-        if (outcome !== 'enriched' && outcome !== 'duplicate') scheduled.delete(key);
+        if (outcome !== 'enriched' && outcome !== 'duplicate') {
+          scheduled.delete(key);
+          inspected.delete(sessionId); // recovery looks again next tick
+        }
         logger.debug('[otlp-ingest] copilot usage enrichment', ...sanitizeLogArgs({ sessionId, outcome }));
       })
-      .catch(() => scheduled.delete(key));
+      .catch(() => {
+        scheduled.delete(key);
+        inspected.delete(sessionId);
+      });
   }
 }
