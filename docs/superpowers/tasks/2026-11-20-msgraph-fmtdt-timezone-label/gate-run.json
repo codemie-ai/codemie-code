@@ -1,26 +1,27 @@
 {
   "schema": 1,
   "branch": "fix/msgraph-timezone-label",
-  "head": "7d31c3b9ec8284d43421c3f984ce11de2471694b",
+  "head": "46f0f795d6a52ca00f071d9bbc7ce5d6481630b4",
   "runner": "npm",
-  "started_at": "2026-11-20T00:00:00Z",
-  "completed_at": "2026-11-20T00:00:00Z",
-  "status": "PASS",
-  "drift_detected": false,
+  "started_at": "2026-11-24T07:23:53Z",
+  "completed_at": "2026-11-24T07:31:11Z",
+  "status": "PASSED",
+  "drift_detected": true,
   "gates": [
     {
       "id": "license-check",
       "source": "guide",
       "status": "PASS",
-      "duration_ms": 2000,
+      "duration_ms": 1359,
       "command": "npm run license-check",
-      "exit_code": 0
+      "exit_code": 0,
+      "notes": "The script reports dependency licenses; the guide text describes source header checks."
     },
     {
       "id": "lint",
       "source": "guide",
       "status": "PASS",
-      "duration_ms": 2000,
+      "duration_ms": 3785,
       "command": "npm run lint",
       "exit_code": 0
     },
@@ -28,7 +29,7 @@
       "id": "typecheck",
       "source": "guide",
       "status": "PASS",
-      "duration_ms": 3000,
+      "duration_ms": 3950,
       "command": "npm run typecheck",
       "exit_code": 0
     },
@@ -36,7 +37,7 @@
       "id": "build",
       "source": "guide",
       "status": "PASS",
-      "duration_ms": 4000,
+      "duration_ms": 5542,
       "command": "npm run build",
       "exit_code": 0
     },
@@ -44,35 +45,100 @@
       "id": "unit",
       "source": "guide",
       "status": "PASS",
-      "duration_ms": 163000,
+      "duration_ms": 164919,
       "command": "npx vitest run --project unit",
       "exit_code": 0,
-      "notes": "full unit project passed 12111/12111 with CODEMIE_*/ANTHROPIC_* unset; the 5 failures depend on the environment and also fail on clean upstream/main"
+      "notes": "CODEMIE_*/ANTHROPIC_* unset (ANTHROPIC_BASE_URL was the only such variable present; vitest.config.ts sets its own CODEMIE_HOME). Test Files 660 passed (660); Tests 12538 passed (12538)."
     },
     {
       "id": "integration",
       "source": "guide",
       "status": "PASS",
-      "duration_ms": 33000,
+      "duration_ms": 36416,
       "command": "npx vitest run --project cli",
-      "exit_code": 0
+      "exit_code": 0,
+      "notes": "Test Files 48 passed | 2 skipped (50); Tests 392 passed | 12 skipped (404). The output does not name the skipped files or the reason."
     },
     {
       "id": "secrets",
       "source": "guide",
       "status": "SKIPPED",
-      "duration_ms": 1000,
+      "duration_ms": 902,
       "command": "npm run validate:secrets",
       "exit_code": 0,
-      "notes": "Output: 'No staged changes to scan'. Stage changes to scan locally; CI runs it unconditionally."
+      "notes": "Self-skipped: \"No staged changes to scan\" (exit 0, no scan ran). Scans the staged diff only; to run locally, stage the changes first. Also the last command of .husky/pre-commit."
     },
     {
       "id": "commitlint",
       "source": "guide",
       "status": "PASS",
-      "duration_ms": 0,
+      "duration_ms": 394,
       "command": "npm run commitlint:last",
-      "exit_code": 0
+      "exit_code": 0,
+      "notes": "The branch is one commit ahead of upstream/main, so HEAD~1..HEAD covers the whole range; same rules as .husky/commit-msg."
+    },
+    {
+      "id": "check-pre-commit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 6473,
+      "command": "npm run check:pre-commit",
+      "exit_code": 0,
+      "notes": "Aggregate of typecheck and lint."
+    },
+    {
+      "id": "ci",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 214341,
+      "command": "npm run ci",
+      "exit_code": 0,
+      "notes": "Aggregate of license-check, lint, build, unit, cli. Test Files 660 passed (660), Tests 12538 passed (12538); cli Test Files 48 passed | 2 skipped (50), Tests 392 passed | 12 skipped (404)."
+    },
+    {
+      "id": "lint-staged",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": null,
+      "command": "npx lint-staged",
+      "exit_code": null,
+      "notes": "Not run: operates on staged files only and staging was not allowed. To run locally, stage the changes first."
+    },
+    {
+      "id": "ci-secrets-detection",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": null,
+      "command": "codemie-ai/ci-workflows reusable-secrets-detection.yml",
+      "exit_code": null,
+      "notes": "Not run: remote reusable workflow; settled only by CI."
+    },
+    {
+      "id": "ci-codeql",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": null,
+      "command": "codemie-ai/ci-workflows reusable-codeql.yml (language: actions)",
+      "exit_code": null,
+      "notes": "Not run: remote reusable workflow; settled only by CI."
+    },
+    {
+      "id": "ci-pr-title",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": null,
+      "command": "codemie-ai/ci-workflows reusable-commit-lint.yml",
+      "exit_code": null,
+      "notes": "Not run: checks the PR title, which needs a PR."
+    },
+    {
+      "id": "ci-test-windows",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": null,
+      "command": "npx vitest run --project unit && npx vitest run --project cli (windows-latest)",
+      "exit_code": null,
+      "notes": "Not run: needs a Windows runner."
     }
   ],
   "failures": {}

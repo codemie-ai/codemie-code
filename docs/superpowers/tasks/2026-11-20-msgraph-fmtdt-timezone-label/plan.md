@@ -52,3 +52,10 @@ Replace `fmtDt(e.start?.dateTime)` and `fmtDt(e.end.dateTime)` with `fmtCalDt(e,
 - `--json` output unchanged: honored, the JSON paths are not touched (adding `isAllDay` to `$select` only adds a field to the raw objects).
 - All-day events must not get a fake converted time: honored by the `isAllDay` branch in Task 1.
 - No tests, no git operations in tasks: honored.
+
+## Changes after plan approval
+
+Requested during code review, so the implementation differs from the tasks above:
+
+- All-day end dates: Graph sends the end as next-day midnight (exclusive), so `fmtCalDt` subtracts one day for `end` and shows the last day. Task 1 described the same date-only slice for start and end.
+- Regression test: `tests/integration/msgraph-calendar-timezone.test.ts` was explicitly requested, replacing the "no test files" constraint.
