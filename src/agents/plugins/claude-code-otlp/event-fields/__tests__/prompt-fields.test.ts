@@ -49,6 +49,7 @@ describe('autoPromptSource / resolvePromptSource', () => {
     '',
     'see the <task-notification> above',
     `${OPENED_FILE}<task-notification>`,
+    'This session is being continued from a previous conversation. Summary: x',
   ])('treats %j as a user prompt', (prompt) => {
     expect(autoPromptSource(prompt)).toBeUndefined();
     expect(resolvePromptSource(prompt)).toBe('user');

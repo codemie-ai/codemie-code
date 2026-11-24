@@ -3,23 +3,31 @@
  * the tool wrote itself. Daemon-safe leaf: no imports, no I/O.
  */
 
-/** Who wrote a prompt: the user, or the tool itself (background task, agent message, context reset). */
-export type PromptSource = 'user' | 'task_notification' | 'agent_message' | 'session_continuation';
+/** Who wrote a prompt: the user, or the tool itself (background task, agent message). */
+export type PromptSource = 'user' | 'task_notification' | 'agent_message';
 
-/** Opening sentence Claude Code writes into the first prompt after a context reset. */
+/** Opening sentence Claude Code writes into the first prompt after a context reset. Reduction-only marker. */
 export const SESSION_CONTINUATION_PREFIX = 'This session is being continued from a previous conversation';
 
-/** Starts of an auto prompt: the tool injects it when a background task finishes, a message arrives or a session continues. */
+/** Starts of an auto prompt: the tool injects it when a background task finishes or a message arrives. */
 export const AUTO_PROMPT_SOURCES: ReadonlyArray<readonly [prefix: string, source: PromptSource]> = [
   ['<task-notification>', 'task_notification'],
   ['<agent-message', 'agent_message'],
-  [SESSION_CONTINUATION_PREFIX, 'session_continuation'],
 ];
 
-/** The leading marker of an auto prompt (its fixed prefix), `undefined` for a prompt the user wrote. */
+/**
+ * Markers reduction recognizes: the auto prompts above plus the session-continuation sentence.
+ * Kept apart from AUTO_PROMPT_SOURCES so `prompt_source` and session signals are unchanged with reduction off.
+ */
+export const REDUCTION_AUTO_MARKERS: readonly string[] = [
+  ...AUTO_PROMPT_SOURCES.map(([prefix]) => prefix),
+  SESSION_CONTINUATION_PREFIX,
+];
+
+/** The leading marker of an auto prompt for reduction (its fixed prefix), `undefined` for a prompt the user wrote. */
 export function autoPromptMarker(text: string): string | undefined {
   const start = text.trimStart();
-  return AUTO_PROMPT_SOURCES.find(([prefix]) => start.startsWith(prefix))?.[0];
+  return REDUCTION_AUTO_MARKERS.find((prefix) => start.startsWith(prefix));
 }
 
 /** The source of an auto prompt, `undefined` for a prompt the user wrote. */
