@@ -403,7 +403,7 @@ describe('resolveBudget', () => {
   };
 
   it('returns the fresh cached value without touching the network when cache is fresh', async () => {
-    const readFile = readFileFor(CONFIG, { schema: 2, profile: 'default', ts: Date.now(), value: { text: 'cached', pct: 5 } });
+    const readFile = readFileFor(CONFIG, { schema: 3, profile: 'default', project: '', ts: Date.now(), value: { text: 'cached', pct: 5 } });
     const fetchImpl = vi.fn();
     const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl: vi.fn() });
     expect(result).toEqual({ budget: { text: 'cached', pct: 5 }, budgetError: null });
@@ -413,7 +413,7 @@ describe('resolveBudget', () => {
   it('ignores a cache entry written for a different profile', async () => {
     // Budgets are per-profile and every session shares one cache file, so an entry from another
     // profile must not be shown here — it would report someone else's budget for up to the TTL.
-    const readFile = readFileFor(CONFIG, { schema: 2, profile: 'other-profile', ts: Date.now(), value: { text: 'cached', pct: 5 } });
+    const readFile = readFileFor(CONFIG, { schema: 3, profile: 'other-profile', project: '', ts: Date.now(), value: { text: 'cached', pct: 5 } });
     const getAuthHeadersImpl = vi.fn().mockResolvedValue(null);
     const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl: vi.fn(), getAuthHeadersImpl });
     expect(result).toEqual({ budget: null, budgetError: 'reauthenticate' }); // fell through to a live lookup
@@ -506,6 +506,31 @@ describe('resolveBudget', () => {
     const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl: vi.fn() });
     expect(result).toEqual({ budget: null, budgetError: null });
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('AC8: cache miss when same profile but different project', async () => {
+    // A fresh cache written for project 'proj-a' must not be used when the session is on 'proj-b'
+    const readFile = readFileFor(
+      {
+        activeProfile: 'default',
+        userEmail: 'me@x.com',
+        workspace: { codeMieUrl: 'https://x' },
+        profiles: { default: { baseUrl: 'https://x/api' } },
+      },
+      // Cache entry written for 'proj-a'
+      { schema: 3, profile: 'default', project: 'proj-a', ts: Date.now(), value: { text: 'stale', pct: 5 } }
+    );
+    const getAuthHeadersImpl = vi.fn().mockResolvedValue(null); // force reauthenticate on cache miss
+    const prevProject = process.env.CODEMIE_PROJECT;
+    process.env.CODEMIE_PROJECT = 'proj-b'; // different project
+    try {
+      const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl: vi.fn(), getAuthHeadersImpl });
+      // Should have missed the cache and attempted a live fetch (which fails with 'reauthenticate')
+      expect(result).toEqual({ budget: null, budgetError: 'reauthenticate' });
+    } finally {
+      if (prevProject === undefined) delete process.env.CODEMIE_PROJECT;
+      else process.env.CODEMIE_PROJECT = prevProject;
+    }
   });
 });
 

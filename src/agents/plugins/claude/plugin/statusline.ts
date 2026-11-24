@@ -37,7 +37,7 @@ const CONFIG_FILE = path.join(HOME, 'codemie-cli.config.json');
 const CREDS_DIR = path.join(HOME, 'credentials');
 const CACHE_TTL_MS = 60_000;
 const BUDGET_FETCH_TIMEOUT_MS = 2_000; // an unreachable API must not stall every render
-const CACHE_SCHEMA = 2; // bump when the cache.value shape changes, to discard stale pre-upgrade entries
+const CACHE_SCHEMA = 3; // bump when the cache.value shape changes, to discard stale pre-upgrade entries
 
 const ENCRYPTION_KEY = deriveMachineEncryptionKey();
 
@@ -759,13 +759,32 @@ export async function resolveBudget({
     ? sessionProfile
     : config.activeProfile;
 
+  // Pre-compute activeProject from config and env — needed for the cache key so a
+  // profile-project switch causes a cache miss (AC8). The profile object is available here
+  // because the config is already parsed; the guard check below re-reads it and exits early
+  // when any required field is absent.
+  const earlyProfile = config.profiles?.[profileName];
+  let activeProject: string | null = null;
+  if (earlyProfile?.codeMieProject === null) {
+    // Explicitly off CodeMie — no project.
+    activeProject = null;
+  } else if (process.env.CODEMIE_PROJECT?.trim()) {
+    activeProject = process.env.CODEMIE_PROJECT.trim();
+  } else if (typeof earlyProfile?.codeMieProject === 'string' && earlyProfile.codeMieProject) {
+    activeProject = earlyProfile.codeMieProject;
+  } else if (typeof config.workspace?.codeMieProject === 'string' && config.workspace.codeMieProject) {
+    activeProject = config.workspace.codeMieProject;
+  }
+
   // Fast path: fresh cache, skip the network. Discard any entry that isn't this schema version
-  // (e.g. a pre-upgrade string-shaped value) or that was written for a different profile —
-  // budgets are per-profile, and two sessions on different profiles share this one cache file.
+  // (e.g. a pre-upgrade string-shaped value), that was written for a different profile, or that
+  // was written for a different project — budgets are per-profile and per-project, and two
+  // sessions on different profiles or projects share this one cache file.
   try {
     const cache = JSON.parse(await readFile(CACHE_FILE, 'utf8'));
     const validShape = cache.schema === CACHE_SCHEMA
       && cache.profile === profileName
+      && cache.project === (activeProject ?? '')
       && typeof cache.value === 'object' && cache.value !== null
       && typeof cache.value.text === 'string';
     if (validShape && Date.now() - cache.ts < CACHE_TTL_MS) {
@@ -783,24 +802,6 @@ export async function resolveBudget({
   const userEmail = config.userEmail;
   if (!profile || !codeMieUrl || !baseUrl || !userEmail) {
     return { budget: null, budgetError: null }; // no CodeMie profile configured → skip silently
-  }
-
-  // Resolve the project this session is running under. Env var is preferred over config because
-  // it represents the project the CLI session was actually launched with; the config's active
-  // profile can be repointed mid-session by another process (same reason CODEMIE_PROFILE_NAME is
-  // preferred above). A null codeMieProject is an explicit "off CodeMie" signal — not "unset" —
-  // and must not be overridden by the env var. Source: ConfigLoader.resolveProfileIdentity().
-  let activeProject: string | null = null;
-  if (profile.codeMieProject === null) {
-    // Explicitly off CodeMie — no project. (sessionCodeMieUrl would have returned undefined and
-    // the guard above would have fired before reaching here, but be explicit for clarity.)
-    activeProject = null;
-  } else if (process.env.CODEMIE_PROJECT?.trim()) {
-    activeProject = process.env.CODEMIE_PROJECT.trim();
-  } else if (typeof profile.codeMieProject === 'string' && profile.codeMieProject) {
-    activeProject = profile.codeMieProject;
-  } else if (typeof config.workspace?.codeMieProject === 'string' && config.workspace.codeMieProject) {
-    activeProject = config.workspace.codeMieProject;
   }
 
   // The stored credentials belong to `codeMieUrl`; send them nowhere else. A profile on another
@@ -846,7 +847,7 @@ export async function resolveBudget({
     if (!row) throw new Error('budget row not found');
 
     const budget = formatBudgetSegment(row);
-    await writeFile(CACHE_FILE, JSON.stringify({ schema: CACHE_SCHEMA, profile: profileName, ts: Date.now(), value: budget }), 'utf8');
+    await writeFile(CACHE_FILE, JSON.stringify({ schema: CACHE_SCHEMA, profile: profileName, project: activeProject ?? '', ts: Date.now(), value: budget }), 'utf8');
     return { budget, budgetError: null };
   } catch (e) {
     // Node collapses every transport failure into a bare "fetch failed" and hides the real
