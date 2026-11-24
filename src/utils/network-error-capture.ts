@@ -6,7 +6,9 @@
  * axios error code so SDK commands can report it.
  */
 
-import { maskSecretsInText } from '@/utils/security.js';
+import axios, { type AxiosAdapter, type InternalAxiosRequestConfig } from 'axios';
+import { logger } from '@/utils/logger.js';
+import { maskSecretsInText, sanitizeLogArgs } from '@/utils/security.js';
 
 export interface CapturedNetworkError {
   code: string;
@@ -48,4 +50,44 @@ export function takeNetworkError(): CapturedNetworkError | undefined {
 
 export function clearNetworkError(): void {
   captured = undefined;
+}
+
+const WRAPPED = Symbol.for('codemie.networkErrorCapture');
+
+/**
+ * Wrap the public axios default adapter so response-less failures are recorded.
+ *
+ * Verified against axios 1.18.1 (the repo and codemie-sdk resolve the same
+ * node_modules/axios/dist/node/axios.cjs; the SDK pins 1.15.0, so a future
+ * install may nest a second copy, in which case this has no effect):
+ * - `axios.defaults.adapter` is the array ["xhr", "http", "fetch"], not a
+ *   function, so it is resolved with `axios.getAdapter` before wrapping.
+ * - `axios.create()` copies `defaults.adapter` at creation: an instance made
+ *   before the assignment keeps the old adapter, one made after uses the new
+ *   one. Call this before `new CodeMieClient`.
+ *
+ * Idempotent. Returns whether the wrapper is active.
+ */
+export function installNetworkErrorCapture(): boolean {
+  try {
+    const current = axios.defaults.adapter;
+    if (typeof current === 'function' && (current as unknown as Record<symbol, boolean>)[WRAPPED]) {
+      return true;
+    }
+    const resolved = axios.getAdapter(current);
+    const wrapped = (async (config: InternalAxiosRequestConfig) => {
+      try {
+        return await resolved(config);
+      } catch (err) {
+        recordNetworkError(err);
+        throw err;
+      }
+    }) as AxiosAdapter;
+    (wrapped as unknown as Record<symbol, boolean>)[WRAPPED] = true;
+    axios.defaults.adapter = wrapped;
+    return true;
+  } catch (err) {
+    logger.debug('Network error capture not installed', ...sanitizeLogArgs({ error: String(err) }));
+    return false;
+  }
 }
