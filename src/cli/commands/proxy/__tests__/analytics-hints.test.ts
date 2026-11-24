@@ -15,7 +15,19 @@ describe('coverage and resume notes', () => {
     expect(unaffectedChannels(CLAUDE)).toMatch(/codemie claude/);
     expect(unaffectedChannels(CLI)).toMatch(/copilot-cli/);
     expect(unaffectedChannels(CHAT)).toBe('the daily analytics collector');
-    expect(coverageNote(CLAUDE)).toMatch(/^Controls the hook pipeline only — not affected: .+\.$/);
+    expect(coverageNote(CLI)).toMatch(/^Controls the hook pipeline only — not affected: .+\.$/);
+    expect(coverageNote(CHAT)).toBe('Controls the hook pipeline only — not affected: the daily analytics collector.');
+    expect(coverageNote('some-other-connector')).toMatch(/^Controls the hook pipeline only — not affected: .+\.$/);
+  });
+
+  it('Claude disable covers Claude Desktop chats; exclude says they are not affected', async () => {
+    const { unaffectedChannels, coverageNote } = await import('../analytics-hints.js');
+    expect(coverageNote(CLAUDE, 'disable')).toMatch(/^Controls Claude Code hooks, Cowork and Claude Desktop chats \(metrics and conversation sync\) — not affected: .+\.$/);
+    expect(coverageNote(CLAUDE, 'disable')).not.toContain('hook pipeline only');
+    expect(coverageNote(CLAUDE)).toBe(coverageNote(CLAUDE, 'disable'));
+    expect(unaffectedChannels(CLAUDE, 'disable')).not.toContain('Claude Desktop');
+    expect(coverageNote(CLAUDE, 'exclude')).toMatch(/^Controls the hook pipeline and Cowork only — not affected: Claude Desktop chats \(exclusions are not applied to them\), .+\.$/);
+    expect(unaffectedChannels(CLAUDE, 'exclude')).toMatch(/^Claude Desktop chats \(exclusions are not applied to them\), the daily analytics collector/);
   });
 
   it('warns about reporting on resume for Claude and Copilot CLI, not for Copilot Chat', async () => {

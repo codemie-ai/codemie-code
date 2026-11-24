@@ -82,24 +82,38 @@ function copilotAdvice(connectorId: string, reason: string, path: string): NotTr
   }
 }
 
+export type CoverageVerb = 'disable' | 'exclude';
+
+const CLAUDE_UNAFFECTED = 'the daily analytics collector and the session sync that `codemie claude` runs itself';
+
 /**
- * Channels these settings do NOT control. The commands gate the hook pipeline only, so a user who
- * runs `disable` must not believe that nothing is ever sent.
+ * Channels these settings do NOT control, so a user who runs `disable` or `exclude` does not believe that
+ * nothing is ever sent. `disable` covers Claude Desktop chats; `exclude` does not apply to them.
  */
-export function unaffectedChannels(connectorId: string): string {
+export function unaffectedChannels(connectorId: string, verb: CoverageVerb = 'disable'): string {
   switch (connectorId) {
+    case CLAUDE_CODE_OTLP_AGENT_NAME:
+      return verb === 'exclude'
+        ? `Claude Desktop chats (exclusions are not applied to them), ${CLAUDE_UNAFFECTED}`
+        : CLAUDE_UNAFFECTED;
     case COPILOT_CLI_OTLP_AGENT_NAME:
       return 'managed `codemie copilot-cli` launches and the daily analytics collector';
     case COPILOT_CHAT_OTLP_AGENT_NAME:
       return 'the daily analytics collector';
     default:
-      return 'the daily analytics collector and the session sync that `codemie claude` runs itself';
+      return CLAUDE_UNAFFECTED;
   }
 }
 
 /** One-line statement of the coverage boundary, printed after `disable`/`exclude`. */
-export function coverageNote(connectorId: string): string {
-  return `Controls the hook pipeline only — not affected: ${unaffectedChannels(connectorId)}.`;
+export function coverageNote(connectorId: string, verb: CoverageVerb = 'disable'): string {
+  if (connectorId === CLAUDE_CODE_OTLP_AGENT_NAME) {
+    const controls = verb === 'exclude'
+      ? 'the hook pipeline and Cowork only'
+      : 'Claude Code hooks, Cowork and Claude Desktop chats (metrics and conversation sync)';
+    return `Controls ${controls} — not affected: ${unaffectedChannels(connectorId, verb)}.`;
+  }
+  return `Controls the hook pipeline only — not affected: ${unaffectedChannels(connectorId, verb)}.`;
 }
 
 /**

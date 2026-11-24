@@ -495,6 +495,17 @@ describe('BaseAgentAdapter', () => {
       );
     });
 
+    it('hands the agent no CLAUDE_CODE_USE_BEDROCK key once it was deleted from process.env', async () => {
+      process.env.CLAUDE_CODE_USE_BEDROCK = '1';
+      delete process.env.CLAUDE_CODE_USE_BEDROCK;
+
+      await new RunPipelineAdapter(effortMetadata).run([], {});
+
+      const spawnOptions = vi.mocked(spawn).mock.calls.at(-1)?.[2] as { env: NodeJS.ProcessEnv };
+      expect(Object.keys(spawnOptions.env)).not.toContain('CLAUDE_CODE_USE_BEDROCK');
+      expect(process.env.CLAUDE_CODE_USE_BEDROCK).toBeUndefined();
+    });
+
     it('does not call applyReasoningEffort when CODEMIE_REASONING_EFFORT is absent', async () => {
       const adapter = new RunPipelineAdapter(effortMetadata);
 
