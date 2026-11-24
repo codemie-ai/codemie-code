@@ -801,14 +801,24 @@ export async function getCodeMieDesktopConfigPath(
   return join(libDir, `${configId}.json`);
 }
 
+export interface WriteDesktopConfigResult {
+  /** Absolute path of the config file written. */
+  configPath: string;
+  /** Name of the entry that was active before connect switched Desktop to CodeMie's; absent when nothing was switched or no named entry was active. */
+  switchedFrom?: string;
+  /** True when `appliedId` changed to the CodeMie entry. */
+  activated: boolean;
+}
+
 /**
- * Write/merge the CodeMie gateway settings into Claude Desktop's
- * `configLibrary/<UUID>.json` and update `_meta.json` so the app picks them up.
- * Desktop is given its named key, `<gatewayKey>.claude-desktop`; the catalog read
- * through the daemon keeps the shared `gatewayKey`.
+ * Write/merge the CodeMie gateway settings into Claude Desktop's CodeMie config entry
+ * (`configLibrary/<UUID>.json`, see {@link resolveCodeMieDesktopConfig}) and make it the applied
+ * entry in `_meta.json`, so the app picks them up even when another config was active. No other
+ * config file is touched. Desktop is given its named key, `<gatewayKey>.claude-desktop`; the
+ * catalog read through the daemon keeps the shared `gatewayKey`.
  *
- * Preserves unrelated keys in the existing config file.
- * Returns the absolute path of the config file written.
+ * Preserves unrelated keys in the existing config file and unknown `_meta.json` fields; `_meta.json`
+ * is rewritten only when the entry was added or was not applied yet.
  */
 export async function writeDesktopConfig(
   proxyUrl: string,
@@ -817,7 +827,7 @@ export async function writeDesktopConfig(
   orgMcpServers: ManagedMcpServerEntry[] | null = null,
   managedStatePath: string = getManagedMcpStatePath(),
   project?: string
-): Promise<string> {
+): Promise<WriteDesktopConfigResult> {
   const libDir = join(baseDir, 'configLibrary');
   if (!existsSync(libDir)) {
     await mkdir(libDir, { recursive: true });
@@ -825,16 +835,10 @@ export async function writeDesktopConfig(
   const desktopKey = `${gatewayKey}.${CLAUDE_DESKTOP}`;
 
   const metaPath = join(libDir, '_meta.json');
-  let meta: ConfigMeta = {};
-  if (existsSync(metaPath)) {
-    try {
-      meta = JSON.parse(await readFile(metaPath, 'utf-8')) as ConfigMeta;
-    } catch {
-      meta = {};
-    }
-  }
+  const meta = await readConfigMeta(metaPath);
 
-  const configId = appliedConfigId(meta) ?? randomUUID();
+  const target = await resolveCodeMieDesktopConfig(libDir, meta, gatewayKey);
+  const { configId } = target;
   const configPath = join(libDir, `${configId}.json`);
 
   let existing: Record<string, unknown> = {};
@@ -953,7 +957,7 @@ export async function writeDesktopConfig(
     coworkEgressAllowedHosts: JSON.stringify([...DEFAULT_COWORK_EGRESS_ALLOWED_HOSTS]),
     managedMcpServers: JSON.stringify(managedMcpServers),
   };
-  await writeFile(configPath, JSON.stringify(merged, null, 2), 'utf-8');
+  await writeFileAtomic(configPath, JSON.stringify(merged, null, 2));
   logger.info(
     '[proxy] Claude Desktop config file updated',
     ...sanitizeLogArgs({
@@ -972,17 +976,25 @@ export async function writeDesktopConfig(
     await writeManagedMcpState(managedStatePath, managedNames);
   }
 
-  const entries = meta.entries ?? [];
-  if (!entries.find((e) => e.id === configId)) {
+  const entries = Array.isArray(meta.entries) ? [...meta.entries] : [];
+  const appended = !entries.some((entry) => entry?.id === configId);
+  if (appended) {
     entries.push({ id: configId, name: CODEMIE_DESKTOP_CONFIG_NAME });
   }
-  const updatedMeta: ConfigMeta = {
-    appliedId: configId,
-    entries,
-  };
-  await writeFile(metaPath, JSON.stringify(updatedMeta, null, 2), 'utf-8');
+  const activated = target.appliedId !== configId;
+  if (appended || activated) {
+    const updatedMeta: ConfigMeta = { ...meta, appliedId: configId, entries };
+    await writeFileAtomic(metaPath, JSON.stringify(updatedMeta, null, 2));
+  }
+  if (activated) {
+    logger.info(
+      '[proxy] Activated the CodeMie Claude Desktop config',
+      ...sanitizeLogArgs({ configId, previousAppliedId: target.appliedId ?? null })
+    );
+  }
 
-  return configPath;
+  const switchedFrom = activated ? target.previousAppliedName : undefined;
+  return switchedFrom === undefined ? { configPath, activated } : { configPath, activated, switchedFrom };
 }
 
 /**

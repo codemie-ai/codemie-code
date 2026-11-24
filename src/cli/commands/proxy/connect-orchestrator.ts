@@ -791,7 +791,7 @@ async function runClaudeDesktop(state: DaemonState, verbose: boolean): Promise<T
         noAuthCount: oauthShapes.noAuth,
       })
     );
-    const configPath = await writeDesktopConfig(
+    const { configPath } = await writeDesktopConfig(
       state.url,
       state.gatewayKey,
       getDesktopBaseDir(),

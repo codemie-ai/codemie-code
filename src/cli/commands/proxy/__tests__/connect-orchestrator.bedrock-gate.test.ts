@@ -151,7 +151,7 @@ async function setupHappyMocks(provider = 'ai-run-sso'): Promise<void> {
   const { writeDesktopConfig } = await import('../connectors/desktop.js');
   const { getVsCodeClaudeCodeSettingsPath } = await import('../connectors/vscode-claude-code.js');
   const { canPromptForProject } = await import('@/utils/interactive.js');
-  vi.mocked(writeDesktopConfig).mockReset().mockResolvedValue('/desktop/config.json');
+  vi.mocked(writeDesktopConfig).mockReset().mockResolvedValue({ configPath: '/desktop/config.json', activated: false });
   vi.mocked(getVsCodeClaudeCodeSettingsPath).mockReset().mockImplementation((insiders?: boolean) =>
     insiders ? '/mock/vscode-insiders/User/settings.json' : '/mock/vscode/User/settings.json'
   );
@@ -407,7 +407,7 @@ describe('connectTargets: Bedrock settings conflict gate', () => {
   it('does not change a no-conflict connect: inert apply, targets written, exit code 0', async () => {
     await setupHappyMocks();
     const { writeDesktopConfig } = await import('../connectors/desktop.js');
-    vi.mocked(writeDesktopConfig).mockResolvedValue('/desktop/config.json');
+    vi.mocked(writeDesktopConfig).mockResolvedValue({ configPath: '/desktop/config.json', activated: false });
     const { connectTargets } = await import('../connect-orchestrator.js');
 
     await connectTargets({ targets: { claudeDesktop: true } });

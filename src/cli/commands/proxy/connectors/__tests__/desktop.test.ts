@@ -619,7 +619,7 @@ describe('writeDesktopConfig', () => {
   afterEach(() => { globalThis.fetch = originalFetch; });
 
   it('creates configLibrary/<UUID>.json + _meta.json when no existing config', async () => {
-    const written = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
+    const { configPath: written } = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
     expect(existsSync(libDir)).toBe(true);
     expect(existsSync(metaPath)).toBe(true);
     expect(written.startsWith(libDir)).toBe(true);
@@ -645,7 +645,7 @@ describe('writeDesktopConfig', () => {
     });
     globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
 
-    const written = await writeDesktopConfig(
+    const { configPath: written } = await writeDesktopConfig(
       'http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath, 'router-demo'
     );
     expect(new URL(String(fetchSpy.mock.calls[0][0])).searchParams.get('project_id')).toBe('router-demo');
@@ -673,7 +673,7 @@ describe('writeDesktopConfig', () => {
       json: async () => [{ base_name: 'claude-opus-4-5-20251101' }, { base_name: 'claude-3-haiku-20240307' }],
     }) as unknown as typeof globalThis.fetch;
 
-    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'k', baseDir, [], statePath, 'legacy-claude');
+    const { configPath: written } = await writeDesktopConfig('http://127.0.0.1:4001', 'k', baseDir, [], statePath, 'legacy-claude');
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(config.modelDiscoveryEnabled).toBe(true);
   });
@@ -686,12 +686,12 @@ describe('writeDesktopConfig', () => {
       headers: { get: () => 'application/json' },
     }) as unknown as typeof globalThis.fetch;
 
-    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'k', baseDir, [], statePath, 'p1');
+    const { configPath: written } = await writeDesktopConfig('http://127.0.0.1:4001', 'k', baseDir, [], statePath, 'p1');
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(config.modelDiscoveryEnabled).toBe(true);
   });
 
-  it('reuses appliedId from existing _meta.json when present', async () => {
+  it('appends and activates a CodeMie Proxy entry when the applied entry has no file', async () => {
     const existingId = 'existing-uuid-1234';
     await mkdir(libDir, { recursive: true });
     await writeFile(metaPath, JSON.stringify({
@@ -699,13 +699,112 @@ describe('writeDesktopConfig', () => {
       entries: [{ id: existingId, name: 'Default' }],
     }), 'utf-8');
 
-    const written = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
-    expect(written).toBe(join(libDir, `${existingId}.json`));
+    const result = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
 
     const meta = JSON.parse(await readFile(metaPath, 'utf-8'));
-    expect(meta.appliedId).toBe(existingId);
-    // Entry name is preserved (not changed to "CodeMie Proxy")
-    expect(meta.entries[0].name).toBe('Default');
+    expect(meta.appliedId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(meta.entries).toEqual([
+      { id: existingId, name: 'Default' },
+      { id: meta.appliedId, name: 'CodeMie Proxy' },
+    ]);
+    expect(result).toEqual({ configPath: join(libDir, `${meta.appliedId}.json`), activated: true, switchedFrom: 'Default' });
+    expect(existsSync(join(libDir, `${existingId}.json`))).toBe(false);
+  });
+
+  it('keeps the name of an applied entry that already points at the local proxy', async () => {
+    const existingId = 'renamed-codemie';
+    await mkdir(libDir, { recursive: true });
+    await writeFile(metaPath, JSON.stringify({
+      appliedId: existingId,
+      entries: [{ id: existingId, name: 'Default' }],
+    }), 'utf-8');
+    await writeFile(join(libDir, `${existingId}.json`), LOOPBACK_GATEWAY_CONFIG, 'utf-8');
+
+    const result = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
+
+    expect(result).toEqual({ configPath: join(libDir, `${existingId}.json`), activated: false });
+    const meta = JSON.parse(await readFile(metaPath, 'utf-8'));
+    expect(meta).toEqual({ appliedId: existingId, entries: [{ id: existingId, name: 'Default' }] });
+  });
+
+  describe('while another config is applied', () => {
+    const CODEMIE_ID = 'codemie-c';
+    const OTHER_ID = 'qa-other';
+    const OTHER_CONFIG = JSON.stringify({
+      inferenceProvider: 'gateway',
+      inferenceGatewayBaseUrl: 'https://qa-gateway.example.com',
+      inferenceGatewayApiKey: 'qa-key',
+    }, null, 2);
+    const USER_SERVER = { name: 'teamtools', url: 'https://tools.example.com/mcp', transport: 'http', oauth: false };
+
+    beforeEach(async () => {
+      await mkdir(libDir, { recursive: true });
+      await writeFile(metaPath, JSON.stringify({
+        appliedId: OTHER_ID,
+        entries: [{ id: CODEMIE_ID, name: 'CodeMie Proxy' }, { id: OTHER_ID, name: 'QA Other Gateway' }],
+        extra: 'keep',
+      }), 'utf-8');
+      await writeFile(join(libDir, `${CODEMIE_ID}.json`), JSON.stringify({
+        inferenceProvider: 'gateway',
+        inferenceGatewayBaseUrl: 'http://127.0.0.1:61111',
+        inferenceGatewayApiKey: 'codemie-proxy.claude-desktop',
+        inferenceGatewayAuthScheme: 'bearer',
+        inferenceGatewayOidc: { issuer: 'https://idp.example.com' },
+        inferenceBedrockRegion: 'us-east-1',
+        managedMcpServers: JSON.stringify([USER_SERVER]),
+        someUserPreference: 'keep-me',
+      }), 'utf-8');
+      await writeFile(join(libDir, `${OTHER_ID}.json`), OTHER_CONFIG, 'utf-8');
+    });
+
+    it('writes the CodeMie entry, activates it and leaves the applied config untouched', async () => {
+      const result = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
+
+      expect(result).toEqual({
+        configPath: join(libDir, `${CODEMIE_ID}.json`),
+        activated: true,
+        switchedFrom: 'QA Other Gateway',
+      });
+      const config = JSON.parse(await readFile(join(libDir, `${CODEMIE_ID}.json`), 'utf-8'));
+      expect(config).toMatchObject({
+        inferenceProvider: 'gateway',
+        inferenceGatewayBaseUrl: 'http://127.0.0.1:4001',
+        inferenceGatewayApiKey: 'codemie-proxy.claude-desktop',
+        inferenceGatewayAuthScheme: 'bearer',
+        inferenceCredentialKind: 'static',
+        modelDiscoveryEnabled: true,
+        someUserPreference: 'keep-me',
+      });
+      expect(typeof config.coworkEgressAllowedHosts).toBe('string');
+      expect(config).not.toHaveProperty('inferenceGatewayOidc');
+      expect(config).not.toHaveProperty('inferenceBedrockRegion');
+      expect(await readFile(join(libDir, `${OTHER_ID}.json`), 'utf-8')).toBe(OTHER_CONFIG);
+      const meta = JSON.parse(await readFile(metaPath, 'utf-8'));
+      expect(meta).toEqual({
+        appliedId: CODEMIE_ID,
+        entries: [{ id: CODEMIE_ID, name: 'CodeMie Proxy' }, { id: OTHER_ID, name: 'QA Other Gateway' }],
+        extra: 'keep',
+      });
+    });
+
+    it('keeps an MCP server the user added to the CodeMie entry', async () => {
+      const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
+
+      const servers = JSON.parse(JSON.parse(await readFile(configPath, 'utf-8')).managedMcpServers);
+      expect(servers).toContainEqual(USER_SERVER);
+      expect(servers.some((s: { name: string }) => s.name === 'Notion')).toBe(true);
+    });
+  });
+
+  it('leaves _meta.json as it is when the CodeMie entry is already applied', async () => {
+    await mkdir(libDir, { recursive: true });
+    const metaText = JSON.stringify({ appliedId: 'c', entries: [{ id: 'c', name: 'CodeMie Proxy' }], extra: 1 });
+    await writeFile(metaPath, metaText, 'utf-8');
+
+    const result = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
+
+    expect(result).toEqual({ configPath: join(libDir, 'c.json'), activated: false });
+    expect(await readFile(metaPath, 'utf-8')).toBe(metaText);
   });
 
   it('writes a fresh UUID config and leaves the target untouched when appliedId leads outside the library', async () => {
@@ -713,7 +812,7 @@ describe('writeDesktopConfig', () => {
     await writeFile(metaPath, JSON.stringify({ appliedId: '../outside', entries: [] }), 'utf-8');
     await writeFile(join(baseDir, 'outside.json'), LOOPBACK_GATEWAY_CONFIG, 'utf-8');
 
-    const written = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
+    const { configPath: written } = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
 
     const meta = JSON.parse(await readFile(metaPath, 'utf-8'));
     expect(meta.appliedId).toMatch(/^[0-9a-f-]{36}$/);
@@ -726,7 +825,7 @@ describe('writeDesktopConfig', () => {
     await mkdir(libDir, { recursive: true });
     await writeFile(metaPath, JSON.stringify({ appliedId: '', entries: [] }), 'utf-8');
 
-    const written = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
+    const { configPath: written } = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
 
     const meta = JSON.parse(await readFile(metaPath, 'utf-8'));
     expect(meta.appliedId).toMatch(/^[0-9a-f-]{36}$/);
@@ -734,16 +833,36 @@ describe('writeDesktopConfig', () => {
     expect(existsSync(join(libDir, '.json'))).toBe(false);
   });
 
-  it('preserves non-inference keys in the config file', async () => {
+  it('appends a CodeMie Proxy entry and leaves a stale non-gateway applied entry alone', async () => {
     const existingId = 'reuse-id';
+    const existingText = JSON.stringify({
+      someUserPreference: 'keep-me',
+      inferenceGatewayBaseUrl: 'http://stale',
+    });
     await mkdir(libDir, { recursive: true });
     await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'X' }] }), 'utf-8');
+    await writeFile(join(libDir, `${existingId}.json`), existingText, 'utf-8');
+
+    const { configPath: written, activated } = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
+
+    const meta = JSON.parse(await readFile(metaPath, 'utf-8'));
+    expect(activated).toBe(true);
+    expect(written).toBe(join(libDir, `${meta.appliedId}.json`));
+    expect(meta.entries).toEqual([{ id: existingId, name: 'X' }, { id: meta.appliedId, name: 'CodeMie Proxy' }]);
+    expect(JSON.parse(await readFile(written, 'utf-8')).inferenceGatewayBaseUrl).toBe('http://localhost:4001');
+    expect(await readFile(join(libDir, `${existingId}.json`), 'utf-8')).toBe(existingText);
+  });
+
+  it('preserves non-inference keys in the CodeMie config file', async () => {
+    const existingId = 'reuse-id';
+    await mkdir(libDir, { recursive: true });
+    await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'CodeMie Proxy' }] }), 'utf-8');
     await writeFile(join(libDir, `${existingId}.json`), JSON.stringify({
       someUserPreference: 'keep-me',
       inferenceGatewayBaseUrl: 'http://stale',
     }), 'utf-8');
 
-    const written = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
+    const { configPath: written } = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(config.someUserPreference).toBe('keep-me');
     expect(config.inferenceGatewayBaseUrl).toBe('http://localhost:4001');
@@ -752,13 +871,13 @@ describe('writeDesktopConfig', () => {
   it('removes a model list written by an earlier connect, so Desktop discovers models', async () => {
     const existingId = 'reuse-id';
     await mkdir(libDir, { recursive: true });
-    await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'X' }] }), 'utf-8');
+    await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'CodeMie Proxy' }] }), 'utf-8');
     await writeFile(join(libDir, `${existingId}.json`), JSON.stringify({
       inferenceModels: JSON.stringify([{ name: 'claude-sonnet-4-5-20250929' }]),
       modelDiscoveryEnabled: false,
     }), 'utf-8');
 
-    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
+    const { configPath: written } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(config.inferenceModels).toBeUndefined();
     expect(config.modelDiscoveryEnabled).toBe(true);
@@ -786,7 +905,7 @@ describe('writeDesktopConfig', () => {
       ],
     }) as unknown as typeof globalThis.fetch;
 
-    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir);
+    const { configPath: written } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir);
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(config.inferenceProvider).toBe('gateway');
   });
@@ -794,7 +913,7 @@ describe('writeDesktopConfig', () => {
   it('overwrites the four inference keys with new values', async () => {
     const existingId = 'reuse-id';
     await mkdir(libDir, { recursive: true });
-    await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'X' }] }), 'utf-8');
+    await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'CodeMie Proxy' }] }), 'utf-8');
     await writeFile(join(libDir, `${existingId}.json`), JSON.stringify({
       inferenceProvider: 'bedrock',
       inferenceGatewayBaseUrl: 'https://old.com',
@@ -802,7 +921,7 @@ describe('writeDesktopConfig', () => {
       inferenceGatewayAuthScheme: 'x-api-key',
     }), 'utf-8');
 
-    const written = await writeDesktopConfig('http://localhost:4002', 'new-key', baseDir, [], statePath);
+    const { configPath: written } = await writeDesktopConfig('http://localhost:4002', 'new-key', baseDir, [], statePath);
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(config.inferenceProvider).toBe('gateway');
     expect(config.inferenceGatewayBaseUrl).toBe('http://localhost:4002');
@@ -811,7 +930,7 @@ describe('writeDesktopConfig', () => {
   });
 
   it('writes the named Desktop key, reads the catalog with the shared one, and reads back as pointed at the local proxy', async () => {
-    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
+    const { configPath: written } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
 
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(config.inferenceGatewayApiKey).toBe('codemie-proxy.claude-desktop');
@@ -825,11 +944,11 @@ describe('writeDesktopConfig', () => {
   it('rewrites a config holding the shared key to one named key, also on a second connect', async () => {
     const existingId = 'shared-key-config';
     await mkdir(libDir, { recursive: true });
-    await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'X' }] }), 'utf-8');
+    await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'CodeMie Proxy' }] }), 'utf-8');
     await writeFile(join(libDir, `${existingId}.json`), LOOPBACK_GATEWAY_CONFIG, 'utf-8');
 
     await writeDesktopConfig('http://127.0.0.1:4001', 'k', baseDir, [], statePath);
-    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'k', baseDir, [], statePath);
+    const { configPath: written } = await writeDesktopConfig('http://127.0.0.1:4001', 'k', baseDir, [], statePath);
 
     expect(JSON.parse(await readFile(written, 'utf-8')).inferenceGatewayApiKey).toBe('k.claude-desktop');
   });
@@ -845,7 +964,7 @@ describe('writeDesktopConfig', () => {
   it('removes every inferenceBedrock* key in the same rewrite and ends on the gateway provider', async () => {
     const existingId = 'bedrock-left-over';
     await mkdir(libDir, { recursive: true });
-    await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'X' }] }), 'utf-8');
+    await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'CodeMie Proxy' }] }), 'utf-8');
     await writeFile(join(libDir, `${existingId}.json`), JSON.stringify({
       inferenceProvider: 'bedrock',
       inferenceBedrockRegion: 'us-east-1',
@@ -854,7 +973,7 @@ describe('writeDesktopConfig', () => {
       unrelatedUserKey: 'kept',
     }), 'utf-8');
 
-    const written = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
+    const { configPath: written } = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
     const config = JSON.parse(await readFile(written, 'utf-8'));
 
     expect(config.inferenceProvider).toBe('gateway');
@@ -865,7 +984,7 @@ describe('writeDesktopConfig', () => {
   it('drops a sign-in mode left by "Sign in with your organization" and pins the static gateway key', async () => {
     const existingId = 'sso-left-over';
     await mkdir(libDir, { recursive: true });
-    await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'X' }] }), 'utf-8');
+    await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'CodeMie Proxy' }] }), 'utf-8');
     await writeFile(join(libDir, `${existingId}.json`), JSON.stringify({
       inferenceProvider: 'gateway',
       inferenceGatewayBaseUrl: 'http://localhost:4001',
@@ -885,7 +1004,7 @@ describe('writeDesktopConfig', () => {
       unrelatedUserKey: 'kept',
     }), 'utf-8');
 
-    const written = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
+    const { configPath: written } = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
     const config = JSON.parse(await readFile(written, 'utf-8'));
 
     expect(written).toBe(join(libDir, `${existingId}.json`));
@@ -912,7 +1031,7 @@ describe('writeDesktopConfig', () => {
     const org = [
       { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http' as const, oauth: true },
     ];
-    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
 
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
@@ -929,7 +1048,7 @@ describe('writeDesktopConfig', () => {
       { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http' as const, oauth: true },
     ];
     await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
-    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
 
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
@@ -948,7 +1067,7 @@ describe('writeDesktopConfig', () => {
     const org = [
       { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http' as const, oauth: true },
     ];
-    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
     expect(servers.some((s: any) => s.name === 'sample')).toBe(true);
@@ -965,7 +1084,7 @@ describe('writeDesktopConfig', () => {
     await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
     const stateBefore = await readFile(statePath, 'utf-8');
     // Run 2: fetch FAILED (null) — sample must survive, sidecar must be unchanged.
-    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, null, statePath);
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, null, statePath);
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
     expect(servers.some((s: any) => s.name === 'sample')).toBe(true);
@@ -977,7 +1096,7 @@ describe('writeDesktopConfig', () => {
     const org = [
       { name: 'Notion', url: 'https://mcp.notion.com/mcp', transport: 'http' as const, oauth: true },
     ];
-    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
     expect(servers.filter((s: any) => s.name === 'Notion').length).toBe(1);
@@ -992,7 +1111,7 @@ describe('writeDesktopConfig', () => {
         oauth: { ...OAUTH_CONFIG, audience: 'onehub' },
       },
     ]);
-    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
 
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
@@ -1004,7 +1123,7 @@ describe('writeDesktopConfig', () => {
     const org = mapCanonicalToDesktop([
       { name: 'legacy', transport: 'http', url: 'https://mcp.example.com/mcp/legacy', auth: 'oauth' },
     ]);
-    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
 
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
@@ -1020,7 +1139,7 @@ describe('writeDesktopConfig', () => {
     const org: ManagedMcpServerEntry[] = [
       { name: 'no_oauth_key', url: 'https://mcp.internal.test/mcp/no-oauth-key', transport: 'http' },
     ];
-    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
 
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
@@ -1033,7 +1152,7 @@ describe('writeDesktopConfig', () => {
     const org = [
       { name: 'notion', url: 'https://mcp.internal.test/mcp/notion', transport: 'http' as const, oauth: { ...OAUTH_CONFIG } },
     ];
-    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
 
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
@@ -1047,7 +1166,7 @@ describe('writeDesktopConfig', () => {
     const org = [
       { name: 'notion_internal', url: 'https://mcp.notion.com/mcp', transport: 'http' as const, oauth: { ...OAUTH_CONFIG } },
     ];
-    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
 
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
@@ -1064,7 +1183,7 @@ describe('writeDesktopConfig', () => {
     await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
     // Run 2: the catalog fetch FAILED (null) — the bundled public Notion must not
     // come back and evict the tenant's internal server.
-    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, null, statePath);
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, null, statePath);
 
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
@@ -1080,7 +1199,7 @@ describe('writeDesktopConfig', () => {
       { name: 'notion_internal', url: 'https://mcp.notion.com/mcp', transport: 'http' as const, oauth: { ...OAUTH_CONFIG } },
     ];
     await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
-    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, null, statePath);
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, null, statePath);
 
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
@@ -1091,7 +1210,7 @@ describe('writeDesktopConfig', () => {
   });
 
   it('still seeds every bundled default on a first run whose fetch failed', async () => {
-    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, null, statePath);
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, null, statePath);
 
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
@@ -1104,12 +1223,12 @@ describe('writeDesktopConfig', () => {
     // corrupt list actually held — on the very run with the least recourse.
     const existingId = 'reuse-id';
     await mkdir(libDir, { recursive: true });
-    await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'X' }] }), 'utf-8');
+    await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'CodeMie Proxy' }] }), 'utf-8');
     await writeFile(join(libDir, `${existingId}.json`), JSON.stringify({
       managedMcpServers: 'not-json{{{',
     }), 'utf-8');
 
-    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, null, statePath);
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, null, statePath);
 
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     expect(JSON.parse(written.managedMcpServers)).toEqual([]);
@@ -1118,12 +1237,12 @@ describe('writeDesktopConfig', () => {
   it('seeds no bundled default on a failed fetch when the stored managed list is not an array', async () => {
     const existingId = 'reuse-id';
     await mkdir(libDir, { recursive: true });
-    await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'X' }] }), 'utf-8');
+    await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'CodeMie Proxy' }] }), 'utf-8');
     await writeFile(join(libDir, `${existingId}.json`), JSON.stringify({
       managedMcpServers: { Notion: { url: 'https://mcp.internal.corp/notion' } },
     }), 'utf-8');
 
-    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, null, statePath);
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, null, statePath);
 
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     expect(JSON.parse(written.managedMcpServers)).toEqual([]);
@@ -1138,7 +1257,7 @@ describe('writeDesktopConfig', () => {
       const org = mapCanonicalToDesktop([
         { name: 'notion_internal', transport: 'http', url: 'https://mcp.notion.com/mcp', auth: 'none' },
       ]);
-      const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+      const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
 
       const written = JSON.parse(await readFile(configPath, 'utf-8'));
       const servers = JSON.parse(written.managedMcpServers);
@@ -1162,7 +1281,7 @@ describe('writeDesktopConfig', () => {
     const org = mapCanonicalToDesktop([
       { name: 'notion_internal', transport: 'http', url: 'https://mcp.notion.com/mcp', auth: 'none' },
     ]);
-    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
 
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
@@ -1179,7 +1298,7 @@ describe('writeDesktopConfig', () => {
       { name: 'Notion', url: 'https://mcp.internal.test/mcp/notion', transport: 'http' as const, oauth: { ...OAUTH_CONFIG } },
       { name: 'notion_alt', url: 'https://mcp.notion.com/mcp', transport: 'http' as const },
     ];
-    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
 
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
@@ -1197,7 +1316,7 @@ describe('writeDesktopConfig', () => {
       const org = mapCanonicalToDesktop([
         { name: 'Notion', transport: 'http', url: 'https://mcp.notion.com/mcp/', auth: 'none' },
       ]);
-      const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+      const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
 
       const written = JSON.parse(await readFile(configPath, 'utf-8'));
       const servers = JSON.parse(written.managedMcpServers);
@@ -1234,7 +1353,7 @@ describe('writeDesktopConfig', () => {
     const withoutAuth = [
       { name: 'notion', url: 'https://mcp.internal.corp/notion', transport: 'http' as const, oauth: false },
     ];
-    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, withoutAuth, statePath);
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, withoutAuth, statePath);
 
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
@@ -1404,7 +1523,7 @@ describe('writeDesktopConfig', () => {
     const org = [
       { name: 'onehub_core', url: 'https://mcp.internal.test/mcp/onehub_core', transport: 'http' as const, oauth: { ...OAUTH_CONFIG } },
     ];
-    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
 
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
@@ -1497,7 +1616,7 @@ describe('removeDesktopConfig', () => {
     }) as unknown as typeof globalThis.fetch;
     let written: string;
     try {
-      written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
+      written = (await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath)).configPath;
     } finally {
       globalThis.fetch = originalFetch;
     }
