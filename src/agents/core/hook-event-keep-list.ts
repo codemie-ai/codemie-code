@@ -6,6 +6,11 @@
  * other field, including one added later, becomes `REDACTED:<FIELD>`. `tool_input`, `tool_response`,
  * `description` and `error` are deliberately absent. `git_branch` is cut by `reduceBranch` before the
  * record reducer runs.
+ *
+ * `tool_use_id`, `agent_id` and `fork_agent_id` are opaque runtime ids: they carry no user content and
+ * are needed to pair tool start/end and subagent events. `codemie_cli_version` is the client version
+ * envelope identifier. Identity fields (`user_email`, `developer_name`, `identity_source`) and
+ * `file_path` stay redacted.
  */
 import type { KeepList } from './analytics-reduction.js';
 
@@ -23,6 +28,11 @@ export const HOOK_EVENT_KEEP_LIST: KeepList = {
     'story_marker',
     'prompt_source',
     'analytics_reduction',
+    'codemie_cli_version',
+    // Opaque runtime ids (tool start/end and subagent pairing)
+    'tool_use_id',
+    'agent_id',
+    'fork_agent_id',
     // Event, tool, command, skill and agent type names, MCP names
     'type',
     'hook_event_name',

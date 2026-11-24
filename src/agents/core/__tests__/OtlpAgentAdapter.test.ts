@@ -1321,6 +1321,26 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       });
     });
 
+    it('keeps opaque runtime ids and the CLI version, but redacts user identity on a reduced event', async () => {
+      const { cwd } = makeRepo(true);
+      await run({
+        cwd,
+        payload: [{
+          tool_use_id: 'toolu_01ABC',
+          agent_id: 'agent-123',
+          codemie_cli_version: '1.2.3',
+          user_email: 'dev@example.com',
+        }],
+      });
+      expect(forwarded()[0]).toMatchObject({
+        analytics_reduction: true,
+        tool_use_id: 'toolu_01ABC',
+        agent_id: 'agent-123',
+        codemie_cli_version: '1.2.3',
+        user_email: 'REDACTED:USER-EMAIL',
+      });
+    });
+
     it('keeps the same story id and event id as a run with reduction off', async () => {
       detectGitBranchMock.mockResolvedValue('feature/EPMCDME-17748-private-name');
       const on = makeRepo(true);
