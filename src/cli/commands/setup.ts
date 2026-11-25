@@ -232,7 +232,7 @@ async function runSetupWizard(force?: boolean, headless = false): Promise<void> 
   }
 
   // Use plugin-based setup flow
-  await handlePluginSetup(provider, setupSteps, profileName, isUpdate, storageLocation, headless);
+  await handlePluginSetup(provider, setupSteps, profileName, isUpdate, { storageLocation, headless });
 }
 
 /**
@@ -245,8 +245,7 @@ async function handlePluginSetup(
   setupSteps: any,
   profileName: string | null,
   isUpdate: boolean,
-  storageLocation: 'global' | 'local' = 'global',
-  headless = false
+  { storageLocation = 'global', headless = false }: { storageLocation?: 'global' | 'local'; headless?: boolean } = {}
 ): Promise<void> {
   try {
     const providerTemplate = ProviderRegistry.getProvider(providerName);

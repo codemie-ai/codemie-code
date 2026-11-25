@@ -78,6 +78,29 @@ describe('AnthropicSubscriptionSetupSteps headless login', () => {
     }
   });
 
+  it('names both routes when the headless TTY check fails', async () => {
+    setTTY(false);
+    mockStatus.mockResolvedValue({ loggedIn: false });
+
+    const err = await AnthropicSubscriptionSetupSteps.getCredentials(false, { headless: true }).catch((e: Error) => e);
+
+    expect((err as Error).message).toContain('claude auth login');
+    expect((err as Error).message).toContain('claude setup-token');
+    expect((err as Error).message).toContain('CLAUDE_CODE_OAUTH_TOKEN');
+  });
+
+  it('names both routes when the headless login does not complete', async () => {
+    mockStatus.mockResolvedValue({ loggedIn: false });
+    mockLogin.mockRejectedValueOnce(new Error('Command timed out after 300000ms'));
+
+    const err = await AnthropicSubscriptionSetupSteps.getCredentials(false, { headless: true }).catch((e: Error) => e);
+
+    expect((err as Error).message).toContain('claude auth login');
+    expect((err as Error).message).toContain('claude setup-token');
+    expect((err as Error).message).toContain('CLAUDE_CODE_OAUTH_TOKEN');
+    expect((err as Error).message).not.toContain('timed out');
+  });
+
   it('keeps the browser path unchanged without the flag', async () => {
     mockStatus
       .mockResolvedValueOnce({ loggedIn: false })

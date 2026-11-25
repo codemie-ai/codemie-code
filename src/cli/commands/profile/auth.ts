@@ -112,11 +112,13 @@ async function handleLogin(url?: string, headless = false): Promise<void> {
       if (spinner) spinner.fail(chalk.red('SSO authentication failed'));
       else console.log(chalk.red('SSO authentication failed'));
       console.log(chalk.red(`Error: ${result.error}`));
+      process.exitCode = 1;
     }
   } catch (error) {
     if (spinner) spinner.fail(chalk.red('Authentication error'));
     else console.log(chalk.red('Authentication error'));
     console.log(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+    process.exitCode = 1;
   }
 }
 

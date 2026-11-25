@@ -29,6 +29,33 @@ const HEADLESS_INSTRUCTIONS = [
   '  2. Run `claude setup-token` on a machine with a browser, then export CLAUDE_CODE_OAUTH_TOKEN with the result here and rerun setup.'
 ].join('\n');
 
+const NO_TTY_CLAUDE_MESSAGE =
+  'Headless Claude login needs an interactive terminal (stdin and stdout must both be a TTY). ' +
+  'Run setup from one to use `claude auth login`, or run `claude setup-token` on a machine with a browser, ' +
+  'export CLAUDE_CODE_OAUTH_TOKEN here, then run setup again.';
+
+const LOGIN_NOT_COMPLETED_MESSAGE =
+  'Claude login did not complete. Retry `claude auth login` (paste the code it prints back into the prompt), ' +
+  'or run `claude setup-token` on a machine with a browser and export CLAUDE_CODE_OAUTH_TOKEN here, then run setup again.';
+
+/**
+ * Headless `claude auth login`: needs a terminal, prints both sign-in routes first, and replaces
+ * the CLI's bare failure text (such as a timeout) with a message that names both routes.
+ *
+ * @throws ConfigurationError when stdin or stdout is not a TTY, or when the login does not complete.
+ */
+async function runHeadlessClaudeLogin(): Promise<void> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new ConfigurationError(NO_TTY_CLAUDE_MESSAGE);
+  }
+  console.log(HEADLESS_INSTRUCTIONS);
+  try {
+    await runClaudeBrowserLogin();
+  } catch {
+    throw new ConfigurationError(LOGIN_NOT_COMPLETED_MESSAGE);
+  }
+}
+
 export const AnthropicSubscriptionSetupSteps: ProviderSetupSteps = {
   name: 'anthropic-subscription',
 
@@ -43,16 +70,11 @@ export const AnthropicSubscriptionSetupSteps: ProviderSetupSteps = {
     if (!currentStatus.loggedIn) {
       logger.info('Claude Code is not authenticated yet.');
       if (options?.headless) {
-        if (!process.stdin.isTTY || !process.stdout.isTTY) {
-          throw new ConfigurationError(
-            'Headless Claude login needs an interactive terminal (stdin and stdout must both be a TTY).'
-          );
-        }
-        console.log(HEADLESS_INSTRUCTIONS);
+        await runHeadlessClaudeLogin();
       } else {
         logger.info('Launching native Claude browser login...');
+        await runClaudeBrowserLogin();
       }
-      await runClaudeBrowserLogin();
     } else {
       logger.success('Claude Code is already authenticated');
     }
