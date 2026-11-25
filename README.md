@@ -550,7 +550,7 @@ Providers: CodeMie SSO, Bearer Auth, LiteLLM.
 
 ## Claude Code Statusline
 
-The CodeMie Statusline displays a `[• CodeMie]` indicator, live budget usage, project name, git branch, model, context window percentage, and token counts at the bottom of every Claude Code session.
+The CodeMie Statusline displays a `[⏺CodeMie]` indicator, live budget usage, project name, git branch, model, context window percentage, and token counts at the bottom of every Claude Code session.
 
 ```bash
 # Install (or update) the statusline
@@ -563,10 +563,10 @@ codemie uninstall statusline
 Once installed, the statusline appears automatically in every claude session:
 
 ```
-[• CodeMie] | [my-project] $4.21/$50 (8%) | (main) | [claude-sonnet-4-5] | ctx:12% in:45.2k out:3.1k
+[⏺CodeMie] | [my-project] $4.21/$50 (8%) | (main) | [claude-sonnet-4-5] | ctx:12% in:45.2k out:3.1k
 ```
 
-The `[• CodeMie]` segment appears only in sessions launched through CodeMie.
+The `[⏺CodeMie]` segment appears only in sessions launched through CodeMie.
 
 The script is deployed to `~/.claude/codemie-budget-status.js` and registered as a `statusLine` command in `~/.claude/settings.json`. Budget values are cached for 60 seconds to avoid redundant API calls.
 
