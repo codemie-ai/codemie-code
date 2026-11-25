@@ -7,9 +7,13 @@ const identityMock = vi.fn();
 const gateMock = vi.fn();
 const projectMock = vi.fn();
 const prefsMock = vi.fn();
+const authGateMock = vi.fn();
+const authProfileMock = vi.fn();
 
 vi.mock('@/agents/core/evidence/hook-identity.js', () => ({ currentEvidenceIdentity: identityMock }));
 vi.mock('../claude-code-otlp.gate.js', () => ({ evaluateClaudeAnalyticsGate: gateMock }));
+vi.mock('@/providers/plugins/sso/sso.auth-gate.js', () => ({ ensureCodeMieSsoAuthOrWait: authGateMock }));
+vi.mock('@/agents/core/hook-auth-profile.js', () => ({ resolveHookAuthProfile: authProfileMock }));
 vi.mock('@/agents/core/event-fields/identity-fields.js', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   resolveProjectAtCwd: projectMock,
@@ -54,6 +58,14 @@ beforeEach(() => {
   gateMock.mockResolvedValue({ tracked: true, reason: 'tracked' });
   projectMock.mockResolvedValue('proj');
   prefsMock.mockResolvedValue({ kind: 'ok', value: { collectionGeneration: 0 } });
+  authProfileMock.mockClear();
+  authProfileMock.mockResolvedValue({
+    provider: 'ai-run-sso',
+    ssoUrl: 'https://sso.example.com',
+    baseUrl: 'https://api.example.com',
+  });
+  authGateMock.mockClear();
+  authGateMock.mockResolvedValue({ ok: true });
   logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 });
 afterEach(async () => {
@@ -200,6 +212,58 @@ describe('hook-side transitions', () => {
       expect(await t.gate(hook({ session_id: 'unknown' }))).toBe('stop');
       await t.record();
       expect(await t.gate(hook())).toBe('continue'); // has a record: parked, re-checked at replay or stamp
+    });
+
+    it('blocks a no-owner UserPromptSubmit when authentication is missing', async () => {
+      const t = await setup();
+      identityMock.mockResolvedValue(null);
+      authGateMock.mockResolvedValue({
+        ok: false,
+        reason: 'no valid CodeMie SSO credentials found',
+        loginOutcome: 'started',
+      });
+      const deps = { ensureOtlpProxy: vi.fn(), forwardOtlpEventsToSpool: vi.fn() };
+
+      await t.plugin.processOtlpEvent(JSON.stringify(hook({ session_id: 'unknown' })), deps as never);
+
+      expect(authGateMock).toHaveBeenCalledTimes(1);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"decision":"block"'));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"hookEventName":"UserPromptSubmit"'));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"suppressOriginalPrompt":true'));
+      expect(deps.ensureOtlpProxy).not.toHaveBeenCalled();
+      expect(deps.forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+    });
+
+    it('authenticates but still stops an unknown ownerless mid-session prompt', async () => {
+      const t = await setup();
+      identityMock.mockResolvedValue(null);
+      const deps = { ensureOtlpProxy: vi.fn(), forwardOtlpEventsToSpool: vi.fn() };
+
+      await t.plugin.processOtlpEvent(JSON.stringify(hook({ session_id: 'unknown' })), deps as never);
+
+      expect(authGateMock).toHaveBeenCalledTimes(1);
+      expect(logSpy).not.toHaveBeenCalled();
+      expect(deps.ensureOtlpProxy).not.toHaveBeenCalled();
+      expect(deps.forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+    });
+
+    it('blocks a recorded ownerless prompt before starting the proxy when authentication is missing', async () => {
+      const t = await setup();
+      await t.record();
+      identityMock.mockResolvedValue(null);
+      authGateMock.mockResolvedValue({
+        ok: false,
+        reason: 'no valid CodeMie SSO credentials found',
+        loginOutcome: 'started',
+      });
+      const deps = { ensureOtlpProxy: vi.fn(), forwardOtlpEventsToSpool: vi.fn() };
+
+      await t.plugin.processOtlpEvent(JSON.stringify(hook()), deps as never);
+
+      expect(authGateMock).toHaveBeenCalledTimes(1);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"decision":"block"'));
+      expect(deps.ensureOtlpProxy).not.toHaveBeenCalled();
+      expect(deps.forwardOtlpEventsToSpool).not.toHaveBeenCalled();
     });
 
     it('the record the stamp later returns is re-checked: a folder move during the outage stops with a marker', async () => {

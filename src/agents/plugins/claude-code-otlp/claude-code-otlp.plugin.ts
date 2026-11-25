@@ -171,11 +171,14 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
 
   /** The one-shot user notice of this hook, printed once at the end (or merged into a block answer). */
   private pendingNotice?: string;
+  private promptAuthResult?: AuthGateResult;
 
   public override async processOtlpEvent(rawHookInput: string, deps: OtlpAdapterDeps): Promise<void> {
+    this.promptAuthResult = undefined;
     try {
       await super.processOtlpEvent(rawHookInput, deps);
     } finally {
+      this.promptAuthResult = undefined;
       // The hook always returns normally; the notice is a systemMessage (user-visible, not model context).
       if (this.pendingNotice) {
         console.log(JSON.stringify({ systemMessage: this.pendingNotice }));
@@ -222,6 +225,13 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
         // No owner to key a record by. Only a fresh session, one already held for its owner, or one with a record may go on
         // (held for replay, which re-checks it); an unknown mid-session scope never gets a record made from an outage.
         this.identityUnverifiedAtGate = true;
+        if (hookInput.hook_event_name === 'UserPromptSubmit') {
+          this.promptAuthResult = await this.ensureProxyAuth();
+          if (!this.promptAuthResult.ok) {
+            this.emitBlock(this.promptAuthBlock(this.promptAuthResult));
+            return 'stop';
+          }
+        }
         const source = readOptionalString(hookInput, 'source');
         const fresh = hookInput.hook_event_name === 'SessionStart' && (source === 'startup' || source === 'clear');
         return fresh || (await hasPendingOwnerSession(sessionId)) || (await hasRecordForSession(sessionId)) ? 'continue' : 'stop';
@@ -700,7 +710,8 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
   }
 
   private async onUserPromptSubmit(hookInput: UserPromptSubmitHookInput): Promise<ClaudeForwardDecision> {
-    const authResult = await this.ensureProxyAuth();
+    const authResult = this.promptAuthResult ?? (await this.ensureProxyAuth());
+    this.promptAuthResult = undefined;
 
     if (authResult.ok) {
       await markReopenedActive(hookInput.session_id); // a prompt is the reopened session's own activity
@@ -724,6 +735,12 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       }
     }
 
+    return this.promptAuthBlock(authResult);
+  }
+
+  private promptAuthBlock(
+    authResult: Extract<AuthGateResult, { ok: false }>
+  ): Extract<ClaudeForwardDecision, { decision: 'block' }> {
     return {
       decision: 'block',
       reason: `${describeLogin(authResult.loginOutcome, { wait: authResult.waitResult })}\n(${authResult.reason})`,
@@ -731,7 +748,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
         hookEventName: "UserPromptSubmit",
         suppressOriginalPrompt: true,
       }
-    }
+    };
   }
 
   // Tool events go through withoutSensitiveFileContent: a call on a credentials file would otherwise
