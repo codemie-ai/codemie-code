@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "task": "Fix --include-external being silently ignored by enabling positional options on the root commander program via a createProgram() factory, adding allowExcessArguments(false) to five sync subcommands, and adding root-program regression tests.",
+  "generated": "2026-11-19T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 11,
+  "size": "S",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Root program factory (cli/program.ts, cli/index.ts), analytics sync subcommands, and a comment-only proxy touch; all in the CLI layer with a clear pattern." },
+    { "dimension": "file_change_estimate", "reason": "3 modified files (cli/index.ts, analytics/index.ts, proxy/index.ts) plus 2 new (program.ts, program.test.ts) across 2-3 directories." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
