@@ -163,7 +163,8 @@ describe('analytics auth gate (codemie hook UserPromptSubmit)', () => {
     expect(res.stderr).toBe(
       'Reason: no valid CodeMie SSO credentials found.\n' +
         `${BLOCK_HEADER}\n` +
-        'Could not open the browser sign-in automatically. Run `codemie profile login`. After login completes, re-send your prompt.\n'
+        'Could not open the browser sign-in automatically. Run `codemie profile login`. After login completes, re-send your prompt.\n' +
+        'No browser on this machine? Run `codemie profile login --no-browser` to paste the login result instead.\n'
     );
     expect(res.stderr).not.toContain('[DEBUG]');
     expect(res.stderr).not.toContain('[hook:init]');
