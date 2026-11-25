@@ -416,6 +416,9 @@ export interface SSOAuthConfig {
   /** Suppress stdout banners (e.g. browser-opening messages). Use when a caller's
    * own stdout contract (e.g. a hook's JSON response) cannot tolerate extra output. */
   quiet?: boolean;
+  /** Paste-back login for machines without a browser: print the login URL and read the
+   * pasted token instead of starting a callback server. Opt-in only; never inferred. */
+  headless?: boolean;
 }
 
 /**
