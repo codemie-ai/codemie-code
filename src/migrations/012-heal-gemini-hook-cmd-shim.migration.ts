@@ -15,11 +15,13 @@ class HealGeminiHookCmdShimMigration extends RewriteHookCommandPathsMigration {
   }
 
   // Gemini may read hooks.json at any time: write beside it, then rename over it so it never sees a torn file.
+  // A symlinked hooks.json (e.g. a linked extension) is resolved first, so the rename replaces the target, not the link.
   protected async writeHooks(file: string, content: string): Promise<void> {
-    const tmp = `${file}.${process.pid}.tmp`;
+    const target = await fs.realpath(file).catch(() => file);
+    const tmp = `${target}.${process.pid}.tmp`;
     try {
       await fs.writeFile(tmp, content, 'utf-8');
-      await this.renameWithRetry(tmp, file);
+      await this.renameWithRetry(tmp, target);
     } catch (error) {
       await fs.rm(tmp, { force: true }).catch(() => undefined);
       throw error;
