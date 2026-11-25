@@ -1,0 +1,152 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.final",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "Verdict approve, 0 blocking; user accepted recommended dispositions (CR-001 accept, CR-002/CR-003 fix-later)."
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "Verdict approve, 0 blocking; user accepted recommended dispositions (CR-001 accept, CR-002/CR-003 fix-later)."
+    }
+  ],
+  "reviewed_head": "6c2e9ce068ba17d8c27b241b7460ba647336b2da",
+  "rounds": [
+    "final"
+  ],
+  "rationale": "All four lenses and the standards audit ran; no blocking defects. 3 advisory findings (one intent question, two narrow guard-bypass notes), 0 deferred, 17 dismissed (mostly spec-sanctioned behavior; launcher check placed after ConfigLoader.load per the user-approved plan). AC5 is pending-stage-7.",
+  "confidence": "high",
+  "check_confidence": null,
+  "risk_flags": [
+    "input validation on a trust boundary (proxy request body)"
+  ],
+  "open": 0,
+  "closed": {
+    "fixed": 0,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "type": "question",
+      "file": "src/agents/core/AgentCLI.ts",
+      "line": 252,
+      "title": "Bad CODEMIE_MODEL aborts launch under --profile",
+      "problem": "With --profile and no --model, ConfigLoader drops the env model (config.ts:228-231), yet the launcher still validates process.env.CODEMIE_MODEL (AgentCLI.ts:253-256) and exits 1 on a bad value the config never uses.",
+      "impact": "Trigger is narrow: --profile plus an invalid CODEMIE_MODEL exported in the shell; workaround is unsetting the variable, and the message names CODEMIE_MODEL as the source. Reachability confirmed.",
+      "recommendation": "Confirm the abort is intended (spec validates the user-supplied env value); if not, skip the env check when options.profile is set and options.model is undefined.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "accept"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/providers/plugins/sso/proxy/plugins/model-value-guard.plugin.ts",
+      "line": 24,
+      "title": "Compressed request bodies bypass the model guard",
+      "problem": "modelOf returns found:false when the first non-blank byte is not '{', so a request with Content-Encoding gzip/br (or a UTF-16 body) skips validation. The class comment says a request cannot dodge the check, which overstates this. The proxy does not decode request bodies anywhere, so the Claude normalizers are bypassed the same way.",
+      "impact": "Needs a client that compresses its request body; Claude clients do not by default, and a BOM-prefixed body fails JSON.parse anyway. The bad value reaches the upstream, which validates it itself.",
+      "recommendation": "Narrow the comment to the content-type claim it actually makes, or reject/decode requests carrying a content-encoding header.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/providers/plugins/sso/proxy/plugins/model-value-guard.plugin.ts",
+      "line": 27,
+      "title": "Duplicate model keys: guard and upstream may disagree",
+      "problem": "JSON.parse keeps the last duplicate model key, so a body with a bad first and valid last value passes the guard; an upstream parser that keeps the first would see the bad one.",
+      "impact": "Reachability unconfirmed, no trigger built: mainstream JSON parsers also keep the last key, and the normalizer parses the same way.",
+      "recommendation": "Accept as is, or document that the guard judges the value a standard JSON parser sees.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "AC1: codemie-claude -m / CODEMIE_MODEL with empty, over-256, whitespace or control value exits 1, prints rule and length, not value",
+      "status": "pass",
+      "notes": "AgentCLI.ts:252-263; check runs after ConfigLoader.load, as approved in plan.approved (decisions.jsonl:2)."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC2: bad or non-text model on the four Claude-path clients gets a 400 Anthropic-style error and is not forwarded",
+      "status": "pass",
+      "notes": "Guard uses CLAUDE_PATH_CLIENTS; real-proxy test covers codemie-claude, other clients via clients-equality test."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC3: valid names, router aliases, model-less requests and unresolved pass-through behave as before",
+      "status": "pass",
+      "notes": "Good rows return false untouched; normalizers not changed."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC4: console output, 400 body and logs (launcher debug log included) never contain the value or a prefix",
+      "status": "pass",
+      "notes": "Messages carry rule and length only; debug log replaced by <length N>."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC5: the shared table runs green in the util, launcher and hook tests",
+      "status": "pending-stage-7",
+      "notes": "All three suites consume MODEL_VALUE_CASES; a green run is execution evidence owned by Stage 7."
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "4 subjects in the review range use allowed types and scopes (feat with utils, agents, proxy), imperative, under 100 chars"
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "changed source files use .js import extensions, kebab-case and kebab.plugin.ts naming, explicit return types on exports, interface for shapes; no console.log debug output"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "guard 400 carries only rule, length or JSON type, never the model value; log call goes through sanitizeLogArgs; body parse bounded to JSON objects, failures fall through"
+    }
+  ],
+  "final_round": {
+    "decision": "approve",
+    "rationale": "All four lenses and the standards audit ran; no blocking defects. 3 advisory findings (one intent question, two narrow guard-bypass notes), 0 deferred, 17 dismissed (mostly spec-sanctioned behavior; launcher check placed after ConfigLoader.load per the user-approved plan). AC5 is pending-stage-7.",
+    "confidence": "high",
+    "risk_flags": [
+      "input validation on a trust boundary (proxy request body)"
+    ]
+  }
+}
