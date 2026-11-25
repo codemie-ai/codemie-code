@@ -153,3 +153,4 @@ Order in `buildEvent`: adapters compute `prompt_body = reducePrompt(raw, …)` b
 - Task 1 and Task 4: shared branch names are sent as they are (`SHARED_BRANCH_NAMES` in `reduceBranch`), and the hook keep-list also keeps model usage and session-summary fields. Commits: "feat(analytics): send shared branch names unreduced", "fix(analytics): keep model usage and session summary fields when reduced".
 - Task 10: the setup step was reworded and extended. Commit: "feat(cli): clearer analytics privacy step in setup".
 - Tasks 3 and 10: `codemie setup` no longer erases the flag, because `ConfigLoader.initProjectConfig` carries the `analytics` block over. Commit: "fix(cli): keep analytics setting when setup rewrites the project config".
+- Tasks 3 and 10: Off in the setup step now turns off the current project too (`writeProjectReductionFlag(dir, false)` and the new `removeOptedInProject`). Commit: "fix(cli): let setup turn off project-level analytics privacy".
