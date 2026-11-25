@@ -1,0 +1,423 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "Check round approved; CR-009 and CR-014 deferred as fix-later"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "User chose to fix all 15 findings (CR-001..CR-015)"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "Check round approved; CR-009 and CR-014 deferred as fix-later"
+    }
+  ],
+  "reviewed_head": "3ff9d19c2a50683d00fa54c79c4f26f4e54b9189",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "All 8 prior blocking findings are resolved on current source or a recorded decision (CR-001 at the root in analytics-reduction.ts, whose reducePrompt/reduceBranch now never throw; CR-008 by a recorded decision to squash with a clean title). Advisory CR-009 and CR-014 remain unresolved and do not block.",
+  "confidence": "low",
+  "check_confidence": "high",
+  "risk_flags": [
+    "security",
+    "data-contract"
+  ],
+  "open": 0,
+  "closed": {
+    "fixed": 7,
+    "moot": 0,
+    "decided": 1,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/agents/core/OtlpAgentAdapter.ts",
+      "title": "Unguarded reducePrompt/reduceBranch calls",
+      "problem": "AC15 requires a field whose reduction fails to be sent as REDACTED:FAILED with metrics still sent. Only the per-field loop in reduceRecord has a try/catch. The reducePrompt and reduceBranch calls in OtlpAgentAdapter.buildEvent/reduceEvent, stampCoworkEvent, reduceMetric and reduceSession are unguarded.",
+      "impact": "A throw in any of these drops the whole event or metric instead of degrading to REDACTED:FAILED. This is a partial on a required criterion.",
+      "recommendation": "Wrap each reducePrompt/reduceBranch call in the same guard as reduceRecord, emitting placeholder FAILED and logging without content.",
+      "status": "resolved",
+      "check_notes": "reducePrompt/reduceBranch are now try/catch wrappers returning REDACTED:FAILED; all callers covered; test added",
+      "fix": {
+        "change": "reducePrompt and reduceBranch never throw; failure yields REDACTED:FAILED",
+        "test": "analytics-reduction.test.ts never-throwing prompt and branch reduction"
+      },
+      "disposition": {
+        "rationale": "user asked to fix all findings",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/analytics-reduction.ts",
+      "line": 597,
+      "title": "Keep-listed keys pass non-string values verbatim",
+      "problem": "reduceValue returns any value whose key is on the keep-list as-is, whatever its type. An object or array under a kept key (cwd, tool_name, ticket_mentions, tools, dispatches, modelTimeline and similar) keeps its nested strings unreduced.",
+      "impact": "Reachability was not confirmed, so the grade is capped at major. If a kept key carries a nested object, free text bypasses reduction despite the 'unlisted = redacted' guarantee.",
+      "recommendation": "Keep a value only when it is a string or a string array; otherwise recurse through reduction or redact it.",
+      "status": "resolved",
+      "check_notes": "reduceKept keeps strings only; nested free text replaced with placeholders; test added",
+      "fix": {
+        "change": "kept keys keep strings; nested containers keep scalars and identifier-like strings only",
+        "test": "analytics-reduction.test.ts kept keys with non-string values"
+      },
+      "disposition": {
+        "rationale": "user asked to fix all findings",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/report-builder.ts",
+      "line": 64,
+      "title": "Sync decides reduction from process.cwd() only",
+      "problem": "buildSyncReport spans all projects, but isReportReductionOn() reads the nearest project config of process.cwd() plus the global flag. AC2 requires each session's project setting to apply. Same root cause in redact.ts resolveReportPrivacyMode.",
+      "impact": "Verified in source. A session of an opted-in project is synced with raw titles and branches when sync runs from another cwd (daemon or cron). Sessions of other projects are reduced when run inside an opted-in one. This is a partial on a required criterion.",
+      "recommendation": "Resolve reduction per session from the session's working directory or project config dir, with the global flag as the floor.",
+      "status": "resolved",
+      "check_notes": "redactPayloadPerSession decides per session project; used by sync and export",
+      "fix": {
+        "change": "report/sync decide reduction per session from the session project config, global as floor (redactPayloadPerSession)",
+        "test": "redact.test.ts redactPayloadPerSession"
+      },
+      "disposition": {
+        "rationale": "user asked to fix all findings",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-spool/otlp-json-reduction.ts",
+      "title": "OTLP JSON free text outside KeyValue nodes unreduced",
+      "problem": "walk reduces only {key,value} KeyValue nodes and an object body. Span name, status.message, span events, metric name/description, a bare-string body and scope names pass through.",
+      "impact": "Reachability was not confirmed, so the grade is capped at major. Free text in these fields can reach the analytics backend from a reduced session.",
+      "recommendation": "Reduce or drop string values of name, description, body, severityText and status.message unless they are on a keep-list.",
+      "status": "resolved",
+      "check_notes": "reduceChild redacts description/body/message/severityText and non-identifier names",
+      "fix": {
+        "change": "OTLP JSON description/body/message/severityText redacted; names kept only when identifier-like",
+        "test": "otlp-json-reduction.test.ts"
+      },
+      "disposition": {
+        "rationale": "user asked to fix all findings",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-spool/owner-pending-replay.ts",
+      "line": 118,
+      "title": "Owner replay restores real email on reduced events",
+      "problem": "Replay unconditionally sets user_email and developer_name to the verified email on every held event, including events already reduced at hook time.",
+      "impact": "Verified in source. The REDACTED:USER-EMAIL placeholder is replaced by the real email on those events, which are then appended as reduced and not re-reduced.",
+      "recommendation": "For events where hookEventReduced is true, set only identity_source and leave user_email and developer_name redacted.",
+      "status": "resolved",
+      "check_notes": "reduced held events keep redacted identity on replay; test added",
+      "fix": {
+        "change": "owner replay keeps redacted email on reduced events",
+        "test": "owner-pending-scope.test.ts reduced held event"
+      },
+      "disposition": {
+        "rationale": "user asked to fix all findings",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp.plugin.ts",
+      "line": 307,
+      "title": "Reduction binding on hook route and replay untested",
+      "problem": "No test asserts the `reduced` argument passed to appendSpool on the hook ingestion path (otlp.plugin.hooks.test.ts mocks appendSpool and checks only indexes 2 and 3) or on the owner-pending replay path.",
+      "impact": "If either site drops or inverts the flag, status.reduction is never bound, so native OTLP JSON for that session goes out unreduced and protobuf is spooled. No existing test would fail.",
+      "recommendation": "Add tests that post a hook with analytics_reduction true and assert the reduced argument and readStatus(session).reduction, for both the hook route and processPendingOwner.",
+      "status": "resolved",
+      "check_notes": "tests assert reduced arg on hook route and replay status.reduction",
+      "fix": {
+        "change": "tests for reduced argument on hook route and replay status binding",
+        "test": "otlp.plugin.hooks.test.ts; owner-pending-scope.test.ts"
+      },
+      "disposition": {
+        "rationale": "user asked to fix all findings",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/telemetry/runtime/cowork/CoworkEventProducer.ts",
+      "line": 356,
+      "title": "Cowork hook appends never bind session reduction",
+      "problem": "Both appendSpool calls (lines 356 and 436) pass no reduced argument for events stamped analytics_reduction true. The other call sites, otlp.plugin and owner-pending-replay, pass it.",
+      "impact": "Verified in source. status.reduction is not bound for Cowork sessions, so native OTLP for such a session is neither reduced nor dropped, and the session may stay unbound.",
+      "recommendation": "Pass the reduced value from resolveCoworkReduction as the reduced argument of both appendSpool calls.",
+      "status": "resolved",
+      "check_notes": "both Cowork appendSpool calls pass reduced; test added",
+      "fix": {
+        "change": "Cowork appendSpool calls pass reduced",
+        "test": "CoworkEventProducer.test.ts binds the session reduction"
+      },
+      "disposition": {
+        "rationale": "user asked to fix all findings",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-008",
+      "kind": "evidence",
+      "severity": "major",
+      "triage": "patch",
+      "file": "unknown",
+      "title": "Ticket key in all commit subjects",
+      "problem": "All 15 commit subjects embed EPMCDME-17748. git-workflow.md lists this as an anti-pattern and puts the ticket in the body footer.",
+      "impact": "A documented, blocking commit-format rule is broken, and a squash title derived from these subjects would repeat it.",
+      "recommendation": "Use a clean squash title and reference EPMCDME-17748 in the commit body footer. Rewrite subjects only if the user asks for a git operation.",
+      "status": "decided",
+      "check_notes": "recorded decision with rationale: squash with clean title, ticket in footer",
+      "fix": {
+        "change": "no code change: rewriting commit subjects is a git operation left to the user; use a clean squash title",
+        "test": "n/a"
+      },
+      "decision": {
+        "outcome": "no code change; commit subjects are git history, left for the user to squash",
+        "rationale": "Rewriting history is a git operation that needs explicit user request; a clean squash title with the ticket in the footer resolves it"
+      },
+      "disposition": {
+        "rationale": "user asked to fix all findings",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-009",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/agents/core/__tests__/OtlpAgentAdapter.test.ts",
+      "title": "Event-id parity test asserts no event_id",
+      "problem": "The test 'keeps the same story id and event id' asserts only story_id and the unreduced fields, not event_id.",
+      "impact": "Computing event_id after reduction would still pass this test. The adapter-level choice is covered only by direct buildEventId unit tests.",
+      "recommendation": "Assert the event_id relationship through buildEvent, or rename the test.",
+      "status": "wont-fix",
+      "check_notes": "test only renamed; still no event_id assertion",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-010",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/agents/core/analytics-event-key.ts",
+      "line": 431,
+      "title": "Event key file never repairs after bad read",
+      "problem": "If the key file exists but is empty, truncated or the wrong length (including another hook process between wx create and write), the code throws 'invalid analytics event key', falls back to a per-process random key and never repairs the file.",
+      "impact": "Trigger is a first-use race or a corrupt file. Affected hooks get unstable event_ids, so the backend loses dedup for them.",
+      "recommendation": "Write the key via a temp file plus atomic rename, and regenerate on a wrong-length read.",
+      "status": "resolved",
+      "check_notes": "key written via temp file with link/rename; wrong-length file repaired",
+      "fix": {
+        "change": "event key written via temp file then link/rename; wrong-length file repaired",
+        "test": "analytics-event-key.test.ts"
+      },
+      "disposition": {
+        "rationale": "user asked to fix all findings",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-011",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "type": "question",
+      "file": "src/cli/commands/analytics/index.ts",
+      "title": "Is --redact now reduce mode intended?",
+      "problem": "With reduction on, --redact resolves to reduce mode, which shows command name plus ticket and MR refs as the title. Previously --redact blanked titles. The option help still says 'Omit prompt text'.",
+      "impact": "The flag's documented behavior changes silently when reduction is on.",
+      "recommendation": "Confirm the intent and update the option help text, or keep --redact semantics distinct from reduce.",
+      "status": "resolved",
+      "check_notes": "--redact help text now documents reduce-mode behavior",
+      "fix": {
+        "change": "--redact help text states the reduced-title behaviour when reduction is on",
+        "test": "n/a"
+      },
+      "disposition": {
+        "rationale": "user asked to fix all findings",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-012",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/commands/analytics/report/redact.ts",
+      "line": 97,
+      "title": "isReportReductionOn lacks a findNearestConfigDir guard",
+      "problem": "isReportReductionOn calls findNearestConfigDir without try/catch. decideReduction and reduceMetric wrap the same call and fall back to the start dir.",
+      "impact": "Trigger is an unreadable directory or permission error. It aborts the analytics command and the sync report instead of failing closed.",
+      "recommendation": "Catch and fall back to cwd, or treat the error as reduction on.",
+      "status": "resolved",
+      "check_notes": "isReportReductionOn falls back to start dir on error",
+      "fix": {
+        "change": "isReportReductionOn falls back to the start dir when config dir lookup throws",
+        "test": "n/a"
+      },
+      "disposition": {
+        "rationale": "user asked to fix all findings",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-013",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/commands/setup.ts",
+      "title": "Setup step prompt and partial writes not guarded",
+      "problem": "inquirer.prompt is outside the try/catch. A project choice can write the flag and then fail in addOptedInProject while reporting 'Could not save'. Turning off globally leaves project flags and the opted-in list set with no message.",
+      "impact": "Trigger is a non-TTY or aborted prompt, or a partial write failure. It can interrupt handlePluginSetup or leave the user with a misleading message.",
+      "recommendation": "Move the prompt inside the guard, report partial success accurately, and note remaining project flags when turning off globally.",
+      "status": "resolved",
+      "check_notes": "prompt guarded, partial write reported, global-off note added",
+      "fix": {
+        "change": "setup prompt inside guard, partial-write message, off-globally note about project flags",
+        "test": "n/a"
+      },
+      "disposition": {
+        "rationale": "user asked to fix all findings",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-014",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-spool/spool-io.ts",
+      "line": 359,
+      "title": "Unbound session held with no release",
+      "problem": "reductionField returns unbound whenever status.projectScanned is unset, and the idle return has no timeout. A session with native OTLP but no hook is held with the cursor frozen.",
+      "impact": "Trigger is a session whose hooks never arrive. Its native records wait until retention drops them, so the data is lost rather than sent unreduced.",
+      "recommendation": "Release or drop the held stream after a bounded age and log it.",
+      "status": "wont-fix",
+      "check_notes": "intentionally left unfixed; spool-io.ts unchanged",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-015",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/telemetry/runtime/cowork/cowork-events.ts",
+      "title": "Cowork reduction ignores the project config flag",
+      "problem": "resolveCoworkReduction reads only the global flag and the home-level opted-in list. It never reads the project .codemie/codemie-cli.config.json flag that the hook path and metrics sender honor.",
+      "impact": "Trigger is a project flag set by hand or committed to a repo. It reduces hooks but not Cowork events. AC19 as written (global or opted-in list) is met.",
+      "recommendation": "Also consult the project config flag for the Cowork working directory, with realpath comparison.",
+      "status": "resolved",
+      "check_notes": "resolveCoworkReduction now consults nearest project config for the working directory",
+      "fix": {
+        "change": "resolveCoworkReduction also reads the project config flag of the working directory",
+        "test": "n/a"
+      },
+      "disposition": {
+        "rationale": "user asked to fix all findings",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "AC2: per-project opt-in reduces that project on every route",
+      "status": "partial",
+      "notes": "sync/report decide from process.cwd(), not each session's working directory"
+    },
+    {
+      "kind": "spec",
+      "item": "AC15: failed field reduction sent as REDACTED:FAILED, metrics still sent",
+      "status": "partial",
+      "notes": "only the reduceRecord field loop is guarded; reducePrompt/reduceBranch calls are not"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "fail",
+      "notes": "All 15 subjects embed ticket key EPMCDME-17748; git-workflow.md puts it in the body footer"
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "No rule violation attributable to this change was confirmed"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "No header injection outside the canonical injector, no exec use, no hardcoded secrets in added lines"
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "Two story criteria are only partly met (AC2 sync/report decide from process.cwd(); AC15 reducePrompt/reduceBranch calls are unguarded), and replay re-identifies reduced events. Reachability was verified for 4 candidates (owner-pending replay, report cwd, event key, Cowork binding); the rest keep lens grading, so confidence is low. 0 deferred, 7 advisory (in the total), 2 dismissed.",
+    "confidence": "low",
+    "risk_flags": [
+      "security",
+      "data-contract"
+    ]
+  }
+}
