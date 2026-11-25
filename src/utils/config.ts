@@ -728,11 +728,17 @@ export class ConfigLoader {
       return rawConfig;
     }
 
-    if (Object.keys(rawConfig).length === 0) {
+    // A file written by `codemie setup` that holds only the analytics setting (EPMCDME-17748) has no
+    // profiles: read it as an empty config that keeps its `analytics` block.
+    const { analytics, ...rest } = rawConfig as Record<string, unknown>;
+    if (Object.keys(rest).length === 0) {
       return {
         version: 2,
         activeProfile: 'default',
-        profiles: {}
+        profiles: {},
+        ...(typeof analytics === 'object' && analytics !== null && !Array.isArray(analytics)
+          ? { analytics: analytics as MultiProviderConfig['analytics'] }
+          : {})
       };
     }
 
@@ -996,11 +1002,15 @@ export class ConfigLoader {
         config.activeProfile = profileName;
         await fs.writeFile(localConfigPath, JSON.stringify(config, null, 2), 'utf-8');
       } else {
-        // Create proper multi-provider structure if needed
+        // Create proper multi-provider structure if needed, keeping the analytics setting of the old file
+        const previousAnalytics = (config as Record<string, unknown>)['analytics'];
         const newConfig: MultiProviderConfig = {
           version: 2,
           activeProfile: profileName,
-          profiles: {}
+          profiles: {},
+          ...(typeof previousAnalytics === 'object' && previousAnalytics !== null && !Array.isArray(previousAnalytics)
+            ? { analytics: previousAnalytics as MultiProviderConfig['analytics'] }
+            : {})
         };
         await fs.writeFile(localConfigPath, JSON.stringify(newConfig, null, 2), 'utf-8');
       }
@@ -1242,13 +1252,17 @@ export class ConfigLoader {
     // `codemie setup` saved here (EPMCDME-17748); an unreadable file simply has none to carry.
     let analytics: MultiProviderConfig['analytics'];
     try {
-      const existing = (await this.loadJsonConfig(configPath)) as Record<string, unknown>;
+      const existing = JSON.parse(await fs.readFile(configPath, 'utf-8')) as Record<string, unknown>;
       const value = existing['analytics'];
       if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
         analytics = value as MultiProviderConfig['analytics'];
       }
-    } catch {
-      analytics = undefined;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        // Present but unreadable or not JSON: the setting cannot be told, so fail closed like every other reader.
+        logger.warn('[analytics] Project config unreadable while rewriting it; keeping prompt reduction on', { path: configPath });
+        analytics = { promptReduction: true };
+      }
     }
 
     const config: MultiProviderConfig = {

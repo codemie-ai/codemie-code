@@ -92,14 +92,54 @@ describe('ConfigLoader - Project-Level Configuration', () => {
       expect(config.analytics).toEqual({ promptReduction: true });
     });
 
-    it('writes no analytics key when the project config had none or was unreadable', async () => {
+    it('writes no analytics key when the project config had none', async () => {
+      const workingDir = path.join(TEST_DIR, 'project');
+      await fs.writeFile(LOCAL_CONFIG_PATH, JSON.stringify({ version: 2, activeProfile: 'old', profiles: { old: {} } }));
+
+      await ConfigLoader.initProjectConfig(workingDir);
+
+      const config = JSON.parse(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8'));
+      expect(config.analytics).toBeUndefined();
+    });
+
+    it('fails closed when the existing project config is unreadable: reduction stays on', async () => {
       const workingDir = path.join(TEST_DIR, 'project');
       await fs.writeFile(LOCAL_CONFIG_PATH, '{ not json');
 
       await ConfigLoader.initProjectConfig(workingDir);
 
       const config = JSON.parse(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8'));
-      expect(config.analytics).toBeUndefined();
+      expect(config.analytics).toEqual({ promptReduction: true });
+    });
+
+    it('loads a project file that holds only the analytics setting, keeping it', async () => {
+      const workingDir = path.join(TEST_DIR, 'project');
+      await fs.writeFile(LOCAL_CONFIG_PATH, JSON.stringify({ analytics: { promptReduction: true } }));
+
+      const config = await ConfigLoader.loadLocalMultiProviderConfig(workingDir);
+
+      expect(config.profiles).toEqual({});
+      expect(config.analytics).toEqual({ promptReduction: true });
+      await expect(ConfigLoader.load(workingDir)).resolves.toBeDefined();
+    });
+
+    it('keeps the analytics setting when a profile switch rewrites a project file that holds only that setting', async () => {
+      const workingDir = path.join(TEST_DIR, 'project');
+      await fs.writeFile(GLOBAL_CONFIG_PATH, JSON.stringify({ version: 2, activeProfile: 'g', profiles: { g: { name: 'g', provider: 'openai' } } }));
+      await fs.writeFile(LOCAL_CONFIG_PATH, JSON.stringify({ analytics: { promptReduction: true } }));
+
+      await ConfigLoader.switchProfile('g', workingDir);
+
+      const config = JSON.parse(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8'));
+      expect(config.activeProfile).toBe('g');
+      expect(config.analytics).toEqual({ promptReduction: true });
+    });
+
+    it('still rejects a project file with other unrecognised content', async () => {
+      const workingDir = path.join(TEST_DIR, 'project');
+      await fs.writeFile(LOCAL_CONFIG_PATH, JSON.stringify({ analytics: { promptReduction: true }, other: 1 }));
+
+      await expect(ConfigLoader.loadLocalMultiProviderConfig(workingDir)).rejects.toThrow('Unrecognized config format');
     });
 
     it('should apply codeMieProject override into workspace, not the profile', async () => {
