@@ -12,6 +12,7 @@ import type {
   LocalTelemetryDiscoveredSession
 } from '@/telemetry/runtime/types.js';
 import { desktopEndTime } from '@/telemetry/runtime/desktop-session.js';
+import { claudeAnalyticsCollecting } from '@/telemetry/runtime/analytics-switch.js';
 import { logger } from '@/utils/logger.js';
 
 /** The processing context and the start / end metrics of a Desktop session. */
@@ -27,10 +28,11 @@ export class DesktopSessionMetrics {
   }
 
   /**
-   * The daemon holds the cookies a delivery would carry and the server has not rejected them; without
-   * them a delivery makes no request and spends no attempt.
+   * Analytics are on, the daemon holds the cookies a delivery would carry and the server has not rejected them;
+   * otherwise a delivery makes no request and spends no attempt.
    */
   async canDeliver(): Promise<boolean> {
+    if (!(await claudeAnalyticsCollecting())) return false;
     const urls = [this.credentialsUrl, this.config.syncApiUrl || this.config.targetApiUrl, this.config.targetApiUrl];
     return !(await analyticsAuthMarkedInvalid(urls)) && (await this.loadCookieAuth()).cookies !== '';
   }

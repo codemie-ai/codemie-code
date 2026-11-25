@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "generated": "2026-11-18T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 24,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 24,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "New cloud-provider-conflict module (provider, resolver, prompt, gate, switcher) wired into three entry flows: AgentCLI launch, codemie install claude, and proxy connect orchestrator plus the Desktop connector. It reuses shared helpers in claude-code-otlp claude-settings-env and evidence/routing, which were also modified." },
+    { "dimension": "technical_risk", "reason": "Rewrites users' Claude Code, Claude Desktop and VS Code settings files. It adds a layered precedence resolver (managed plist/registry/drop-ins, project, local, user, env), a byte-exact credential-bearing backup at 0600, atomic writes with mtime/size change detection, and rollback on partial failure. There is no exact precedent for this, and it is security-sensitive (secrets in backups, values never logged). The edge cases are enumerated (managed policy, unknown, non-interactive, cancel), and each has a dedicated test suite." },
+    { "dimension": "file_change_estimate", "reason": "24 files and 4658 insertions across src/agents/core, src/agents/plugins/claude, src/agents/plugins/claude-code-otlp and src/cli/commands (install, proxy, connectors). About 5 new source modules and 8 new test files. Roughly 14 of the files are tests, which lifts the count but not the product risk proportionally." },
+    { "dimension": "affected_layers", "reason": "CLI (prompt and guidance), service logic (resolver, gate), persistence (settings file read, backup and atomic write on the filesystem), and infrastructure/OS policy sources (macOS plist via plutil, Windows registry via reg). The settings belong to three external tools (Claude Code, Claude Desktop, VS Code)." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk held at XL: security-sensitive handling of credentials in backups, with writes to user config files and rollback",
+    "Component Scope XL: touches shared utilities (claude-settings-env, routing) and multiple workflows (agent launch, install, proxy connect)"
+  ],
+  "split_recommendation": null
+}

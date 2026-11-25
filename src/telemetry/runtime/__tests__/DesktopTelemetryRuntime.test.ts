@@ -3029,4 +3029,129 @@ describe('DesktopTelemetryRuntime', () => {
       });
     });
   });
+
+  describe('the Claude analytics switch', () => {
+    const setSwitch = (enabled: boolean): void => {
+      writeFileSync(join(codemieHome, 'claude-analytics.json'), JSON.stringify({ enabled }));
+    };
+    const sendsSoFar = () => ({
+      starts: mockSendSessionStart.mock.calls.length,
+      ends: mockSendSessionEnd.mock.calls.length,
+      syncs: mockSync.mock.calls.length
+    });
+
+    it('off: nothing is discovered, recorded or sent, the Cowork producer still runs, and stop() sends no end metric', async () => {
+      setSwitch(false);
+      openDesktopChat('ext-1', 2, T0);
+      const run = vi.fn(async (_now: number, _connected?: boolean) => undefined);
+      const runtime = new DesktopTelemetryRuntime(createAdapter(), config, { run });
+
+      await runtime.triggerPoll();
+      await pollTicks(runtime, 3);
+      await (runtime as any).cowork.inFlight;
+      await runtime.stop();
+
+      expect(sendsSoFar()).toEqual({ starts: 0, ends: 0, syncs: 0 });
+      expect(persistedRecords()).toEqual([]);
+      expect(run).toHaveBeenCalled();
+      expect(run.mock.calls.every(([, connected]) => connected === true)).toBe(true);
+    });
+
+    it('sends what a tracked chat gained while off once analytics are enabled', async () => {
+      openDesktopChat('ext-1', 2, T0);
+      const adapter = createAdapter();
+      const daemon = await startDaemon(adapter);
+      expect(sentDeltas).toEqual([{ externalSessionId: 'ext-1', historyIndices: [0, 1] }]);
+      sentDeltas.length = 0;
+
+      setSwitch(false);
+      appendMessages('ext-1', 1);
+      await pollTicks(daemon, 2);
+      expect(sentDeltas).toEqual([]);
+
+      setSwitch(true);
+      await pollTicks(daemon, 1);
+
+      expect(sentDeltas).toEqual([{ externalSessionId: 'ext-1', historyIndices: [2] }]);
+      expect(adapter.applyBaseline).not.toHaveBeenCalled();
+    });
+
+    it('sends a chat opened while off in full once analytics are enabled', async () => {
+      const adapter = createAdapter();
+      const daemon = await startDaemon(adapter);
+
+      setSwitch(false);
+      vi.setSystemTime(Date.now() + 1_000);
+      openDesktopChat('ext-1', 3, Date.now());
+      await pollTicks(daemon, 2);
+      expect(sendsSoFar()).toEqual({ starts: 0, ends: 0, syncs: 0 });
+      expect(sentDeltas).toEqual([]);
+
+      setSwitch(true);
+      await pollTicks(daemon, 1);
+
+      expect(mockSendSessionStart).toHaveBeenCalledOnce();
+      expect(sentDeltas).toEqual([{ externalSessionId: 'ext-1', historyIndices: [0, 1, 2] }]);
+      expect(adapter.applyBaseline).not.toHaveBeenCalled();
+    });
+
+    it('stop() while off sends nothing and leaves the chat\'s record to be delivered after enable', async () => {
+      openDesktopChat('ext-1', 2, T0);
+      const daemon = await startDaemon(createAdapter());
+      const sessionId = sessionIdFor('ext-1')!;
+      mockSendSessionEnd.mockClear();
+
+      setSwitch(false);
+      await daemon.stop();
+
+      expect(mockSendSessionEnd).not.toHaveBeenCalled();
+      expect(existsSync(join(sessionsDir(), `${sessionId}.json`))).toBe(true);
+
+      setSwitch(true);
+      await startRuntime(createAdapter());
+
+      expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+      expect(existsSync(join(sessionsDir(), `${sessionId}.json`))).toBe(false);
+    });
+
+    it('a corrupt file sends nothing and warns once; collection resumes when it reads valid again', async () => {
+      const warn = vi.spyOn(logger, 'warn');
+      const daemon = await startDaemon(createAdapter());
+
+      writeFileSync(join(codemieHome, 'claude-analytics.json'), '{not json');
+      vi.setSystemTime(Date.now() + 1_000);
+      openDesktopChat('ext-1', 1, Date.now());
+      await pollTicks(daemon, 2);
+      expect(sendsSoFar()).toEqual({ starts: 0, ends: 0, syncs: 0 });
+      expect(warn.mock.calls.filter(([message]) => String(message).includes('preferences file unreadable'))).toHaveLength(1);
+
+      setSwitch(true);
+      await pollTicks(daemon, 1);
+
+      expect(sendsSoFar().starts).toBe(1);
+      expect(sentDeltas).toEqual([{ externalSessionId: 'ext-1', historyIndices: [0] }]);
+    });
+
+    it('reopens a chat finalized before the pause and sends what it gained while off', async () => {
+      openDesktopChat('ext-1', 2, T0);
+      const daemon = await startDaemon(createAdapter());
+      const sessionId = sessionIdFor('ext-1')!;
+      await pollTicks(daemon, INACTIVITY_TIMEOUT_MS / POLL_INTERVAL_MS + 1);
+      expect(readRecord(sessionId)!.status).toBe('completed');
+      sentDeltas.length = 0;
+      mockSendSessionStart.mockClear();
+
+      setSwitch(false);
+      appendMessages('ext-1', 1);
+      await pollTicks(daemon, 2);
+      expect(sentDeltas).toEqual([]);
+
+      setSwitch(true);
+      await pollTicks(daemon, 1);
+
+      expect(mockSendSessionStart).not.toHaveBeenCalled();
+      expect(readRecord(sessionId)!.status).toBe('active');
+      expect(sentDeltas).toEqual([{ externalSessionId: 'ext-1', historyIndices: [2] }]);
+    });
+  });
 });

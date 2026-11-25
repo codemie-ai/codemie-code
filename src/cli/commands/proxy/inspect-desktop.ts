@@ -13,6 +13,7 @@ import {
   getClaudeDesktopCodeSessionsRoot,
   getClaudeDesktopLocalSessionsRoot
 } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
+import { readClaudeAnalyticsSwitch } from '@/telemetry/runtime/analytics-switch.js';
 import type { LocalTelemetryDiscoveredSession } from '@/telemetry/runtime/types.js';
 import type { DaemonState } from './daemon-manager.js';
 
@@ -80,6 +81,7 @@ async function inspectSessions(
   const connectedSince = daemonState?.desktopConnectedSince
     ? new Date(daemonState.desktopConnectedSince).getTime()
     : undefined;
+  const analytics = await readClaudeAnalyticsSwitch();
   const inspections: DesktopSessionInspection[] = [];
 
   for (const discovered of sessions) {
@@ -93,6 +95,12 @@ async function inspectSessions(
       reasons.push('daemon-of-older-cli');
     } else if (connectedSince === undefined) {
       reasons.push('desktop-not-connected');
+    }
+
+    if (analytics === 'off') {
+      reasons.push('analytics-disabled');
+    } else if (analytics === 'corrupt') {
+      reasons.push('analytics-preferences-corrupt');
     }
 
     if (connectedSince !== undefined && discovered.createdAt < connectedSince && !persisted) {

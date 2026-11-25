@@ -1,0 +1,26 @@
+{
+  "decision": "approve",
+  "rationale": "All four lenses and standards ran; candidates (orphan pin files, funding after served-mark prune, permanent empty pin, lock/link/TOCTOU speculation) were checked against source and dismissed as baseline-consistent or unreachable (16 dismissed, 0 deferred). EPMCDME-17410 AC1 is partial only via the user-accepted upgrade edge case, no-project sessions that are never sent, and non-header-safe project names; AC2 backend spend is pending-stage-7, so confidence is medium. Human security sign-off remains an external merge gate.",
+  "confidence": "medium",
+  "risk_flags": [],
+  "business_review": [
+    { "kind": "story-ac", "item": "EPMCDME-17385 AC1: project stays under P1 after folder added; no conflict discard; session final", "status": "pass", "notes": "pinAttribution feeds envelope(); tests assert no projectConflict and final summary+end." },
+    { "kind": "story-ac", "item": "EPMCDME-17385 AC2: established project unchanged on folder/metadata change or restart", "status": "pass", "notes": "write-once pin file; spool-bound project kept when pin missing." },
+    { "kind": "story-ac", "item": "EPMCDME-17385 AC3: task whose folder never changes behaves unchanged", "status": "pass", "notes": "Same ConfigLoader rules via resolveProject." },
+    { "kind": "story-ac", "item": "EPMCDME-17385 AC4: native Claude Code sessions unchanged", "status": "pass", "notes": "Only Cowork producer touched; forwarder branch gated by served mark." },
+    { "kind": "spec", "item": "EPMCDME-17385: project resolved once before first events appended", "status": "pass", "notes": "Lookup failure propagates before any append." },
+    { "kind": "spec", "item": "EPMCDME-17385 tests: add/remove/reorder, restart, spool integration", "status": "pass", "notes": "Backend-side finality verified by mocked HTTP and local-backend runs r4/r6." },
+    { "kind": "story-ac", "item": "EPMCDME-17410 AC1: sent Cowork session has subscription_type codemie", "status": "partial", "notes": "Withheld only for accepted upgrade edge case, no served mark, or non-header-safe project; no-project sessions are not sent." },
+    { "kind": "story-ac", "item": "EPMCDME-17410 AC2: cost appears as CodeMie spend on CLI Analytics", "status": "pending-stage-7", "notes": "Backend aggregation not verifiable from diff." },
+    { "kind": "story-ac", "item": "EPMCDME-17410 AC3: Cowork still needs no folder consent", "status": "pass", "notes": "No consent header added; header set asserted." },
+    { "kind": "story-ac", "item": "EPMCDME-17410 AC4: native Claude Code sessions unchanged", "status": "pass", "notes": "Funding branch requires no evidence, no guard and a served mark." },
+    { "kind": "spec", "item": "EPMCDME-17410 tests: header unit tests; backend stored/spend integration", "status": "partial", "notes": "Unit header tests present; backend integration covered by external local runs, not in diff." }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "pass", "notes": "13 subjects use allowed types and scope, under 100 chars." },
+    { "kind": "code-quality", "status": "pass", "notes": "Conventions followed; CoworkEventProducer.ts under 500 lines; tests added." },
+    { "kind": "security", "status": "pass", "notes": "Source-backed security review recorded; human PR sign-off remains a merge-time item." }
+  ],
+  "findings": [],
+  "deferred": []
+}

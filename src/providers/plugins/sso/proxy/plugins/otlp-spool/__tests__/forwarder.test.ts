@@ -839,6 +839,29 @@ describe('send outcomes and evidence requests (Task 13)', () => {
     expect(headersOf(0)['X-CodeMie-Project']).toBe('Proj A');
   });
 
+  it('a recorded session never declares Cowork funding, even when it would pass the funding gate (EPMCDME-17410)', async () => {
+    readStatusMock.mockResolvedValue({ sendMode: 'legacy', producerAttribution: { project: 'Proj A', projectSource: 'profile', routedViaCodemie: true } });
+    fetchMock.mockImplementation(async () => json({}));
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', true, credentials);
+    expect(headersOf(0)).not.toHaveProperty('X-CodeMie-Routed-Via-CodeMie');
+    expect(headersOf(0)).not.toHaveProperty('X-CodeMie-Subscription-Type');
+    expect(headersOf(0)).not.toHaveProperty('X-CodeMie-Session-Id');
+    expect(headersOf(0)['X-CodeMie-Project']).toBe('Proj A');
+  });
+
+  it('an unrecorded session forwards producer funding metadata from the shared spool', async () => {
+    readRecordMock.mockResolvedValue(null);
+    readStatusMock.mockResolvedValue({ sendMode: 'legacy', producerAttribution: { project: 'Proj A', projectSource: 'profile', routedViaCodemie: true } });
+    fetchMock.mockImplementation(async () => json({}));
+    const { forwardSession } = await import('../forwarder.js');
+    await forwardSession('s1', true, credentials);
+    expect(headersOf(0)).toMatchObject({
+      'X-CodeMie-Session-Id': 's1', 'X-CodeMie-Project': 'Proj A',
+      'X-CodeMie-Routed-Via-CodeMie': 'true', 'X-CodeMie-Subscription-Type': 'codemie', 'X-CodeMie-Project-Source': 'profile',
+    });
+  });
+
   it('hooks 2xx with an empty/non-JSON body: legacy acknowledges the range, an evidence request keeps it queued', async () => {
     snapshotPendingHookRecordsMock.mockResolvedValue({ ...hooksBatch([line('s1')]), cursor: 0 });
     fetchMock.mockImplementation(async () => new Response('', { status: 200, headers: { 'content-type': 'text/plain' } }));

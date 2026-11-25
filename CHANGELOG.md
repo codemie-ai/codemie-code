@@ -4,6 +4,34 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-11-24
+
+### Added
+
+- `codemie proxy connect --claude-otlp --include-personal-subscriptions` sends analytics from personal Claude subscriptions: for this repository with `--scope project`, for any repository with `--scope user`. Without the flag, an interactive connect asks; `--yes` records consent only with the flag
+- `codemie proxy analytics consent grant --all` and `revoke --all` manage a consent that covers any repository (`any repository` in `consent list` and `status`)
+- `codemie proxy doctor` shows an `On hold:` / `Fix:` pair under `Unsent data` for sessions held back for lack of consent
+
+### Fixed
+
+- The statusline refreshes every 60 seconds again instead of polling budget usage every 3 seconds
+- Copilot sessions without session state no longer end with a spurious session-end event in analytics
+- The CodeMie Claude extension stays enabled when `--plugin-dir` is passed to Claude
+
+## [0.17.1] - 2026-11-23
+
+### Fixed
+
+- Analytics prices GPT-6.2 Sol and Gemini 4 Carbon sessions instead of leaving their cost empty
+- A Claude Code `Agent` or `Task` call that was denied or failed (by a hook, a permission prompt or an error) is no longer counted as an agent in the session's agent count in CLI Analytics; calls that ran are counted as before, and a call whose result has not arrived yet is counted only once that result succeeds. In the per-record agent metrics of a live session, a call whose turn is still held back at the end of the session (for example, a sibling tool call that never got a result) and that is followed by a later turn can be missed; the session summary count is not affected. Skill counts are unchanged
+- `codemie-claude` detects Claude settings that route requests through Amazon Bedrock instead of the CodeMie gateway and stops with guidance (and offers to switch) instead of silently bypassing CodeMie
+- Claude Desktop collection stops while analytics are disabled, and `proxy analytics disable` / `exclude` name the channels they do not cover
+- The Cowork session's project is pinned and its CodeMie funding is declared in CLI Analytics
+- Copilot turns count only user prompts, `total_user_prompts` counts all of them, trailing Copilot desktop blocks are stripped from the session prompt, and tools that run no hooks are backfilled
+- IDE context is stripped from Claude OTLP prompts and task notifications are flagged
+- Hook commands no longer relaunch agent wrappers
+
+
 ## [0.17.0] - 2026-11-19
 
 ### Added

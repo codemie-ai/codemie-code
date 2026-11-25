@@ -100,7 +100,7 @@ export class DesktopSessionDelivery {
   private async deliverLocked(record: Session, options: { flush: boolean }): Promise<void> {
     const sessionId = record.sessionId;
     if (!(await this.metrics.canDeliver())) {
-      logger.info('[desktop-telemetry] No usable analytics credentials; record kept for a re-login, nothing sent', { sessionId });
+      logger.info('[desktop-telemetry] Analytics off or no usable credentials; nothing sent', { sessionId });
       await this.sessionStore.saveSession(record);
       if (options.flush) {
         await this.flushTranscript(record, false);

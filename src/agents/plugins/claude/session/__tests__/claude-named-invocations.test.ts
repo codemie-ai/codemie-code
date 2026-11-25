@@ -4,7 +4,12 @@
  * session adapter's parse path (native/untracked sessions).
  */
 import { describe, it, expect } from 'vitest';
-import { extractNamedInvocations, extractOrderedNamedInvocations } from '../claude-named-invocations.js';
+import {
+  collectFailedToolUseIds,
+  collectToolOutcomes,
+  extractNamedInvocations,
+  extractOrderedNamedInvocations,
+} from '../claude-named-invocations.js';
 
 function toolUse(name: string, input: Record<string, unknown>) {
   return { message: { role: 'assistant', content: [{ type: 'tool_use', name, input }] } };
@@ -184,5 +189,134 @@ describe('extractOrderedNamedInvocations', () => {
   it('keeps extractNamedInvocations free of the ordered list', () => {
     const out = extractNamedInvocations([userStringContent(commandWrapper('plan'))]);
     expect(Object.keys(out).sort()).toEqual(['agentInvocations', 'commandInvocations', 'skillInvocations']);
+  });
+});
+
+/** A tool_use carrying the `id` a later tool_result points back to. */
+function toolUseWithId(id: string, name: string, input: Record<string, unknown>) {
+  return { message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } };
+}
+
+function toolResultMsg(id: string, flag: { is_error?: boolean; isError?: boolean }, content = 'ok') {
+  return {
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content, ...flag }] },
+  };
+}
+
+describe('failed Agent/Task calls (EPMCDME-15557)', () => {
+  const outcomesOf = (messages: unknown[]) => collectToolOutcomes(messages);
+
+  it('collectFailedToolUseIds collects is_error and isError results across messages', () => {
+    const ids = collectFailedToolUseIds([
+      toolResultMsg('a', { is_error: true }),
+      toolResultMsg('b', { isError: true }),
+      toolResultMsg('c', { is_error: false }),
+      toolResultMsg('d', {}),
+      userStringContent('plain text'),
+      { message: { role: 'user', content: [{ type: 'tool_result', content: 'no id', is_error: true }] } },
+      null,
+    ]);
+    expect([...ids].sort()).toEqual(['a', 'b']);
+  });
+
+  it('collectToolOutcomes marks each tool_use_id ok or failed, and a failed result wins', () => {
+    const outcomes = collectToolOutcomes([
+      toolResultMsg('a', { is_error: true }),
+      toolResultMsg('b', { isError: true }),
+      toolResultMsg('c', { is_error: false }),
+      toolResultMsg('d', {}),
+      toolResultMsg('e', { is_error: false }),
+      toolResultMsg('e', { is_error: true }),
+      toolResultMsg('f', { is_error: true }),
+      toolResultMsg('f', { is_error: false }),
+      { message: { role: 'user', content: [{ type: 'tool_result', content: 'no id', is_error: true }] } },
+      userStringContent('plain text'),
+      null,
+    ]);
+    expect(Object.fromEntries(outcomes)).toEqual({
+      a: 'failed', b: 'failed', c: 'ok', d: 'ok', e: 'failed', f: 'failed',
+    });
+  });
+
+  it('skips a denied Agent call whose result arrives in a later message', () => {
+    const messages = [
+      toolUseWithId('t1', 'Agent', { subagent_type: 'Explore' }),
+      toolResultMsg('t1', { is_error: true }, 'QA-15557 deny'),
+    ];
+    expect(extractNamedInvocations(messages, outcomesOf(messages)).agentInvocations).toEqual({});
+  });
+
+  it('skips a denied Task call the same way as Agent', () => {
+    const messages = [
+      toolUseWithId('t1', 'Task', { subagent_type: 'Explore' }),
+      toolResultMsg('t1', { is_error: true }, 'QA-15557 deny'),
+    ];
+    expect(extractNamedInvocations(messages, outcomesOf(messages)).agentInvocations).toEqual({});
+  });
+
+  it('skips a call flagged with camelCase isError', () => {
+    const messages = [
+      toolUseWithId('t1', 'Agent', { subagent_type: 'Explore' }),
+      toolResultMsg('t1', { isError: true }),
+    ];
+    expect(extractNamedInvocations(messages, outcomesOf(messages)).agentInvocations).toEqual({});
+  });
+
+  it('counts the same subtype once when one call is denied and one allowed', () => {
+    const messages = [
+      toolUseWithId('t1', 'Agent', { subagent_type: 'Explore' }),
+      toolResultMsg('t1', { is_error: true }, 'denied'),
+      toolUseWithId('t2', 'Agent', { subagent_type: 'Explore' }),
+      toolResultMsg('t2', { is_error: false }),
+    ];
+    expect(extractNamedInvocations(messages, outcomesOf(messages)).agentInvocations).toEqual({ Explore: 1 });
+  });
+
+  it('does not count a call until its result has arrived, but counts a call without an id', () => {
+    const messages = [
+      toolUseWithId('t1', 'Agent', { subagent_type: 'Explore' }),
+      toolUse('Agent', { subagent_type: 'Plan' }),
+    ];
+    expect(extractNamedInvocations(messages, outcomesOf(messages)).agentInvocations).toEqual({ Plan: 1 });
+  });
+
+  it('counts the call once its successful result arrives', () => {
+    const pending = [toolUseWithId('t1', 'Agent', { subagent_type: 'Explore' })];
+    const resolved = [...pending, toolResultMsg('t1', { is_error: false })];
+    expect(extractNamedInvocations(pending, outcomesOf(pending)).agentInvocations).toEqual({});
+    expect(extractNamedInvocations(resolved, outcomesOf(resolved)).agentInvocations).toEqual({ Explore: 1 });
+  });
+
+  it('counts every call when no outcomes are passed', () => {
+    const messages = [
+      toolUseWithId('t1', 'Agent', { subagent_type: 'Explore' }),
+      toolResultMsg('t1', { is_error: true }),
+    ];
+    expect(extractNamedInvocations(messages).agentInvocations).toEqual({ Explore: 1 });
+  });
+
+  it('does not change Skill counting: a failed and a pending Skill call are still counted', () => {
+    const messages = [
+      toolUseWithId('t1', 'Skill', { skill: 'codemie:msgraph' }),
+      toolResultMsg('t1', { is_error: true }),
+      toolUseWithId('t2', 'Skill', { skill: 'tech-lead' }),
+    ];
+    expect(extractNamedInvocations(messages, outcomesOf(messages)).skillInvocations).toEqual({
+      'codemie:msgraph': 1,
+      'tech-lead': 1,
+    });
+  });
+
+  it('ordered and unordered extractors agree when a failed set is passed', () => {
+    const messages = [
+      toolUseWithId('t1', 'Agent', { subagent_type: 'Explore' }),
+      toolResultMsg('t1', { is_error: true }),
+      toolUseWithId('t2', 'Task', { subagent_type: 'Plan' }),
+      toolResultMsg('t2', {}),
+    ];
+    const failed = outcomesOf(messages);
+    const { commandsInOrder: _ignored, ...ordered } = extractOrderedNamedInvocations(messages, undefined, failed);
+    expect(ordered).toEqual(extractNamedInvocations(messages, failed));
+    expect(ordered.agentInvocations).toEqual({ Plan: 1 });
   });
 });

@@ -8,7 +8,11 @@
  *
  * - Skills:   `tool_use` block with `name === 'Skill'` → `input.skill` (e.g. "codemie:msgraph")
  * - Agents:   `tool_use` block with `name === 'Agent'` (this CLI) or `'Task'` (standard Claude
- *             Code) → `input.subagent_type` (e.g. "Explore", "sdlc-factory:tech-analyst")
+ *             Code) → `input.subagent_type` (e.g. "Explore", "sdlc-factory:tech-analyst").
+ *             Counted only once its `tool_result` has arrived and is not an error: a denied,
+ *             rejected or failed call never started an agent, and a call still waiting for its
+ *             result could turn out to be denied with nothing left to subtract it. A call with
+ *             no `id` cannot be matched to a result and is counted. See {@link collectToolOutcomes}.
  * - Commands: user message whose text carries the Claude CLI slash-command wrapper. A genuine
  *   invocation always includes a `<command-message>` sibling alongside `<command-name>`; we
  *   require it so documentation/prose that merely mentions `<command-name>` is not miscounted.
@@ -29,9 +33,13 @@ export interface OrderedNamedInvocations extends NamedInvocationCounts {
 
 interface RawBlock {
   type?: string;
+  id?: unknown;
   name?: string;
   input?: { skill?: unknown; subagent_type?: unknown };
   text?: unknown;
+  tool_use_id?: unknown;
+  is_error?: unknown;
+  isError?: unknown;
 }
 
 interface RawMessage {
@@ -65,13 +73,54 @@ function bump(map: Record<string, number>, key: string): void {
   map[key] = (map[key] || 0) + 1;
 }
 
+/** How a tool call ended: its result succeeded, or carried an `is_error`/`isError` flag. */
+export type ToolOutcome = 'ok' | 'failed';
+
+/**
+ * The outcome of every tool call that has a `tool_result`, by `tool_use_id`, across the whole
+ * message list. Claude Code reports a denied (hook, permission prompt, classifier) or failed tool
+ * call with an error flag, so a `failed` call never ran. A call with no entry has no result yet.
+ * When one id has several results, `failed` wins. Build it from the FULL transcript: the result
+ * sits in a later message than its call, and callers that count a slice of messages would
+ * otherwise miss it.
+ */
+export function collectToolOutcomes(messages: readonly unknown[]): Map<string, ToolOutcome> {
+  const outcomes = new Map<string, ToolOutcome>();
+  for (const raw of messages) {
+    const content = (raw as RawMessage | null)?.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const item of content as RawBlock[]) {
+      if (item?.type !== 'tool_result' || typeof item.tool_use_id !== 'string') continue;
+      const failed = item.is_error === true || item.isError === true;
+      if (failed || !outcomes.has(item.tool_use_id)) {
+        outcomes.set(item.tool_use_id, failed ? 'failed' : 'ok');
+      }
+    }
+  }
+  return outcomes;
+}
+
+/** The `tool_use_id`s whose result carried an error flag (see {@link collectToolOutcomes}). */
+export function collectFailedToolUseIds(messages: readonly unknown[]): Set<string> {
+  const failed = new Set<string>();
+  for (const [id, outcome] of collectToolOutcomes(messages)) {
+    if (outcome === 'failed') failed.add(id);
+  }
+  return failed;
+}
+
 /**
  * Extract skill / agent / command name counts from a flat list of Claude messages.
  * Safe against missing or malformed fields — anything that isn't a recognized shape is skipped.
+ * When `toolOutcomes` (see {@link collectToolOutcomes}) is given, an `Agent`/`Task` call with an id
+ * is counted only if its result has arrived and succeeded; without it every call is counted.
  */
-export function extractNamedInvocations(messages: readonly unknown[]): NamedInvocationCounts {
+export function extractNamedInvocations(
+  messages: readonly unknown[],
+  toolOutcomes?: ReadonlyMap<string, ToolOutcome>
+): NamedInvocationCounts {
   const { skillInvocations, agentInvocations, commandInvocations } =
-    extractOrderedNamedInvocations(messages);
+    extractOrderedNamedInvocations(messages, undefined, toolOutcomes);
   return { skillInvocations, agentInvocations, commandInvocations };
 }
 
@@ -81,7 +130,8 @@ export function extractNamedInvocations(messages: readonly unknown[]): NamedInvo
  */
 export function extractOrderedNamedInvocations(
   messages: readonly unknown[],
-  forkedSlashPromptIds?: ReadonlySet<string>
+  forkedSlashPromptIds?: ReadonlySet<string>,
+  toolOutcomes?: ReadonlyMap<string, ToolOutcome>
 ): OrderedNamedInvocations {
   const skillInvocations: Record<string, number> = {};
   const agentInvocations: Record<string, number> = {};
@@ -143,6 +193,10 @@ export function extractOrderedNamedInvocations(
           (item.name === 'Agent' || item.name === 'Task') &&
           typeof item.input?.subagent_type === 'string'
         ) {
+          // Count the launch only once it is known to have run: a denied/errored call never
+          // started an agent, and a call with no result yet may still be denied (nothing could
+          // subtract it later). A call without an id cannot be matched to a result and counts.
+          if (toolOutcomes && typeof item.id === 'string' && toolOutcomes.get(item.id) !== 'ok') continue;
           const subtype = item.input.subagent_type.trim();
           if (subtype) bump(agentInvocations, subtype);
         }

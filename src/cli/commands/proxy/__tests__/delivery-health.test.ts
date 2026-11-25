@@ -237,7 +237,7 @@ describe('collectDeliveryHealth', () => {
 
       const health = await collectDeliveryHealth(state, ok);
 
-      expect(health).toEqual({ status: 'healthy', pendingBytes: 4096, heldBytes: 4096 });
+      expect(health).toEqual({ status: 'healthy', pendingBytes: 4096, heldBytes: 4096, heldByReason: { publication_stopped: 4096 } });
     });
 
     it('does not hide a failing send of another session', async () => {
@@ -253,6 +253,13 @@ describe('collectDeliveryHealth', () => {
 
       expect(health).toMatchObject({ status: 'unhealthy', reason: 'send_failed', pendingBytes: 4096 + 100, heldBytes: 4096, sendFailure: { nextAt, detail: 'http_503' } });
     });
+  });
+
+  it('carries the per-reason held bytes beside heldBytes, and neither when nothing is held', async () => {
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 42, heldBytes: 40, heldByReason: { work_consent_required: 40 }, mismatchHeld: false });
+    expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'healthy', pendingBytes: 42, heldBytes: 40, heldByReason: { work_consent_required: 40 } });
+    summarizeSpoolDelivery.mockResolvedValue({ pendingBytes: 42, mismatchHeld: false });
+    expect(await collectDeliveryHealth(state, ok)).toEqual({ status: 'healthy', pendingBytes: 42 });
   });
 
   it('carries pending bytes on a healthy result', async () => {
