@@ -13,6 +13,7 @@ import { AgentCLI } from '../dist/agents/core/AgentCLI.js';
 import { AgentRegistry } from '../dist/agents/registry.js';
 import { loadCopilotLaunchEnv, resolveCopilotModel } from '../dist/agents/plugins/copilot-cli/index.js';
 import { getCodemiePath } from '../dist/utils/paths.js';
+import { recordSavedModelPick } from '../dist/utils/model-origin.js';
 
 const SAVED_MODEL_PATH = getCodemiePath('agents', 'copilot-cli', 'model.json');
 
@@ -93,6 +94,7 @@ function applySavedModelIfNeeded(options, savedModel) {
   }
 
   process.env.CODEMIE_MODEL = savedModel;
+  recordSavedModelPick(savedModel);
 }
 
 function resolveInitialModelSource(options) {
