@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated": "2026-11-25T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 17,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 11,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "technical_risk", "reason": "Held start batch reuses the owner-pending queue and resolves credentials from the recorded profile; scope/owner/consent/allowlist boundaries had to stay unchanged, and the replay path needed repeated review fixes (retry-safety, receipt, torn-replay protection) before the crash machinery was dropped." },
+    { "dimension": "file_change_estimate", "reason": "11 files per diffstat (maps to XL), but only 5 are source with ~100 changed lines; 6 are tests, so the score overstates real effort." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
