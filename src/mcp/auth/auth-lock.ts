@@ -17,17 +17,28 @@ import { logger } from '../../utils/logger.js';
 
 const LOCK_FILE_NAME = 'mcp-auth.lock';
 const POLL_INTERVAL_MS = 250;
-/** A lock older than this is considered abandoned (callback server gives up after 120s). */
-const STALE_AFTER_MS = 150_000;
 /**
- * Must stay below the callback server's 120s timeout, which starts before the lock wait: its
- * rejection is only observed once the browser has opened and the bridge awaits the callback.
+ * Stale age assumed for lock files written before the age was recorded per lock
+ * (they were created with the former fixed 150s limit).
  */
-const DEFAULT_MAX_WAIT_MS = 90_000;
+const LEGACY_STALE_AFTER_MS = 150_000;
+
+/**
+ * Timings come from the caller, derived from the single MCP auth timeout
+ * (see `getMcpAuthTimings()`); this module does not read the environment.
+ */
+export interface AuthLockOptions {
+  /** How long to wait for another login to finish before proceeding without the lock. */
+  maxWaitMs: number;
+  /** Age after which the lock this call creates is considered abandoned; recorded in the lock file. */
+  staleAfterMs: number;
+}
 
 interface LockInfo {
   pid: number;
   createdAt: number;
+  /** Absent in lock files written by older versions. */
+  staleAfterMs?: number;
 }
 
 function readLock(lockPath: string): LockInfo | undefined {
@@ -51,14 +62,19 @@ function isProcessAlive(pid: number): boolean {
 function isStale(info: LockInfo | undefined): boolean {
   // Unreadable/partial content: the owner is mid-write, or the file is garbage. Age decides below.
   if (!info) return false;
-  return !isProcessAlive(info.pid) || Date.now() - info.createdAt > STALE_AFTER_MS;
+  // The lock's own recorded age wins, so a short-timeout caller never expires a long-timeout holder
+  const staleAfterMs = info.staleAfterMs ?? LEGACY_STALE_AFTER_MS;
+  return !isProcessAlive(info.pid) || Date.now() - info.createdAt > staleAfterMs;
 }
 
-function tryCreate(lockPath: string): boolean {
+function tryCreate(lockPath: string, staleAfterMs: number): boolean {
   try {
     const fd = openSync(lockPath, 'wx');
     try {
-      writeSync(fd, JSON.stringify({ pid: process.pid, createdAt: Date.now() } satisfies LockInfo));
+      writeSync(
+        fd,
+        JSON.stringify({ pid: process.pid, createdAt: Date.now(), staleAfterMs } satisfies LockInfo)
+      );
     } finally {
       closeSync(fd);
     }
@@ -74,7 +90,8 @@ function tryCreate(lockPath: string): boolean {
  * Resolves with a no-op release if the lock could not be taken within `maxWaitMs` or on any
  * unexpected filesystem error.
  */
-export async function acquireAuthLock(maxWaitMs = DEFAULT_MAX_WAIT_MS): Promise<() => void> {
+export async function acquireAuthLock(options: AuthLockOptions): Promise<() => void> {
+  const { maxWaitMs, staleAfterMs } = options;
   const lockPath = join(getCodemieHome(), LOCK_FILE_NAME);
   const noop = () => {};
 
@@ -85,7 +102,7 @@ export async function acquireAuthLock(maxWaitMs = DEFAULT_MAX_WAIT_MS): Promise<
     let announced = false;
 
     while (true) {
-      if (tryCreate(lockPath)) {
+      if (tryCreate(lockPath, staleAfterMs)) {
         let released = false;
         return () => {
           if (released) return;
