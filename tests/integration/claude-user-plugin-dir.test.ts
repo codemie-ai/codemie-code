@@ -207,7 +207,9 @@ function report(run: CliRun, workspace: Workspace): string {
   return `exit ${run.code}\nstdout: ${run.stdout}\nstderr: ${run.stderr}\nclaude runs: ${JSON.stringify(workspace.claudeRuns(), null, 2)}`;
 }
 
-describe('codemie-claude with a --plugin-dir of the user (EPMCDME-17667)', () => {
+// POSIX only: the stub `claude` is an extensionless script with a shebang, which the wrapper cannot start through
+// cmd.exe on Windows. The argument handling under test has no platform branch.
+describe.skipIf(process.platform === 'win32')('codemie-claude with a --plugin-dir of the user (EPMCDME-17667)', () => {
   it(
     'passes the extension next to one user plugin directory, so the session is tracked and resumable',
     async () => {

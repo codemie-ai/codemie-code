@@ -104,10 +104,11 @@ describe.skipIf(!existsSync(DAEMON_DIST))('Claude Code analytics connected for o
     for (const close of closers.splice(0)) await close();
   });
 
+  // The native realpath, as the CLI resolves it: on Windows the JS one keeps an 8.3 short name from tmpdir().
   function projectDir(home: string, name: string): string {
     const dir = join(home, 'work', name);
     mkdirSync(dir, { recursive: true });
-    return realpathSync(dir);
+    return realpathSync.native(dir);
   }
 
   /** A prompt in `project`: the hooks Claude Code runs with the settings' env, then the OTel log it exports. */
@@ -169,7 +170,7 @@ describe.skipIf(!existsSync(DAEMON_DIST))('Claude Code analytics connected for o
       });
       expect(settings.env?.OTEL_EXPORTER_OTLP_ENDPOINT).toMatch(/^http:\/\/(127\.0\.0\.1|localhost):\d+\//);
       expect(settings.env?.OTEL_EXPORTER_OTLP_HEADERS).toBeTruthy();
-      expect(JSON.parse(settings.env?.[PROJECT_FILTER_ENV] ?? '[]').map((p: string) => realpathSync(p))).toEqual([tracked]);
+      expect(JSON.parse(settings.env?.[PROJECT_FILTER_ENV] ?? '[]').map((p: string) => realpathSync.native(p))).toEqual([tracked]);
       for (const event of ['SessionStart', 'UserPromptSubmit', 'Stop', 'SessionEnd']) {
         expect(settings.hooks?.[event]?.[0]?.hooks[0]?.command).toContain('hook --agent claude-code-otlp');
       }
