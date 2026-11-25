@@ -15,7 +15,7 @@ import type { AgentAdapter } from '../types.js';
 import { ProviderRegistry } from '../../../providers/core/registry.js';
 import '../../../providers/index.js';
 import { ConfigLoader } from '../../../utils/config.js';
-import { loadStatusConfig } from '../../../cli/commands/profile/index.js';
+import { createProfileCommand, loadStatusConfig } from '../../../cli/commands/profile/index.js';
 import {
   describeModel,
   MODEL_ENV_ORIGIN_ENV,
@@ -148,6 +148,63 @@ describe('CODEMIE_MODEL override at launch', () => {
     expect(status.config.name).toBe('p');
     expect(status.modelText).toBe(`${ENV_MODEL} (CODEMIE_MODEL from shell env overrides profile: ${PROFILE_MODEL})`);
     expect(status.modelText).toBe(bannerModel(env));
+  });
+
+  describe('the profile status command from a repo subfolder', () => {
+    let sub: string;
+
+    /** Console output of `codemie profile <args>` run from `cwd`, ANSI-free. */
+    async function runProfile(cwd: string, args: string[]): Promise<string[]> {
+      vi.spyOn(process, 'cwd').mockReturnValue(cwd);
+      vi.spyOn(process, 'exit').mockImplementation((code) => {
+        throw new Error(`process.exit(${code})`);
+      });
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      await createProfileCommand().parseAsync(args, { from: 'user' });
+      // eslint-disable-next-line no-control-regex
+      return log.mock.calls.map((call) => call.join(' ')).join('\n').replace(/\u001b\[[0-9;]*m/g, '').split('\n');
+    }
+
+    beforeEach(async () => {
+      sub = path.join(repo, 'sub');
+      await fs.mkdir(sub, { recursive: true });
+      const globalPath = path.join(tmp, 'home', 'codemie-cli.config.json');
+      const config = JSON.parse(await fs.readFile(globalPath, 'utf-8'));
+      config.activeProfile = 'x';
+      config.profiles.x = { ...config.profiles.p, model: 'x-model', codeMieProject: 'x-project' };
+      await fs.writeFile(globalPath, JSON.stringify(config));
+      await fs.writeFile(path.join(repo, '.codemie', 'codemie-cli.config.json'), JSON.stringify({ version: 2, activeProfile: 'p', profiles: {} }));
+    });
+
+    it('status shows a shell override and the nearest .codemie profile', async () => {
+      process.env.CODEMIE_MODEL = ENV_MODEL;
+      const lines = await runProfile(sub, ['status']);
+
+      expect(lines.find((line) => line.includes('Model'))).toContain(
+        `${ENV_MODEL} (CODEMIE_MODEL from shell env overrides profile: ${PROFILE_MODEL})`
+      );
+      expect(lines.join('\n')).toContain('p-project');
+      expect(lines.join('\n')).not.toContain('x-project');
+    });
+
+    it('status shows a .env override read from the cwd', async () => {
+      await fs.writeFile(path.join(sub, '.env'), `CODEMIE_MODEL=${ENV_MODEL}\n`);
+      const lines = await runProfile(sub, ['status']);
+
+      expect(lines.find((line) => line.includes('Model'))).toContain(
+        `${ENV_MODEL} (CODEMIE_MODEL from .env overrides profile: ${PROFILE_MODEL})`
+      );
+      expect(lines.join('\n')).not.toContain('x-project');
+    });
+
+    it('status --show-sources labels the cwd .env model and reads the nearest .codemie', async () => {
+      await fs.writeFile(path.join(sub, '.env'), `CODEMIE_MODEL=${ENV_MODEL}\n`);
+      const lines = await runProfile(sub, ['status', '--show-sources']);
+
+      expect(lines).toContainEqual(expect.stringContaining(`model: ${ENV_MODEL} (.env)`));
+      expect(lines.find((line) => line.includes('codeMieProject:'))).toContain('p-project');
+      expect(lines.join('\n')).not.toContain('x-project');
+    });
   });
 
   it('counts an env model equal to the profile model as env, without a marker', async () => {

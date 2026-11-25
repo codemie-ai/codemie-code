@@ -20,7 +20,7 @@ import {
   isLegacyConfig
 } from '../env/types.js';
 import { bindingLabel, type ProjectBindingState } from './project-binding.js';
-import { isFromDotenv, recordDotenvValues } from './model-origin.js';
+import { envKeyId, isFromDotenv, recordDotenvValues } from './model-origin.js';
 import { writeJsonFileAtomic } from './atomic-write.js';
 import { ProviderRegistry } from '../providers/index.js';
 import { getCodemieHome, getCodemiePath } from './paths.js';
@@ -54,6 +54,8 @@ export interface ProfileIdentityResolution {
   workspace: WorkspaceConfig;
   projectOrigin: ProjectOrigin;
   identitySource: IdentitySource;
+  /** Scope whose `workspace` supplied the tooling context: the local one if defined, else global. */
+  workspaceScope?: 'project' | 'global';
   isLocalProfile: boolean;
   /** Name of the profile the identity belongs to. */
   profileName?: string;
@@ -82,32 +84,53 @@ interface LayeredResolution {
   sources: Record<string, ConfigWithSource>;
 }
 
+/** A merge in progress: each applied layer overrides earlier ones and records its source per key. */
+interface LayerMerge extends LayeredResolution {
+  apply(layer: unknown, source: ConfigSource | ((key: string) => ConfigSource)): void;
+  drop(key: string): void;
+}
+
 const modelResolutions = new WeakMap<CodeMieConfigOptions, ModelResolution>();
 
-/** The CODEMIE_* variables loadFromEnv() reads for each config key. */
-const ENV_LAYER_VARS: Record<string, readonly string[]> = {
-  provider: ['CODEMIE_PROVIDER'],
-  baseUrl: ['CODEMIE_BASE_URL'],
-  apiKey: ['CODEMIE_API_KEY'],
-  model: ['CODEMIE_MODEL'],
-  timeout: ['CODEMIE_TIMEOUT'],
-  debug: ['CODEMIE_DEBUG'],
-  allowedDirs: ['CODEMIE_ALLOWED_DIRS'],
-  ignorePatterns: ['CODEMIE_IGNORE_PATTERNS'],
-  codeMieUrl: ['CODEMIE_URL'],
-  authMethod: ['CODEMIE_AUTH_METHOD'],
-  codeMieIntegration: ['CODEMIE_INTEGRATION_ID', 'CODEMIE_INTEGRATION_ALIAS']
+type EnvValues = readonly (string | undefined)[];
+
+interface EnvLayerField {
+  vars: readonly string[];
+  /** The config value for the variables' values, in `vars` order; `undefined` leaves the key unset. */
+  read: (values: EnvValues) => unknown;
+}
+
+const envText = ([value]: EnvValues): string | undefined => value || undefined;
+const envList = ([value]: EnvValues): string[] | undefined =>
+  value ? value.split(',').map(s => s.trim()) : undefined;
+
+/** Every config key the env layer can set, the CODEMIE_* variables feeding it, and how they are read. */
+const ENV_LAYER: Record<string, EnvLayerField> = {
+  provider: { vars: ['CODEMIE_PROVIDER'], read: envText },
+  baseUrl: { vars: ['CODEMIE_BASE_URL'], read: envText },
+  apiKey: { vars: ['CODEMIE_API_KEY'], read: envText },
+  model: { vars: ['CODEMIE_MODEL'], read: envText },
+  timeout: { vars: ['CODEMIE_TIMEOUT'], read: ([value]) => (value ? parseInt(value, 10) : undefined) },
+  debug: { vars: ['CODEMIE_DEBUG'], read: ([value]) => (value ? value === 'true' : undefined) },
+  allowedDirs: { vars: ['CODEMIE_ALLOWED_DIRS'], read: envList },
+  ignorePatterns: { vars: ['CODEMIE_IGNORE_PATTERNS'], read: envList },
+  codeMieUrl: { vars: ['CODEMIE_URL'], read: envText },
+  authMethod: { vars: ['CODEMIE_AUTH_METHOD'], read: envText },
+  codeMieIntegration: {
+    vars: ['CODEMIE_INTEGRATION_ID', 'CODEMIE_INTEGRATION_ALIAS'],
+    read: ([id, alias]) => (id || alias ? { id: id || '', alias: alias || '' } : undefined)
+  }
 };
+
+/** Keys an explicit `--profile` keeps from the env layer unless the CLI sets them too. */
+const PROFILE_PROTECTED_ENV_KEYS: readonly (keyof CodeMieConfigOptions)[] = [
+  'baseUrl', 'apiKey', 'model', 'provider', 'codeMieUrl', 'authMethod', 'codeMieIntegration'
+];
 
 /** `dotenv` when every variable feeding the key still holds the value `.env` set, else `env`. */
 function envLayerSource(key: string): ConfigSource {
-  const feeding = (ENV_LAYER_VARS[key] ?? []).filter((name) => process.env[name]);
+  const feeding = (ENV_LAYER[key]?.vars ?? []).filter((name) => process.env[name]);
   return feeding.length > 0 && feeding.every((name) => isFromDotenv(name)) ? 'dotenv' : 'env';
-}
-
-// Windows environment variable names are case-insensitive.
-function envKeyId(key: string): string {
-  return process.platform === 'win32' ? key.toUpperCase() : key;
 }
 
 function pickIdentity(source: Partial<WorkspaceConfig> | undefined): ResolvedIdentity {
@@ -203,22 +226,10 @@ export class ConfigLoader {
     cliOverrides: Partial<CodeMieConfigOptions> | undefined,
     envDir: string
   ): Promise<LayeredResolution> {
-    const config = {} as CodeMieConfigOptions;
-    const sources: Record<string, ConfigWithSource> = {};
-    const apply = (layer: unknown, source: ConfigSource | ((key: string) => ConfigSource)): void => {
-      const values: Record<string, unknown> = this.removeUndefined(layer);
-      Object.assign(config, values);
-      for (const [key, value] of Object.entries(values)) {
-        if (value !== null) sources[key] = { value, source: typeof source === 'function' ? source(key) : source };
-      }
-    };
-    const drop = (key: string): void => {
-      delete (config as Record<string, unknown>)[key];
-      delete sources[key];
-    };
+    const merge = this.createLayerMerge();
 
     // 5. Built-in defaults (lowest priority)
-    apply(
+    merge.apply(
       {
         name: 'default',
         provider: 'openai',
@@ -239,8 +250,7 @@ export class ConfigLoader {
     const localProfileName = await this.resolveLocalProfileName(workingDir, selectedProfileName);
 
     // 4. Global config (~/.codemie/codemie-cli.config.json)
-    const globalConfig = await this.loadGlobalConfigProfile(selectedProfileName);
-    apply(globalConfig, 'global');
+    merge.apply(await this.loadGlobalConfigProfile(selectedProfileName), 'global');
 
     // 3. Project-local config (.codemie/codemie-cli.config.json) — provider identity
     // (name/model/baseUrl/apiKey/etc.). Repo/tooling-context fields no longer live on
@@ -254,19 +264,69 @@ export class ConfigLoader {
     );
     const effectiveLocalConfig = applyProjectOnly ? {} : localConfig;
 
-    apply(effectiveLocalConfig, 'project');
+    merge.apply(effectiveLocalConfig, 'project');
 
-    // Workspace fields: tooling context by whole-object override (local scope, else
-    // global); CodeMie identity only from resolveProfileIdentity(). For a global
-    // profile the raw record's identity keys are removed first, so a stored
-    // `codeMieProject: null` (or a stale URL on a `none` record) never survives.
-    const resolution = await this.resolveIdentityFor(
+    const identityIsAuthoritative = await this.applyWorkspaceLayers(
+      merge,
       workingDir,
       { selectedName: selectedProfileName, localName: localProfileName, isLocalProfile: Object.keys(effectiveLocalConfig).length > 0 }
     );
+    const preEnvModel = merge.config.model;
+
+    // 2. Environment variables (load .env first if in project)
+    await this.loadDotenv(envDir);
+    merge.apply(this.envLayer(cliOverrides, identityIsAuthoritative, merge.config.debug), envLayerSource);
+
+    // 1. CLI arguments (highest priority)
+    if (cliOverrides) {
+      merge.apply(cliOverrides, 'cli');
+    }
+
+    const modelSource = merge.sources.model?.source;
+    modelResolutions.set(merge.config, {
+      envModelUsed: modelSource === 'env' || modelSource === 'dotenv',
+      profileModel: preEnvModel
+    });
+    return { config: merge.config, sources: merge.sources };
+  }
+
+  private static createLayerMerge(): LayerMerge {
+    const config = {} as CodeMieConfigOptions;
+    const sources: Record<string, ConfigWithSource> = {};
+    return {
+      config,
+      sources,
+      apply: (layer, source) => {
+        const values: Record<string, unknown> = this.removeUndefined(layer);
+        Object.assign(config, values);
+        for (const [key, value] of Object.entries(values)) {
+          if (value !== null) sources[key] = { value, source: typeof source === 'function' ? source(key) : source };
+        }
+      },
+      drop: (key) => {
+        delete (config as Record<string, unknown>)[key];
+        delete sources[key];
+      }
+    };
+  }
+
+  /**
+   * Workspace fields: tooling context by whole-object override (local scope, else
+   * global); CodeMie identity only from resolveProfileIdentity(). For a global
+   * profile the raw record's identity keys are removed first, so a stored
+   * `codeMieProject: null` (or a stale URL on a `none` record) never survives.
+   *
+   * @returns Whether the identity is authoritative (`own`/`none`), so env must not supply it
+   */
+  private static async applyWorkspaceLayers(
+    merge: LayerMerge,
+    workingDir: string,
+    names: { selectedName?: string; localName?: string; isLocalProfile: boolean }
+  ): Promise<boolean> {
+    const resolution = await this.resolveIdentityFor(workingDir, names);
     const identityIsAuthoritative = resolution.state === 'own' || resolution.state === 'none';
     if (!resolution.isLocalProfile || identityIsAuthoritative) {
-      for (const key of IDENTITY_KEYS) drop(key);
+      for (const key of IDENTITY_KEYS) merge.drop(key);
     }
     // Tooling context is labelled by the scope that supplied it (resolveWorkspace()'s
     // local-else-global rule); identity by the scope of the profile in use.
@@ -276,79 +336,35 @@ export class ConfigLoader {
       if (toolingWorkspace[key] !== undefined) identityWorkspace[key] = toolingWorkspace[key];
       delete toolingWorkspace[key];
     }
-    const localWorkspaceScope = await this.loadLocalMultiProviderConfig(workingDir);
-    apply(toolingWorkspace, localWorkspaceScope.workspace != null ? 'project' : 'global');
-    apply(identityWorkspace, resolution.identitySource);
-    const preEnvModel = config.model;
+    merge.apply(toolingWorkspace, resolution.workspaceScope ?? 'global');
+    merge.apply(identityWorkspace, resolution.identitySource);
+    return identityIsAuthoritative;
+  }
 
-    // 2. Environment variables (load .env first if in project)
-    await this.loadDotenv(envDir);
+  /**
+   * The env layer as load() applies it. An `own`/`none` profile takes identity only from
+   * the resolver: inherited CODEMIE_URL / CODEMIE_INTEGRATION_* (another session, a shell
+   * export) are ignored. An explicit `--profile` keeps its profile-specific keys unless the
+   * CLI sets them too, so the environment cannot contaminate the selected profile.
+   */
+  private static envLayer(
+    cliOverrides: Partial<CodeMieConfigOptions> | undefined,
+    identityIsAuthoritative: boolean,
+    debug: boolean | undefined
+  ): Partial<CodeMieConfigOptions> {
     const envConfig = this.loadFromEnv();
-    // An `own`/`none` profile takes identity only from the resolver: inherited
-    // CODEMIE_URL / CODEMIE_INTEGRATION_* (another session, a shell export) are ignored.
     if (identityIsAuthoritative) {
       delete envConfig.codeMieUrl;
       delete envConfig.codeMieIntegration;
     }
+    if (!cliOverrides?.name) return envConfig;
 
-    // If a profile is explicitly selected, only apply env vars that aren't profile-specific
-    // This prevents environment contamination from overriding the selected profile
-    if (cliOverrides?.name) {
-      // Only apply env vars for fields not explicitly set in CLI overrides
-      const filteredEnvConfig = { ...envConfig };
-      const filtered: string[] = [];
-
-      // Don't override profile's baseUrl, apiKey, model, provider unless explicitly in CLI
-      if (!cliOverrides.baseUrl && filteredEnvConfig.baseUrl) {
-        delete filteredEnvConfig.baseUrl;
-        filtered.push('baseUrl');
-      }
-      if (!cliOverrides.apiKey && filteredEnvConfig.apiKey) {
-        delete filteredEnvConfig.apiKey;
-        filtered.push('apiKey');
-      }
-      if (!cliOverrides.model && filteredEnvConfig.model) {
-        delete filteredEnvConfig.model;
-        filtered.push('model');
-      }
-      if (!cliOverrides.provider && filteredEnvConfig.provider) {
-        delete filteredEnvConfig.provider;
-        filtered.push('provider');
-      }
-      if (!cliOverrides.codeMieUrl && filteredEnvConfig.codeMieUrl) {
-        delete filteredEnvConfig.codeMieUrl;
-        filtered.push('codeMieUrl');
-      }
-      if (!cliOverrides.authMethod && filteredEnvConfig.authMethod) {
-        delete filteredEnvConfig.authMethod;
-        filtered.push('authMethod');
-      }
-      if (!cliOverrides.codeMieIntegration && filteredEnvConfig.codeMieIntegration) {
-        delete filteredEnvConfig.codeMieIntegration;
-        filtered.push('codeMieIntegration');
-      }
-
-      if (filtered.length > 0 && config.debug) {
-        logger.status(`[ConfigLoader] Profile protection: filtered environment vars: ${filtered.join(', ')}`);
-      }
-
-      apply(filteredEnvConfig, envLayerSource);
-    } else {
-      // No explicit profile selected, use normal priority
-      apply(envConfig, envLayerSource);
+    const filtered = PROFILE_PROTECTED_ENV_KEYS.filter((key) => !cliOverrides[key] && envConfig[key]);
+    for (const key of filtered) delete envConfig[key];
+    if (filtered.length > 0 && debug) {
+      logger.status(`[ConfigLoader] Profile protection: filtered environment vars: ${filtered.join(', ')}`);
     }
-
-    // 1. CLI arguments (highest priority)
-    if (cliOverrides) {
-      apply(cliOverrides, 'cli');
-    }
-
-    const modelSource = sources.model?.source;
-    modelResolutions.set(config, {
-      envModelUsed: modelSource === 'env' || modelSource === 'dotenv',
-      profileModel: preEnvModel
-    });
-    return { config, sources };
+    return envConfig;
   }
 
   /** Load `<envDir>/.env` without overwriting set keys, and record the keys it added. */
@@ -446,6 +462,7 @@ export class ConfigLoader {
       workspace: { ...tooling, ...this.removeUndefined(identity) },
       projectOrigin,
       identitySource,
+      workspaceScope: localMulti.workspace != null ? 'project' : 'global',
       isLocalProfile,
       profileName: resolvedName,
       shared
@@ -719,45 +736,12 @@ export class ConfigLoader {
    * Load configuration from environment variables
    */
   private static loadFromEnv(): Partial<CodeMieConfigOptions> {
-    const env: Partial<CodeMieConfigOptions> = {};
-
-    if (process.env.CODEMIE_PROVIDER) {
-      env.provider = process.env.CODEMIE_PROVIDER;
+    const env: Record<string, unknown> = {};
+    for (const [key, field] of Object.entries(ENV_LAYER)) {
+      const value = field.read(field.vars.map((name) => process.env[name]));
+      if (value !== undefined) env[key] = value;
     }
-    if (process.env.CODEMIE_BASE_URL) {
-      env.baseUrl = process.env.CODEMIE_BASE_URL;
-    }
-    if (process.env.CODEMIE_API_KEY) {
-      env.apiKey = process.env.CODEMIE_API_KEY;
-    }
-    if (process.env.CODEMIE_MODEL) {
-      env.model = process.env.CODEMIE_MODEL;
-    }
-    if (process.env.CODEMIE_TIMEOUT) {
-      env.timeout = parseInt(process.env.CODEMIE_TIMEOUT, 10);
-    }
-    if (process.env.CODEMIE_DEBUG) {
-      env.debug = process.env.CODEMIE_DEBUG === 'true';
-    }
-    if (process.env.CODEMIE_ALLOWED_DIRS) {
-      env.allowedDirs = process.env.CODEMIE_ALLOWED_DIRS.split(',').map(s => s.trim());
-    }
-    if (process.env.CODEMIE_IGNORE_PATTERNS) {
-      env.ignorePatterns = process.env.CODEMIE_IGNORE_PATTERNS.split(',').map(s => s.trim());
-    }
-
-    // SSO-specific environment variables
-    if (process.env.CODEMIE_URL) env.codeMieUrl = process.env.CODEMIE_URL;
-    if (process.env.CODEMIE_AUTH_METHOD) env.authMethod = process.env.CODEMIE_AUTH_METHOD as 'manual' | 'sso';
-    // Handle CodeMie integration from environment variables
-    if (process.env.CODEMIE_INTEGRATION_ID || process.env.CODEMIE_INTEGRATION_ALIAS) {
-      env.codeMieIntegration = {
-        id: process.env.CODEMIE_INTEGRATION_ID || '',
-        alias: process.env.CODEMIE_INTEGRATION_ALIAS || ''
-      };
-    }
-
-    return env;
+    return env as Partial<CodeMieConfigOptions>;
   }
 
   /**

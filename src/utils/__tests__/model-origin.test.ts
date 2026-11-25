@@ -111,6 +111,33 @@ describe('resolveModelEnvOrigin', () => {
     }
   });
 
+  describe('.env key case', () => {
+    const originalPlatform = process.platform;
+    const setPlatform = (platform: NodeJS.Platform): void => {
+      Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+    };
+
+    afterEach(() => {
+      setPlatform(originalPlatform);
+    });
+
+    it('matches a lowercase .env key on Windows, where env names are case-insensitive', () => {
+      setPlatform('win32');
+      recordDotenvValues({ codemie_model: 'gpt-5' });
+      const env: NodeJS.ProcessEnv = { CODEMIE_MODEL: 'gpt-5' };
+
+      expect(isFromDotenv('CODEMIE_MODEL', env)).toBe(true);
+      expect(resolveModelEnvOrigin(env)).toBe('dotenv');
+    });
+
+    it('keeps keys case-sensitive elsewhere', () => {
+      setPlatform('linux');
+      recordDotenvValues({ codemie_model: 'gpt-5' });
+
+      expect(isFromDotenv('CODEMIE_MODEL', { CODEMIE_MODEL: 'gpt-5' })).toBe(false);
+    });
+  });
+
   it('forgets every record on reset', () => {
     recordDotenvValues({ CODEMIE_MODEL: 'gpt-5' });
     recordSavedModelPick('gpt-6');

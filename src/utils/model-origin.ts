@@ -33,16 +33,21 @@ export function parseModelEnvOrigin(value: unknown): ModelEnvOrigin | undefined 
     : undefined;
 }
 
+/** An env variable name as the platform compares it: Windows names are case-insensitive. */
+export function envKeyId(key: string): string {
+  return process.platform === 'win32' ? key.toUpperCase() : key;
+}
+
 /** Record the keys dotenv added to `process.env`, with the values it set. */
 export function recordDotenvValues(applied: Record<string, string>): void {
   for (const [key, value] of Object.entries(applied)) {
-    dotenvValues.set(key, value);
+    dotenvValues.set(envKeyId(key), value);
   }
 }
 
 /** True only while `env[key]` still holds the value dotenv set. */
 export function isFromDotenv(key: string, env: NodeJS.ProcessEnv = process.env): boolean {
-  const recorded = dotenvValues.get(key);
+  const recorded = dotenvValues.get(envKeyId(key));
   return recorded !== undefined && env[key] === recorded;
 }
 
@@ -60,6 +65,7 @@ export function resolveModelEnvOrigin(env: NodeJS.ProcessEnv = process.env): Mod
   return 'shell';
 }
 
+/** Clear the in-process `.env` and saved-pick records; for tests. */
 export function resetModelOriginRecords(): void {
   dotenvValues.clear();
   savedModelPick = undefined;
