@@ -1,6 +1,7 @@
 import { ProviderRegistry } from '@/providers/index.js';
 import { logger } from '@/utils/logger.js';
-import { hasRecordForSession } from '@/agents/core/evidence/record-store.js';
+import { hasRecordForSession, readRecord, recordKey } from '@/agents/core/evidence/record-store.js';
+import { currentEvidenceIdentity } from '@/agents/core/evidence/hook-identity.js';
 import { hasPendingOwnerSession } from '@/agents/core/evidence/owner-pending.js';
 import { fundingRoute, routedViaCodemie, type RoutingInput } from '@/agents/core/evidence/routing.js';
 import type { EvidenceInputs } from '@/agents/core/evidence/stamp.js';
@@ -57,9 +58,16 @@ export function copilotRouteProof(managed: boolean, env: NodeJS.ProcessEnv = pro
   return funding === 'api_based' ? { routing, funding_route: funding } : undefined;
 }
 
-/** A session already known to the evidence store (record, or events held for its owner). */
-export async function isRecordedSession(sessionId: string): Promise<boolean> {
+/** A session known to the evidence store under ANY login or key: only ever a conservative stop signal, never authorization. */
+export async function isKnownSession(sessionId: string): Promise<boolean> {
   return (await hasRecordForSession(sessionId)) || (await hasPendingOwnerSession(sessionId));
+}
+
+/** Authorization to continue: a record at THIS login's key, or events held for this session's owner. */
+async function isRecordedForCurrentLogin(sessionId: string): Promise<boolean> {
+  const id = await currentEvidenceIdentity();
+  if (id && (await readRecord(recordKey(id.api_identity, id.owner_hash, sessionId)))) return true;
+  return hasPendingOwnerSession(sessionId);
 }
 
 /**
@@ -76,7 +84,7 @@ export async function copilotEvidenceInputs(args: {
 }, env: NodeJS.ProcessEnv = process.env): Promise<EvidenceInputs | undefined> {
   const proof = copilotRouteProof(args.managed, env);
   if (!proof) return undefined;
-  if (!(args.freshStart && args.pinned) && !(await isRecordedSession(args.sessionId))) {
+  if (!(args.freshStart && args.pinned) && !(await isRecordedForCurrentLogin(args.sessionId))) {
     logger.debug('[copilot-cli-otlp] no session binding or record for a new funding claim; staying on the unrecorded path');
     return undefined;
   }

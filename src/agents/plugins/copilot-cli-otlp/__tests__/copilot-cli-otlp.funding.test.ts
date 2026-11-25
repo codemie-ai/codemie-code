@@ -198,6 +198,44 @@ describe('sticky attribution boundary', () => {
     expect(spooled).toHaveLength(1);
   });
 
+  describe('across a changed or missing login identity', () => {
+    const other = { ...creds, email: 'other@example.com' };
+    const otherKey = (): string => recordKey(apiIdentity(creds.apiUrl), ownerHash(other.email), sid);
+
+    it('lost proof under another login (record sits under the previous owner): no unstamped bytes, stopped', async () => {
+      const { resolveHookCredentials } = await import('@/agents/core/hook-credentials.js');
+      await start();
+      expect(spooled).toHaveLength(1);
+      vi.mocked(resolveHookCredentials).mockResolvedValueOnce(other as never).mockResolvedValueOnce(other as never);
+      process.env.COPILOT_PROVIDER_BASE_URL = 'https://byok.example.org/v1';
+      await hook('preToolUse', { toolName: 'bash', toolArgs: '{}', toolCallId: 't1' });
+      expect(spooled).toHaveLength(1);
+      expect(await isStopped(otherKey())).toBe(true);
+    });
+
+    it('proof present under another login is not positive authorization: no new claim for a session recorded elsewhere', async () => {
+      const { resolveHookCredentials } = await import('@/agents/core/hook-credentials.js');
+      await start();
+      vi.mocked(resolveHookCredentials).mockResolvedValueOnce(other as never).mockResolvedValueOnce(other as never);
+      await start('resume');
+      expect(spooled).toHaveLength(1);
+      expect(await readRecord(otherKey())).toBeUndefined();
+    });
+
+    it('missing identity with lost proof on a recorded session sends nothing', async () => {
+      const { resolveHookCredentials } = await import('@/agents/core/hook-credentials.js');
+      await start();
+      vi.mocked(resolveHookCredentials).mockResolvedValue(undefined as never);
+      try {
+        process.env.COPILOT_PROVIDER_BASE_URL = 'https://byok.example.org/v1';
+        await hook('preToolUse', { toolName: 'bash', toolArgs: '{}', toolCallId: 't1' });
+      } finally {
+        vi.mocked(resolveHookCredentials).mockResolvedValue(creds as never);
+      }
+      expect(spooled).toHaveLength(1);
+    });
+  });
+
   it('a native session with a record under the same id (no managed launch) is stopped, not forwarded as legacy', async () => {
     await start();
     for (const k of ['CODEMIE_SESSION_ID', PINNED_NATIVE_SESSION_ENV]) delete process.env[k];

@@ -21,7 +21,7 @@ import { currentGeneration, scopeViolation } from '@/agents/core/evidence/sessio
 import { hasPendingOwnerSession } from '@/agents/core/evidence/owner-pending.js';
 import { resolveProjectAtCwd } from '@/agents/core/event-fields/identity-fields.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from './copilot-cli-otlp.constants.js';
-import { copilotEvidenceInputs, copilotRouteProof, isFreshStart } from './copilot-cli-otlp.evidence.js';
+import { copilotEvidenceInputs, copilotRouteProof, isFreshStart, isKnownSession } from './copilot-cli-otlp.evidence.js';
 import { buildStopPass, type StopPass } from './copilot-cli-otlp.stop-pass.js';
 import { TOOL_STATE_BUDGET_MS, readSessionState, resolveRootSessionId, sweepStaleStateFiles, updateSessionState } from './copilot-cli-otlp.state.js';
 import { recordOpenStarts, resolveEndToolUseId } from './copilot-cli-otlp.tool-correlation.js';
@@ -129,10 +129,17 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
       const proven = copilotRouteProof(isManagedSession(input.sessionId)) !== undefined;
       // Sticky attribution: a session the evidence store knows keeps its claim only while the route is still proven.
       const id = await currentEvidenceIdentity();
-      if (!id) return !proven && (await hasPendingOwnerSession(input.sessionId)) ? 'stop' : 'continue';
+      // A session-wide existence check is only a stop signal: it never authorizes anything.
+      if (!id) return !proven && (await isKnownSession(input.sessionId)) ? 'stop' : 'continue';
       const key = recordKey(id.api_identity, id.owner_hash, input.sessionId);
       const found = await readRecord(key);
-      if (!found) return !proven && (await hasPendingOwnerSession(input.sessionId)) ? 'stop' : 'continue';
+      if (!found) {
+        if (!(await isKnownSession(input.sessionId))) return 'continue'; // an unrecorded session
+        // Known, but not at this login's key (login/profile changed) or only held for its owner: continue only a proven, owner-held session.
+        if (proven && (await hasPendingOwnerSession(input.sessionId))) return 'continue';
+        await writeStop(key, 'scope_unproven', input.sessionId);
+        return 'stop';
+      }
       if (found.kind !== 'existing' && found.kind !== 'created') return 'stop';
       if (await isStopped(key)) return 'stop';
       const generation = await currentGeneration(found.record);
