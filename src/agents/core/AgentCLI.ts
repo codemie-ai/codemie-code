@@ -11,6 +11,7 @@ import { AuthMethod, ProviderName } from '../../providers/core/types.js';
 import { JWTTemplate } from '../../providers/plugins/jwt/jwt.template.js';
 import { logger } from '../../utils/logger.js';
 import { getDirname } from '../../utils/paths.js';
+import { describeModelValueViolation, validateModelValue } from '../../utils/model-value.js';
 import { installSystemProxyDispatcher } from '../../utils/system-proxy-dispatcher.js';
 import { isNonInteractiveEnvironment } from '../../utils/interactive.js';
 import { BUILTIN_AGENT_NAME } from '../registry.js';
@@ -111,7 +112,9 @@ export class AgentCLI {
         // Debug logging
         logger.debug(`[AgentCLI] action called with args: ${JSON.stringify(args)}`);
         logger.debug(`[AgentCLI] options type: ${typeof options}, has opts(): ${typeof options?.opts === 'function'}`);
-        logger.debug(`[AgentCLI] extracted opts: ${JSON.stringify(opts)}`);
+        // The model value is unvalidated here and may be anything a user pasted: log its length, never the value.
+        const loggedOpts = typeof opts?.model === 'string' ? { ...opts, model: `<length ${Array.from(opts.model).length}>` } : opts;
+        logger.debug(`[AgentCLI] extracted opts: ${JSON.stringify(loggedOpts)}`);
 
         await this.handleRun(args, opts);
       });
@@ -241,6 +244,23 @@ export class AgentCLI {
         timeout: options.timeout as number | undefined,
         reasoningEffort: options.reasoningEffort as import('./types.js').CanonicalReasoningEffort | undefined,
       }, process.cwd());
+
+      // A model value that is not a plain model name (an empty or huge one, or one with whitespace or control
+      // characters) would reach the agent's own model setting and the proxy. Checked here, after the load, so a
+      // CODEMIE_MODEL that only a .env file defines is covered; --model wins over it, as in the launch itself.
+      // The profile's own model is not checked, and the message never carries the value.
+      if (this.adapter.name === ClaudePluginMetadata.name) {
+        const [source, candidate]: [string, unknown] = options.model !== undefined
+          ? ['--model', options.model]
+          : ['CODEMIE_MODEL', process.env.CODEMIE_MODEL];
+        const violation = candidate === undefined ? null : validateModelValue(candidate);
+        if (violation) {
+          const message = `${source}: ${describeModelValueViolation(violation)}`;
+          console.error(chalk.red(`\n✗ ${message}\n`));
+          logger.error(message);
+          process.exit(1);
+        }
+      }
 
       // JWT token from CLI overrides everything
       if (options.jwtToken) {
