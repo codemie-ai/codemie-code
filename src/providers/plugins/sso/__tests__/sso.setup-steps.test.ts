@@ -103,6 +103,30 @@ describe('SSOSetupSteps platform URL resolution', () => {
     });
   });
 
+  describe('headless', () => {
+    it('getCredentials passes headless to authenticate', async () => {
+      mockPrompt.mockResolvedValue({ codeMieUrl: P });
+      mockAuthenticate.mockResolvedValue({ success: false, error: 'x' });
+      await expect(SSOSetupSteps.getCredentials(false, { headless: true })).rejects.toThrow();
+      expect(mockAuthenticate).toHaveBeenCalledWith({ codeMieUrl: P, timeout: 120000, headless: true });
+    });
+
+    it('getCredentials without options is unchanged', async () => {
+      mockPrompt.mockResolvedValue({ codeMieUrl: P });
+      mockAuthenticate.mockResolvedValue({ success: false, error: 'x' });
+      await expect(SSOSetupSteps.getCredentials()).rejects.toThrow();
+      expect(mockAuthenticate).toHaveBeenCalledWith({ codeMieUrl: P, timeout: 120000 });
+    });
+
+    it('promptForReauth with headless shows no prompt and authenticates headless', async () => {
+      mockAuthenticate.mockResolvedValue({ success: true });
+      const ok = await SSOSetupSteps.promptForReauth!({ provider: 'ai-run-sso', baseUrl: P } as never, true);
+      expect(ok).toBe(true);
+      expect(mockPrompt).not.toHaveBeenCalled();
+      expect(mockAuthenticate).toHaveBeenCalledWith({ codeMieUrl: P, timeout: 120000, headless: true });
+    });
+  });
+
   describe('promptForReauth', () => {
     it('re-authenticates against the profile baseUrl when codeMieUrl is missing', async () => {
       mockPrompt.mockResolvedValue({ confirm: true });

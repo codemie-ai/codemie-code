@@ -127,12 +127,16 @@ export const SSOSetupSteps: ProviderSetupSteps = {
    *
    * Prompts for CodeMie URL and performs browser-based authentication
    */
-  async getCredentials(): Promise<ProviderCredentials> {
+  async getCredentials(_isUpdate = false, options?: { headless?: boolean }): Promise<ProviderCredentials> {
     const codeMieUrl = await promptForCodeMieUrl(DEFAULT_CODEMIE_BASE_URL);
 
     // Authenticate via browser
-    console.log(chalk.cyan('\n🔐 Authenticating via browser...\n'));
-    const authResult = await authenticateWithCodeMie(codeMieUrl, 120000);
+    console.log(chalk.cyan(options?.headless
+      ? '\n🔐 Authenticating (paste-back, no browser launch)...\n'
+      : '\n🔐 Authenticating via browser...\n'));
+    const authResult = options?.headless
+      ? await authenticateWithCodeMie(codeMieUrl, 120000, true)
+      : await authenticateWithCodeMie(codeMieUrl, 120000);
 
     if (!authResult.success) {
       throw new Error(`SSO authentication failed: ${authResult.error || 'Unknown error'}`);
@@ -275,23 +279,25 @@ export const SSOSetupSteps: ProviderSetupSteps = {
    *
    * Interactive re-auth flow when validation fails
    */
-  async promptForReauth(config: CodeMieConfigOptions): Promise<boolean> {
+  async promptForReauth(config: CodeMieConfigOptions, headless = false): Promise<boolean> {
     try {
       // Show warning about credentials
       console.log(chalk.yellow('\n⚠️  Authentication required\n'));
 
-      // Prompt user
-      const { confirm } = await inquirer.prompt([
-        {
-          type: 'confirm',
-          name: 'confirm',
-          message: 'Re-authenticate now?',
-          default: true
-        }
-      ]);
+      // Headless was chosen explicitly by the caller, so there is nothing to ask
+      if (!headless) {
+        const { confirm } = await inquirer.prompt([
+          {
+            type: 'confirm',
+            name: 'confirm',
+            message: 'Re-authenticate now?',
+            default: true
+          }
+        ]);
 
-      if (!confirm) {
-        return false;
+        if (!confirm) {
+          return false;
+        }
       }
 
       // Run authentication
@@ -301,16 +307,19 @@ export const SSOSetupSteps: ProviderSetupSteps = {
         return false;
       }
 
-      const spinner = ora('Launching SSO authentication...').start();
+      // Headless login prompts for input, so no spinner
+      const spinner = headless ? undefined : ora('Launching SSO authentication...').start();
 
       const sso = new CodeMieSSO();
-      const result = await sso.authenticate({ codeMieUrl, timeout: 120000 });
+      const result = await sso.authenticate({ codeMieUrl, timeout: 120000, ...(headless ? { headless: true } : {}) });
 
       if (result.success) {
-        spinner.succeed(chalk.green('SSO authentication successful'));
+        if (spinner) spinner.succeed(chalk.green('SSO authentication successful'));
+        else console.log(chalk.green('SSO authentication successful'));
         return true;
       } else {
-        spinner.fail(chalk.red('SSO authentication failed'));
+        if (spinner) spinner.fail(chalk.red('SSO authentication failed'));
+        else console.log(chalk.red('SSO authentication failed'));
         console.log(chalk.red(`Error: ${result.error}`));
         return false;
       }

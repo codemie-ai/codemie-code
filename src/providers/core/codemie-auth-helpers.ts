@@ -89,13 +89,15 @@ export async function promptForCodeMieUrl(
 
 export async function authenticateWithCodeMie(
   codeMieUrl: string,
-  timeout: number = 120000
+  timeout: number = 120000,
+  headless?: boolean
 ): Promise<SSOAuthResult> {
   const { CodeMieSSO } = await import('../plugins/sso/sso.auth.js');
   const sso = new CodeMieSSO();
   return sso.authenticate({
     codeMieUrl,
-    timeout
+    timeout,
+    ...(headless ? { headless: true } : {})
   });
 }
 

@@ -297,7 +297,7 @@ export interface ProviderSetupSteps {
    *
    * Interactive prompts for API keys, URLs, etc.
    */
-  getCredentials(isUpdate?: boolean): Promise<ProviderCredentials>;
+  getCredentials(isUpdate?: boolean, options?: { headless?: boolean }): Promise<ProviderCredentials>;
 
   /**
    * Step 2: Fetch available models
@@ -375,7 +375,7 @@ export interface ProviderSetupSteps {
    *
    * Interactive re-auth flow when validation fails
    */
-  promptForReauth?(config: CodeMieConfigOptions): Promise<boolean>;
+  promptForReauth?(config: CodeMieConfigOptions, headless?: boolean): Promise<boolean>;
 
   /**
    * Optional: Get authentication status for display
