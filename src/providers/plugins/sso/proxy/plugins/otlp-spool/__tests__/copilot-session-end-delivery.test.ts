@@ -139,6 +139,9 @@ describe('tick: recovered session end reaches the analytics API', () => {
       expect(ofType(records, 'agent.tool.start').map((row) => row['tool_use_id']).sort()).toEqual(['ra-1', 'ra-2']);
     });
     expect(readSessionState(SID).sessionStateRoot).toBe(sessionStateRoot);
+    await (interceptor as unknown as { tick(): Promise<void> }).tick();
+    expect(ofType(accepted(), 'agent.session.end').map((row) => row['timestamp'])).toEqual([at(5_000)]);
+    expect((await readStatus(SID))?.endedAt).toBeUndefined();
   });
 
   it('delivers one end, one final summary and each hook-less read_agent once, also after a failed send, a repeat tick and a late hook', async () => {

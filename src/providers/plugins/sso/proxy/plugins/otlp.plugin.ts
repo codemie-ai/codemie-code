@@ -35,6 +35,8 @@ export interface OtlpHookSpoolData {
   hookEvent: string;
   /** Provenance marker: the hook stamped a durable evidence record before spooling. Envelope only. */
   evidence_v?: 1;
+  /** This run ended before a recorded resume. Deliver it without closing the current spool lifecycle. */
+  historicalEnd?: true;
 }
 
 /** One hook invocation's batch, as the hook process POSTs it. */

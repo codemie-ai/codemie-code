@@ -295,7 +295,11 @@ export async function recoverMissingSessionEnds(
           event_id: recoveredEndId(sessionId, shutdown.timestamp),
         };
         if (!existing) {
-          const line = JSON.stringify({ agentName: COPILOT_CLI_OTLP_AGENT, hookEvent: JSON.stringify(end) }) + '\n';
+          const line = JSON.stringify({
+            agentName: COPILOT_CLI_OTLP_AGENT,
+            hookEvent: JSON.stringify(end),
+            ...(startMs < lastStart ? { historicalEnd: true } : {}),
+          }) + '\n';
           const written = await appendSpool(sessionId, 'hooks', line, undefined, undefined, async () =>
             runEndedOrSuperseded(await readHookRecordsLocked(sessionId), startMs, endedMs));
           if (!written) {
