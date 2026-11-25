@@ -318,7 +318,11 @@ describe('AgentsCheck', () => {
   });
 
   describe('PATH shadow', () => {
-    const shadowed = { status: 'shadowed', active: 'C:\\old\\bin\\claude.cmd', managedDir: 'C:\\managed\\bin' };
+    // AgentsCheck splits the active path with the host platform's path module, so the fixture must use host separators.
+    const sep = process.platform === 'win32' ? '\\' : '/';
+    const oldDir = process.platform === 'win32' ? 'C:\\old\\bin' : '/old/bin';
+    const activePath = `${oldDir}${sep}claude.cmd`;
+    const shadowed = { status: 'shadowed', active: activePath, managedDir: 'C:\\managed\\bin' };
     const missingOnPath = { status: 'missing-on-path', managedDir: 'C:\\managed\\bin', shimPath: 'C:\\managed\\bin\\codex.cmd' };
     const agent = (name: string, verdict: unknown) => ({
       name,
@@ -338,8 +342,8 @@ describe('AgentsCheck', () => {
       expect(result.details).toHaveLength(1);
       expect(result.details[0].status).toBe('warn');
       expect(result.details[0].message).toContain('claude (1.0.0)');
-      expect(result.details[0].message).toContain('C:\\old\\bin\\claude.cmd');
-      expect(result.details[0].hint).toBe('  - Put "C:\\managed\\bin" ahead of "C:\\old\\bin" on your PATH');
+      expect(result.details[0].message).toContain(activePath);
+      expect(result.details[0].hint).toBe(`  - Put "C:\\managed\\bin" ahead of "${oldDir}" on your PATH`);
     });
 
     it('appends the version warning to a shadowed agent message', async () => {
