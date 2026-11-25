@@ -116,10 +116,11 @@ async function replayEntry(path: string, fp: string, api: string, email: string)
   }
 
   // Hook-time facts stay as captured; only identity comes from the verified login (never git/OS/config values).
-  // An event reduced at hook time keeps its redacted identity fields: only the source label is set.
+  // An event reduced at hook time keeps all its identity fields redacted, source label included, exactly as every
+  // other reduced event leaves the machine; the owner travels in the entry's `owner_hash`/`api_identity`.
   const events = entry.events.map((event) =>
     hookEventReduced(event)
-      ? { ...event, identity_source: 'jwt' }
+      ? event
       : { ...event, user_email: email, developer_name: email, identity_source: 'jwt' }
   );
   const lines = events.map((event) => JSON.stringify({ agentName: entry.agentName, hookEvent: JSON.stringify(event), evidence_v: 1 }));

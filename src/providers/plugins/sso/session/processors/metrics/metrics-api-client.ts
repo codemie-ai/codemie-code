@@ -31,7 +31,7 @@ import { extractRepository } from '../../../../../../utils/paths.js';
 import { encodeAttributionHeader, rawProjectHeader } from '../../../../../../utils/header-value.js';
 import { reduceBranch, reduceRecord } from '@/agents/core/analytics-reduction.js';
 import { keyedDigest } from '@/agents/core/analytics-event-key.js';
-import { isReductionOn } from '@/utils/analytics-reduction-setting.js';
+import { isReductionOn, readOptedInProjects } from '@/utils/analytics-reduction-setting.js';
 import { clearAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
 import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
 import { SyncStoppedError, type SyncBounds } from '../../../../../../agents/core/session/BaseProcessor.js';
@@ -46,17 +46,23 @@ import type { CredentialsSupersededCheck } from '../../cookie-auth.js';
  * Returns the given metric untouched when reduction is off. Never mutates its input.
  */
 async function reduceMetric(metric: SessionMetric, workingDirectory?: string): Promise<SessionMetric> {
-  let configDir: string | undefined;
+  let configDirs: string[] = [];
   if (workingDirectory) {
     try {
       // Lazy: identity-fields pulls in ConfigLoader and the proxy graph, which cycles back to the plugin registry
-      const { findNearestConfigDir } = await import('@/agents/core/event-fields/identity-fields.js');
-      configDir = await findNearestConfigDir(workingDirectory);
+      const { findAllConfigDirs } = await import('@/agents/core/event-fields/identity-fields.js');
+      configDirs = await findAllConfigDirs(workingDirectory);
     } catch {
-      configDir = workingDirectory;
+      configDirs = [workingDirectory];
     }
   }
-  if (!(await isReductionOn({ configDirs: [configDir] }))) {
+  let reduce = await isReductionOn({ configDirs });
+  if (!reduce && !workingDirectory) {
+    // No project to read: reduce when any project opted in, rather than sending that project's session unreduced.
+    const optedIn = await readOptedInProjects();
+    reduce = optedIn === 'unreadable' || optedIn.length > 0;
+  }
+  if (!reduce) {
     return metric;
   }
   const rawBranch = metric.attributes.branch;

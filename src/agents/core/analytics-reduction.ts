@@ -73,7 +73,9 @@ function reducePromptUnsafe(raw: string, opts: ReducePromptOptions = {}): string
   if (marker) {
     return marker.slice(0, MAX_REDUCED_PROMPT);
   }
-  const command = opts.commandName ?? resolveCommandFields(raw).command_name;
+  // `commandName: ''` means the adapter looked and found no command: do not re-derive one from the first word
+  // (a path such as `/tmp is full` is not a command). Only an absent value parses the text itself.
+  const command = opts.commandName !== undefined ? opts.commandName : resolveCommandFields(raw).command_name;
   const parts: string[] = command ? [`/${command}`] : [];
   const seen = new Set<string>();
   for (const ref of [...findTicketRefs(raw), ...findMrRefs(raw)]) {

@@ -22,7 +22,7 @@ function readKeyFile(path: string): Buffer | null {
  * wins and its key is read), `rename` over a wrong-length file (repair). No reader ever sees a partial key.
  */
 function writeKeyAtomically(path: string, missing: boolean): Buffer {
-  mkdirSync(dirname(path), { recursive: true });
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const fresh = randomBytes(KEY_BYTES);
   const temp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
   try {

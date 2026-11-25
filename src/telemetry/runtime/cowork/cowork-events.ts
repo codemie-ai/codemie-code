@@ -10,8 +10,9 @@ import { maskSecretsDeep } from '@/utils/security.js';
 import { reduceBranch, reducePrompt, reduceRecord } from '@/agents/core/analytics-reduction.js';
 import { HOOK_EVENT_KEEP_LIST } from '@/agents/core/hook-event-keep-list.js';
 import { isReductionOn, readOptedInProjects } from '@/utils/analytics-reduction-setting.js';
-import { findNearestConfigDir } from '@/agents/core/event-fields/identity-fields.js';
+import { findAllConfigDirs } from '@/agents/core/event-fields/identity-fields.js';
 import { stripPastedContentTags } from '@/agents/core/pasted-content.js';
+import { stripInjectedContext } from '@/agents/plugins/claude-code-otlp/event-fields/prompt-fields.js';
 import { isCountedTranscriptLine, keepFirstByUuid } from '@/agents/plugins/claude/session/transcript-lines.js';
 import { buildClaudeEventId } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.event-id.js';
 import { resolveForkAgentFields, resolveToolContextFields } from '@/agents/plugins/claude-code-otlp/event-fields/tool-fields.js';
@@ -328,15 +329,15 @@ function isWithin(dir: string, root: string): boolean {
  */
 export async function resolveCoworkReduction(envelope: Pick<CoworkEnvelope, 'workingDirectory'>): Promise<boolean> {
   const dir = envelope.workingDirectory;
-  let configDir: string | undefined;
+  let configDirs: string[] = [];
   if (dir) {
     try {
-      configDir = await findNearestConfigDir(dir);
+      configDirs = await findAllConfigDirs(dir);
     } catch {
-      configDir = dir;
+      configDirs = [dir];
     }
   }
-  if (await isReductionOn({ configDirs: [configDir] })) return true;
+  if (await isReductionOn({ configDirs })) return true;
   const projects = await readOptedInProjects();
   if (projects === 'unreadable') return true;
   return Boolean(dir) && projects.some((root) => isWithin(dir as string, root));
@@ -391,7 +392,7 @@ export function stampCoworkEvent(
   masked['analytics_reduction'] = true;
   // The prompt is reduced from the raw text, before the length cut, like the hook path.
   if (typeof own['prompt_body'] === 'string') {
-    masked['prompt_body'] = boundedText(maskAndBoundFields({ prompt: reducePrompt(own['prompt_body']) })['prompt'], TEXT_FIELD_LIMITS['prompt']);
+    masked['prompt_body'] = boundedText(maskAndBoundFields({ prompt: reducePrompt(stripInjectedContext(own['prompt_body']), { commandName: '' }) })['prompt'], TEXT_FIELD_LIMITS['prompt']);
   }
   const reducedBranch = branch ? (reduceBranch(branch) ?? '') : '';
   masked['git_branch'] = reducedBranch;

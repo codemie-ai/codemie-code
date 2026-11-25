@@ -174,6 +174,26 @@ describe('MetricsSender prompt reduction', () => {
     expect(postedHeaders()['X-CodeMie-Branch']).toBeDefined();
   });
 
+  it('reduces a metric with no working directory when any project opted in, and leaves it when none did (CR-025)', async () => {
+    await sender().sendSessionMetric(toolUsageMetric(), undefined);
+    expect(posted().attributes.error_messages).toEqual(['cannot read /home/me/secret.txt']);
+
+    fetchMock.mockClear();
+    writeFileSync(join(home, 'analytics-reduction-projects.json'), JSON.stringify([project]));
+    await sender().sendSessionMetric(toolUsageMetric(), undefined);
+    expect(posted().attributes.error_messages).toEqual(['REDACTED:ERROR-MESSAGES']);
+  });
+
+  it('reduces when a nested .codemie without the flag sits under a root that has it (CR-002)', async () => {
+    setReduction(project, true);
+    mkdirSync(join(project, '.git'));
+    const nested = join(project, 'packages', 'billing');
+    mkdirSync(join(nested, '.codemie'), { recursive: true });
+    writeFileSync(join(nested, '.codemie', 'codemie-cli.config.json'), JSON.stringify({ version: 2, activeProfile: 'p', profiles: {} }));
+    await sender().sendSessionMetric(toolUsageMetric(), nested);
+    expect(posted().attributes.error_messages).toEqual(['REDACTED:ERROR-MESSAGES']);
+  });
+
   it('reads the setting on every send', async () => {
     setReduction(project, false);
     await sender().sendSessionMetric(toolUsageMetric(), project);

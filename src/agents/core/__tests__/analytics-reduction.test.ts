@@ -182,3 +182,17 @@ describe('HOOK_EVENT_KEEP_LIST: model usage and session summary', () => {
     expect(out.commands).toEqual(['commit', 'REDACTED:COMMANDS']);
   });
 });
+
+describe('reducePrompt: commands and refs (CR-009, CR-006)', () => {
+  it('does not read a path as a command when the adapter reports no command', () => {
+    expect(reducePrompt('/tmp is full', { commandName: '' })).toBe('REDACTED:PROMPT');
+    expect(reducePrompt('/usr/bin/node run it', { commandName: '' })).toBe('REDACTED:PROMPT');
+  });
+  it('still derives the command itself when no adapter value is supplied', () => {
+    expect(reducePrompt('/review-pr !456 secret')).toBe('/review-pr !456');
+  });
+  it('keeps short tracker prefixes and org/repo refs, not long bare words', () => {
+    expect(reducePrompt('see AB#123 and org/repo#7 and #9', { commandName: '' })).toBe('AB#123 org/repo#7 #9');
+    expect(reducePrompt('call secretproject#5 now', { commandName: '' })).toBe('REDACTED:PROMPT');
+  });
+});

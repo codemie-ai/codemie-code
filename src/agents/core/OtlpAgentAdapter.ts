@@ -4,7 +4,7 @@ import { AnalyticsSourceError } from '@/utils/errors.js';
 import { boundedText, maskAndBoundFields, MAX_PROMPT_CHARS } from './otlp-field-limits.js';
 import { AgentAdapterType, type OtlpAdapterDeps } from './types.js';
 import { resolveRepoFields, type RepoFields } from './event-fields/repo-fields.js';
-import { findNearestConfigDir, resolveIdentityFields, resolveProjectAtCwd, type IdentityFields, type ProjectPolicy } from './event-fields/identity-fields.js';
+import { findAllConfigDirs, resolveIdentityFields, resolveProjectAtCwd, type IdentityFields, type ProjectPolicy } from './event-fields/identity-fields.js';
 import { resolveBranchStory } from './story-resolver.js';
 import { stampEvidence, type EvidenceInputs } from './evidence/stamp.js';
 import { frozenProfileOf, type EvidenceRecord } from './evidence/record-store.js';
@@ -307,17 +307,17 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
    * itself reads fail-closed (unreadable is on); a project walk that fails falls back to the start dir.
    */
   private async decideReduction(cwd: string): Promise<boolean> {
-    const nearest = async (start: string | undefined): Promise<string | undefined> => {
-      if (!start) return undefined;
+    const allDirs = async (start: string | undefined): Promise<string[]> => {
+      if (!start) return [];
       try {
-        return await findNearestConfigDir(start);
+        return await findAllConfigDirs(start);
       } catch (error) {
         logger.debug(`[${this.name}] project lookup for the reduction setting failed (${error instanceof Error ? error.name : 'error'})`);
-        return start;
+        return [start];
       }
     };
-    const [pinnedDir, cwdDir] = await Promise.all([nearest(process.env['CLAUDE_PROJECT_DIR']?.trim()), nearest(cwd)]);
-    return await isReductionOn({ configDirs: [pinnedDir, cwdDir] });
+    const [pinnedDirs, cwdDirs] = await Promise.all([allDirs(process.env['CLAUDE_PROJECT_DIR']?.trim()), allDirs(cwd)]);
+    return await isReductionOn({ configDirs: [...pinnedDirs, ...cwdDirs] });
   }
 
   /**
@@ -330,7 +330,8 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       return '';
     }
     const command = hookEvent['command_name'];
-    return reducePrompt(prompt, { commandName: typeof command === 'string' ? command : undefined });
+    // An adapter that found no command says so (''), so the reducer never reads a path's first word as one.
+    return reducePrompt(prompt, { commandName: typeof command === 'string' ? command : '' });
   }
 
   /** Assembles the final event: masked and truncated hook fields plus the common and agent fields, all at the top level. */

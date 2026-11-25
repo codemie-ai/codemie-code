@@ -1321,6 +1321,24 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       });
     });
 
+    it('reduces when a nested .codemie without the flag sits between the cwd and the root that has it (CR-002)', async () => {
+      const { repo, cwd } = makeRepo(true);
+      mkdirSync(join(cwd, '.codemie'));
+      writeFileSync(join(cwd, '.codemie', 'codemie-cli.config.json'), JSON.stringify({ version: 2, activeProfile: 'p', profiles: {} }));
+      hasLocalConfigMock.mockImplementation(async (dir: string) => dir === repo || dir === cwd);
+      await run({ cwd, prompt: '/review-pr !456 secret', payload: payload() });
+      expect(forwarded()[0]).toMatchObject({ analytics_reduction: true, prompt: 'REDACTED:PROMPT' });
+    });
+
+    it('reduces when only the CLAUDE_PROJECT_DIR project has the flag and the hook cwd is elsewhere (CR-003)', async () => {
+      const { repo } = makeRepo(true);
+      const elsewhere = mkdtempSync(join(tmpdir(), 'otlp-reduction-elsewhere-'));
+      roots.push(elsewhere);
+      process.env['CLAUDE_PROJECT_DIR'] = repo;
+      await run({ cwd: elsewhere, prompt: '/review-pr !456 secret', payload: payload() });
+      expect(forwarded()[0]).toMatchObject({ analytics_reduction: true, prompt: 'REDACTED:PROMPT' });
+    });
+
     it('keeps opaque runtime ids and the CLI version, but redacts user identity on a reduced event', async () => {
       const { cwd } = makeRepo(true);
       await run({

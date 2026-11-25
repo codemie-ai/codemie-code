@@ -296,4 +296,16 @@ describe('Cowork prompt reduction (EPMCDME-17748)', () => {
     expect(reduced['session_id']).toBe(CLI);
     expect(typeof reduced['event_id']).toBe('string');
   });
+
+  it('strips injected IDE blocks and system reminders before reducing a prompt (CR-031)', () => {
+    const prompt = '<ide_opened_file>The user opened /repo/ABC-777.ts in the IDE.</ide_opened_file>\n'
+      + '<system-reminder>Plan for acme bank #888</system-reminder>\nplease fix XYZ-5 and !42';
+    const reduced = stampCoworkEvent(
+      { type: 'agent.prompt.submit', timestamp: '2026-11-10T11:00:00.000Z', prompt_body: prompt },
+      ENVELOPE, '', { reduced: true }
+    );
+    expect(reduced['prompt_body']).toBe('XYZ-5 !42');
+    expect(JSON.stringify(reduced)).not.toContain('ABC-777');
+    expect(JSON.stringify(reduced)).not.toContain('acme');
+  });
 });

@@ -134,8 +134,7 @@ export const METRICS_KEEP_LIST: KeepList = {
     'agent_names', 'agents_project_names', 'agents_global_names',
     'command_names', 'commands_project_names', 'commands_global_names',
     'skill_names', 'skills_project_names', 'skills_global_names',
-    'hook_names', 'hooks_project_names', 'hooks_global_names',
-    'rule_names', 'rules_project_names', 'rules_global_names'
+    // Hook and rule names are file names the team chose (they can name a client or a policy): not kept.
   ])
 };
 

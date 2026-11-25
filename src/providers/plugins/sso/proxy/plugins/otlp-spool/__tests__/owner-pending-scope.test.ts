@@ -120,7 +120,7 @@ describe('owner-pending replay scope', () => {
     const sent = JSON.parse(line.hookEvent) as Record<string, unknown>;
     expect(sent['user_email']).toBe('REDACTED:USER-EMAIL');
     expect(sent['developer_name']).toBe('REDACTED:USER-EMAIL');
-    expect(sent['identity_source']).toBe('jwt');
+    expect(sent['identity_source']).not.toBe('jwt');
     expect(JSON.stringify(sent)).not.toContain('a@example.com');
     const { readStatus } = await import('../session-status.js');
     expect((await readStatus(SESSION))?.reduction).toBe(true);

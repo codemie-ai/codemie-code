@@ -2,8 +2,8 @@
  * Forward-time reduction of one masked native OTLP/JSON export (EPMCDME-17748).
  *
  * Walks the parsed export by shape: every `KeyValue` (`{ key, value }`) is reduced against
- * `OTLP_ATTRIBUTE_KEEP_LIST`, and a log record `body` string is replaced whole. Numeric and boolean values pass
- * unchanged. Nothing is read from settings: the caller reduces exactly the records of a session whose bound decision is on.
+ * `OTLP_ATTRIBUTE_KEEP_LIST`, a log record `body` is replaced whole, and any other string outside the structural keys
+ * (ids, timestamps, units, versions) and identifier-like names is replaced. Numeric and boolean values pass unchanged. Nothing is read from settings: the caller reduces exactly the records of a session whose bound decision is on.
  */
 import { placeholder, reduceRecord } from '@/agents/core/analytics-reduction.js';
 import { OTLP_ATTRIBUTE_KEEP_LIST } from './otlp-reader.js';
@@ -15,8 +15,18 @@ const MAX_DEPTH = 64;
 const STRING_VALUE_KEYS = ['stringValue', 'string_value'] as const;
 const NON_TEXT_VALUE_KEYS = ['intValue', 'int_value', 'doubleValue', 'double_value', 'boolValue', 'bool_value'] as const;
 
-/** Free-text carriers outside KeyValue nodes: always replaced. */
-const ALWAYS_REDACTED_TEXT_KEYS = new Set(['description', 'body', 'message', 'severityText', 'severity_text']);
+/**
+ * Strings outside KeyValue nodes that are structure, not content: ids and timestamps (hex or digits), units, versions.
+ * Every other string child is replaced, so a free-text field the exporter adds later cannot ride along.
+ */
+const STRUCTURAL_TEXT_KEYS = new Set([
+  'traceId', 'trace_id', 'spanId', 'span_id', 'parentSpanId', 'parent_span_id',
+  'timeUnixNano', 'time_unix_nano', 'startTimeUnixNano', 'start_time_unix_nano',
+  'endTimeUnixNano', 'end_time_unix_nano', 'observedTimeUnixNano', 'observed_time_unix_nano',
+  'asInt', 'as_int', 'unit', 'version',
+]);
+/** Structural strings are still checked: an id or timestamp is a short token, never prose. */
+const STRUCTURAL_VALUE_RE = /^[A-Za-z0-9_.:+-]{0,64}$/;
 /** Names (span, metric, scope, event): kept only when a single identifier-like token. */
 const IDENTIFIER_TEXT_KEYS = new Set(['name']);
 const IDENTIFIER_RE = /^[A-Za-z0-9_.:@/+-]{1,128}$/;
@@ -58,8 +68,9 @@ function reduceKeyValue(node: JsonObject & { key: string; value: JsonObject }): 
 function reduceChild(name: string, child: unknown, depth: number): unknown {
   if (name === 'body' && isObject(child)) return textValue(child, placeholder('body'));
   if (typeof child === 'string') {
-    if (ALWAYS_REDACTED_TEXT_KEYS.has(name)) return placeholder(name);
-    if (IDENTIFIER_TEXT_KEYS.has(name) && !IDENTIFIER_RE.test(child)) return placeholder(name);
+    if (IDENTIFIER_TEXT_KEYS.has(name)) return IDENTIFIER_RE.test(child) ? child : placeholder(name);
+    if (STRUCTURAL_TEXT_KEYS.has(name)) return STRUCTURAL_VALUE_RE.test(child) ? child : placeholder(name);
+    return placeholder(name);
   }
   return walk(child, depth + 1);
 }

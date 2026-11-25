@@ -43,6 +43,8 @@ export const OTLP_ATTRIBUTE_KEEP_LIST: KeepList = {
   keep: new Set([
     'session.id', 'event.name', 'event.timestamp', 'service.name', 'service.version',
     'session_id', 'codemie_project_name', 'tool_name', 'type', 'model',
+    // Command, skill and agent type names and MCP names, kept on every other route
+    'command_name', 'skill_name', 'agent_type', 'agent_name', 'subagent_type', 'mcp_server_name', 'mcp_tool_name',
   ]),
   nested: {
     tool_parameters: { keep: new Set(['skill_name', 'mcp_server_name', 'mcp_tool_name']) },
