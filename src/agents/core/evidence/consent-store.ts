@@ -111,18 +111,21 @@ export type ConsentLookup = { kind: 'found'; ref: string; connectedAt?: number }
 /**
  * The entry that grants consent for this owner, backend, project and folder (the folder or an ancestor of it is
  * connected): `found`, `none` when no entry grants it, `unknown` when the store or the folder could not be read.
- * Never throws.
+ * Without `cwd` (the session's folder is not known) only the all-folders entry can grant it. Never throws.
  */
-export async function lookupConsent(scope: ConsentScope, cwd: string): Promise<ConsentLookup> {
+export async function lookupConsent(scope: ConsentScope, cwd: string | undefined): Promise<ConsentLookup> {
   if (!scope.project.trim()) return { kind: 'none' };
   try {
     const store = await load();
     if (store.kind !== 'ok') return { kind: 'unknown' };
-    const canonicalCwd = await canonicalizePath(cwd);
+    const canonicalCwd = cwd === undefined ? undefined : await canonicalizePath(cwd);
     // The all-folders entry never covers a project whose name cannot travel as a raw header: a frozen reference there
     // would stop the session at send time, and a folder grant for such a project is refused too.
     const covering = store.entries.filter(
-      (e) => scopeMatches(e, scope) && coversFolder(e, canonicalCwd) && (e.all_folders !== true || rawProjectHeader(scope.project) !== undefined)
+      (e) =>
+        scopeMatches(e, scope) &&
+        (canonicalCwd === undefined ? e.all_folders === true : coversFolder(e, canonicalCwd)) &&
+        (e.all_folders !== true || rawProjectHeader(scope.project) !== undefined)
     );
     // A folder-bound entry wins over the all-folders one.
     const entry = covering.find((e) => e.all_folders !== true) ?? covering[0];
