@@ -543,11 +543,21 @@ export interface ReconcileResult {
   servers: unknown[];
   managedNames: string[];
   /**
-   * `sha256` fingerprints ({@link fingerprintManagedMcpEntry}) of what CodeMie last wrote for each managed
-   * name, keyed by lowercase name. An entry the user edited is not re-fingerprinted: it keeps the fingerprint
-   * recorded before, so it is still seen as edited, and stays the user's, on every later run.
+   * `sha256` fingerprints ({@link fingerprintManagedMcpEntry}) of what CodeMie writes for each managed name,
+   * keyed by lowercase name. An entry the user edited is not re-fingerprinted: it keeps the fingerprint
+   * recorded before, so it is still seen as edited, and stays the user's, on every later run. That holds
+   * after its name left the managed set too: the baseline is kept for as long as the edited entry stays in
+   * the config, so a name that comes back into the set finds the edit still protected. It is dropped once
+   * the entry is gone or equals the baseline again.
    */
   fingerprints: Record<string, string>;
+  /**
+   * The baseline of the entries as they are in the config now: per name, the recorded fingerprint the entry
+   * matches (the previous one or the pending one, see {@link reconcileManagedMcpServers}), or the recorded
+   * one for an entry the user edited. This is what a write-ahead marker keeps as the previous baseline, so a
+   * run that stops before it commits cannot make an entry it wrote look like an edit.
+   */
+  priorFingerprints: Record<string, string>;
 }
 
 /**
@@ -593,21 +603,37 @@ interface ManagedMcpPartition {
   preserved: unknown[];
   /** Lowercase names of managed entries whose existing entry the user edited. */
   editedNames: Set<string>;
+  /** Baselines of the existing entries that differ from them (edited), by lowercase name: to be kept. */
+  retained: Map<string, string>;
+  /** Per lowercase name of an existing entry with a recorded baseline, the baseline it matches or, edited, the recorded one. */
+  baseline: Map<string, string>;
+}
+
+/** The own string value of `key` in a fingerprint record, so a name such as `__proto__` is never read as recorded. */
+function recordedFingerprint(fingerprints: Record<string, string>, key: string): string | undefined {
+  if (!Object.hasOwn(fingerprints, key)) return undefined;
+  const value = fingerprints[key];
+  return typeof value === 'string' ? value : undefined;
 }
 
 /**
  * Split an existing managedMcpServers array into the managed entries to write and the entries that stay.
  *
- * An existing entry whose name is managed (now or on an earlier run) and for which `fingerprints` holds the
- * fingerprint CodeMie last wrote is the user's when its own fingerprint differs: it is kept, and the managed
- * entry of that name is not written. Without a recorded fingerprint (legacy state, first run, failed fetch)
- * the entry is replaced.
+ * An existing entry whose name is managed (now or on an earlier run) is the user's when a baseline is recorded
+ * for it and its own fingerprint matches neither the previous one (`fingerprints`) nor the pending one
+ * (`pendingFingerprints`, what an interrupted run was about to write): it is kept, and the managed entry of
+ * that name is not written. Without a recorded baseline (a state an earlier CLI wrote, first run, failed
+ * fetch) the entry is replaced.
+ *
+ * The baseline of an entry that differs from it is reported in `retained` whether its name is managed or not,
+ * so it outlives the name's stay in the managed set; the baseline of an entry that is gone or matches it is not.
  */
 function partitionManagedMcpServers(
   existingServers: unknown,
   managed: ManagedMcpServerEntry[],
   previouslyManagedNames: string[],
-  fingerprints: Record<string, string>
+  fingerprints: Record<string, string>,
+  pendingFingerprints: Record<string, string> = {}
 ): ManagedMcpPartition {
   const ownedLower = new Set(
     [...previouslyManagedNames, ...managed.map((s) => s.name)].map((n) => n.toLowerCase()),
@@ -616,17 +642,33 @@ function partitionManagedMcpServers(
 
   const editedNames = new Set<string>();
   const editedEntries = new Set<unknown>();
+  const retained = new Map<string, string>();
+  const baseline = new Map<string, string>();
+  const matched = new Map<string, string>();
   for (const server of existing) {
     const name = getManagedMcpServerName(server);
     if (!name || !isValidMcpServerName(name)) continue;
     const lower = name.toLowerCase();
-    if (!ownedLower.has(lower)) continue;
-    const recorded = fingerprints[lower];
-    if (recorded !== undefined && fingerprintManagedMcpEntry(server) !== recorded) {
+    const previous = recordedFingerprint(fingerprints, lower);
+    const pending = recordedFingerprint(pendingFingerprints, lower);
+    const recorded = previous ?? pending;
+    if (recorded === undefined) continue;
+    const own = fingerprintManagedMcpEntry(server);
+    if (own === previous || own === pending) {
+      matched.set(lower, own);
+      continue;
+    }
+    // Two entries of one name: the edited one decides, whichever comes first.
+    retained.set(lower, recorded);
+    if (ownedLower.has(lower)) {
       editedNames.add(lower);
       editedEntries.add(server);
     }
   }
+  for (const [lower, fingerprint] of matched) {
+    if (!retained.has(lower)) baseline.set(lower, fingerprint);
+  }
+  for (const [lower, fingerprint] of retained) baseline.set(lower, fingerprint);
 
   const written = managed
     .filter((entry) => !editedNames.has(entry.name.toLowerCase()))
@@ -657,7 +699,7 @@ function partitionManagedMcpServers(
     return true;
   }).map(stripDesktopLocalKeys);
 
-  return { written, preserved, editedNames };
+  return { written, preserved, editedNames, retained, baseline };
 }
 
 /**
@@ -669,9 +711,12 @@ function partitionManagedMcpServers(
  *   that an entry removed from the managed set is dropped even though Claude
  *   Desktop re-stamps entries it persists (we cannot rely on a custom marker
  *   field surviving Desktop's rewrite).
- * - `fingerprints`: what CodeMie last wrote per lowercase name (see
+ * - `fingerprints`: what CodeMie last committed per lowercase name (see
  *   {@link ReconcileResult.fingerprints}). An existing managed entry that no longer matches its fingerprint
  *   was edited by the user and is kept as it is.
+ * - `pendingFingerprints`: what a run that did not finish was about to write. An entry that matches either
+ *   `fingerprints` or this is CodeMie's, not an edit: the config may or may not have been replaced before
+ *   that run stopped.
  *
  * Genuine user-added entries (never managed by us) are preserved.
  * Managed entries appear first in the returned array; user entries follow.
@@ -681,49 +726,66 @@ export function reconcileManagedMcpServers(
   managed: ManagedMcpServerEntry[],
   previouslyManagedNames: string[] = [],
   fingerprints: Record<string, string> = {},
+  pendingFingerprints: Record<string, string> = {},
 ): ReconcileResult {
   const managedNames = managed.map((s) => s.name);
-  const { written, preserved, editedNames } = partitionManagedMcpServers(
+  const { written, preserved, retained, baseline } = partitionManagedMcpServers(
     existingServers,
     managed,
     previouslyManagedNames,
     fingerprints,
+    pendingFingerprints,
   );
 
-  const nextFingerprints: Record<string, string> = {};
+  const next = new Map<string, string>(retained);
   for (const entry of written) {
-    nextFingerprints[entry.name.toLowerCase()] = fingerprintManagedMcpEntry(entry);
-  }
-  for (const lower of editedNames) {
-    if (managedNames.some((name) => name.toLowerCase() === lower)) {
-      nextFingerprints[lower] = fingerprints[lower];
-    }
+    next.set(entry.name.toLowerCase(), fingerprintManagedMcpEntry(entry));
   }
 
   return {
     servers: [...written, ...preserved],
     managedNames,
-    fingerprints: nextFingerprints,
+    fingerprints: Object.fromEntries(next),
+    priorFingerprints: Object.fromEntries(baseline),
   };
 }
 
 /**
- * The CLI-owned marker of what CodeMie last wrote into managedMcpServers. One slot, tied to the config
- * (`configId`) it was written for: the history of one Desktop config says nothing about another's.
+ * What the CLI-owned marker holds for one Desktop config: the names CodeMie wrote into its managedMcpServers
+ * and the fingerprints of what it wrote. The history of one config says nothing about another's.
  */
-interface ManagedMcpState {
-  /** Id of the config entry the state was written for; absent in a state an earlier CLI wrote. */
-  configId?: string;
+interface ManagedMcpConfigRecord {
   managedNames: string[];
-  /** See {@link ReconcileResult.fingerprints}. */
-  fingerprints?: Record<string, string>;
+  /** See {@link ReconcileResult.fingerprints}. Also the retained baselines of edited entries that left the managed set. */
+  fingerprints: Record<string, string>;
+  /**
+   * Set only between the write-ahead marker of a connect and its final commit: the fingerprints that run was
+   * about to write. A record that still has it was left by a run that stopped in between.
+   */
+  pendingFingerprints?: Record<string, string>;
 }
 
-/** What a stored {@link ManagedMcpState} tells about one config. */
+/**
+ * The marker file: one record per config UUID. An earlier CLI wrote one slot, `{ configId, managedNames,
+ * fingerprints }`, or, older still, the same without `configId`; both are read ({@link parseManagedMcpStore}).
+ */
+interface ManagedMcpState {
+  configs: Record<string, ManagedMcpConfigRecord>;
+}
+
+/** The marker as read: the records by config, and the record of a state no config is recorded for. */
+interface ManagedMcpStore {
+  configs: Map<string, ManagedMcpConfigRecord>;
+  /** A state without a config id (or an unreadable one): only a target that holds a CodeMie-written entry adopts it. */
+  untied?: ManagedMcpConfigRecord;
+}
+
+/** What a stored marker tells about one config. */
 interface ManagedMcpHistory {
   managedNames: string[];
   fingerprints: Record<string, string>;
-  /** The state belongs to this config (tied to it, or adopted from an earlier CLI): disconnect may remove the file. */
+  pendingFingerprints: Record<string, string>;
+  /** The marker holds a record for this config (or adopted an earlier CLI's untied state for it): disconnect may drop it. */
   tied: boolean;
 }
 
@@ -732,7 +794,12 @@ export function getManagedMcpStatePath(): string {
   return getCodemiePath('proxy', 'desktop-managed-mcp-state.json');
 }
 
-const NO_MANAGED_MCP_HISTORY: ManagedMcpHistory = { managedNames: [], fingerprints: {}, tied: false };
+const NO_MANAGED_MCP_HISTORY: ManagedMcpHistory = {
+  managedNames: [],
+  fingerprints: {},
+  pendingFingerprints: {},
+  tied: false,
+};
 
 function stringRecord(value: unknown): Record<string, string> {
   if (!isRecord(value)) return {};
@@ -741,43 +808,95 @@ function stringRecord(value: unknown): Record<string, string> {
   );
 }
 
+function parseManagedMcpRecord(value: unknown): ManagedMcpConfigRecord {
+  const raw = isRecord(value) ? value : {};
+  const record: ManagedMcpConfigRecord = {
+    managedNames: Array.isArray(raw.managedNames)
+      ? raw.managedNames.filter((n): n is string => typeof n === 'string')
+      : [],
+    fingerprints: stringRecord(raw.fingerprints),
+  };
+  const pending = stringRecord(raw.pendingFingerprints);
+  if (Object.keys(pending).length > 0) record.pendingFingerprints = pending;
+  return record;
+}
+
 /**
- * The managed-MCP history that applies to config `configId`: the state when it is tied to that config, or
- * when it is an earlier CLI's untied state and the target already holds an entry CodeMie wrote
- * (`targetOwned`). A state tied to another config, a missing one and an unreadable one give no history.
+ * Read a marker of any generation: per-config records; a single slot tied to `configId`, which becomes that
+ * config's record; a slot without one, kept as the untied record. Anything unreadable is an empty untied record,
+ * which disconnect may clean.
+ */
+function parseManagedMcpStore(raw: unknown): ManagedMcpStore {
+  const configs = new Map<string, ManagedMcpConfigRecord>();
+  if (!isRecord(raw)) return { configs, untied: parseManagedMcpRecord(undefined) };
+  if (isRecord(raw.configs)) {
+    for (const [configId, record] of Object.entries(raw.configs)) {
+      if (isRecord(record)) configs.set(configId, parseManagedMcpRecord(record));
+    }
+    return { configs };
+  }
+  if (typeof raw.configId === 'string') {
+    configs.set(raw.configId, parseManagedMcpRecord(raw));
+    return { configs };
+  }
+  return { configs, untied: parseManagedMcpRecord(raw) };
+}
+
+async function readManagedMcpStore(statePath: string): Promise<ManagedMcpStore> {
+  if (!existsSync(statePath)) return { configs: new Map() };
+  try {
+    return parseManagedMcpStore(JSON.parse(await readFile(statePath, 'utf-8')));
+  } catch {
+    // An unreadable marker holds no history; it counts as an untied one, which disconnect may clean.
+    return parseManagedMcpStore(undefined);
+  }
+}
+
+/**
+ * The managed-MCP history that applies to config `configId`: its record, or an earlier CLI's untied state when
+ * the target already holds an entry CodeMie wrote (`targetOwned`). The record of another config, a missing
+ * marker and an unreadable one give no history.
  */
 async function readManagedMcpState(
   statePath: string,
   configId: string,
   targetOwned: boolean
 ): Promise<ManagedMcpHistory> {
-  if (!existsSync(statePath)) return NO_MANAGED_MCP_HISTORY;
-  let parsed: Partial<ManagedMcpState> = {};
-  try {
-    const raw: unknown = JSON.parse(await readFile(statePath, 'utf-8'));
-    if (isRecord(raw)) parsed = raw as Partial<ManagedMcpState>;
-  } catch {
-    // An unreadable marker holds no history; it counts as an untied one, which disconnect may clean.
-  }
-  const tiedToConfig = parsed.configId === configId;
-  const adopted = parsed.configId === undefined && targetOwned;
-  if (!tiedToConfig && !adopted) return NO_MANAGED_MCP_HISTORY;
+  const store = await readManagedMcpStore(statePath);
+  const record = store.configs.get(configId) ?? (targetOwned ? store.untied : undefined);
+  if (!record) return NO_MANAGED_MCP_HISTORY;
   return {
-    managedNames: Array.isArray(parsed.managedNames)
-      ? parsed.managedNames.filter((n): n is string => typeof n === 'string')
-      : [],
-    fingerprints: stringRecord(parsed.fingerprints),
+    managedNames: record.managedNames,
+    fingerprints: record.fingerprints,
+    pendingFingerprints: record.pendingFingerprints ?? {},
     tied: true,
   };
 }
 
-async function writeManagedMcpState(statePath: string, state: ManagedMcpState): Promise<void> {
+/**
+ * Set (or, with `null`, drop) the record of `configId`. The records of the other configs are kept as they
+ * are, and an untied state is gone: this is the first write of a CLI that ties every record to a config. The
+ * file is removed when no record is left.
+ */
+async function writeManagedMcpRecord(
+  statePath: string,
+  configId: string,
+  record: ManagedMcpConfigRecord | null
+): Promise<void> {
+  const { configs } = await readManagedMcpStore(statePath);
+  if (record) configs.set(configId, record);
+  else configs.delete(configId);
+  if (configs.size === 0) {
+    await rm(statePath, { force: true });
+    return;
+  }
+  const state: ManagedMcpState = { configs: Object.fromEntries(configs) };
   const dir = join(statePath, '..');
   if (!existsSync(dir)) {
     await mkdir(dir, { recursive: true });
   }
   // Atomic write (tmp + rename), mirroring daemon-manager.writeState. A crash
-  // mid-write must never leave a truncated marker: readManagedMcpState would
+  // mid-write must never leave a truncated marker: readManagedMcpStore would
   // parse-fail and fall back to no history, silently orphaning every previously-managed
   // entry (it would no longer match by name and be preserved as a user entry).
   const tmp = `${statePath}.tmp`;
@@ -1137,27 +1256,32 @@ async function writeDesktopConfigLocked(
   const history = orgFetchSucceeded
     ? await readManagedMcpState(managedStatePath, configId, targetOwned)
     : NO_MANAGED_MCP_HISTORY;
-  const { servers: managedMcpServers, managedNames, fingerprints } = reconcileManagedMcpServers(
+  const { servers: managedMcpServers, managedNames, fingerprints, priorFingerprints } = reconcileManagedMcpServers(
     existing.managedMcpServers,
     managedSet,
     history.managedNames,
     history.fingerprints,
+    history.pendingFingerprints,
   );
 
   // Marker write-ahead (successful fetch only): record the UNION of previously-
   // and newly-managed names BEFORE writing the config. If we crash between this
   // write and the config write, the next run still sees every name we might have
   // left in the config and can revoke it — so neither an add nor a revoke can
-  // orphan an entry. The marker is narrowed to the exact managed set AFTER the
-  // config is durable (see below), which releases revoked names so a user can
-  // later reclaim them. On a failed fetch we leave the prior marker untouched so
-  // a later successful run can still revoke.
+  // orphan an entry. The fingerprints are journaled the same way: what the
+  // entries in the config match now stays as the previous baseline, and what this
+  // run is about to write goes in as the pending one, so whichever side of the
+  // config write a crash falls on, no entry CodeMie wrote reads as a user edit.
+  // The marker is narrowed to the exact managed set AFTER the config is durable
+  // (see below), which releases revoked names so a user can later reclaim them. On
+  // a failed fetch we leave the prior marker untouched so a later successful run
+  // can still revoke.
   if (orgFetchSucceeded) {
     const unionNames = [...new Set([...history.managedNames, ...managedNames])];
-    await writeManagedMcpState(managedStatePath, {
-      configId,
+    await writeManagedMcpRecord(managedStatePath, configId, {
       managedNames: unionNames,
-      fingerprints: history.fingerprints,
+      fingerprints: priorFingerprints,
+      pendingFingerprints: fingerprints,
     });
   }
 
@@ -1222,7 +1346,7 @@ async function writeDesktopConfigLocked(
   // durable (see the write-ahead union above). This releases names dropped from
   // the managed set so they no longer count as owned on the next run.
   if (orgFetchSucceeded) {
-    await writeManagedMcpState(managedStatePath, { configId, managedNames, fingerprints });
+    await writeManagedMcpRecord(managedStatePath, configId, { managedNames, fingerprints });
   }
 
   const entries = Array.isArray(meta.entries) ? [...meta.entries] : [];
@@ -1414,12 +1538,13 @@ async function removeDesktopConfigLocked(baseDir: string, managedStatePath: stri
   // match them by URL; what it writes back is dropped, what it preserves stays. The guard
   // above proved the entry is CodeMie's, so a marker of an earlier CLI counts for it.
   const history = await readManagedMcpState(managedStatePath, configId, true);
-  const userServers = partitionManagedMcpServers(
+  const { preserved: userServers, retained } = partitionManagedMcpServers(
     existing.managedMcpServers,
     [...DEFAULT_MANAGED_MCP_SERVERS],
     history.managedNames,
-    history.fingerprints
-  ).preserved;
+    history.fingerprints,
+    history.pendingFingerprints
+  );
   if (userServers.length > 0) {
     existing.managedMcpServers = JSON.stringify(userServers);
   } else {
@@ -1451,8 +1576,15 @@ async function removeDesktopConfigLocked(baseDir: string, managedStatePath: stri
     await writeFileAtomic(configPath, JSON.stringify(existing, null, 2));
   }
 
-  // The marker is single-slot: only the one tied to this config goes with it.
-  if (history.tied) await rm(managedStatePath, { force: true });
+  // Only the record of this config goes, and not all of it: the baselines of the edited servers left in the
+  // config stay, so they are still the user's when CodeMie connects again. Another config's record is not touched.
+  if (history.tied) {
+    await writeManagedMcpRecord(
+      managedStatePath,
+      configId,
+      retained.size > 0 ? { managedNames: [], fingerprints: Object.fromEntries(retained) } : null
+    );
+  }
 
   logger.info(
     '[proxy] Removed CodeMie config from Claude Desktop',

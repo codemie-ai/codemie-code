@@ -10,10 +10,23 @@ import { existsSync } from 'fs';
 
 // A path whose file is deleted on its next lstat, before the call goes through.
 const lstatRemoves = vi.hoisted(() => ({ path: undefined as string | undefined }));
+// A rename onto `target` fails once `skip` earlier renames onto it have gone through (a crash between two state writes).
+const renameFault = vi.hoisted(() => ({ target: undefined as string | undefined, skip: 0 }));
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return {
     ...actual,
+    rename: async (from: Parameters<typeof actual.rename>[0], to: Parameters<typeof actual.rename>[1]) => {
+      if (renameFault.target !== undefined && String(to) === renameFault.target) {
+        if (renameFault.skip > 0) {
+          renameFault.skip -= 1;
+        } else {
+          renameFault.target = undefined;
+          throw new Error('injected: crash before the managed-state commit');
+        }
+      }
+      return actual.rename(from, to);
+    },
     lstat: async (p: Parameters<typeof actual.lstat>[0], ...rest: unknown[]) => {
       if (lstatRemoves.path !== undefined && String(p) === lstatRemoves.path) {
         lstatRemoves.path = undefined;
@@ -65,6 +78,24 @@ const LOOPBACK_GATEWAY_CONFIG = JSON.stringify({
   inferenceGatewayBaseUrl: 'http://127.0.0.1:4001',
   inferenceGatewayApiKey: 'codemie-proxy',
 });
+
+interface ManagedRecordOnDisk {
+  managedNames: string[];
+  fingerprints: Record<string, string>;
+  pendingFingerprints?: Record<string, string>;
+}
+
+/** The per-config records of the managed-MCP state file. */
+async function readManagedRecords(statePath: string): Promise<Record<string, ManagedRecordOnDisk>> {
+  return (JSON.parse(await readFile(statePath, 'utf-8')) as { configs: Record<string, ManagedRecordOnDisk> }).configs;
+}
+
+/** The one record of a state file that holds a single config. */
+async function readOnlyManagedRecord(statePath: string): Promise<ManagedRecordOnDisk> {
+  const records = Object.values(await readManagedRecords(statePath));
+  expect(records).toHaveLength(1);
+  return records[0];
+}
 
 const ids = (models: DesktopModel[]) => models.map((model) => model.id);
 
@@ -1063,7 +1094,7 @@ describe('writeDesktopConfig', () => {
     expect(servers.some((s: any) => s.name === 'sample')).toBe(true);
     expect(servers.some((s: any) => s.name === 'Notion')).toBe(true);
 
-    const state = JSON.parse(await readFile(statePath, 'utf-8'));
+    const state = await readOnlyManagedRecord(statePath);
     expect(state.managedNames).toContain('sample');
     expect(state.managedNames).toContain('Notion');
   });
@@ -1078,7 +1109,7 @@ describe('writeDesktopConfig', () => {
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
     expect(servers.some((s: any) => s.name === 'sample')).toBe(false);
-    const state = JSON.parse(await readFile(statePath, 'utf-8'));
+    const state = await readOnlyManagedRecord(statePath);
     expect(state.managedNames).not.toContain('sample');
   });
 
@@ -1097,7 +1128,7 @@ describe('writeDesktopConfig', () => {
     const servers = JSON.parse(written.managedMcpServers);
     expect(servers.some((s: any) => s.name === 'sample')).toBe(true);
     // corrupt prior state is ignored (treated as []), so the run succeeds and rewrites valid state
-    const state = JSON.parse(await readFile(statePath, 'utf-8'));
+    const state = await readOnlyManagedRecord(statePath);
     expect(state.managedNames).toContain('sample');
   });
 
@@ -2724,10 +2755,13 @@ describe('managed MCP state tied to a config', () => {
 
     const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
 
-    const state = JSON.parse(await readFile(statePath, 'utf-8'));
-    expect(configPath.endsWith(`${state.configId}.json`)).toBe(true);
-    expect(state.managedNames).toContain('Notion');
-    expect(typeof state.fingerprints.notion).toBe('string');
+    const records = await readManagedRecords(statePath);
+    const [configId] = Object.keys(records);
+    expect(Object.keys(records)).toHaveLength(1);
+    expect(configPath.endsWith(`${configId}.json`)).toBe(true);
+    expect(records[configId].managedNames).toContain('Notion');
+    expect(typeof records[configId].fingerprints.notion).toBe('string');
+    expect(records[configId].pendingFingerprints).toBeUndefined();
   });
 
   it('keeps a user server named like a server managed in another config', async () => {
@@ -2742,7 +2776,10 @@ describe('managed MCP state tied to a config', () => {
 
     const servers = JSON.parse(JSON.parse(await readFile(configPath, 'utf-8')).managedMcpServers);
     expect(servers).toContainEqual(USER_OLD_NAME);
-    expect(JSON.parse(await readFile(statePath, 'utf-8')).configId).toBe('b');
+    const records = await readManagedRecords(statePath);
+    expect(records.b.managedNames).toContain('Notion');
+    // the record of the other config stays: its history says nothing about b, but it is not b's to drop
+    expect(records.a.managedNames).toEqual(['oldserver']);
   });
 
   it('still revokes a server it managed in the same config', async () => {
@@ -2952,6 +2989,85 @@ describe('user-edited managed MCP servers', () => {
 
       expect(third.servers).toEqual([edited]);
     });
+
+    it('takes an entry that matches the pending fingerprint for unedited, whatever the previous one says', () => {
+      const moved = { ...SAMPLE, url: 'https://mcp.example.com/mcp/sample-v2' };
+      const previous = reconcileManagedMcpServers([], [SAMPLE], []).fingerprints;
+      const pending = reconcileManagedMcpServers([], [moved], []);
+      const v3 = { ...SAMPLE, url: 'https://mcp.example.com/mcp/sample-v3' };
+
+      const result = reconcileManagedMcpServers(pending.servers, [v3], ['sample'], previous, pending.fingerprints);
+
+      expect(result.servers).toEqual([v3]);
+    });
+
+    it('takes an entry that matches the previous fingerprint for unedited when a pending one is also recorded', () => {
+      const moved = { ...SAMPLE, url: 'https://mcp.example.com/mcp/sample-v2' };
+      const previous = reconcileManagedMcpServers([], [SAMPLE], []);
+      const pending = reconcileManagedMcpServers([], [moved], []).fingerprints;
+
+      const result = reconcileManagedMcpServers(previous.servers, [moved], ['sample'], previous.fingerprints, pending);
+
+      expect(result.servers).toEqual([moved]);
+    });
+
+    it('keeps an entry that matches neither the previous nor the pending fingerprint', () => {
+      const moved = { ...SAMPLE, url: 'https://mcp.example.com/mcp/sample-v2' };
+      const previous = reconcileManagedMcpServers([], [SAMPLE], []).fingerprints;
+      const pending = reconcileManagedMcpServers([], [moved], []).fingerprints;
+      const edited = { ...SAMPLE, url: 'https://my-fork.example.com/mcp' };
+
+      const result = reconcileManagedMcpServers([edited], [moved], ['sample'], previous, pending);
+
+      expect(result.servers).toEqual([edited]);
+    });
+
+    it('journals as the baseline the fingerprint each entry on disk matches', () => {
+      const moved = { ...SAMPLE, url: 'https://mcp.example.com/mcp/sample-v2' };
+      const previous = reconcileManagedMcpServers([], [SAMPLE], []);
+      const pending = reconcileManagedMcpServers([], [moved], []).fingerprints;
+
+      const onPrevious = reconcileManagedMcpServers(previous.servers, [moved], ['sample'], previous.fingerprints, pending);
+      const onPending = reconcileManagedMcpServers([moved], [moved], ['sample'], previous.fingerprints, pending);
+
+      expect(onPrevious.priorFingerprints).toEqual(previous.fingerprints);
+      expect(onPending.priorFingerprints).toEqual(pending);
+    });
+
+    it('keeps the baseline of an edited entry that left the managed set, for as long as the entry stays', () => {
+      const { fingerprints } = reconcileManagedMcpServers([], [SAMPLE], []);
+      const edited = { ...SAMPLE, url: 'https://my-fork.example.com/mcp' };
+
+      const dropped = reconcileManagedMcpServers([edited], [], ['sample'], fingerprints);
+      const later = reconcileManagedMcpServers(dropped.servers, [], [], dropped.fingerprints);
+
+      expect(dropped.servers).toEqual([edited]);
+      expect(dropped.managedNames).toEqual([]);
+      expect(dropped.fingerprints).toEqual(fingerprints);
+      expect(later.fingerprints).toEqual(fingerprints);
+    });
+
+    it('keeps an edited entry that comes back into the managed set with another url', () => {
+      const { fingerprints } = reconcileManagedMcpServers([], [SAMPLE], []);
+      const edited = { ...SAMPLE, url: 'https://my-fork.example.com/mcp' };
+      const dropped = reconcileManagedMcpServers([edited], [], ['sample'], fingerprints);
+      const back = { ...SAMPLE, url: 'https://mcp.example.com/mcp/sample-v2' };
+
+      const result = reconcileManagedMcpServers(dropped.servers, [back], [], dropped.fingerprints);
+
+      expect(result.servers).toEqual([edited]);
+    });
+
+    it('drops the baseline of a left entry once the user reverted it or removed it', () => {
+      const { servers: written, fingerprints } = reconcileManagedMcpServers([], [SAMPLE], []);
+
+      const reverted = reconcileManagedMcpServers(written, [], [], fingerprints);
+      const removed = reconcileManagedMcpServers([], [], [], fingerprints);
+
+      expect(reverted.fingerprints).toEqual({});
+      expect(reverted.servers).toEqual(written);
+      expect(removed.fingerprints).toEqual({});
+    });
   });
 
   describe('through writeDesktopConfig and removeDesktopConfig', () => {
@@ -3012,6 +3128,220 @@ describe('user-edited managed MCP servers', () => {
 
       expect(result).toMatchObject({ removed: true, deletedConfigFile: false });
       expect(await serversOf(configPath)).toEqual([{ ...SAMPLE, url: 'https://my-fork.example.com/mcp' }, added]);
+    });
+
+    const EDITED_URL = 'https://my-fork.example.com/mcp';
+    const OTHER = { name: 'other', url: 'https://mcp.example.com/mcp/other', transport: 'http' as const, oauth: true };
+    const sampleOf = async (configPath: string): Promise<Array<Record<string, any>>> =>
+      (await serversOf(configPath)).filter((s) => s.name === 'sample');
+
+    it('keeps the edit across disconnect and reconnect', async () => {
+      const { configPath } = await connect([SAMPLE]);
+      await editServer(configPath, 'sample', { url: EDITED_URL });
+      const { baseDir, statePath } = lib.paths();
+
+      await removeDesktopConfig(baseDir, statePath);
+      expect(await sampleOf(configPath)).toEqual([{ ...SAMPLE, url: EDITED_URL }]);
+      await connect([{ ...SAMPLE, url: 'https://mcp.example.com/mcp/sample-v2' }]);
+
+      expect(await sampleOf(configPath)).toEqual([{ ...SAMPLE, url: EDITED_URL }]);
+    });
+
+    it('retains only the baseline of the kept edit on disconnect, and removes the state when nothing is kept', async () => {
+      const { configPath } = await connect([SAMPLE]);
+      const { baseDir, statePath } = lib.paths();
+      const [configId] = Object.keys(await readManagedRecords(statePath));
+      const baseline = (await readOnlyManagedRecord(statePath)).fingerprints.sample;
+      await editServer(configPath, 'sample', { url: EDITED_URL });
+
+      await removeDesktopConfig(baseDir, statePath);
+
+      expect(await readManagedRecords(statePath)).toEqual({ [configId]: { managedNames: [], fingerprints: { sample: baseline } } });
+
+      await connect([SAMPLE]);
+      await editServer(configPath, 'sample', { url: SAMPLE.url });
+      await removeDesktopConfig(baseDir, statePath);
+      expect(existsSync(statePath)).toBe(false);
+    });
+
+    it('still updates a server the user never edited after a disconnect and reconnect', async () => {
+      const { configPath } = await connect([SAMPLE, OTHER]);
+      await editServer(configPath, 'sample', { url: EDITED_URL });
+      const { baseDir, statePath } = lib.paths();
+
+      await removeDesktopConfig(baseDir, statePath);
+      await connect([SAMPLE, { ...OTHER, url: 'https://mcp.example.com/mcp/other-v2' }]);
+
+      expect((await serversOf(configPath)).find((s) => s.name === 'other')?.url).toBe('https://mcp.example.com/mcp/other-v2');
+      expect(await sampleOf(configPath)).toEqual([{ ...SAMPLE, url: EDITED_URL }]);
+    });
+
+    it('keeps the edit when the catalog drops the server and later brings it back with another url', async () => {
+      const { configPath } = await connect([SAMPLE, OTHER]);
+      await editServer(configPath, 'sample', { url: EDITED_URL });
+
+      await connect([OTHER]);
+      expect(await sampleOf(configPath)).toEqual([{ ...SAMPLE, url: EDITED_URL }]);
+      await connect([OTHER]);
+      await connect([OTHER, { ...SAMPLE, url: 'https://mcp.example.com/mcp/sample-v2' }]);
+
+      expect(await sampleOf(configPath)).toEqual([{ ...SAMPLE, url: EDITED_URL }]);
+    });
+
+    it('lets a reintroduced server replace the entry once the user reverted the edit', async () => {
+      const { configPath } = await connect([SAMPLE, OTHER]);
+      await editServer(configPath, 'sample', { url: EDITED_URL });
+      await connect([OTHER]);
+      await editServer(configPath, 'sample', { url: SAMPLE.url });
+      await connect([OTHER]);
+
+      await connect([OTHER, { ...SAMPLE, url: 'https://mcp.example.com/mcp/sample-v2' }]);
+
+      expect(await sampleOf(configPath)).toEqual([{ ...SAMPLE, url: 'https://mcp.example.com/mcp/sample-v2' }]);
+    });
+
+    it('removes a dropped server the user never edited', async () => {
+      const { configPath } = await connect([SAMPLE, OTHER]);
+
+      await connect([OTHER]);
+
+      expect(await sampleOf(configPath)).toEqual([]);
+      expect((await readOnlyManagedRecord(lib.paths().statePath)).fingerprints).not.toHaveProperty('sample');
+    });
+
+    describe('after an interrupted connect', () => {
+      afterEach(() => {
+        renameFault.target = undefined;
+        renameFault.skip = 0;
+      });
+      const crashBeforeCommit = async (org: ManagedMcpServerEntry[]): Promise<void> => {
+        const { statePath } = lib.paths();
+        renameFault.target = statePath;
+        renameFault.skip = 1; // the write-ahead marker goes through, the final commit does not
+        await expect(connect(org)).rejects.toThrow('injected');
+      };
+
+      it('journals the fingerprints about to be written next to the previous ones', async () => {
+        await connect([SAMPLE]);
+        const { statePath } = lib.paths();
+        const before = await readOnlyManagedRecord(statePath);
+
+        await crashBeforeCommit([{ ...SAMPLE, url: 'https://mcp.example.com/mcp/sample-v2' }]);
+
+        const crashed = await readOnlyManagedRecord(statePath);
+        expect(crashed.fingerprints).toEqual(before.fingerprints);
+        expect(crashed.pendingFingerprints?.sample).toMatch(/^[0-9a-f]{64}$/);
+        expect(crashed.pendingFingerprints?.sample).not.toBe(before.fingerprints.sample);
+      });
+
+      it('updates a server the interrupted run already rewrote, and still keeps a genuine edit', async () => {
+        const { configPath } = await connect([SAMPLE, OTHER]);
+        await editServer(configPath, 'other', { url: EDITED_URL });
+        const v2 = (e: ManagedMcpServerEntry): ManagedMcpServerEntry => ({ ...e, url: `${e.url}-v2` });
+
+        await crashBeforeCommit([v2(SAMPLE), v2(OTHER)]);
+        expect(await sampleOf(configPath)).toEqual([v2(SAMPLE)]);
+        await connect([{ ...SAMPLE, url: 'https://mcp.example.com/mcp/sample-v3' }, v2(OTHER)]);
+
+        expect(await sampleOf(configPath)).toEqual([{ ...SAMPLE, url: 'https://mcp.example.com/mcp/sample-v3' }]);
+        expect((await serversOf(configPath)).filter((s) => s.name === 'other')).toEqual([{ ...OTHER, url: EDITED_URL }]);
+        expect((await readOnlyManagedRecord(lib.paths().statePath)).pendingFingerprints).toBeUndefined();
+      });
+
+      it('updates a server the interrupted run never got to rewrite', async () => {
+        const { configPath } = await connect([SAMPLE]);
+        const { statePath } = lib.paths();
+        renameFault.target = statePath;
+        renameFault.skip = 0; // not even the write-ahead marker lands
+        await expect(connect([{ ...SAMPLE, url: 'https://mcp.example.com/mcp/sample-v2' }])).rejects.toThrow('injected');
+
+        await connect([{ ...SAMPLE, url: 'https://mcp.example.com/mcp/sample-v3' }]);
+
+        expect(await sampleOf(configPath)).toEqual([{ ...SAMPLE, url: 'https://mcp.example.com/mcp/sample-v3' }]);
+      });
+
+      it('survives two interrupted runs in a row', async () => {
+        const { configPath } = await connect([SAMPLE]);
+        const at = (n: number): ManagedMcpServerEntry => ({ ...SAMPLE, url: `https://mcp.example.com/mcp/sample-v${n}` });
+
+        await crashBeforeCommit([at(2)]);
+        await crashBeforeCommit([at(3)]);
+        await connect([at(4)]);
+
+        expect(await sampleOf(configPath)).toEqual([at(4)]);
+      });
+    });
+
+    describe('with the state an earlier CLI wrote', () => {
+      it('refreshes a managed server once on the first reconnect, then keeps the edits made after that', async () => {
+        const { configPath } = await connect([SAMPLE]);
+        const { statePath } = lib.paths();
+        const [configId] = Object.keys(await readManagedRecords(statePath));
+        // the earlier CLI recorded no fingerprints
+        await writeFile(statePath, JSON.stringify({ configId, managedNames: ['sample', 'Notion'] }), 'utf-8');
+        await editServer(configPath, 'sample', { url: EDITED_URL });
+
+        await connect([SAMPLE]);
+        expect(await sampleOf(configPath)).toEqual([SAMPLE]);
+        await editServer(configPath, 'sample', { url: EDITED_URL });
+        await connect([SAMPLE]);
+
+        expect(await sampleOf(configPath)).toEqual([{ ...SAMPLE, url: EDITED_URL }]);
+      });
+
+      it('reads the single-slot state of the config and keeps its recorded baselines', async () => {
+        const { configPath } = await connect([SAMPLE]);
+        const { statePath } = lib.paths();
+        const [configId] = Object.keys(await readManagedRecords(statePath));
+        const record = await readOnlyManagedRecord(statePath);
+        await writeFile(statePath, JSON.stringify({ configId, ...record }), 'utf-8');
+        await editServer(configPath, 'sample', { url: EDITED_URL });
+
+        await connect([SAMPLE]);
+
+        expect(await sampleOf(configPath)).toEqual([{ ...SAMPLE, url: EDITED_URL }]);
+        expect(await readManagedRecords(statePath)).toEqual({ [configId]: record });
+      });
+    });
+
+    describe('with two CodeMie configs', () => {
+      const twoConfigs = async (applied: string): Promise<void> => {
+        await lib.seed(
+          { appliedId: applied, entries: [{ id: 'a', name: 'CodeMie Proxy' }, { id: 'b', name: 'CodeMie Proxy' }] },
+          { a: {}, b: {} },
+        );
+      };
+      const apply = async (id: string): Promise<void> => {
+        const meta = await lib.readMeta();
+        await writeFile(lib.paths().metaPath, JSON.stringify({ ...meta, appliedId: id }), 'utf-8');
+      };
+
+      it('keeps the baseline of each config while the other one is connected', async () => {
+        await twoConfigs('a');
+        const a = await connect([SAMPLE]);
+        await editServer(a.configPath, 'sample', { url: EDITED_URL });
+
+        await apply('b');
+        const b = await connect([SAMPLE]);
+        expect(b.configPath.endsWith('b.json')).toBe(true);
+        await apply('a');
+        await connect([SAMPLE]);
+
+        expect(await sampleOf(a.configPath)).toEqual([{ ...SAMPLE, url: EDITED_URL }]);
+        expect(Object.keys(await readManagedRecords(lib.paths().statePath)).sort()).toEqual(['a', 'b']);
+      });
+
+      it('keeps the record of the other config when one is disconnected', async () => {
+        await twoConfigs('a');
+        await connect([SAMPLE]);
+        await apply('b');
+        await connect([SAMPLE]);
+        const { baseDir, statePath } = lib.paths();
+
+        await removeDesktopConfig(baseDir, statePath);
+
+        expect(Object.keys(await readManagedRecords(statePath))).toEqual(['a']);
+      });
     });
   });
 });

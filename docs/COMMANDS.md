@@ -257,7 +257,7 @@ Behavior:
 
 The command updates the `CodeMie Proxy` configuration and makes it the active one, even when you had switched Claude Desktop to another configuration; that configuration is left untouched, and the command prints `Switched Claude Desktop's active configuration from "<name>" to "CodeMie Proxy".` when it changed which one is active.
 
-MCP servers you added to the `CodeMie Proxy` configuration, and managed MCP servers you edited there since the last connect, are kept on reconnect and on `disconnect`; only unedited managed entries are updated or removed.
+MCP servers you added to the `CodeMie Proxy` configuration, and managed MCP servers you edited there since the last connect, are kept on reconnect and on `disconnect`; only unedited managed entries are updated or removed. An edit stays yours through `disconnect` and a later connect, and after the catalog drops a server and adds it back. On the first reconnect after upgrading the CLI, managed servers are refreshed once, because no earlier edit was recorded; edits made after that are kept.
 
 On Linux this requires Claude Desktop's Ubuntu/Debian beta. If `/etc/claude-desktop/managed-settings.json` is present, the command warns that the write **may** have no effect: Claude Desktop applies a managed (MDM) source in preference to local configuration. The check is presence-only — the file is never read.
 
