@@ -99,17 +99,8 @@ export function selectBudgetRow(rows: BudgetRow[], project: string | null | unde
     const target = `${project.trim().toLowerCase()} (cli)`;
     const projectRow = rows.find(r => r.project_name?.trim().toLowerCase() === target);
     if (projectRow) {
-      // For shared-pot projects the member may have a personal override row (email (cli)).
-      // Prefer that — the member should see their own spend and limit, not the team aggregate.
-      // Only a non-default email row qualifies as a personal override; the is_default row is
-      // the global personal fallback, not a project-specific allocation.
-      if (projectRow.is_shared_limit && userEmail) {
-        const emailTarget = `${userEmail.trim().toLowerCase()} (cli)`;
-        const overrideRow = rows.find(
-          r => r.project_name?.trim().toLowerCase() === emailTarget && !r.is_default
-        );
-        if (overrideRow) return overrideRow;
-      }
+      // A member's fixed override changes this same row (is_shared_limit: false, own limit);
+      // it never arrives as a separate `<email> (cli)` row, which is the personal budget.
       return projectRow;
     }
   }
@@ -132,10 +123,14 @@ export function selectBudgetRow(rows: BudgetRow[], project: string | null | unde
 
 export function formatBudgetSegment(row) {
   if (!row) return null;
-  const pct = Math.round(row.total ?? 0);
+  // parseFloat handles numbers and numeric strings; null/undefined/''/text give NaN. Spend the
+  // backend reports as unavailable must not be shown as $0.00, so no segment.
+  const spend = parseFloat(row.current_spending);
+  if (Number.isNaN(spend)) return null;
+  const pct = Math.round(parseFloat(row.total)) || 0;
   const reset = row.budget_reset_at ? new Date(row.budget_reset_at).toLocaleDateString() : '?';
   return {
-    text: `$${row.current_spending.toFixed(2)} (${pct}%) resets ${reset}`,
+    text: `$${spend.toFixed(2)} (${pct}%) resets ${reset}`,
     pct,
   };
 }

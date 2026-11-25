@@ -108,9 +108,20 @@ resolve(profile, env) →
 
 ### Shared-pot rendering (AC5, AC5a)
 
-When `is_shared_limit: true`, the row's `current_spending`, `total`, and `budget_limit` already
-reflect the correct figures (whole-project spend vs shared pot for AC5, or member spend vs
-personal override for AC5a). `formatBudgetSegment` needs no changes.
+The matched `<project> (cli)` row is always shown as-is; `formatBudgetSegment` needs no changes.
+The backend (`codemie` repo, `budget_usage_service.py`, `member_spend_service.py:_apply_unenforced_limit`)
+puts the right figures on that row:
+
+- Shared pot (AC5): member allocation `equal`, row has `is_shared_limit: true`, `budget_limit` = the pot.
+- Member override (AC5a): member allocation `fixed`; the same project row carries the member's limit
+  with `is_shared_limit: false`. No separate `<email> (cli)` row is emitted for an override; that row
+  is the user's personal budget.
+
+Verified against a local backend with a throwaway project (`shared-pot-check`, cli budget 100, enforcement
+off): `budget_usage` returned `shared-pot-check (cli)` with `is_shared_limit: true`, `budget_limit: 100.0`
+for an `equal` member, and the same row with `is_shared_limit: false`, `budget_limit: 40.0` for a member
+given a fixed override of 40. Selecting a personal row for a shared-pot member would be wrong (AC5), so
+`selectBudgetRow` does not look for an email row when a project row matches.
 
 ### Cache invalidation (AC8)
 
@@ -120,9 +131,6 @@ project immediately invalidates the cached entry.
 
 ## Open Risks
 
-1. **`is_shared_limit` with personal override (AC5a)**: Rows for a shared-pot project where the
-   member has a personal override were not observed in testing. The design assumes such a row
-   exists as a personal `email (cli)` row alongside the project row, and that the fallback chain
-   picks it up correctly. Must be validated once such a project is available.
+1. **Personal override (AC5a)**: resolved. See "Shared-pot rendering" for the verified backend shape.
 2. **Bundle deployment**: Changes require rebuilding and reinstalling the statusline bundle
    (`~/.claude/codemie-budget-status.js`) to reach users.

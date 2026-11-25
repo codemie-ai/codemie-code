@@ -66,12 +66,15 @@ describe('selectBudgetRow', () => {
     expect(selectBudgetRow(rows, 'shared-proj', 'user@epam.com')).toBe(sharedRow);
   });
 
-  it('AC5a: shared-pot project with personal override → returns email override row', () => {
-    const overrideRow = { project_name: 'member@example.com (cli)', current_spending: 2, total: 1,
-      budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 50, is_default: false, is_shared_limit: false };
-    const sharedRowLocal = { project_name: 'shared-proj (cli)', current_spending: 13, total: 11,
-      budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 200, is_default: false, is_shared_limit: true };
-    expect(selectBudgetRow([sharedRowLocal, overrideRow], 'shared-proj', 'member@example.com')).toBe(overrideRow);
+  it('AC5a: member with a fixed override sees the project row carrying their own limit', () => {
+    const overrideProjectRow = { project_name: 'shared-proj (cli)', current_spending: 2, total: 5,
+      budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 40, is_default: false, is_shared_limit: false };
+    expect(selectBudgetRow([overrideProjectRow, personalRow], 'shared-proj', 'user@epam.com')).toBe(overrideProjectRow);
+  });
+
+  it('AC5: shared-pot member keeps the pot even when a non-default personal CLI row exists', () => {
+    const nonDefaultPersonal = { ...personalRow, is_default: false };
+    expect(selectBudgetRow([sharedRow, nonDefaultPersonal], 'shared-proj', 'user@epam.com')).toBe(sharedRow);
   });
 });
 
@@ -87,6 +90,26 @@ describe('formatBudgetSegment', () => {
 
   it('returns null for a null row', () => {
     expect(formatBudgetSegment(null)).toBeNull();
+  });
+
+  it('returns null when spend is unavailable (current_spending null) instead of throwing', () => {
+    const row = { current_spending: null, budget_limit: 40, total: null, budget_reset_at: null, spend_unavailable: true };
+    expect(formatBudgetSegment(row)).toBeNull();
+  });
+
+  it.each([undefined, '', 'abc', NaN])('returns null for unusable spend %p', (spend) => {
+    expect(formatBudgetSegment({ current_spending: spend, total: 10, budget_reset_at: '2026-12-01T00:00:00Z' })).toBeNull();
+  });
+
+  it('accepts numeric strings for spend and percentage', () => {
+    const result = formatBudgetSegment({ current_spending: '12.5', total: '41.4', budget_reset_at: '2026-07-15T00:00:00.000Z' });
+    expect(result.text).toContain('$12.50');
+    expect(result.text).toContain('41%');
+    expect(result.pct).toBe(41);
+  });
+
+  it('treats an unusable percentage as 0% while still showing the spend', () => {
+    expect(formatBudgetSegment({ current_spending: 3, total: null, budget_reset_at: null }).text).toBe('$3.00 (0%) resets ?');
   });
 });
 
