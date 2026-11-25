@@ -24,8 +24,8 @@ describe('step-model', () => {
   });
 
   describe('ALL_STEPS', () => {
-    it('should contain 10 step descriptors', () => {
-      expect(ALL_STEPS).toHaveLength(10);
+    it('should contain 11 step descriptors', () => {
+      expect(ALL_STEPS).toHaveLength(11);
     });
 
     it('should have correct ids in order', () => {
@@ -40,6 +40,7 @@ describe('step-model', () => {
         'git-repo',
         'external',
         'lookback',
+        'task-name',
         'developers',
       ]);
     });
@@ -69,8 +70,8 @@ describe('step-model', () => {
       expect(gitRepo?.targets).toEqual(['git']);
     });
 
-    it('should tag external, lookback, developers as always', () => {
-      const alwaysIds = ['external', 'lookback', 'developers'];
+    it('should tag external, lookback, task-name, developers as always', () => {
+      const alwaysIds = ['external', 'lookback', 'task-name', 'developers'];
       alwaysIds.forEach((id) => {
         const step = ALL_STEPS.find((s) => s.id === id);
         expect(step?.targets).toBe('always');
@@ -79,40 +80,8 @@ describe('step-model', () => {
   });
 
   describe('stepsFor', () => {
-    it('should return 9 steps for webhook-only selection', () => {
+    it('should return 10 steps for webhook-only selection', () => {
       const result = stepsFor({ webhook: true, git: false });
-      expect(result).toHaveLength(9);
-
-      const ids = result.map((s) => s.id);
-      expect(ids).toEqual([
-        'target',
-        'channel',
-        'folder',
-        'timezone',
-        'flow',
-        'trigger-url',
-        'external',
-        'lookback',
-        'developers',
-      ]);
-    });
-
-    it('should return 5 steps for git-only selection', () => {
-      const result = stepsFor({ webhook: false, git: true });
-      expect(result).toHaveLength(5);
-
-      const ids = result.map((s) => s.id);
-      expect(ids).toEqual([
-        'target',
-        'git-repo',
-        'external',
-        'lookback',
-        'developers',
-      ]);
-    });
-
-    it('should return all 10 steps for both webhook and git selection', () => {
-      const result = stepsFor({ webhook: true, git: true });
       expect(result).toHaveLength(10);
 
       const ids = result.map((s) => s.id);
@@ -123,9 +92,44 @@ describe('step-model', () => {
         'timezone',
         'flow',
         'trigger-url',
+        'external',
+        'lookback',
+        'task-name',
+        'developers',
+      ]);
+    });
+
+    it('should return 6 steps for git-only selection', () => {
+      const result = stepsFor({ webhook: false, git: true });
+      expect(result).toHaveLength(6);
+
+      const ids = result.map((s) => s.id);
+      expect(ids).toEqual([
+        'target',
         'git-repo',
         'external',
         'lookback',
+        'task-name',
+        'developers',
+      ]);
+    });
+
+    it('should return all 11 steps for both webhook and git selection', () => {
+      const result = stepsFor({ webhook: true, git: true });
+      expect(result).toHaveLength(11);
+
+      const ids = result.map((s) => s.id);
+      expect(ids).toEqual([
+        'target',
+        'channel',
+        'folder',
+        'timezone',
+        'flow',
+        'trigger-url',
+        'git-repo',
+        'external',
+        'lookback',
+        'task-name',
         'developers',
       ]);
     });
@@ -149,25 +153,25 @@ describe('step-model', () => {
     it('should produce "Step N of M · <title>" format for webhook-only', () => {
       const webhookSteps = stepsFor({ webhook: true, git: false });
       const heading = stepHeading(webhookSteps, 'target');
-      expect(heading).toBe('Step 1 of 9 · Delivery target');
+      expect(heading).toBe('Step 1 of 10 · Delivery target');
     });
 
-    it('should produce "Step 1 of 5 · Delivery target" for git-only list', () => {
+    it('should produce "Step 1 of 6 · Delivery target" for git-only list', () => {
       const gitSteps = stepsFor({ webhook: false, git: true });
       const heading = stepHeading(gitSteps, 'target');
-      expect(heading).toBe('Step 1 of 5 · Delivery target');
+      expect(heading).toBe('Step 1 of 6 · Delivery target');
     });
 
     it('should correctly number middle steps', () => {
       const webhookSteps = stepsFor({ webhook: true, git: false });
       const heading = stepHeading(webhookSteps, 'trigger-url');
-      expect(heading).toBe('Step 6 of 9 · Trigger URL');
+      expect(heading).toBe('Step 6 of 10 · Trigger URL');
     });
 
     it('should correctly number last step', () => {
       const allSteps = stepsFor({ webhook: true, git: true });
       const heading = stepHeading(allSteps, 'developers');
-      expect(heading).toBe('Step 10 of 10 · Developers');
+      expect(heading).toBe('Step 11 of 11 · Developers');
     });
 
     it('should raise error if id not found in steps', () => {
