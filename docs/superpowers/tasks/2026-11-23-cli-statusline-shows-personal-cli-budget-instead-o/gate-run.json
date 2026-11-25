@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "branch": "fix/EPMCDME-16845-statusline-project-budget",
-  "head": "3a494751e78609d8c6770b4d8e64dfa9419ec93c",
+  "head": "e046b60501f38d88107269c23685280d5992d679",
   "runner": "npm",
   "started_at": "2026-11-24T18:36:00.000Z",
   "completed_at": "2026-11-24T18:42:00.000Z",
@@ -20,7 +20,7 @@
       "id": "lint",
       "source": "guide",
       "status": "PASS",
-      "duration_ms": 4000,
+      "duration_ms": 5000,
       "command": "npm run lint",
       "exit_code": 0
     },
@@ -44,7 +44,7 @@
       "id": "unit",
       "source": "guide",
       "status": "PASS",
-      "duration_ms": 176000,
+      "duration_ms": 169000,
       "command": "npx vitest run --project unit",
       "exit_code": 0
     },
@@ -52,7 +52,7 @@
       "id": "integration",
       "source": "guide",
       "status": "PASS",
-      "duration_ms": 45000,
+      "duration_ms": 39000,
       "command": "npx vitest run --project cli",
       "exit_code": 0
     },

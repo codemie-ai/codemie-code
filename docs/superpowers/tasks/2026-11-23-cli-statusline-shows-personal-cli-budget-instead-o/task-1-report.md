@@ -1,5 +1,5 @@
 DONE
-commit: d6ef4481
+commit: 7bc29a9a
 files:
   - src/agents/plugins/claude/plugin/statusline.ts
   - src/agents/plugins/claude/plugin/__tests__/statusline.test.ts
