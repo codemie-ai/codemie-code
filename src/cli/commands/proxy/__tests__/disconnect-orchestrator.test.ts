@@ -317,7 +317,7 @@ describe('disconnectTargets — the analytics aggregates', () => {
     await disconnectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
 
     expect(removers.desktop).toHaveBeenCalled();
-    expect(removers.vscode).toHaveBeenCalledWith(false);
+    expect(removers.vscode).toHaveBeenCalledWith('codemie-proxy', false);
     expect(removers.claudeCode).toHaveBeenCalledWith({ scope: 'user' });
     expect(process.exitCode).toBe(0);
   });
@@ -399,7 +399,7 @@ describe('disconnectTargets — the analytics aggregates', () => {
 
       await disconnectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
 
-      expect(removers.vscode.mock.calls).toEqual([[true]]);
+      expect(removers.vscode.mock.calls).toEqual([['codemie-proxy', true]]);
       expect(lines()).toContain('✓ VS Code Insiders Claude Code disconnected (/vscode/settings.json)');
       expect(lines().some((line) => line.startsWith('VS Code Claude Code extension'))).toBe(false);
       expect(process.exitCode).toBe(0);
@@ -411,7 +411,7 @@ describe('disconnectTargets — the analytics aggregates', () => {
 
       await disconnectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
 
-      expect(removers.vscode.mock.calls).toEqual([[false], [true]]);
+      expect(removers.vscode.mock.calls).toEqual([['codemie-proxy', false], ['codemie-proxy', true]]);
       expect(lines()).toContain('✓ VS Code Claude Code disconnected (/vscode/settings.json)');
       expect(lines()).toContain('✓ VS Code Insiders Claude Code disconnected (/vscode/settings.json)');
     });
@@ -422,7 +422,7 @@ describe('disconnectTargets — the analytics aggregates', () => {
 
       await disconnectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
 
-      expect(removers.vscode.mock.calls).toEqual([[true]]);
+      expect(removers.vscode.mock.calls).toEqual([['codemie-proxy', true]]);
       expect(lines()).toContain('VS Code Claude Code extension: nothing to disconnect.');
     });
 
@@ -443,7 +443,7 @@ describe('disconnectTargets — the analytics aggregates', () => {
 
       await disconnectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], insiders: true });
 
-      expect(removers.vscode.mock.calls).toEqual([[true]]);
+      expect(removers.vscode.mock.calls).toEqual([['codemie-proxy', true]]);
     });
 
     it('scope project leaves both editions untouched', async () => {
@@ -461,7 +461,7 @@ describe('disconnectTargets — the analytics aggregates', () => {
 
       await disconnectTargets({ targets: { vscodeClaudeCode: true } });
 
-      expect(removers.vscode.mock.calls).toEqual([[false]]);
+      expect(removers.vscode.mock.calls).toEqual([['codemie-proxy', false]]);
     });
   });
 

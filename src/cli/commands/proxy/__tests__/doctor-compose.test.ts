@@ -241,6 +241,42 @@ describe('composeProxyDoctor', () => {
     expect(signIn).not.toHaveBeenCalled();
   });
 
+  describe('the Desktop section', () => {
+    it('is ok while collecting', async () => {
+      collectDesktopCollection.mockResolvedValue({ connected: true, collecting: true });
+
+      const desktop = (await compose()).sections.find((s) => s.id === 'desktop');
+
+      expect(desktop).toMatchObject({ status: 'ok', message: 'Claude Desktop: collecting' });
+    });
+
+    it('is info, with the enable command, while analytics are disabled: a choice, not a fault', async () => {
+      collectDesktopCollection.mockResolvedValue({
+        connected: true,
+        collecting: false,
+        analyticsDisabled: true,
+        reason: 'analytics are disabled',
+        remedy: 'run: codemie proxy analytics enable --claude-otlp',
+      });
+
+      const desktop = (await compose()).sections.find((s) => s.id === 'desktop');
+
+      expect(desktop?.status).toBe('info');
+      expect(desktop?.message).toBe('Claude Desktop: not collecting — analytics are disabled');
+      expect(desktop?.hint).toContain('codemie proxy analytics enable --claude-otlp');
+    });
+
+    it('stays a warning when Desktop is not collecting for another reason', async () => {
+      collectDesktopCollection.mockResolvedValue({
+        connected: true,
+        collecting: false,
+        reason: 'the analytics preferences file is unreadable (fix or delete /p)',
+      });
+
+      expect((await compose()).sections.find((s) => s.id === 'desktop')?.status).toBe('warn');
+    });
+  });
+
   describe('every section always renders', () => {
     /** Section ids by display group: daemon, sign-in and upstream, clients, connectors, delivery, Desktop, environment. */
     const GROUPS: string[][] = [['daemon'], ['auth', 'upstream'], ['clients'], ['connectors', 'claude-code-otlp'], ['delivery'], ['desktop'], ['cli-path']];
@@ -484,6 +520,63 @@ describe('composeProxyDoctor', () => {
     expect(text).toContain('Next retry: due now (backend unreachable)');
     expect(text).toMatch(/Last dropped: no_project \(hooks, \d{4}-\d{2}-\d{2} /);
     expect(delivery.find((s) => s.message.startsWith('Last dropped'))?.hint).toContain('codemie setup');
+  });
+
+  describe('unsent data on hold, per reason', () => {
+    const unsent = async (): Promise<string[]> => {
+      const report = await compose();
+      return report.sections.filter((s) => s.id === 'delivery' && s.message.startsWith('Unsent data')).map((s) => s.message);
+    };
+
+    it('stays one line without a hold (f)', async () => {
+      collectDeliveryHealth.mockResolvedValue({ status: 'healthy', pendingBytes: 16650 });
+      expect(await unsent()).toEqual(['Unsent data: 16.26 KB (all sessions on this machine)']);
+    });
+
+    it('lists a reason the table does not know as On hold with its size and no Fix', async () => {
+      collectDeliveryHealth.mockResolvedValue({ status: 'healthy', pendingBytes: 16650, heldBytes: 16650, heldByReason: { some_unlisted_reason: 16650 } });
+      expect(await unsent()).toEqual([
+        [
+          'Unsent data: 16.26 KB (all sessions on this machine), 16.26 KB of it on hold',
+          '      On hold: some unlisted reason (16.26 KB)',
+        ].join('\n'),
+      ]);
+    });
+
+    it('adds an On hold / Fix block for one reason', async () => {
+      collectDeliveryHealth.mockResolvedValue({ status: 'healthy', pendingBytes: 16650, heldBytes: 16650, heldByReason: { work_consent_required: 16650 } });
+      expect(await unsent()).toEqual([
+        [
+          'Unsent data: 16.26 KB (all sessions on this machine), 16.26 KB of it on hold',
+          '      On hold: personal Claude subscription sessions need work consent',
+          '      Fix: codemie proxy analytics consent grant (run in this repository, or add --all for every repository; applies to new sessions only)',
+        ].join('\n'),
+      ]);
+    });
+
+    it('adds one block per reason, in table order', async () => {
+      const { HOLD_REASONS } = await import('../doctor/delivery-sections.js');
+      HOLD_REASONS.test_second_reason = { text: 'second reason text', fix: 'second fix text' };
+      try {
+        collectDeliveryHealth.mockResolvedValue({
+          status: 'healthy',
+          pendingBytes: 20480,
+          heldBytes: 20480,
+          heldByReason: { test_second_reason: 4096, work_consent_required: 16384 },
+        });
+        expect(await unsent()).toEqual([
+          [
+            'Unsent data: 20.00 KB (all sessions on this machine), 20.00 KB of it on hold',
+            '      On hold: personal Claude subscription sessions need work consent',
+            '      Fix: codemie proxy analytics consent grant (run in this repository, or add --all for every repository; applies to new sessions only)',
+            '      On hold: second reason text',
+            '      Fix: second fix text',
+          ].join('\n'),
+        ]);
+      } finally {
+        delete HOLD_REASONS.test_second_reason;
+      }
+    });
   });
 
   it('delivery explains a project-conflict discard as the last drop, with no command to run', async () => {

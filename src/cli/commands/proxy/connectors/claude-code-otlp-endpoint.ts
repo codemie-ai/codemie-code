@@ -6,21 +6,16 @@ import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { getClaudeSettingsPath } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 import { writeAtomically } from './vscode.js';
-import { isCodemieOwnedEnvValue, readSettingsFile, type ClaudeSettings } from './claude-code-otlp.js';
+import { isOwnedLocalDaemonOtlpEnv, readSettingsFile, type ClaudeSettings } from './claude-code-otlp.js';
 
 const OTLP_ENDPOINT_PATH = '/v1/analytics/otlp';
-// The only shape `connect` writes (daemon binds 127.0.0.1); anything else is the user's own destination.
-const LOCAL_DAEMON_ENDPOINT = /^http:\/\/127\.0\.0\.1:\d{1,5}\/v1\/analytics\/otlp$/;
 
 /** CodeMie-written local-daemon OTLP endpoint/header pair in the user-level settings, or null (not connected, foreign, unreadable). */
 async function readOwnedOtlpEnv(): Promise<{ settings: ClaudeSettings; env: Record<string, string> } | null> {
   try {
     const settings = await readSettingsFile(getClaudeSettingsPath());
     const env = settings.env ?? {};
-    return isCodemieOwnedEnvValue('OTEL_EXPORTER_OTLP_ENDPOINT', env.OTEL_EXPORTER_OTLP_ENDPOINT, env) &&
-      LOCAL_DAEMON_ENDPOINT.test(env.OTEL_EXPORTER_OTLP_ENDPOINT)
-      ? { settings, env }
-      : null;
+    return isOwnedLocalDaemonOtlpEnv(env) ? { settings, env } : null;
   } catch {
     return null;
   }

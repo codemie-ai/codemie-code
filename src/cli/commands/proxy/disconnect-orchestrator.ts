@@ -26,6 +26,7 @@ import {
   membersOf,
   type AggregateId,
 } from './analytics-clients.js';
+import { DEFAULT_GATEWAY_KEY, readState } from './daemon-manager.js';
 import { formatFlagRows } from './flag-list.js';
 
 export interface DisconnectTargets {
@@ -93,7 +94,8 @@ export async function disconnectClaudeDesktop(): Promise<void> {
 export async function disconnectVsCodeClaudeCode(insiders: boolean): Promise<void> {
   const label = insiders ? 'VS Code Insiders Claude Code' : 'VS Code Claude Code';
   try {
-    const result = await removeVsCodeClaudeCodeConfig(insiders);
+    const gatewayKey = (await readState())?.gatewayKey ?? DEFAULT_GATEWAY_KEY;
+    const result = await removeVsCodeClaudeCodeConfig(gatewayKey, insiders);
 
     if (!result.removed) {
       const reason = result.reason ? ` (${result.reason})` : '';

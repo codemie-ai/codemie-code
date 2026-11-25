@@ -289,6 +289,26 @@ describe('client-target table', () => {
     expect(rows.map((row) => row.id)).toHaveLength(new Set(rows.map((row) => row.id)).size);
   });
 
+  it('says an extension with analytics on and no CodeMie route keeps the Claude login', async () => {
+    collectAnalyticsClients.mockResolvedValue(ANALYTICS_ROWS.map((row) =>
+      row.client === 'vscode-claude-code' ? { ...row, connected: true, routed: false } : row));
+
+    const rows = (JSON.parse(await runClients(['--json'])) as { clients: ClientRow[] }).clients;
+
+    expect(rows.find((row) => row.id === 'vscode-claude-code')?.hint)
+      .toBe('analytics on (uses your Claude login; model routing unchanged)');
+  });
+
+  it('names the proxy route and the disconnect command for a routed extension', async () => {
+    collectAnalyticsClients.mockResolvedValue(ANALYTICS_ROWS.map((row) =>
+      row.client === 'vscode-claude-code' ? { ...row, connected: true, routed: true } : row));
+
+    const out = stripVTControlCharacters(await runClients([]));
+
+    expect(out).toContain('routed through the proxy');
+    expect(out).toContain('codemie proxy disconnect --vscode-claude-code');
+  });
+
   it('prints the hint on the not connected rows of the text output', async () => {
     const out = stripVTControlCharacters(await runClients([]));
     expect(out).toMatch(/Copilot Chat\s+not connected — run: codemie proxy connect --copilot-otlp/);

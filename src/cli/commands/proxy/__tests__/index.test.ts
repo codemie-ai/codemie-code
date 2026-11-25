@@ -83,6 +83,7 @@ vi.mock('../connectors/desktop.js', async (importOriginal) => ({
   writeDesktopConfig: vi.fn(),
   describeManagedSettingsOverride: vi.fn().mockReturnValue(null),
   getDesktopBaseDir: vi.fn().mockReturnValue('/mock/desktop/base'),
+  getDesktopConfigPath: vi.fn(async () => '/mock/desktop/base/configLibrary/applied.json'),
   mapCanonicalToDesktop: vi.fn().mockReturnValue([]),
   summarizeManagedOauthShapes: vi.fn().mockReturnValue({ oauthConfigured: 0, oauthFlagged: 0, noAuth: 0 }),
   readDesktopGateway: vi.fn().mockResolvedValue(null),
@@ -129,6 +130,12 @@ vi.mock('../../../../cli/commands/skills/setup/sync-plugin.js', () => ({
 // guard for --claude-code-otlp; vitest has no TTY, so pretend there is one.
 vi.mock('@/utils/interactive.js', () => ({
   isNonInteractiveEnvironment: vi.fn().mockReturnValue(false),
+  canPromptForProject: vi.fn().mockReturnValue(true),
+}));
+// The Claude adapter's provider settings check has its own tests; here its gate finds no conflict and never reads real settings.
+vi.mock('@/agents/plugins/claude/cloud-provider-conflict/gate.js', () => ({
+  detectAndAsk: vi.fn(async () => ({ kind: 'proceed', token: { plan: null, deps: {} } })),
+  applyConsented: vi.fn(async () => ({ backupDir: null, files: [], changed: [] })),
 }));
 
 /**
@@ -1974,6 +1981,33 @@ describe('proxy status', () => {
       expect((await diagnose()).payload.desktop).toEqual({ connected: true, collecting: true });
     });
 
+    async function writeAnalyticsPreferences(content: string): Promise<void> {
+      await writeFile(join(clientHome, 'claude-analytics.json'), content);
+    }
+
+    it('gives not collecting, with the enable command, once analytics were disabled', async () => {
+      await arrangeDesktop(4001, { desktopConnectedSince: '2026-11-16T10:00:00.000Z' });
+      await writeAnalyticsPreferences(JSON.stringify({ enabled: false }));
+
+      expect((await diagnose()).payload.desktop).toEqual({
+        connected: true,
+        collecting: false,
+        analyticsDisabled: true,
+        reason: 'analytics are disabled',
+        remedy: 'run: codemie proxy analytics enable --claude-otlp',
+      });
+    });
+
+    it('gives not collecting, naming the file, while the analytics preferences file is unreadable', async () => {
+      await arrangeDesktop(4001, { desktopConnectedSince: '2026-11-16T10:00:00.000Z' });
+      await writeAnalyticsPreferences('{not json');
+
+      const desktop = (await diagnose()).payload.desktop as { collecting: boolean; reason: string };
+
+      expect(desktop.collecting).toBe(false);
+      expect(desktop.reason).toContain('claude-analytics.json');
+    });
+
     it('says Desktop is not connected yet while the daemon has not noticed it on its own port', async () => {
       await arrangeDesktop(4001, {});
 
@@ -3071,5 +3105,81 @@ describe('proxy restart', () => {
       expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ writeRecord: expected });
       expect(daemon.writeConnectionRecord).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('proxy connect: which Claude client routes were typed', () => {
+  const connectTargets = vi.fn(async () => undefined);
+
+  beforeEach(() => {
+    vi.resetModules();
+    connectTargets.mockClear();
+    vi.doMock('../connect-orchestrator.js', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('../connect-orchestrator.js')>()),
+      connectTargets,
+    }));
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.doUnmock('../connect-orchestrator.js');
+    vi.restoreAllMocks();
+  });
+
+  async function connectWith(...args: string[]): Promise<{ explicitRoutes?: unknown; targets: Record<string, boolean> }> {
+    const { createProxyCommand } = await import('../index.js');
+    await createProxyCommand().parseAsync(['connect', ...args], { from: 'user' });
+    expect(connectTargets).toHaveBeenCalledTimes(1);
+    return (connectTargets.mock.calls[0] as unknown as [{ explicitRoutes?: unknown; targets: Record<string, boolean> }])[0];
+  }
+
+  it('--claude-otlp implies both clients but types neither', async () => {
+    const options = await connectWith('--claude-otlp');
+    expect(options.targets).toMatchObject({ claudeDesktop: true, vscodeClaudeCode: true });
+    expect(options.explicitRoutes).toEqual({ claudeDesktop: false, vscodeClaudeCode: false });
+  });
+
+  it('--include-personal-subscriptions is registered and maps to includePersonalSubscriptions: true', async () => {
+    const { createProxyCommand } = await import('../index.js');
+    const connect = createProxyCommand().commands.find((command) => command.name() === 'connect');
+    expect(connect?.options.some((option) => option.long === '--include-personal-subscriptions')).toBe(true);
+
+    const withFlag = await connectWith('--claude-otlp', '--include-personal-subscriptions') as { includePersonalSubscriptions?: boolean };
+    expect(withFlag.includePersonalSubscriptions).toBe(true);
+  });
+
+  it('includePersonalSubscriptions is false without the flag', async () => {
+    const withoutFlag = await connectWith('--claude-otlp') as { includePersonalSubscriptions?: boolean };
+    expect(withoutFlag.includePersonalSubscriptions).toBe(false);
+  });
+
+  it('a typed --claude-desktop or --vscode-claude-code is explicit, with or without --claude-otlp', async () => {
+    expect((await connectWith('--claude-desktop')).explicitRoutes).toEqual({ claudeDesktop: true, vscodeClaudeCode: false });
+    connectTargets.mockClear();
+    expect((await connectWith('--claude-otlp', '--vscode-claude-code')).explicitRoutes)
+      .toEqual({ claudeDesktop: false, vscodeClaudeCode: true });
+  });
+});
+
+describe('proxy connect help of the routing flags', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  async function description(long: string): Promise<string> {
+    const { createProxyCommand } = await import('../index.js');
+    const connect = createProxyCommand().commands.find((command) => command.name() === 'connect');
+    return connect?.options.find((option) => option.long === long)?.description ?? '';
+  }
+
+  it('--claude-desktop says it routes the model requests through the proxy', async () => {
+    const text = await description('--claude-desktop');
+    expect(text).toContain('through the proxy');
+    expect(text).toContain('model');
+    expect(text).toContain('MCP');
+  });
+
+  it('--vscode-claude-code says it routes the extension through the proxy', async () => {
+    expect(await description('--vscode-claude-code')).toContain('through the proxy');
   });
 });

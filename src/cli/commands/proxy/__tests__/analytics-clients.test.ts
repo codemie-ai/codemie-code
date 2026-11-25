@@ -57,6 +57,7 @@ const {
   aggregateFlags,
   collectAnalyticsClients,
   membersNotFound,
+  ANALYTICS_AGGREGATES,
   analyticsClientHint,
   ANALYTICS_CLIENT_TARGET_IDS,
   isMemberConfigured,
@@ -216,60 +217,86 @@ describe('collectAnalyticsClients', () => {
       .toMatchObject({ found: true, connected: true, flag: '--claude-otlp' });
   });
 
-  it('reads the extension not connected and not found with the hooks and no VS Code directory', async () => {
+  it('reads the extension connected, not routed, by the hooks alone: no route in either edition', async () => {
+    await stableDir();
     vi.mocked(hasClaudeCodeOtlpHooks).mockResolvedValue(true);
 
     expect(pick(await collectAnalyticsClients(state), 'vscode-claude-code'))
-      .toMatchObject({ found: false, connected: false, flag: '--claude-otlp' });
+      .toMatchObject({ found: true, connected: true, routed: false, flag: '--claude-otlp' });
   });
 
-  it('reads the extension with the Insiders directory alone and the hooks, no route in either edition, not connected', async () => {
+  it('reads the extension with the Insiders directory alone and the hooks as connected, not routed', async () => {
     await insidersDir();
     vi.mocked(hasClaudeCodeOtlpHooks).mockResolvedValue(true);
 
     expect(pick(await collectAnalyticsClients(state), 'vscode-claude-code'))
-      .toMatchObject({ found: true, connected: false, flag: '--claude-otlp --insiders' });
+      .toMatchObject({ found: true, connected: true, routed: false, flag: '--claude-otlp --insiders' });
   });
 
-  it('reads the extension connected by its Insiders route at the daemon port with the key vscode-claude-code', async () => {
+  it('reads the extension connected and routed by its Insiders route at the daemon port with the key vscode-claude-code', async () => {
     await insidersDir();
     await route('Code - Insiders', 4001);
     vi.mocked(hasClaudeCodeOtlpHooks).mockResolvedValue(true);
 
     expect(pick(await collectAnalyticsClients(state), 'vscode-claude-code'))
-      .toMatchObject({ found: true, connected: true, flag: '--claude-otlp --insiders' });
+      .toMatchObject({ found: true, connected: true, routed: true, flag: '--claude-otlp --insiders' });
   });
 
-  it('reads the extension not connected by a route at another port than the running daemon', async () => {
+  it('reads a route at another port than the running daemon as connected by the hooks, not routed', async () => {
     await insidersDir();
     await route('Code - Insiders', 4999);
     vi.mocked(hasClaudeCodeOtlpHooks).mockResolvedValue(true);
 
-    expect(pick(await collectAnalyticsClients(state), 'vscode-claude-code').connected).toBe(false);
+    expect(pick(await collectAnalyticsClients(state), 'vscode-claude-code'))
+      .toMatchObject({ connected: true, routed: false });
   });
 
-  it('reads the extension not connected by a route with a key the running daemon refuses', async () => {
+  it('reads a route with a key the running daemon refuses as connected by the hooks, not routed', async () => {
     await insidersDir();
     await route('Code - Insiders', 4001, 'someone-else');
     vi.mocked(hasClaudeCodeOtlpHooks).mockResolvedValue(true);
 
-    expect(pick(await collectAnalyticsClients(state), 'vscode-claude-code').connected).toBe(false);
+    expect(pick(await collectAnalyticsClients(state), 'vscode-claude-code'))
+      .toMatchObject({ connected: true, routed: false });
   });
 
-  it('with no daemon reads the extension connected by any stable loopback route and the hooks, not without a route', async () => {
+  it('with no daemon reads any stable loopback route as routed, and no route as not routed', async () => {
     await stableDir();
     vi.mocked(hasClaudeCodeOtlpHooks).mockResolvedValue(true);
-    expect(pick(await collectAnalyticsClients(null), 'vscode-claude-code').connected).toBe(false);
+    expect(pick(await collectAnalyticsClients(null), 'vscode-claude-code')).toMatchObject({ connected: true, routed: false });
 
     await route('Code', 4999, 'someone-else');
-    expect(pick(await collectAnalyticsClients(null), 'vscode-claude-code').connected).toBe(true);
+    expect(pick(await collectAnalyticsClients(null), 'vscode-claude-code')).toMatchObject({ connected: true, routed: true });
   });
 
   it('reads the extension not connected by its route without the hooks', async () => {
     await stableDir();
     await route('Code', 4001);
 
-    expect(pick(await collectAnalyticsClients(state), 'vscode-claude-code').connected).toBe(false);
+    expect(pick(await collectAnalyticsClients(state), 'vscode-claude-code'))
+      .toMatchObject({ connected: false, routed: true });
+  });
+
+  it('reads the extension connected by the hooks with no VS Code directory, and not routed', async () => {
+    vi.mocked(hasClaudeCodeOtlpHooks).mockResolvedValue(true);
+
+    expect(pick(await collectAnalyticsClients(state), 'vscode-claude-code'))
+      .toMatchObject({ found: true, connected: true, routed: false });
+  });
+
+  it('reads Desktop as routed when connected, and no other client as routed', async () => {
+    await desktopApp();
+    vi.mocked(readDesktopGatewayConfig).mockResolvedValue({ port: 4001, apiKey: 'codemie-proxy.claude-desktop' });
+
+    const rows = await collectAnalyticsClients(state);
+
+    expect(rows.map((r) => [r.client, r.routed])).toEqual([
+      ['claude-code', false],
+      ['vscode-claude-code', false],
+      ['claude-desktop', true],
+      ['copilot-chat', false],
+      ['copilot-cli', false],
+    ]);
   });
 
   it('finds Claude Code by the native installer binary on darwin, not on win32', async () => {
@@ -437,8 +464,8 @@ describe('isMemberFound', () => {
 });
 
 describe('analyticsClientHint', () => {
-  const row = (client: string, label: string, found: boolean, connected: boolean, flag: string, otherGateway = false) =>
-    ({ client, label, found, connected, flag, otherGateway }) as Awaited<ReturnType<typeof collectAnalyticsClients>>[number];
+  const row = (client: string, label: string, found: boolean, connected: boolean, flag: string, otherGateway = false, routed = false) =>
+    ({ client, label, found, connected, flag, otherGateway, routed }) as Awaited<ReturnType<typeof collectAnalyticsClients>>[number];
   const rows = [
     row('claude-code', 'Claude Code', true, true, '--claude-otlp'),
     row('vscode-claude-code', 'VS Code Claude Code extension', true, true, '--claude-otlp'),
@@ -447,10 +474,10 @@ describe('analyticsClientHint', () => {
     row('copilot-cli', 'Copilot CLI', false, false, '--copilot-otlp'),
   ];
 
-  it('names the vendor flag for a found client and for one not found, nothing for a connected one', () => {
+  it('names the vendor flag for a found client and for one not found, nothing for a connected one but the extension', () => {
     expect(rows.map((r) => analyticsClientHint(r, true))).toEqual([
       undefined,
-      undefined,
+      'analytics on (uses your Claude login; model routing unchanged)',
       'not connected — run: codemie proxy connect --claude-otlp',
       'not connected — run: codemie proxy connect --copilot-otlp',
       'not found — run: codemie proxy connect --copilot-otlp',
@@ -463,6 +490,24 @@ describe('analyticsClientHint', () => {
       'not connected',
       'not found — run: codemie proxy connect --copilot-otlp',
     ]);
+  });
+
+  it('says a connected extension that is not routed keeps the Claude login', () => {
+    expect(analyticsClientHint(row('vscode-claude-code', 'VS Code Claude Code extension', true, true, '--claude-otlp'), true))
+      .toBe('analytics on (uses your Claude login; model routing unchanged)');
+  });
+
+  it('says a routed extension goes through the proxy, with the disconnect command', () => {
+    const hint = analyticsClientHint(
+      row('vscode-claude-code', 'VS Code Claude Code extension', true, true, '--claude-otlp', false, true), true);
+    expect(hint).toBe('routed through the proxy — ' +
+      'to use your Claude login: codemie proxy disconnect --vscode-claude-code');
+  });
+
+  it('names --insiders in the disconnect command of an Insiders-only extension', () => {
+    const hint = analyticsClientHint(
+      row('vscode-claude-code', 'VS Code Claude Code extension', true, true, '--claude-otlp --insiders', false, true), true);
+    expect(hint).toContain('codemie proxy disconnect --vscode-claude-code --insiders');
   });
 
   it('names another local gateway for Desktop', () => {
@@ -485,6 +530,22 @@ describe('analyticsClientHint', () => {
     const ids = Object.values(ANALYTICS_CLIENT_TARGET_IDS);
     expect(new Set(ids).size).toBe(ids.length);
     for (const id of ids) expect(CLIENT_TARGETS.some((target) => target.id === id), id).toBe(true);
+  });
+});
+
+describe('the claude-otlp help text', () => {
+  const claude = ANALYTICS_AGGREGATES.find((aggregate) => aggregate.id === 'claude-otlp')!;
+
+  it('says the extension and Desktop are routed only when not configured yet, through the proxy', () => {
+    expect(claude.connectDescription).toContain('not configured');
+    expect(claude.connectDescription).toContain('only when they are not configured yet');
+    expect(claude.connectDescription).toContain('--vscode-claude-code');
+    expect(claude.connectDescription).toContain('--claude-desktop');
+    expect(claude.connectDescription).not.toContain('routes Claude Desktop and the extension through');
+  });
+
+  it('keeps the bare-list line within 100 characters', () => {
+    expect(`  --claude-otlp                    ${claude.connectListLine}`.length).toBeLessThanOrEqual(100);
   });
 });
 

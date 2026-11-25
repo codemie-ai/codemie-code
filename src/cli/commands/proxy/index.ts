@@ -173,6 +173,7 @@ interface UnifiedConnectOptions extends AggregateOptions {
   claudeDesktop?: boolean;
   codexDesktop?: boolean;
   force?: boolean;
+  includePersonalSubscriptions?: boolean;
   insiders?: boolean;
   model?: string;
   omp?: boolean;
@@ -332,9 +333,9 @@ export function createProxyCommand(): Command {
   connect.description('Configure clients to use the local CodeMie proxy');
 
   addAggregateOptions(connect, 'connectDescription')
-    .option('--claude-desktop', 'Configure the Claude Desktop app (writes MCP servers config)')
+    .option('--claude-desktop', 'Route Claude Desktop\'s model requests through the proxy and write its MCP servers config')
     .option('--vscode', 'Configure VS Code Copilot Chat models — BYOK (writes chatLanguageModels.json)')
-    .option('--vscode-claude-code', 'Configure the VS Code Claude Code extension (writes settings.json: ANTHROPIC_BASE_URL/token)')
+    .option('--vscode-claude-code', 'Route the VS Code Claude Code extension through the proxy (writes settings.json: ANTHROPIC_BASE_URL/token)')
     .option('--codex-desktop', 'Configure the Codex desktop app (writes ~/.codex/config.toml)')
     .option('--model <slug>', 'Pin a specific model for --codex-desktop (default: best available)')
     .option('--omp', 'Configure oh-my-pi with the live CodeMie model catalog (installs ~/.omp/agent/extensions/codemie-models.js)')
@@ -356,6 +357,10 @@ export function createProxyCommand(): Command {
       `Skip the confirmation prompts (required when non-interactive; applies to ${AGGREGATE_FLAGS.join(' / ')})`,
     )
     .addOption(deprecatedOption(CONNECT_SILENT_DEPRECATION, '--silent', 'Same as --yes'))
+    .option(
+      '--include-personal-subscriptions',
+      'With --claude-otlp: also send analytics from personal Claude subscriptions, for this repository (--scope project) or any repository (--scope user). Without it, an interactive connect asks (not with --yes).',
+    )
     .action(async (opts: UnifiedConnectOptions) => {
       if (opts.force) deprecate(CONNECT_FORCE_DEPRECATION);
       if (opts.silent) deprecate(CONNECT_SILENT_DEPRECATION);
@@ -381,7 +386,13 @@ export function createProxyCommand(): Command {
         // Left undefined when omitted: the orchestrator coalesces it, and an aggregate's member then keeps its project list.
         scope: opts.scope,
         yes: Boolean(opts.yes || opts.silent),
+        includePersonalSubscriptions: Boolean(opts.includePersonalSubscriptions),
         aggregates: aggregatesGiven(opts),
+        // `--claude-otlp` implies both flags (source `implied`); only a typed flag routes its client unconditionally.
+        explicitRoutes: {
+          claudeDesktop: connect.getOptionValueSource('claudeDesktop') === 'cli',
+          vscodeClaudeCode: connect.getOptionValueSource('vscodeClaudeCode') === 'cli',
+        },
       });
       printNext('proxy connect', connectOutcome(opts));
     });

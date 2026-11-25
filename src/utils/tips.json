@@ -260,7 +260,8 @@
     "commands": [
       "codemie proxy analytics consent grant",
       "codemie proxy analytics consent revoke",
-      "codemie proxy analytics consent list"
+      "codemie proxy analytics consent list",
+      "codemie proxy connect --claude-otlp --include-personal-subscriptions"
     ]
   },
   {

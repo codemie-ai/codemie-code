@@ -173,6 +173,16 @@ export function isCodemieOwnedEnvValue(
   return CODEMIE_ENV_FIXED_VALUES[key] === value || isHistoricalCodemieValue(key, value);
 }
 
+// The only shape `connect` writes (daemon binds 127.0.0.1); anything else is the user's own destination.
+const LOCAL_DAEMON_ENDPOINT = /^http:\/\/127\.0\.0\.1:\d{1,5}\/v1\/analytics\/otlp$/;
+
+/** True if `env` holds codemie's own local-daemon endpoint/header pair, for whatever port and gateway key it was written. */
+export function isOwnedLocalDaemonOtlpEnv(env: Record<string, unknown>): boolean {
+  const endpoint = env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  return isCodemieOwnedEnvValue('OTEL_EXPORTER_OTLP_ENDPOINT', endpoint, env) &&
+    typeof endpoint === 'string' && LOCAL_DAEMON_ENDPOINT.test(endpoint);
+}
+
 /**
  * Puts a value an `--overwrite` connect once displaced into `backupEnv` back
  * into `baseEnv`, for any key `baseEnv` doesn't hold — only while `liveEnv`
@@ -513,6 +523,7 @@ export async function writeClaudeCodeOtlpConfig(
   // --- Conflict detection: env values AND malformed (non-array) hooks entries ---
   const existingEnv = existing.env ?? {};
   const envConflicts: string[] = [];
+  const ownsLocalDaemonPair = isOwnedLocalDaemonOtlpEnv(existingEnv);
   for (const key of CODEMIE_ENV_KEYS) {
     const currentVal = existingEnv[key];
     const desiredVal = codemieEnv[key];
@@ -522,6 +533,10 @@ export async function writeClaudeCodeOtlpConfig(
     // A prior CodeMie version's own value for this key — migrated to today's default by
     // this same write below, not a conflict requiring --overwrite.
     if (isHistoricalCodemieValue(key, currentVal)) {
+      continue;
+    }
+    // Codemie's own pair written for an earlier daemon port or gateway key — re-pointed, not a conflict.
+    if ((key === 'OTEL_EXPORTER_OTLP_ENDPOINT' || key === 'OTEL_EXPORTER_OTLP_HEADERS') && ownsLocalDaemonPair) {
       continue;
     }
     envConflicts.push(key);

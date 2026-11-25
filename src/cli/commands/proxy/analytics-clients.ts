@@ -60,8 +60,8 @@ export const ANALYTICS_AGGREGATES: readonly AnalyticsAggregate[] = [
     members: ['claudeDesktop', 'vscodeClaudeCode', 'claudeCodeOtlp'],
     connectDescription:
       'Analytics for every Claude client, found on this machine or not — Claude Code, the VS Code Claude Code extension, ' +
-      'Claude Desktop (Claude Code analytics plus --claude-desktop --vscode-claude-code); routes Claude Desktop and ' +
-      `the extension through the CodeMie proxy, and codemie proxy disconnect ${CLAUDE_OTLP_FLAG} removes that route`,
+      'Claude Desktop; the extension and Desktop are routed through the proxy only when they are not configured yet ' +
+      `(--vscode-claude-code / --claude-desktop route them explicitly), and codemie proxy disconnect ${CLAUDE_OTLP_FLAG} gives them back their Claude login`,
     disconnectDescription:
       'Turn off analytics for every Claude client and remove the CodeMie proxy route of Claude Desktop and the ' +
       'VS Code Claude Code extension',
@@ -135,10 +135,13 @@ export interface AnalyticsClientRow {
   client: 'claude-code' | 'vscode-claude-code' | 'claude-desktop' | 'copilot-chat' | 'copilot-cli';
   label: string;
   found: boolean;
+  /** Its analytics are on: the hooks for Claude Code and the extension, the gateway for Desktop, the scope for Copilot. */
   connected: boolean;
   flag: string;
   /** Desktop's applied config is a loopback gateway with a key this proxy does not accept. */
   otherGateway: boolean;
+  /** Its model requests go through the proxy: the extension's route, Desktop's gateway. */
+  routed: boolean;
 }
 
 /** A lookup that fails counts as found: a member is never skipped, nor a row shown `not found`, on a guess. */
@@ -315,16 +318,17 @@ export async function isMemberConfigured(member: AnalyticsMember, run: { insider
   }
 }
 
-function row({ client, label, lookedUp, connected, aggregateFlag, otherGateway = false }: {
+function row({ client, label, lookedUp, connected, aggregateFlag, otherGateway = false, routed = false }: {
   client: AnalyticsClientRow['client'];
   label: string;
   lookedUp: boolean;
   connected: boolean;
   aggregateFlag: string;
   otherGateway?: boolean;
+  routed?: boolean;
 }): AnalyticsClientRow {
   // The vendor flag connects a client whether or not its application is found.
-  return { client, label, found: lookedUp || connected, connected, flag: aggregateFlag, otherGateway };
+  return { client, label, found: lookedUp || connected, connected, flag: aggregateFlag, otherGateway, routed };
 }
 
 /**
@@ -339,7 +343,8 @@ function isExtensionRouted(routes: (ConnectorGateway | null)[], state: DaemonSta
 /**
  * The five analytics clients `proxy connect` turns on, found and connected. With `state` null (no daemon) Claude
  * Desktop is not connected and its gateway config is not read. The extension is connected when the hooks are in
- * place and its route is in VS Code's settings. Reads files only; never rejects.
+ * place; its route in VS Code's settings (routed through the proxy) is `routed`, a
+ * separate fact. Reads files only; never rejects.
  */
 export async function collectAnalyticsClients(state: DaemonState | null): Promise<AnalyticsClientRow[]> {
   // With no daemon the route's key is not judged.
@@ -369,10 +374,10 @@ export async function collectAnalyticsClients(state: DaemonState | null): Promis
     row({ client: 'claude-code', label: 'Claude Code', lookedUp: claudeBinary,
       connected: hooks, aggregateFlag: claude }),
     row({ client: 'vscode-claude-code', label: 'VS Code Claude Code extension',
-      lookedUp: vscode, connected: hooks && isExtensionRouted([stableRoute, insidersRoute], state),
+      lookedUp: vscode, connected: hooks, routed: isExtensionRouted([stableRoute, insidersRoute], state),
       aggregateFlag: insidersDir && !stableDir ? `${claude} --insiders` : claude }),
     row({ client: 'claude-desktop', label: 'Claude Desktop', lookedUp: desktopApp,
-      connected: desktopConnected, aggregateFlag: claude, otherGateway }),
+      connected: desktopConnected, aggregateFlag: claude, otherGateway, routed: desktopConnected }),
     row({ client: 'copilot-chat', label: 'Copilot Chat', lookedUp: stableDir,
       connected: chatOn, aggregateFlag: copilot }),
     row({ client: 'copilot-cli', label: 'Copilot CLI', lookedUp: copilotBinary,
@@ -389,12 +394,26 @@ export const ANALYTICS_CLIENT_TARGET_IDS: Record<AnalyticsClientRow['client'], s
   'copilot-cli': COPILOT_CLI_OTLP_AGENT_NAME,
 };
 
+/** The extension whose hooks are on and whose model route is not CodeMie's. */
+export const EXTENSION_ANALYTICS_ON = 'analytics on (uses your Claude login; model routing unchanged)';
+
+/** The note of an extension routed through CodeMie, with the command that gives it back its Claude login. */
+export function routedExtensionNote(flag: string): string {
+  const insiders = flag.endsWith('--insiders') ? ' --insiders' : '';
+  return 'routed through the proxy — ' +
+    `to use your Claude login: codemie proxy disconnect --vscode-claude-code${insiders}`;
+}
+
 /**
  * The one-line state of an analytics client that is not connected, with the command that connects it: its vendor
  * flag, whether or not the client is found. `commands` false (a daemon of an older CLI, whose restart
- * comes first) names no command for a found client. Undefined for a connected client.
+ * comes first) names no command for a found client. Undefined for a connected client, except the extension, whose
+ * analytics-on state says whether its model route is CodeMie's (and how to give it back).
  */
 export function analyticsClientHint(row: AnalyticsClientRow, commands: boolean): string | undefined {
+  if (row.client === 'vscode-claude-code' && row.connected) {
+    return row.routed ? routedExtensionNote(row.flag) : EXTENSION_ANALYTICS_ON;
+  }
   if (row.connected) return undefined;
   if (row.found && !commands) return 'not connected';
   const command = `codemie proxy connect ${row.flag}`;

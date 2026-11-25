@@ -1,4 +1,4 @@
-import { MAX_TOOL_FIELD_CHARS } from '@/agents/core/OtlpAgentAdapter.js';
+import { MAX_TOOL_FIELD_CHARS } from '@/agents/core/otlp-field-limits.js';
 import { countContentLines } from '@/utils/file-operations.js';
 
 export interface ToolContextFields {

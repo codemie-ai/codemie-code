@@ -43,12 +43,16 @@ export interface ClientRow {
   found?: boolean;
   /** An analytics client that is not connected: its state and the command that connects it. */
   hint?: string;
+  /** A connected row routed through CodeMie: what it costs and the command that undoes it. */
+  note?: string;
 }
 
 interface AnalyticsClientInfo {
   found: boolean;
   /** The hint shown while the row is not connected. */
   hint?: string;
+  /** Shown beside a connected row. */
+  note?: string;
 }
 
 /**
@@ -61,10 +65,18 @@ async function readAnalyticsClientInfo(): Promise<Map<string, AnalyticsClientInf
     const daemon = running ? state : null;
     const commands = daemon === null || Boolean(daemon.version);
     const rows = await collectAnalyticsClients(daemon);
-    return new Map(rows.map((row) => [
-      ANALYTICS_CLIENT_TARGET_IDS[row.client],
-      { found: row.found, hint: analyticsClientHint({ ...row, connected: false }, commands) },
-    ]));
+    return new Map(rows.map((row) => {
+      // The extension's analytics ride on hooks, apart from the route this table row is about; others judge the row's own state.
+      const extension = row.client === 'vscode-claude-code';
+      return [
+        ANALYTICS_CLIENT_TARGET_IDS[row.client],
+        {
+          found: row.found,
+          hint: analyticsClientHint(extension ? row : { ...row, connected: false }, commands),
+          ...(extension && row.routed && { note: analyticsClientHint({ ...row, connected: true }, commands) }),
+        },
+      ];
+    }));
   } catch (error) {
     logger.debug('[proxy clients] analytics client lookup failed:', error);
     return new Map();
@@ -101,6 +113,7 @@ export async function collectClientRows(): Promise<ClientRow[]> {
       ...(state.error !== undefined && { error: state.error }),
       ...(info && { found: info.found || state.connected }),
       ...(hint && { hint }),
+      ...(info?.note && state.connected && { note: info.note }),
     };
   }));
 }
@@ -114,7 +127,8 @@ const SCOPE_TEXT: Record<ClientScope, string> = {
 function stateText(row: ClientRow): string {
   if (row.error !== undefined) return chalk.yellow(`check failed: ${row.error}`);
   if (!row.connected) return chalk.dim(row.hint ?? 'not connected');
-  return chalk.green('connected') + (row.scope ? `, ${SCOPE_TEXT[row.scope]}` : '');
+  return chalk.green('connected') + (row.scope ? `, ${SCOPE_TEXT[row.scope]}` : '') +
+    (row.note ? chalk.dim(` — ${row.note}`) : '');
 }
 
 function formatRows(rows: ClientRow[]): string[] {
