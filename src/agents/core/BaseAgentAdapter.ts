@@ -23,6 +23,7 @@ import { formatTipLine, getSessionTip } from '../../utils/tips.js';
 import { syncRegisteredSkills } from '../../cli/commands/skills/setup/sync.js';
 import { describeProjectBinding, parseProjectBinding, PROJECT_BINDING_ENV } from '../../utils/project-binding.js';
 import { renderProfileInfo } from '../../utils/profile.js';
+import { describeModel, MODEL_ENV_ORIGIN_ENV, parseModelEnvOrigin, PROFILE_MODEL_ENV } from '../../utils/model-origin.js';
 import chalk from 'chalk';
 import { existsSync } from 'fs';
 import { mkdir, writeFile } from 'fs/promises';
@@ -636,7 +637,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       const profileName = env.CODEMIE_PROFILE_NAME || 'default';
       const provider = env.CODEMIE_PROVIDER || 'unknown';
       const cliVersion = env.CODEMIE_CLI_VERSION || 'unknown';
-      const model = env.CODEMIE_MODEL || 'unknown';
+      const model = describeModel(
+        env.CODEMIE_MODEL || 'unknown',
+        parseModelEnvOrigin(env[MODEL_ENV_ORIGIN_ENV]),
+        env[PROFILE_MODEL_ENV] || undefined
+      );
       const codeMieUrl = env.CODEMIE_URL;
       // The launcher's binding and project; never re-resolved here (EPMCDME-15411).
       const project = describeProjectBinding(
