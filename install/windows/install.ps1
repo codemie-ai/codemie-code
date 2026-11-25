@@ -84,17 +84,29 @@ function Get-PackageVersion {
     return 'dry-run'
   }
 
-  $output = & $NpmPath @('view', $PackageSpec, 'version', '--registry', $RegistryUrl) 2>&1
-  if ($LASTEXITCODE -ne 0) {
+  # Benign npm stderr (warnings) must not abort under the script-wide 'Stop' preference.
+  $previousPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    $output = & $NpmPath @('view', $PackageSpec, 'version', '--registry', $RegistryUrl) 2>&1
+    $npmExitCode = $LASTEXITCODE
+  }
+  finally {
+    $ErrorActionPreference = $previousPreference
+  }
+
+  $versionLines = @($output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] })
+  if ($npmExitCode -ne 0 -or $versionLines.Count -eq 0) {
+    $outputText = (@($output | Where-Object { $null -ne $_ }) | ForEach-Object { $_.ToString() }) -join ' '
     $message = @(
       "Package $PackageSpec was not found in registry $RegistryUrl.",
       'Ask IT to expose @codemieai/code through the approved virtual npm repository, or rerun with -ScopeRegistryUrl pointing to the approved registry.',
-      "npm output: $($output -join ' ')"
+      "npm output: $outputText"
     ) -join ' '
     throw $message
   }
 
-  return ($output | Select-Object -First 1).ToString().Trim()
+  return ($versionLines | Select-Object -First 1).ToString().Trim()
 }
 
 function Add-UserPath {

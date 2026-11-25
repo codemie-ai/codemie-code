@@ -183,6 +183,130 @@ describe('consent grant / revoke / list actions', () => {
     expect(process.exitCode).toBe(1);
   });
 
+  describe('--all (the all-folders consent)', () => {
+    const allEntries = async () => (await store()).entries as Array<Record<string, unknown>>;
+
+    it('grant --all --yes writes one all-folders entry and says so', async () => {
+      await run(['consent', 'grant', '--all', '--yes']);
+      const entries = await allEntries();
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({ all_folders: true, project: '*', folder: '*', owner_hash: id.owner_hash, api_identity: id.api_identity });
+      expect(said(out)).toContain('every repository');
+      expect(process.exitCode).toBe(0);
+    });
+
+    it('grant --all is idempotent', async () => {
+      await run(['consent', 'grant', '--all', '--yes']);
+      await run(['consent', 'grant', '--all', '--yes']);
+      expect(await allEntries()).toHaveLength(1);
+    });
+
+    it('grant --all rejects --project and a path, and writes nothing', async () => {
+      await run(['consent', 'grant', '--all', '--project', 'Proj-A', '--yes']);
+      expect(process.exitCode).toBe(1);
+      expect(said(err)).toContain('--all');
+      process.exitCode = 0;
+      await run(['consent', 'grant', work, '--all', '--yes']);
+      expect(process.exitCode).toBe(1);
+      expect(await allEntries()).toHaveLength(0);
+    });
+
+    it('grant --all without --yes and without a TTY refuses; an interactive no changes nothing', async () => {
+      process.stdin.isTTY = false as never;
+      await run(['consent', 'grant', '--all']);
+      expect(process.exitCode).toBe(1);
+      expect(said(err)).toContain('--yes');
+      process.exitCode = 0;
+      process.stdin.isTTY = true as never;
+      promptMock.mockResolvedValue({ ok: false });
+      await run(['consent', 'grant', '--all']);
+      expect(said(out)).toContain('Nothing changed');
+      expect(await allEntries()).toHaveLength(0);
+    });
+
+    it('grant --all is refused for a Copilot connector and without a signed-in identity', async () => {
+      await run(['consent', 'grant', '--all', '--yes', '--copilot-otlp']);
+      expect(process.exitCode).toBe(1);
+      process.exitCode = 0;
+      identityMock.mockResolvedValue(null);
+      await run(['consent', 'grant', '--all', '--yes']);
+      expect(process.exitCode).toBe(1);
+      expect(said(err)).toContain('Sign in');
+      expect(await allEntries()).toHaveLength(0);
+    });
+
+    it('revoke --all removes only the all-folders entry', async () => {
+      await run(['consent', 'grant', work, '--project', 'Proj-A', '--yes']);
+      await run(['consent', 'grant', '--all', '--yes']);
+      out.mockClear();
+      await run(['consent', 'revoke', '--all']);
+      const entries = await allEntries();
+      expect(entries).toHaveLength(1);
+      expect(entries[0].all_folders).toBeUndefined();
+      expect(said(out)).toContain('all-repositories');
+    });
+
+    it('revoking a folder that has its own grant, under --all, says running sessions stop and new ones keep publishing', async () => {
+      await run(['consent', 'grant', work, '--project', 'Proj-A', '--yes']);
+      await run(['consent', 'grant', '--all', '--yes']);
+      out.mockClear();
+      await run(['consent', 'revoke', work]);
+      expect(await allEntries()).toHaveLength(1);
+      expect(said(out)).toContain('Disconnected');
+      expect(said(out)).toContain('new sessions there keep publishing, sessions already running there stop');
+      expect(said(out)).toContain('consent revoke --all');
+    });
+
+    it('revoke --all with nothing to remove says so; with a path it is rejected', async () => {
+      await run(['consent', 'revoke', '--all']);
+      expect(said(out)).toContain('Nothing to change');
+      expect(process.exitCode).toBe(0);
+      await run(['consent', 'revoke', work, '--all']);
+      expect(process.exitCode).toBe(1);
+      expect(said(err)).toContain('--all');
+    });
+
+    it('revoke of a folder never removes the all-folders entry and names `consent revoke --all`', async () => {
+      await run(['consent', 'grant', '--all', '--yes']);
+      out.mockClear();
+      await run(['consent', 'revoke', work]);
+      expect(await allEntries()).toHaveLength(1);
+      expect(said(out)).toContain('still covered');
+      expect(said(out)).toContain('consent revoke --all');
+      expect(said(out)).not.toContain('is not connected');
+    });
+
+    it('list shows the entry as any repository', async () => {
+      await run(['consent', 'grant', '--all', '--yes']);
+      out.mockClear();
+      await run(['consent', 'list']);
+      expect(said(out)).toContain('any repository');
+      expect(said(out)).not.toContain('*');
+    });
+
+    it('grant --help and revoke --help list --all; the hidden deprecated aliases do not', async () => {
+      const { createProxyAnalyticsCommand } = await import('../analytics-command.js');
+      const consent = createProxyAnalyticsCommand().commands.find((c) => c.name() === 'consent')!;
+      const help = (n: string) => consent.commands.find((c) => c.name() === n)!.helpInformation();
+      expect(help('grant')).toContain('--all');
+      expect(help('revoke')).toContain('--all');
+      const analytics = createProxyAnalyticsCommand();
+      for (const alias of ['connect-folder', 'disconnect-folder']) {
+        expect(analytics.commands.find((c) => c.name() === alias)!.helpInformation()).not.toContain('--all');
+      }
+    });
+  });
+
+  it('output without --all is unchanged (c)', async () => {
+    await run(['consent', 'grant', work, '--project', 'Proj-A', '--yes']);
+    expect(said(out)).toContain(`Folder:  ${work}`);
+    expect(said(out)).toContain('Project: Proj-A');
+    expect(said(out)).toContain('Connected');
+    out.mockClear();
+    await run(['consent', 'list']);
+    expect(said(out)).toContain(`${work}  project Proj-A  ${id.api_identity}`);
+  });
+
   it('the deprecated connect-folder / disconnect-folder still work with one stderr notice each', async () => {
     const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     await run(['connect-folder', work, '--project', 'Proj-A', '--yes']);

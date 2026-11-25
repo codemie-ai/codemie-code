@@ -82,7 +82,7 @@ describe('statusline-installer', () => {
       expect(settingsWrite).toBeDefined();
       const written = JSON.parse(settingsWrite![1] as string);
       expect(written.statusLine.type).toBe('command');
-      expect(written.statusLine.refreshInterval).toBe(3);
+      expect(written.statusLine.refreshInterval).toBe(60);
     });
 
     it('reports alreadyConfigured=true (and still refreshes settings) when statusLine already exists', async () => {
