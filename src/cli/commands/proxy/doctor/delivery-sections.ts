@@ -32,12 +32,40 @@ function formatTime(ms: number): string {
   return `${date} ${time} ${offset}`;
 }
 
-/** An amount that could not be read is `unknown`, never `none`. The part held in sessions not sent for now is named after it. */
-function unsentDataMessage(pendingBytes: number | undefined, heldBytes?: number): string {
+/** A session hold reason a user can act on: what is held and the command that releases it. */
+export interface HoldReasonEntry {
+  text: string;
+  fix: string;
+}
+
+/** Hold reasons with a remedy, keyed by the session hold reason; a held reason missing here is listed as `On hold` with its size and no `Fix`. */
+export const HOLD_REASONS: Record<string, HoldReasonEntry> = {
+  work_consent_required: {
+    text: 'personal Claude subscription sessions need work consent',
+    fix: 'codemie proxy analytics consent grant (run in this repository, or add --all for every repository; applies to new sessions only)',
+  },
+};
+
+/** The indent of a hint under its line in `HealthCheckFormatter.printDetail`; the hint mechanism carries one line only. */
+const HOLD_LINE_INDENT = '      ';
+
+/**
+ * An amount that could not be read is `unknown`, never `none`. The part held in sessions not sent for now is named after
+ * it, followed by an `On hold` / `Fix` pair for each held reason that has a remedy, indented like a hint.
+ */
+function unsentDataMessage(pendingBytes: number | undefined, heldBytes?: number, heldByReason?: Record<string, number>): string {
   if (pendingBytes === undefined) return 'Unsent data: unknown';
   if (pendingBytes <= 0) return 'Unsent data: none';
   const held = heldBytes ? `, ${formatBytes(heldBytes)} of it on hold` : '';
-  return `Unsent data: ${formatBytes(pendingBytes)} (all sessions on this machine)${held}`;
+  const heldReasons = Object.entries(heldByReason ?? {}).filter(([, bytes]) => bytes > 0);
+  const remedied = Object.entries(HOLD_REASONS)
+    .filter(([reason]) => heldReasons.some(([held]) => held === reason))
+    .flatMap(([, entry]) => [`${HOLD_LINE_INDENT}On hold: ${entry.text}`, `${HOLD_LINE_INDENT}Fix: ${entry.fix}`]);
+  const unexplained = heldReasons
+    .filter(([reason]) => !(reason in HOLD_REASONS))
+    .map(([reason, bytes]) => `${HOLD_LINE_INDENT}On hold: ${reason.replace(/_/g, ' ')} (${formatBytes(bytes)})`);
+  const blocks = [...remedied, ...unexplained];
+  return [`Unsent data: ${formatBytes(pendingBytes)} (all sessions on this machine)${held}`, ...blocks].join('\n');
 }
 
 /** The error code of a failed send; no HTTP response at all reads as the backend being unreachable. */
@@ -70,7 +98,7 @@ function dropSection(drop: LatestDrop): Sections[number] {
 function deliveryDetails(health: DeliveryHealth): Sections {
   const details: Sections = [];
   if (!health.incomplete) {
-    details.push({ id: 'delivery', status: 'info', message: unsentDataMessage(health.pendingBytes, health.heldBytes) });
+    details.push({ id: 'delivery', status: 'info', message: unsentDataMessage(health.pendingBytes, health.heldBytes, health.heldByReason) });
   }
   if (health.sendFailure) {
     // The daemon retries on its next tick, so a time that has come reads as due, never as a past date.

@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-11-24
+
+### Added
+
+- `codemie proxy connect --claude-otlp --include-personal-subscriptions` sends analytics from personal Claude subscriptions: for this repository with `--scope project`, for any repository with `--scope user`. Without the flag, an interactive connect asks; `--yes` records consent only with the flag
+- `codemie proxy analytics consent grant --all` and `revoke --all` manage a consent that covers any repository (`any repository` in `consent list` and `status`)
+- `codemie proxy doctor` shows an `On hold:` / `Fix:` pair under `Unsent data` for sessions held back for lack of consent
+
+### Fixed
+
+- The statusline refreshes every 60 seconds again instead of polling budget usage every 3 seconds
+- Copilot sessions without session state no longer end with a spurious session-end event in analytics
+- The CodeMie Claude extension stays enabled when `--plugin-dir` is passed to Claude
+
 ## [0.17.1] - 2026-11-23
 
 ### Fixed

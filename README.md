@@ -640,11 +640,20 @@ codemie proxy connect --claude-otlp --scope project --profile preview
 | `--scope user` | Track every project by clearing the project allowlist (default, also when `--scope` is omitted). |
 | `--scope project` | Explicit opt-in: add the current project root to the allowlist and keep the other entries. Run once from each project to track. |
 | `--yes` | Skip the confirmation prompt. Required when no interactive terminal is available; otherwise the command exits with an error before anything starts or is written. |
+| `--include-personal-subscriptions` | Also send analytics from personal Claude subscriptions: for this repository (`--scope project`) or any repository (`--scope user`). Without it, `connect` asks. |
 | `--profile <name>` | Use that CodeMie profile for this command without changing the active profile. |
 | `--overwrite` | Discard an invalid project allowlist so setup can continue, and replace conflicting Claude Code settings; valid allowlists are not changed. |
 | `--verbose` | Show detailed command output. |
 
 Before the proxy starts or `~/.claude/settings.json` is written, `connect` asks once to enable analytics. Declining or cancelling (Ctrl+C) leaves the proxy and your existing allowlist untouched. Without `--scope`, a first connect tracks every project and an existing project list is kept; `--scope user` resets the list, and `--scope project --yes` adds the current project and keeps the other entries.
+
+The authorization for personal Claude subscriptions can also be managed on its own; details in [Proxy and Analytics Commands](docs/PROXY-AND-ANALYTICS.md):
+
+```bash
+codemie proxy analytics consent grant [--all]   # authorize this repository, or any repository with --all
+codemie proxy analytics consent revoke [--all]  # withdraw it
+codemie proxy analytics consent list            # show what is authorized
+```
 
 Disconnect a project or remove the integration entirely:
 
