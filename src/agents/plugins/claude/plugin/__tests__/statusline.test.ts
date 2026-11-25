@@ -7,6 +7,7 @@ import {
   extractBasicInfo,
   formatDuration,
   buildStatusLine,
+  isManagedSession,
   truncate,
   resolveBudget,
   isMainModule,
@@ -210,6 +211,20 @@ describe('truncate', () => {
     expect(truncate(null, 10)).toBe('');
     expect(truncate(42, 10)).toBe('');
     expect(truncate('', 10)).toBe('');
+  });
+});
+
+describe('isManagedSession', () => {
+  it('is true when CODEMIE_SESSION_ID is set', () => {
+    expect(isManagedSession({ CODEMIE_SESSION_ID: 'abc' })).toBe(true);
+  });
+
+  it('is false when CODEMIE_SESSION_ID is absent', () => {
+    expect(isManagedSession({})).toBe(false);
+  });
+
+  it('is false when CODEMIE_SESSION_ID is an empty string', () => {
+    expect(isManagedSession({ CODEMIE_SESSION_ID: '' })).toBe(false);
   });
 });
 
