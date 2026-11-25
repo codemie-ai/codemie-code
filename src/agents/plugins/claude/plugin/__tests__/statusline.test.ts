@@ -259,11 +259,11 @@ describe('buildStatusLine', () => {
     expect(plain).toContain('$1.5000');
   });
 
-  it('prefixes [CodeMie ●] as the first segment for managed sessions', () => {
+  it('prefixes [⏺ CodeMie] as the first segment for managed sessions', () => {
     const line = buildStatusLine({ ...basic, managed: true });
-    expect(stripAnsi(line).startsWith('[CodeMie ●] | [my-project]')).toBe(true);
+    expect(stripAnsi(line).startsWith('[⏺ CodeMie] | [my-project]')).toBe(true);
     expect(line.startsWith(
-      '\x1b[2;38;2;177;185;249m[CodeMie \x1b[0m\x1b[0;32m●\x1b[0m\x1b[2;38;2;177;185;249m]\x1b[0m',
+      '\x1b[1;38;2;177;185;249m[\x1b[0m\x1b[1;92m⏺\x1b[0m\x1b[1;38;2;177;185;249m CodeMie]\x1b[0m',
     )).toBe(true);
   });
 
@@ -271,18 +271,18 @@ describe('buildStatusLine', () => {
     for (const args of [{ ...basic }, { ...basic, managed: false }]) {
       const line = buildStatusLine(args);
       expect(line).not.toContain('CodeMie');
-      expect(line).not.toContain('●');
+      expect(line).not.toContain('⏺');
       expect(stripAnsi(line)).toMatch(/^\[my-project\]/);
     }
   });
 
   it('renders only the segment when nothing else is available', () => {
-    expect(stripAnsi(buildStatusLine({ managed: true }))).toBe('[CodeMie ●]');
+    expect(stripAnsi(buildStatusLine({ managed: true }))).toBe('[⏺ CodeMie]');
   });
 
   it('truncates a long project name in a managed session without confusing it with the segment', () => {
     const plain = stripAnsi(buildStatusLine({ ...basic, managed: true, projectName: 'p'.repeat(27) }));
-    const inner = plain.match(/^\[CodeMie ●\] \| \[([^\]]*)\]/)![1];
+    const inner = plain.match(/^\[⏺ CodeMie\] \| \[([^\]]*)\]/)![1];
     expect(Array.from(inner)).toHaveLength(20);
     expect(inner.endsWith('…')).toBe(true);
     expect(plain).toContain('$1.5000');
