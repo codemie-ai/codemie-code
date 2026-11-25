@@ -31,7 +31,6 @@ import { extractRepository } from '../../../../../../utils/paths.js';
 import { encodeAttributionHeader, rawProjectHeader } from '../../../../../../utils/header-value.js';
 import { reduceBranch, reduceRecord } from '@/agents/core/analytics-reduction.js';
 import { keyedDigest } from '@/agents/core/analytics-event-key.js';
-import { findNearestConfigDir } from '@/agents/core/event-fields/identity-fields.js';
 import { isReductionOn } from '@/utils/analytics-reduction-setting.js';
 import { clearAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
 import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
@@ -50,6 +49,8 @@ async function reduceMetric(metric: SessionMetric, workingDirectory?: string): P
   let configDir: string | undefined;
   if (workingDirectory) {
     try {
+      // Lazy: identity-fields pulls in ConfigLoader and the proxy graph, which cycles back to the plugin registry
+      const { findNearestConfigDir } = await import('@/agents/core/event-fields/identity-fields.js');
       configDir = await findNearestConfigDir(workingDirectory);
     } catch {
       configDir = workingDirectory;
