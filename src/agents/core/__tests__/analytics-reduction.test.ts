@@ -21,7 +21,17 @@ describe('reduceBranch', () => {
     expect(reduceBranch('feature/epmcdme-12-x-EPMCDME-12-ABC-3')).toBe('epmcdme-12 ABC-3');
   });
   it('redacts branches without ticket keys', () => {
-    expect(reduceBranch('main')).toBe('REDACTED:BRANCH');
+    expect(reduceBranch('feature/acme-bank-migration')).toBe('REDACTED:BRANCH');
+  });
+  it('sends shared branch names (main, master, develop, dev, qa, test, testing, perf, stage, staging, prod) as they are', () => {
+    for (const name of ['main', 'master', 'develop', 'dev', 'qa', 'test', 'testing', 'perf', 'stage', 'staging', 'prod', 'Main']) {
+      expect(reduceBranch(name)).toBe(name);
+    }
+  });
+  it('matches shared names exactly: a prefix or suffix is still redacted', () => {
+    expect(reduceBranch('feature/main')).toBe('REDACTED:BRANCH');
+    expect(reduceBranch('test-acme-bank')).toBe('REDACTED:BRANCH');
+    expect(reduceBranch('qa/acme-EPMCDME-5')).toBe('EPMCDME-5');
   });
   it('passes undefined through', () => {
     expect(reduceBranch(undefined)).toBeUndefined();

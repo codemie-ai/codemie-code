@@ -26,7 +26,7 @@ describe('redactPayload', () => {
 
   it('reduce mode cuts a branch with no ticket and keeps an empty title empty', () => {
     const p = payload();
-    p.sessions[0].branch = 'main';
+    p.sessions[0].branch = 'feature/acme-bank-migration';
     p.sessions[0].title = '';
     const out = redactPayload(p, 'reduce').sessions[0];
     expect(out.branch).toBe('REDACTED:BRANCH');
@@ -62,11 +62,11 @@ describe('redactPayloadPerSession (CR-003)', () => {
     try {
       const { redactPayloadPerSession } = await import('../redact.js');
       const p = payload();
-      const on = { ...p.sessions[0], sessionId: 'on', project: optedIn, branch: 'main' };
-      const off = { ...p.sessions[0], sessionId: 'off', project: plain, branch: 'main' };
+      const on = { ...p.sessions[0], sessionId: 'on', project: optedIn, branch: 'feature/acme-bank-migration' };
+      const off = { ...p.sessions[0], sessionId: 'off', project: plain, branch: 'feature/acme-bank-migration' };
       const out = await redactPayloadPerSession({ meta: p.meta, sessions: [on, off] }, {});
       expect(out.sessions.find((s) => s.sessionId === 'on')?.branch).toBe('REDACTED:BRANCH');
-      expect(out.sessions.find((s) => s.sessionId === 'off')?.branch).toBe('main');
+      expect(out.sessions.find((s) => s.sessionId === 'off')?.branch).toBe('feature/acme-bank-migration');
     } finally {
       if (previousHome === undefined) delete process.env.CODEMIE_HOME;
       else process.env.CODEMIE_HOME = previousHome;

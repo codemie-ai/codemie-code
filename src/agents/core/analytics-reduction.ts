@@ -24,10 +24,21 @@ export const placeholder = (kind: string): string =>
     .replace(/[_\s]+/g, '-')
     .toUpperCase()}`;
 
-/** Ticket keys found in a branch name (as written, de-duplicated, space-joined) or `REDACTED:BRANCH`. */
+/** Generic long-lived branch names: they identify no client or project, so they are sent as they are. */
+export const SHARED_BRANCH_NAMES: ReadonlySet<string> = new Set([
+  'main', 'master', 'develop', 'dev', 'qa', 'test', 'testing', 'perf', 'stage', 'staging', 'prod'
+]);
+
+/**
+ * A shared branch name exactly (case-insensitive, no prefix like `feature/`), else the ticket keys found in the
+ * branch name (as written, de-duplicated, space-joined), else `REDACTED:BRANCH`.
+ */
 function reduceBranchUnsafe(branch: string | undefined): string | undefined {
   if (branch === undefined) {
     return undefined;
+  }
+  if (SHARED_BRANCH_NAMES.has(branch.trim().toLowerCase())) {
+    return branch;
   }
   const accepted = new Set(extractTicketMentions(branch, MAX_BRANCH_TICKETS, { source: 'branch' }));
   const seen = new Set<string>();

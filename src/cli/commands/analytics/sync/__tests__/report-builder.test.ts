@@ -18,7 +18,7 @@ function delta(sessionId: string, i: number): MetricDelta {
     sessionId,
     agentSessionId: sessionId,
     timestamp: 1000 + i,
-    gitBranch: 'main',
+    gitBranch: 'feature/acme-bank-migration',
     tools: { Read: 1 },
     toolStatus: { Read: { success: 1, failure: 0 } },
     fileOperations: [{ type: 'edit', path: `f${i}.ts`, linesAdded: 3, linesRemoved: 1 }],
@@ -104,7 +104,7 @@ describe('buildSyncReport', () => {
     const source = new StubSource({ rawSessions: [session('s1')], cost: cost('s1') });
     const report = await buildSyncReport({ source, window: dailyWindow(now, null, 7), email: EMAIL, includeExternal: false, now });
     const payload = JSON.parse(report!.bytes.toString('utf-8'));
-    expect(payload.sessions[0].branch).toBe('main');
+    expect(payload.sessions[0].branch).toBe('feature/acme-bank-migration');
   });
 
   it('returns null when the source has zero sessions', async () => {
