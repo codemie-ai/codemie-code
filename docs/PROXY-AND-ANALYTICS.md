@@ -102,6 +102,51 @@ codemie analytics sync run                 # send now
 
 See [Analytics Sync](ANALYTICS-SYNC.md) for the team-lead and developer steps.
 
+### Hide prompts in analytics (prompt reduction)
+
+By default analytics carries the text of your prompts, tool input and output, file paths and branch names. Prompt reduction (EPMCDME-17748) is an opt-in setting that sends only a fixed list of safe fields instead.
+
+**What is sent:** event, tool, command, skill and agent type names (including MCP tool names); model names and usage figures; token counts and other numbers; session and project identifiers; ticket and merge or pull request numbers; the repository name and git remote.
+
+**What is hidden** (replaced by `REDACTED:<FIELD>`, for example `REDACTED:TOOL-INPUT`): prompt text, tool input and responses, file paths and transcript paths, session titles, error messages and descriptions, and any field added later.
+
+How individual values are reduced:
+
+| Value | Sent as |
+|---|---|
+| A prompt starting with a command | `/review-pr !456`: the command name plus the ticket and MR numbers found in the whole prompt |
+| A prompt without a command | the ticket and MR numbers only, or `REDACTED:PROMPT` when there are none |
+| An automatic prompt (hook, task or continuation notice) | its bare marker; the continuation notice becomes `This session is being continued from a previous conversation` |
+| Ticket and MR references | Jira-style keys in either case (`EPMCDME-123`), GitHub `#24` and `org/repo#24`, Azure DevOps `AB#123`, GitLab `!456`, and the number of a `/pull/N` or `/merge_requests/N` URL |
+| The git branch | its ticket keys (`feature/acme-EPMCDME-5` becomes `EPMCDME-5`); `REDACTED:BRANCH` when there are none |
+| `main`, `master`, `develop`, `dev`, `qa`, `test`, `testing`, `perf`, `stage`, `staging`, `prod` | sent as they are, when the whole branch name is exactly one of these |
+| The project path | the folder name in the local report |
+
+Look-alikes are not kept: `/usr/bin/node`, `#fff` and `# Plan` are not read as a command or a reference, though a word such as `step-2` is read as a ticket key. Ticket attribution is computed from the raw prompt and branch **before** reduction, so it is the same with reduction on or off.
+
+**Turn it on.** Run `codemie setup`; the last step is **Analytics privacy**. It shows what is sent and hidden and the current setting, then asks "Hide prompts in analytics?":
+
+- *Off*, *On for all projects*, or *On for this project only (<project>)*.
+- With "all projects" already on you can *Keep on*, turn it *Off*, or choose *Turn off globally, on for the current project only*.
+- "On for this project only" saves the flag in `.codemie/codemie-cli.config.json`; commit it to apply it to your team. Repositories that ignore `.codemie` need that file force-added.
+- *Off* turns off the current project too, and lists any other project that stays on.
+
+You can also set `analytics.promptReduction` yourself; see [CONFIGURATION.md](CONFIGURATION.md#analytics-privacy-prompt-reduction). Reduction is on if the global **or** the project setting is on.
+
+**Where it applies.** The same rules cover every route: hook collectors (Claude Code, Copilot CLI, Copilot Chat), native OTLP from `--claude-otlp`, Claude Desktop (Cowork), the Copilot usage enrichment, managed-agent session metrics (error text and branch), the local report and `analytics sync`. The hook decides once per session from the project config (it reads every `.codemie` from the working directory up to the repository root, so a package inside a monorepo is covered), and the background proxy follows that decision for the session's native telemetry.
+
+**Things to know:**
+
+- **Protobuf is dropped.** Native OTLP sent as `http/protobuf` cannot be reduced field by field, so those records are skipped for reduced sessions, with one log line naming the fix. The setup step offers to switch the connection to `http/json`.
+- **Conversation history is not reduced.** Managed agents still upload full conversations to CodeMie conversation history; reduction covers analytics only.
+- **Nothing already stored changes.** Data spooled, synced or stored before you turned reduction on is not rewritten.
+- **Claude Desktop (Cowork) has no hook to read a project's config.** Cowork reads the session's own working directory (and the list of opted-in projects in `~/.codemie/analytics-reduction-projects.json`); a session with no known working directory follows the global setting alone, and an unreadable list counts as "on".
+- **Unreadable settings fail closed.** A config file or project list that cannot be read counts as "on".
+- **Reduced event ids are keyed** with a local random key (`~/.codemie/analytics-event-key`), so they cannot be guessed from a prompt.
+- **The local report** is reduced by default when reduction is on; `codemie analytics --unreduced` shows the full data for you (see [ANALYTICS-REPORT.md](ANALYTICS-REPORT.md#prompt-reduction)). `analytics sync` is always reduced.
+
+**Check it.** Run Claude Code in the project and send `/review-pr !456 secret notes`; the recorded prompt should read `/review-pr !456`. A plain prompt should read `REDACTED:PROMPT`. To turn it off, run `codemie setup` and choose *Off*.
+
 ## Deprecated and removed forms
 
 Deprecated forms still work until the removal date and print one notice line on stderr naming the replacement. Removed forms fail with a message naming the replacement and exit non-zero.
