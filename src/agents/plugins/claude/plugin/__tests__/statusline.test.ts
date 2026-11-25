@@ -226,6 +226,10 @@ describe('isManagedSession', () => {
   it('is false when CODEMIE_SESSION_ID is an empty string', () => {
     expect(isManagedSession({ CODEMIE_SESSION_ID: '' })).toBe(false);
   });
+
+  it('is false when CODEMIE_SESSION_ID is whitespace only', () => {
+    expect(isManagedSession({ CODEMIE_SESSION_ID: '   ' })).toBe(false);
+  });
 });
 
 describe('buildStatusLine', () => {

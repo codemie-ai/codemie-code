@@ -625,9 +625,9 @@ export function truncate(text, max) {
 }
 
 // A CodeMie-managed session is launched with CODEMIE_SESSION_ID (same discriminator as launchMode()
-// in src/agents/core/evidence/routing.ts). An empty string counts as not managed.
+// in src/agents/core/evidence/routing.ts). An empty or whitespace-only value counts as not managed.
 export function isManagedSession(env: NodeJS.ProcessEnv = process.env): boolean {
-  return Boolean(env.CODEMIE_SESSION_ID);
+  return Boolean(env.CODEMIE_SESSION_ID?.trim());
 }
 
 export function buildStatusLine({ projectName, branch, model, actualModel, ctxPct, tokIn, tokOut, cost, costExact, durationMs, budget = null as { pct: number; text: string } | null, budgetError = null as string | null, managed = false }) {
