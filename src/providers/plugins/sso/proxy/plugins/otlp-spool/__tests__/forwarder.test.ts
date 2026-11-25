@@ -1296,6 +1296,22 @@ describe('forwardSession (native OTLP reduction, EPMCDME-17748)', () => {
     expect(advanceCursorMock).not.toHaveBeenCalled();
   });
 
+  it('never sends a record of a reduced session that cannot be reduced, and consumes its bytes (CR-020)', async () => {
+    const unreducible = '{ this is not json, with a private prompt';
+    snapshotPendingNdjsonRecordsMock.mockImplementation(async (_s: string, stream: string) =>
+      (stream === 'logsJson'
+        ? { ...batch('on'), records: [unreducible, nativeRecord], byteLength: Buffer.byteLength(unreducible) + 1 + Buffer.byteLength(nativeRecord) + 1 }
+        : null));
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', false, credentials);
+
+    const bodies = fetchMock.mock.calls.map(([, init]) => String((init as { body: unknown }).body));
+    expect(bodies.some((body) => body.includes('private prompt'))).toBe(false);
+    expect(bodies).toHaveLength(1);
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'logsJson', Buffer.byteLength(unreducible) + 1);
+  });
+
   it('drops already-spooled protobuf of a reduced session without sending it', async () => {
     snapshotPendingNdjsonRecordsMock.mockResolvedValue(null);
     snapshotPendingBytesMock.mockImplementation(async (_s: string, stream: string) =>

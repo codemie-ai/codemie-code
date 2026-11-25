@@ -100,6 +100,23 @@ describe('MetricsSyncProcessor', () => {
     );
   }
 
+  describe('working directory pass-through for prompt reduction (CR-028)', () => {
+    let folder: string;
+    beforeEach(() => { folder = mkdtempSync(join(tmpdir(), 'metrics-sync-wd-')); });
+    afterEach(() => { rmSync(folder, { recursive: true, force: true }); });
+
+    it('hands the session working directory to sendSessionMetric, so the sender can read the project setting', async () => {
+      const send = vi.spyOn(metricsApiClient.MetricsSender.prototype, 'sendSessionMetric');
+      try {
+        await syncDeltas([delta('wd-1', 'pending')], {}, { workingDirectory: folder });
+        expect(send).toHaveBeenCalled();
+        expect(send.mock.calls[0][1]).toBe(folder);
+      } finally {
+        send.mockRestore();
+      }
+    });
+  });
+
   describe('EPMCDME-17054 legacy work-consent gate', () => {
     const scope = { api_identity: 'api-x', owner_hash: 'owner-x', project: 'test321' };
     let folder: string;

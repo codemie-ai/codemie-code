@@ -196,3 +196,10 @@ describe('reducePrompt: commands and refs (CR-009, CR-006)', () => {
     expect(reducePrompt('call secretproject#5 now', { commandName: '' })).toBe('REDACTED:PROMPT');
   });
 });
+
+describe('nested undefined (CR-039)', () => {
+  it('keeps an undefined value inside a kept container instead of turning it into a redacted string', () => {
+    const out = reduceRecord({ tools: { Bash: { calls: 2, errors: undefined } } }, HOOK_EVENT_KEEP_LIST);
+    expect(out.tools).toEqual({ Bash: { calls: 2, errors: undefined } });
+  });
+});

@@ -94,6 +94,19 @@ describe('MetricsSender prompt reduction', () => {
     });
   });
 
+  it('reduces a session start metric when the project has reduction on (CR-027)', async () => {
+    setReduction(project, true);
+    await sender().sendSessionStart(session(project), project, { status: 'failed', reason: 'user said secret' },
+      { type: 'AgentError', code: 'E1', message: 'secret path /home/me' });
+
+    const { attributes } = posted();
+    // The start metric detects its branch from the directory (none here), and a reduced one never carries a raw name.
+    expect(attributes.branch).toBe('REDACTED:BRANCH');
+    expect(attributes.reason).toBe('REDACTED:REASON');
+    expect(JSON.stringify(attributes)).not.toContain('secret');
+    expect(postedHeaders()['X-CodeMie-Branch']).toBe('REDACTED:BRANCH');
+  });
+
   it('reduces a tool usage metric and keeps name lists and counts', async () => {
     setReduction(project, true);
     await sender().sendSessionMetric(toolUsageMetric(), project);

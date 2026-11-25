@@ -29,17 +29,32 @@ function writeKeyAtomically(path: string, missing: boolean): Buffer {
     writeFileSync(temp, fresh, { mode: 0o600, flag: 'wx' });
     if (!missing) {
       renameSync(temp, path);
-      return fresh;
+      // Two repairers may race: whoever renamed last wins, so every one of them uses what is on disk now.
+      return readKeyFile(path) ?? fresh;
     }
     try {
       linkSync(temp, path);
       return fresh;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      const existing = readKeyFile(path);
-      if (existing) return existing;
-      renameSync(temp, path);
-      return fresh;
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'EEXIST') {
+        const existing = readKeyFile(path);
+        if (existing) return existing;
+        renameSync(temp, path);
+        return readKeyFile(path) ?? fresh;
+      }
+      // A filesystem without hard links (FAT, some network mounts): create exclusively instead of giving up,
+      // so the key is stable across processes rather than a random one per process.
+      if (code === 'EPERM' || code === 'ENOTSUP' || code === 'EOPNOTSUPP' || code === 'ENOSYS' || code === 'EXDEV') {
+        try {
+          writeFileSync(path, fresh, { mode: 0o600, flag: 'wx' });
+          return fresh;
+        } catch (exclusive) {
+          if ((exclusive as NodeJS.ErrnoException).code !== 'EEXIST') throw exclusive;
+          return readKeyFile(path) ?? fresh;
+        }
+      }
+      throw error;
     }
   } finally {
     try {

@@ -16,6 +16,7 @@ import {
   CODEMIE_USER_PROMPT_HOOK_TIMEOUT_SECONDS,
   HOOK_EVENTS,
   SETTINGS_BACKUP_SUFFIX,
+  isClaudeCodeOtlpOnProtobuf,
   writeClaudeCodeOtlpConfig,
   removeClaudeCodeOtlpConfig,
 } from '../claude-code-otlp.js';
@@ -1806,6 +1807,42 @@ describe('claude-code-otlp connector', () => {
       await removeClaudeCodeOtlpConfig();
 
       expect(await readPreferencesBytes()).toBe(before);
+    });
+  });
+
+  describe('isClaudeCodeOtlpOnProtobuf (CR-015)', () => {
+    const settingsPath = (): string => join(homeDir, '.claude', 'settings.json');
+    const setProtocol = async (protocol: string): Promise<void> => {
+      const settings = await readJson(settingsPath());
+      settings.env.OTEL_EXPORTER_OTLP_PROTOCOL = protocol;
+      await writeFile(settingsPath(), JSON.stringify(settings, null, 2));
+    };
+
+    it('is false before any connection and for a connection that exports http/json', async () => {
+      expect(await isClaudeCodeOtlpOnProtobuf()).toBe(false);
+      await writeClaudeCodeOtlpConfig();
+      expect(await isClaudeCodeOtlpOnProtobuf()).toBe(false);
+    });
+
+    it('is true for a CodeMie connection whose settings export http/protobuf', async () => {
+      await writeClaudeCodeOtlpConfig();
+      await setProtocol('http/protobuf');
+      expect(await isClaudeCodeOtlpOnProtobuf()).toBe(true);
+    });
+
+    it('is false for http/protobuf that does not point at the CodeMie daemon (not ours to switch)', async () => {
+      await writeClaudeCodeOtlpConfig();
+      await setProtocol('http/protobuf');
+      const settings = await readJson(settingsPath());
+      settings.env.OTEL_EXPORTER_OTLP_ENDPOINT = 'https://collector.example.com/v1';
+      await writeFile(settingsPath(), JSON.stringify(settings, null, 2));
+      expect(await isClaudeCodeOtlpOnProtobuf()).toBe(false);
+    });
+
+    it('is false when the settings file cannot be parsed', async () => {
+      await writeClaudeCodeOtlpConfig();
+      await writeFile(settingsPath(), '{ not json');
+      expect(await isClaudeCodeOtlpOnProtobuf()).toBe(false);
     });
   });
 

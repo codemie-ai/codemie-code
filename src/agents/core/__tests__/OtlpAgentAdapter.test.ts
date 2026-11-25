@@ -156,11 +156,16 @@ class FakeAdapter extends OtlpAgentAdapter<FakeInput> {
     return event['kind'] === 'start' ? 'fake.start' : 'fake.event';
   }
   /** Test-only deterministic id: `<type>:<session>:<sha256(payload + timestamp)>`. */
+  /** The `reduced` option each event id was asked for, so a test can check the adapter keys a reduced id. */
+  readonly idOptions: Array<{ reduced: boolean } | undefined> = [];
+
   protected buildEventId(
     event: Record<string, unknown>,
     payload: Record<string, unknown>,
-    timestamp: string
+    timestamp: string,
+    options?: { reduced: boolean }
   ): string {
+    this.idOptions.push(options);
     const hash = createHash('sha256').update(`${JSON.stringify(payload)}::${timestamp}`).digest('hex');
     return `${String(event['type'])}:${String(event['session_id'])}:${hash}`;
   }
@@ -1337,6 +1342,19 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       process.env['CLAUDE_PROJECT_DIR'] = repo;
       await run({ cwd: elsewhere, prompt: '/review-pr !456 secret', payload: payload() });
       expect(forwarded()[0]).toMatchObject({ analytics_reduction: true, prompt: 'REDACTED:PROMPT' });
+    });
+
+    it('asks for a keyed event id only when the event is reduced (CR-004)', async () => {
+      const reduced = makeRepo(true);
+      await run({ cwd: reduced.cwd, prompt: 'plain prompt', payload: payload() });
+      expect(adapter.idOptions.every((options) => options?.reduced === true)).toBe(true);
+      expect(adapter.idOptions.length).toBeGreaterThan(0);
+
+      adapter.idOptions.length = 0;
+      const plain = makeRepo(false);
+      await run({ cwd: plain.cwd, prompt: 'plain prompt', payload: payload() });
+      expect(adapter.idOptions.length).toBeGreaterThan(0);
+      expect(adapter.idOptions.every((options) => options?.reduced === false)).toBe(true);
     });
 
     it('keeps opaque runtime ids and the CLI version, but redacts user identity on a reduced event', async () => {

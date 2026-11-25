@@ -165,7 +165,7 @@ function reduceKept(key: string, value: unknown): unknown {
 }
 
 function reduceNested(key: string, value: unknown): unknown {
-  if (value === null || typeof value === 'number' || typeof value === 'boolean') {
+  if (value === null || value === undefined || typeof value === 'number' || typeof value === 'boolean') {
     return value;
   }
   if (typeof value === 'string') {
