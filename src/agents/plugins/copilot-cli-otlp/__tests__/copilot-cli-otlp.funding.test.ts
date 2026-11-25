@@ -248,6 +248,45 @@ describe('sticky attribution boundary', () => {
     });
   });
 
+  describe('events held for the session owner (pending-owner state)', () => {
+    const hold = async (): Promise<void> => {
+      const { enqueuePendingOwner } = await import('@/agents/core/evidence/owner-pending.js');
+      expect(await enqueuePendingOwner({
+        fp: 'fp-test', agentName: 'copilot-cli-otlp', api_identity: apiIdentity(creds.apiUrl), session_id: sid, fields: {} as never, events: [],
+      })).toBe(true);
+    };
+    const keyOf = (): string => recordKey(apiIdentity(creds.apiUrl), ownerHash(creds.email), sid);
+
+    it('proven and held for its owner (no record yet): the hook continues with a stamped claim, no stop', async () => {
+      await hold();
+      await hook('preToolUse', { toolName: 'bash', toolArgs: '{}', toolCallId: 't1' });
+      expect(spooled.length).toBeGreaterThan(0);
+      for (const s of spooled) expect(s.options).toEqual({ evidenceV: 1 });
+      expect(await isStopped(keyOf())).toBe(false);
+    });
+
+    it('held for its owner but route proof lost: stopped, no unstamped bytes', async () => {
+      await hold();
+      process.env.COPILOT_PROVIDER_BASE_URL = 'https://byok.example.org/v1';
+      await hook('preToolUse', { toolName: 'bash', toolArgs: '{}', toolCallId: 't1' });
+      expect(spooled).toHaveLength(0);
+      expect(await isStopped(keyOf())).toBe(true);
+    });
+
+    it('no identity, held for its owner, proof lost: stopped, no unstamped bytes', async () => {
+      const { resolveHookCredentials } = await import('@/agents/core/hook-credentials.js');
+      await hold();
+      vi.mocked(resolveHookCredentials).mockResolvedValue(undefined as never);
+      try {
+        process.env.COPILOT_PROVIDER_BASE_URL = 'https://byok.example.org/v1';
+        await hook('preToolUse', { toolName: 'bash', toolArgs: '{}', toolCallId: 't1' });
+      } finally {
+        vi.mocked(resolveHookCredentials).mockResolvedValue(creds as never);
+      }
+      expect(spooled).toHaveLength(0);
+    });
+  });
+
   it('a native session with a record under the same id (no managed launch) is stopped, not forwarded as legacy', async () => {
     await start();
     for (const k of ['CODEMIE_SESSION_ID', PINNED_NATIVE_SESSION_ENV]) delete process.env[k];

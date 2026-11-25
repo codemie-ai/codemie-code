@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "generated": "2026-11-25T00:00:00Z",
+  "head_reviewed": "43c8e27e",
+  "dimensions": {
+    "component_scope": { "score": 5, "label": "XL", "evidence": "Spans the copilot-cli-otlp plugin (plugin.ts extractHookContext + transitionGate), a new copilot-cli-otlp.evidence.ts (copilotRouteProof, copilotEvidenceInputs, isKnownSession), shared core evidence contract (record-store.ts agent field, stamp.ts EvidenceInputs.agent, session-scope.ts new currentGeneration) and the proxy spool sender (evidence-send.ts sendGuard). Shared utilities bumped +1 for core contract touch." },
+    "requirements_clarity": { "score": 3, "label": "M", "evidence": "Goal and never-claim cases were clear (native/BYOK/non-SSO), but three follow-up fix commits (session binding, sticky attribution, known-session hold) show edge semantics emerged during build; behaviours now pinned by funding test file." },
+    "technical_risk": { "score": 5, "label": "XL", "evidence": "Privacy/attribution-sensitive: fail-closed transitionGate with stop markers, route proof from env exports, login/profile change handling, resume and nested-native-Copilot spoofing. Closest pattern is Claude managed-launch proof, which was reused by mapping COPILOT_PROVIDER_BASE_URL onto ANTHROPIC_BASE_URL; it does not cover pinned-session binding or independent collection generation, so risk bumped. Many enumerated edge cases covered by new tests." },
+    "file_change_estimate": { "score": 5, "label": "XL", "evidence": "About 12 files in the frozen diff: 5 production modified (plugin.ts, record-store.ts, session-scope.ts, stamp.ts, evidence-send.ts), 1 new production (copilot-cli-otlp.evidence.ts), 1 doc (ARCHITECTURE-OTLP-PLUGIN.md), 1 new unit test (copilot-cli-otlp.funding.test.ts, +3 tests later), 3 e2e files (backend_app.py, drive-copilot.mjs, run-copilot-funding.sh). Roughly half are test/e2e/docs." },
+    "dependencies": { "score": 1, "label": "XS", "evidence": "No new packages or manifest changes; reuses ProviderRegistry, routing.ts, record-store and existing evidence modules." },
+    "affected_layers": { "score": 4, "label": "L", "evidence": "Service (plugin hook adapter), DB-Persistence (file-based evidence record and stop markers, new agent field validated on read), Infrastructure (proxy otlp-spool sender guard) and External (X-CodeMie-Funding-Route/Subscription-Type headers to backend, e2e mock backend)." }
+  },
+  "total": 23,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 12,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Plugin plus shared core evidence contract plus proxy sender; a new agent discriminator flows through stamp, record store, session scope and sender." },
+    { "dimension": "technical_risk", "reason": "Security/privacy-sensitive sticky funding attribution with fail-closed gating; no exact precedent for independent collection generation." },
+    { "dimension": "file_change_estimate", "reason": "About 12 files including new module, unit test and e2e harness." },
+    { "dimension": "affected_layers", "reason": "Service, persistence, proxy infrastructure and backend header contract." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped to XL: touches core shared evidence utilities (record-store, stamp, session-scope)",
+    "Technical Risk bumped to XL: security/compliance-sensitive attribution, edge-case enumeration beyond existing Claude test templates"
+  ],
+  "split_recommendation": null
+}
