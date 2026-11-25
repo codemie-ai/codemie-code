@@ -12,7 +12,12 @@ const NASTY = [
 const FIXTURE = 'a\n$(touch SENTINEL)';
 const flat = (s: string): string => s.replace(/\r?\n|\r/g, ' ');
 
+// The real-shell cases run on POSIX only: Windows runners have no zsh or fish, and Git Bash
+// is not a supported completion target, so they are skipped there (also when CI is set).
+const IS_WINDOWS = process.platform === 'win32';
+
 function shellAvailable(sh: string): boolean {
+  if (IS_WINDOWS) return false;
   return spawnSync(sh, ['--version'], { encoding: 'utf8' }).status === 0;
 }
 
@@ -50,7 +55,7 @@ describe('escape functions', () => {
 
   for (const sh of shells) {
     const available = shellAvailable(sh.name);
-    if (!available && process.env.CI) {
+    if (!available && process.env.CI && !IS_WINDOWS) {
       it(`${sh.name} is installed (required in CI)`, () => {
         expect.fail(`${sh.name} not found but CI is set`);
       });

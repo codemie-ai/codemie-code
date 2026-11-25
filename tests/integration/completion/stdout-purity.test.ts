@@ -140,7 +140,9 @@ describe('completion stdout purity', () => {
     expect(res.stderr).toMatch(/bash/);
   });
 
-  it('the bash output passes bash -n under the same conditions', async () => {
+  // Windows runners have no supported bash target; the script syntax is covered by the POSIX jobs.
+  const bashAvailable = process.platform !== 'win32' && spawnSync('bash', ['--version']).status === 0;
+  it.skipIf(!bashAvailable)('the bash output passes bash -n under the same conditions', async () => {
     const home = freshHome();
     const res = await run(home, ['completion', 'bash'], { CODEMIE_DEBUG: 'true' });
     const syntax = spawnSync('bash', ['-n'], { input: res.stdout, encoding: 'utf-8' });

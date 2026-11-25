@@ -1,4 +1,3 @@
-import * as pty from 'node-pty';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { randomBytes } from 'crypto';
 import { tmpdir } from 'os';
@@ -68,6 +67,8 @@ print -r -- "R\${__tok}Y"
   const setupFile = join(tmp, 'setup.zsh');
   writeFileSync(setupFile, setup);
 
+  // Loaded lazily: the zsh suite never runs on Windows, so node-pty must not be imported there.
+  const pty = await import('node-pty');
   const proc = pty.spawn('zsh', ['-f', '-i'], {
     name: 'xterm-256color',
     cols: 200,
