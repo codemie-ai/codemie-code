@@ -42,12 +42,12 @@
 ```ts
 export type KeepList = { readonly keep: ReadonlySet<string>; readonly nested?: Readonly<Record<string, KeepList>> };
 export const placeholder: (kind: string) => string;            // 'gitBranch'|'error_messages' -> 'REDACTED:GIT-BRANCH'|'REDACTED:ERROR-MESSAGES'
-export function reduceBranch(branch: string | undefined): string | undefined; // ticket keys joined by ' ' (as written) or 'REDACTED:BRANCH'
+export function reduceBranch(branch: string | undefined): string | undefined; // shared names (SHARED_BRANCH_NAMES: main, master, develop, dev, qa, test, testing, perf, stage, staging, prod; exact, case-insensitive) as is; else ticket keys joined by ' ' (as written) or 'REDACTED:BRANCH'
 export function reduceRecord<T extends Record<string, unknown>>(record: T, keepList: KeepList): T;
 ```
 Numbers and booleans always pass. Unlisted strings become `placeholder(key)`, unlisted `string[]` become `[placeholder(key)]`, unlisted objects are replaced whole by `placeholder(key)`, and a `nested` entry recurses. Any throw while reducing one field sets that field to `REDACTED:FAILED`, and `logger.debug` logs the field name and `err.name` only.
 
-- [ ] Test-first: yes — `reduceRecord` keeps listed keys, turns an unlisted future field `foo_bar` into `REDACTED:FOO-BAR`, a `string[]` into a one-element array, and a nested object into one placeholder; a getter that throws yields `REDACTED:FAILED` and a debug log without the value; `reduceBranch('feature/EPMCDME-12-secret-client')` gives `EPMCDME-12`, and `reduceBranch('main')` gives `REDACTED:BRANCH`.
+- [ ] Test-first: yes — `reduceRecord` keeps listed keys, turns an unlisted future field `foo_bar` into `REDACTED:FOO-BAR`, a `string[]` into a one-element array, and a nested object into one placeholder; a getter that throws yields `REDACTED:FAILED` and a debug log without the value; `reduceBranch('feature/EPMCDME-12-secret-client')` gives `EPMCDME-12`, `reduceBranch('main')` and `reduceBranch('Staging')` are sent as they are, and `reduceBranch('feature/main')` and `reduceBranch('test-acme-bank')` give `REDACTED:BRANCH`.
 - [ ] Implement; run `npx vitest run src/agents/core/__tests__/analytics-reduction.test.ts` → PASS.
 
 ### Task 2: Prompt reducer, shared grammar, ref finders
@@ -75,12 +75,14 @@ export function addOptedInProject(absPath: string): Promise<void>;
 ```
 No `ConfigLoader.loadJsonConfig`, no cache.
 
+Note: `ConfigLoader.initProjectConfig` (`src/utils/config.ts`), used by `codemie setup`, rewrote the project config from scratch and erased `analytics.promptReduction`. It now carries the `analytics` block over, and `MultiProviderConfig` has an optional `analytics?: { promptReduction?: boolean }` (see Task 10).
+
 - [ ] Test-first: yes — conflict-marker file → `'unreadable'` and `isReductionOn` true with a single warning across two calls; writing the flag into a file with profiles preserves the profiles byte-for-byte except the new key; writing into an empty repo produces `{"analytics":{"promptReduction":true}}` only; with that flag-only file present, `ConfigLoader.loadLocalConfigProfile(dir, name)`, `resolveProfileName` and `getActiveProfileName` return the same as with no file (legacy-path risk).
 - [ ] Implement; if the legacy test fails, stop and report rather than editing profile selection (non-goal). Run the test → PASS.
 
 ### Task 4: Hook collectors (buildEvent, three adapters, unhooked tools)
 
-**Files:** Modify `src/agents/core/OtlpAgentAdapter.ts:295-395`, `claude-code-otlp.plugin.ts:701-731`, `copilot-cli-otlp.plugin.ts:81,293-324`, `copilot-chat-otlp.plugin.ts:52`, `copilot-cli-otlp.unhooked-tools.ts:91-100`. Declare `HOOK_EVENT_KEEP_LIST` beside the hook event type. It holds the spec's envelope identifiers plus `analytics_reduction`, `prompt_body`, type/tool/command/skill/agent names, MCP names, ticket fields, `cwd` (repository name), `repo_remote`, and `git_branch` (via `reduceBranch`). `tool_input`, `tool_response`, `description` and `error` are excluded. Tests: `OtlpAgentAdapter.test.ts` and the plugin tests.
+**Files:** Modify `src/agents/core/OtlpAgentAdapter.ts:295-395`, `claude-code-otlp.plugin.ts:701-731`, `copilot-cli-otlp.plugin.ts:81,293-324`, `copilot-chat-otlp.plugin.ts:52`, `copilot-cli-otlp.unhooked-tools.ts:91-100`. Declare `HOOK_EVENT_KEEP_LIST` beside the hook event type. It holds the spec's envelope identifiers plus `analytics_reduction`, `prompt_body`, type/tool/command/skill/agent names, MCP names, ticket fields, `cwd` (repository name), `repo_remote`, and `git_branch` (via `reduceBranch`). It also keeps the model usage and session-summary fields (model names, fixed enums, opaque ids and timestamps): `request_id`, `message_id`, `model`, `model_raw`, `speed`, `inference_geo`, `service_tier`, `stop_reason`, `scope_kind`, `scope_name` (agent.usage.request) and `started_at`, `ended_at`, `models`, `primary_model`, `tools`, `skills`, `agents`, `commands`, `primary_command`, `client_versions` (agent.session.summary), where kept containers keep only identifier-like strings. `title`, `compactions`, `branch_counts`, `branch_dominant`, `tool_input`, `tool_response`, `description` and `error` are excluded. Tests: `OtlpAgentAdapter.test.ts` and the plugin tests.
 
 **Consumes:** Tasks 1-3. The decision is `isReductionOn({ configDirs: [loadHookConfig(...).configDir, findNearestConfigDir(CLAUDE_PROJECT_DIR), findNearestConfigDir(cwd)] })` (`identity-fields.ts:201-276`), never `ConfigLoader.load(cwd)`.
 
@@ -129,9 +131,9 @@ Order in `buildEvent`: adapters compute `prompt_body = reducePrompt(raw, …)` b
 
 ### Task 10: Setup step
 
-**Files:** Add a step to `src/cli/commands/setup.ts` (all providers): choices off globally (default), on globally, on for the current project. When the global flag is on, offer no project-level off and say that global applies. The step states that conversation history sync is not reduced. A project "on" calls `writeProjectReductionFlag` and `addOptedInProject`. When turning reduction on, it detects a `--claude-otlp` connection on `http/protobuf` (`connectors/claude-code-otlp.ts:115-139`) and offers the reconnect. Test: setup test with a mocked prompter.
+**Files:** Add a step to `src/cli/commands/setup.ts` (all providers), headed "Analytics privacy". It states what is Sent (commands, skill and agent names, ticket and MR numbers, metrics) and Hidden (prompt text, file paths, tool input and output, branch names with ticket keys kept), says that conversation history in CodeMie chat is not affected, and shows "Current: ..." for global and this project, defaulting to the current state. Prompt: "Hide prompts in analytics?". With global off the choices are Off, On for all projects, On for this project only (<project>). With global on they are Keep on for all projects, Off, On for this project only (<project>); that last choice turns global off and the current project on in one pass, and after global goes off the step lists "Still on for: ...". A project "on" calls `writeProjectReductionFlag` and `addOptedInProject`. When turning reduction on, it detects a `--claude-otlp` connection on `http/protobuf` (`connectors/claude-code-otlp.ts:115-139`), shows a two-line plain warning and asks "Switch to http/json?". `ConfigLoader.initProjectConfig` (`src/utils/config.ts`) carries the `analytics` block over so setup never erases the flag. Test: setup test with a mocked prompter.
 
-- [ ] Test-first: yes — choosing project writes only the flag plus the home list entry; with global on, the choices exclude project-off and include the notice text; the disclosure line is shown; a protobuf connection triggers the reconnect offer.
+- [ ] Test-first: yes — choosing project writes only the flag plus the home list entry; each menu (global off, global on) offers exactly its choices, the combined choice turns global off and the project on, and the "Still on for" list appears; the disclosure line is shown; a protobuf connection triggers the "Switch to http/json?" offer; a setup rerun keeps `analytics.promptReduction` in the project config.
 - [ ] Implement; run test → PASS.
 
 ---
@@ -145,3 +147,9 @@ Order in `buildEvent`: adapters compute `prompt_body = reducePrompt(raw, …)` b
 - Secret masking with reduction off is unchanged; every task has an "off = current output" assertion.
 - No backend setting read, no backend change, no reduction of already-spooled data: Task 6 reduces only records whose session decision is bound now, and does not rewrite the spool.
 - The setting is never read via `ConfigLoader.loadJsonConfig`/`ConfigLoader.load(cwd)`/`multiProviderCache` (Tasks 3, 4, 6).
+
+## Changes after approval (2026-11-25)
+
+- Task 1 and Task 4: shared branch names are sent as they are (`SHARED_BRANCH_NAMES` in `reduceBranch`), and the hook keep-list also keeps model usage and session-summary fields. Commits: "feat(analytics): send shared branch names unreduced", "fix(analytics): keep model usage and session summary fields when reduced".
+- Task 10: the setup step was reworded and extended. Commit: "feat(cli): clearer analytics privacy step in setup".
+- Tasks 3 and 10: `codemie setup` no longer erases the flag, because `ConfigLoader.initProjectConfig` carries the `analytics` block over. Commit: "fix(cli): keep analytics setting when setup rewrites the project config".
