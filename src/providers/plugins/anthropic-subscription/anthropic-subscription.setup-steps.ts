@@ -23,6 +23,12 @@ import {
   runClaudeBrowserLogin
 } from './anthropic-subscription.auth.js';
 
+const HEADLESS_INSTRUCTIONS = [
+  'No browser on this machine? Two ways to sign in to Claude Code:',
+  '  1. `claude auth login` (starting now): open the printed URL on any machine, then paste the code back here.',
+  '  2. Run `claude setup-token` on a machine with a browser, then export CLAUDE_CODE_OAUTH_TOKEN with the result here and rerun setup.'
+].join('\n');
+
 export const AnthropicSubscriptionSetupSteps: ProviderSetupSteps = {
   name: 'anthropic-subscription',
 
@@ -36,7 +42,16 @@ export const AnthropicSubscriptionSetupSteps: ProviderSetupSteps = {
     const currentStatus = await getClaudeAuthStatus();
     if (!currentStatus.loggedIn) {
       logger.info('Claude Code is not authenticated yet.');
-      logger.info('Launching native Claude browser login...');
+      if (options?.headless) {
+        if (!process.stdin.isTTY || !process.stdout.isTTY) {
+          throw new ConfigurationError(
+            'Headless Claude login needs an interactive terminal (stdin and stdout must both be a TTY).'
+          );
+        }
+        console.log(HEADLESS_INSTRUCTIONS);
+      } else {
+        logger.info('Launching native Claude browser login...');
+      }
       await runClaudeBrowserLogin();
     } else {
       logger.success('Claude Code is already authenticated');
@@ -44,7 +59,10 @@ export const AnthropicSubscriptionSetupSteps: ProviderSetupSteps = {
 
     const finalStatus = await getClaudeAuthStatus();
     if (!finalStatus.loggedIn) {
-      throw new ConfigurationError('Claude Code authentication is required. Complete `claude auth login` and run setup again.');
+      throw new ConfigurationError(
+        'Claude Code authentication is required. Complete `claude auth login` (paste the code it prints back into the prompt), ' +
+        'or run `claude setup-token` on a machine with a browser and export CLAUDE_CODE_OAUTH_TOKEN here, then run setup again.'
+      );
     }
 
     logger.success(`Claude native auth confirmed (${finalStatus.authMethod || 'unknown'})`);
