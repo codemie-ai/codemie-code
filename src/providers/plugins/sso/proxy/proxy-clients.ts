@@ -13,6 +13,12 @@ export const CODEMIE_DAEMON = 'codemie-daemon';
 
 export const PROXY_CLIENTS: readonly string[] = [CLAUDE_DESKTOP, VSCODE_CLAUDE_CODE, CODEX_DESKTOP, VSCODE_BYOK, CODEMIE_DAEMON];
 
+/**
+ * The clients that speak the Claude (Anthropic Messages) protocol through the proxy: the plugins that act on a
+ * Claude request (the request normalizers, the model value guard) serve exactly these.
+ */
+export const CLAUDE_PATH_CLIENTS: readonly string[] = ['codemie-claude', 'codemie-copilot', CLAUDE_DESKTOP, VSCODE_CLAUDE_CODE];
+
 /** The message of the 401 a proxy answers to a gateway key it does not accept; clients tell that refusal by it. */
 export const INVALID_GATEWAY_KEY_MESSAGE = 'Invalid API key';
 
