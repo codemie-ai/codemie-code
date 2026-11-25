@@ -11,7 +11,7 @@ const TEXT: Record<StopReason, string> = {
   folder_changed: 'the working folder moved to another project or an unconnected folder.',
   consent_revoked: 'the folder is no longer connected for work analytics.',
   consent_missing: 'the folder is not connected for work analytics.',
-  work_consent_required: 'To send analytics for future work sessions, run codemie proxy analytics consent grant --project "<project-name>" from this folder and start a new session.',
+  work_consent_required: 'To send it, run codemie proxy analytics consent grant --project "<project-name>" from this folder, then codemie proxy analytics resend.',
   resume_unknown: 'this resumed or forked session has no recorded scope, so none of it is published.',
   generation_changed: 'analytics collection was turned off and on again during this session.',
   scope_excluded: 'this folder is excluded from analytics.',

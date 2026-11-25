@@ -122,6 +122,9 @@ export function storeForConnector(connectorId: AnalyticsConnectorId): AnalyticsS
   };
 }
 
+/** The command that sends sessions held locally once what held them is resolved. */
+export const RESEND_COMMAND = 'codemie proxy analytics resend';
+
 export function errorMessage(error: unknown): string {
   return error instanceof ConfigurationError ? error.message : error instanceof Error ? error.message : String(error);
 }

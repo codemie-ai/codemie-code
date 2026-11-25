@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+### Added
+
+- `codemie proxy analytics resend` sends sessions held for lack of consent once a consent covers them (a folder consent for the session's folder, or `--all`); `consent grant`, `proxy connect` and `proxy doctor` point to it
+
 ## [0.17.2] - 2026-11-24
 
 ### Added

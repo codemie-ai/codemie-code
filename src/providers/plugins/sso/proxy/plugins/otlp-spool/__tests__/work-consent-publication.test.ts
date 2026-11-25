@@ -6,7 +6,7 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -58,6 +58,7 @@ async function load() {
     io: await import('../spool-io.js'),
     tick: await import('../tick-processor.js'),
     st: await import('../session-status.js'),
+    release: await import('../hold-release.js'),
   };
 }
 type M = Awaited<ReturnType<typeof load>>;
@@ -150,7 +151,7 @@ describe('Personal and Unknown+subscription sessions need explicit work consent 
     const { stopNoticeText } = await import('@/agents/plugins/claude-code-otlp/claude-code-otlp.notice.js');
     const notice = stopNoticeText(reason!);
     expect(notice).toContain('codemie proxy analytics consent grant');
-    expect(notice).toContain('start a new session');
+    expect(notice).toContain('codemie proxy analytics resend');
     expect(notice).not.toMatch(/retry|backend/i);
     await drain(m, 's1');
     expect(await m.stop.takeNotice(key)).toBeUndefined();
@@ -202,6 +203,20 @@ describe('Personal and Unknown+subscription sessions need explicit work consent 
     await m.consent.disconnectAllFolders({ owner_hash: identity(m).owner_hash, api_identity: identity(m).api_identity });
     await drain(m, 's1');
     expect(posts().length).toBe(sent);
+  });
+
+  it('a session stamped without consent records its canonical folder; a consented one does not', async () => {
+    const m = await load();
+    const { canonicalizePath } = await import('@/agents/core/project-allowlist.js');
+    expect(await stamp(m, 's1', 'Gmail Personal', 'subscription')).toMatchObject({
+      ok: true,
+      record: { session_folder: await canonicalizePath(work) },
+    });
+
+    await connect(m);
+    const consented = await stamp(m, 's2', 'Gmail Personal', 'subscription');
+    expect(consented.ok).toBe(true);
+    if (consented.ok) expect(consented.record).not.toHaveProperty('session_folder');
   });
 
   it('a corporate session, and an Unknown one without a subscription claim, are unchanged (no consent needed)', async () => {
@@ -326,5 +341,127 @@ describe('a confirmed-subscription record cannot reach the old-backend or persis
     await drain(m, 's1');
     await drain(m, 's1');
     expect(posts()).toEqual([]);
+  });
+});
+
+describe('codemie proxy analytics resend: held sessions are released once what held them is resolved', () => {
+  const HELD = 'work_consent_required';
+  const heldPersonal = async (m: M, sid: string, cwd = work) => {
+    await m.stamp.stampEvidence(
+      { cwd, sessionId: sid },
+      { organization: 'Gmail Personal', routing: { routed: false, routing_proof: 'proven' }, funding_route: 'subscription', collection_generation: 0 }
+    );
+    await hook(m, sid);
+    await drain(m, sid);
+    expect((await m.st.readStatus(sid))!.holds?.session?.reason).toBe(HELD);
+  };
+  const release = (m: M, options = {}) => m.release.releaseHeldSessions(identity(m), options);
+  const recordFile = (m: M, sid: string) => join(m.rec.evidenceDir(), `${keyOf(m, sid)}.json`);
+
+  it('a folder consent releases a session held in that folder; the next pass publishes all of it under the consent', async () => {
+    const m = await load();
+    await heldPersonal(m, 's1');
+    expect(posts()).toEqual([]);
+
+    await connect(m);
+    expect(await release(m)).toEqual([{ sessionId: 's1', reason: HELD, outcome: 'released' }]);
+    await drain(m, 's1');
+
+    expect(posts().length).toBeGreaterThan(0);
+    expect(posts()[0].headers).toMatchObject({ 'X-CodeMie-Work-Consent': 'explicit-folder', 'X-CodeMie-Project': 'proj-orig' });
+    expect(Object.values(posts()[0].headers).join(' ')).not.toContain(work); // the folder never travels
+    const status = (await m.st.readStatus('s1'))!;
+    expect(status.cursors.hooks).toBe(hooksSize('s1'));
+    expect(status.holds?.session).toBeUndefined();
+    expect(await release(m)).toEqual([]); // nothing is held any more: a rerun is a no-op
+  });
+
+  it('a consent on a parent folder releases a session held in a sub-folder', async () => {
+    const m = await load();
+    const sub = join(work, 'sub');
+    mkdirSync(sub);
+    await heldPersonal(m, 's1', sub);
+    await connect(m);
+    expect(await release(m)).toEqual([{ sessionId: 's1', reason: HELD, outcome: 'released' }]);
+  });
+
+  it('a consent on another folder, for another project, or under another account releases nothing', async () => {
+    const m = await load();
+    await heldPersonal(m, 's1');
+    const elsewhere = join(home, 'elsewhere');
+    mkdirSync(elsewhere);
+    await m.consent.connectFolder({ owner_hash: identity(m).owner_hash, api_identity: identity(m).api_identity, project: 'proj-orig' }, elsewhere);
+    await connect(m, 'some-other-project');
+    expect(await release(m)).toEqual([{ sessionId: 's1', reason: HELD, outcome: 'kept', detail: 'no_consent' }]);
+    await connect(m);
+    const other = { ...identity(m), owner_hash: 'f'.repeat(64) };
+    expect(await m.release.releaseHeldSessions(other)).toEqual([{ sessionId: 's1', reason: HELD, outcome: 'kept', detail: 'not_eligible' }]);
+    await drain(m, 's1');
+    expect(posts()).toEqual([]);
+  });
+
+  it('a session recorded before the folder was stored is released by an all-folders consent only', async () => {
+    const m = await load();
+    await heldPersonal(m, 's1');
+    const r = JSON.parse(readFileSync(recordFile(m, 's1'), 'utf-8'));
+    delete r.session_folder;
+    writeFileSync(recordFile(m, 's1'), JSON.stringify(r));
+
+    await connect(m);
+    expect(await release(m)).toEqual([{ sessionId: 's1', reason: HELD, outcome: 'kept', detail: 'no_consent' }]);
+    await m.consent.connectAllFolders({ owner_hash: identity(m).owner_hash, api_identity: identity(m).api_identity });
+    expect(await release(m)).toEqual([{ sessionId: 's1', reason: HELD, outcome: 'released' }]);
+    await drain(m, 's1');
+    expect(posts().length).toBeGreaterThan(0);
+  });
+
+  it('a session that was never held (corporate) is not touched and gets no consent reference', async () => {
+    const m = await load();
+    await stamp(m, 'corp', 'Corp', 'subscription');
+    await hook(m, 'corp');
+    await connect(m);
+    expect(await release(m)).toEqual([]);
+    expect(await m.rec.readRecord(keyOf(m, 'corp'))).not.toMatchObject({ record: { consent_ref: expect.anything() } });
+  });
+
+  it('an old record without a funding claim is never released', async () => {
+    const m = await load();
+    await stamp(m, 's1', 'Gmail Personal', undefined);
+    await hook(m, 's1');
+    await drain(m, 's1');
+    await connect(m);
+    expect((await release(m)).filter((r) => r.outcome === 'released')).toEqual([]);
+    await drain(m, 's1');
+    expect(posts()).toEqual([]);
+  });
+
+  it('a stopped session is never released', async () => {
+    const m = await load();
+    await heldPersonal(m, 's1');
+    await connect(m);
+    await m.stop.writeStop(keyOf(m, 's1'), 'consent_revoked', 's1');
+    expect(await release(m)).toEqual([{ sessionId: 's1', reason: HELD, outcome: 'stopped' }]);
+    await drain(m, 's1');
+    expect(posts()).toEqual([]);
+  });
+
+  it('a hold reason without a releaser is left alone', async () => {
+    const m = await load();
+    h.be.policy = { status: 500, body: {} };
+    await stamp(m, 'unresolved', 'Gmail Personal', 'subscription');
+    await hook(m, 'unresolved');
+    await drain(m, 'unresolved');
+    expect((await m.st.readStatus('unresolved'))!.holds?.session?.reason).toBe('classification_unresolved');
+    await connect(m);
+    expect(await release(m)).toEqual([]);
+    expect(m.release.releasableHoldReasons()).toEqual([HELD]);
+  });
+
+  it('the reasons option narrows the run', async () => {
+    const m = await load();
+    await heldPersonal(m, 's1');
+    await connect(m);
+    expect(await release(m, { reasons: ['classification_unresolved'] })).toEqual([]);
+    expect(await release(m, { reasons: [HELD] })).toEqual([{ sessionId: 's1', reason: HELD, outcome: 'released' }]);
   });
 });
