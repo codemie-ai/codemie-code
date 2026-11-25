@@ -395,3 +395,190 @@ describe('unregister', () => {
     await expect(scheduler.unregister()).resolves.toBe(false);
   });
 });
+
+describe('custom task names', () => {
+  const NAME = 'my-custom-task';
+  const customPlist = join('/home/dev', 'Library', 'LaunchAgents', `${NAME}.plist`);
+  const customService = join(UNIT_DIR, `${NAME}.service`);
+  const customTimer = join(UNIT_DIR, `${NAME}.timer`);
+
+  it('darwin: register writes <name>.plist with that label and bootstraps gui/<uid>/<name>', async () => {
+    const { exec, calls } = fakeExec([FAIL, OK]);
+    const fs = fakeFs();
+
+    await createScheduler(baseDeps('darwin', exec, fs), NAME).register(CMD, '07:05');
+
+    expect(String(fs.writes.find((w) => w.path === customPlist)?.data)).toContain(`<key>Label</key>\n    <string>${NAME}</string>`);
+    expect(fs.writes.map((w) => w.path)).not.toContain(PLIST_PATH);
+    expect(calls).toEqual([
+      { command: 'launchctl', args: ['bootout', `gui/501/${NAME}`] },
+      { command: 'launchctl', args: ['bootstrap', 'gui/501', customPlist] }
+    ]);
+  });
+
+  it('darwin: unregister and query target the custom name only', async () => {
+    const { exec, calls } = fakeExec([OK, OK]);
+    const fs = fakeFs([customPlist, PLIST_PATH]);
+    const scheduler = createScheduler(baseDeps('darwin', exec, fs), NAME);
+
+    await expect(scheduler.unregister()).resolves.toBe(true);
+    await expect(scheduler.query()).resolves.toBe('enabled');
+
+    expect(calls).toEqual([
+      { command: 'launchctl', args: ['bootout', `gui/501/${NAME}`] },
+      { command: 'launchctl', args: ['print', `gui/501/${NAME}`] }
+    ]);
+    expect(fs.removed).toEqual([customPlist]);
+  });
+
+  it('linux: register writes <name>.service/.timer and enables <name>.timer', async () => {
+    const { exec, calls } = fakeExec([OK, OK, OK]);
+    const fs = fakeFs();
+
+    await createScheduler(baseDeps('linux', exec, fs), NAME).register(CMD, '07:05');
+
+    expect(fs.writes.map((w) => w.path)).toEqual([customService, customTimer]);
+    expect(calls[1]).toEqual({ command: 'systemctl', args: ['--user', 'enable', '--now', `${NAME}.timer`] });
+  });
+
+  it('linux: unregister disables <name>.timer and removes only its unit files', async () => {
+    const { exec, calls } = fakeExec([OK, OK]);
+    const fs = fakeFs([customService, customTimer, SERVICE_PATH, TIMER_PATH]);
+
+    await expect(createScheduler(baseDeps('linux', exec, fs), NAME).unregister()).resolves.toBe(true);
+
+    expect(calls[0]).toEqual({ command: 'systemctl', args: ['--user', 'disable', '--now', `${NAME}.timer`] });
+    expect(fs.removed).toEqual(expect.arrayContaining([customService, customTimer]));
+    expect(fs.removed).not.toContain(SERVICE_PATH);
+  });
+
+  it('linux: query asks is-enabled for <name>.timer', async () => {
+    const { exec, calls } = fakeExec([{ code: 0, stdout: 'enabled', stderr: '' }]);
+
+    await createScheduler(baseDeps('linux', exec, fakeFs()), NAME).query();
+
+    expect(calls).toEqual([{ command: 'systemctl', args: ['--user', 'is-enabled', `${NAME}.timer`] }]);
+  });
+
+  it('win32: register, unregister and query pass the name to schtasks /TN', async () => {
+    const taskName = 'My Custom Task';
+    const { exec, calls } = fakeExec([FAIL, OK, OK, { code: 0, stdout: 'Status: Ready', stderr: '' }]);
+    const scheduler = createScheduler(baseDeps('win32', exec, fakeFs()), taskName);
+
+    await scheduler.register(CMD, '07:05');
+    await scheduler.unregister();
+    await scheduler.query();
+
+    expect(calls[0]).toEqual({ command: 'schtasks', args: ['/Delete', '/F', '/TN', taskName] });
+    expect(calls[1].args).toEqual(expect.arrayContaining(['/Create', '/TN', taskName]));
+    expect(calls[2]).toEqual({ command: 'schtasks', args: ['/Delete', '/F', '/TN', taskName] });
+    expect(calls[3]).toEqual({ command: 'schtasks', args: ['/Query', '/TN', taskName, '/FO', 'LIST', '/V'] });
+  });
+});
+
+describe('exists', () => {
+  const NAME = 'my-custom-task';
+  const customPlist = join('/home/dev', 'Library', 'LaunchAgents', `${NAME}.plist`);
+  const customService = join(UNIT_DIR, `${NAME}.service`);
+  const customTimer = join(UNIT_DIR, `${NAME}.timer`);
+
+  describe('darwin', () => {
+    it('is present when launchctl print succeeds', async () => {
+      const { exec, calls } = fakeExec([OK]);
+      await expect(createScheduler(baseDeps('darwin', exec, fakeFs()), NAME).exists()).resolves.toBe('present');
+      expect(calls).toEqual([{ command: 'launchctl', args: ['print', `gui/501/${NAME}`] }]);
+    });
+
+    it('is present when only the plist file is left (not loaded)', async () => {
+      const { exec } = fakeExec([FAIL]);
+      await expect(createScheduler(baseDeps('darwin', exec, fakeFs([customPlist])), NAME).exists()).resolves.toBe('present');
+    });
+
+    it('is absent when neither the job nor the plist exists', async () => {
+      const { exec } = fakeExec([FAIL]);
+      await expect(createScheduler(baseDeps('darwin', exec, fakeFs()), NAME).exists()).resolves.toBe('absent');
+    });
+
+    it('is unknown when the probe throws', async () => {
+      const { exec } = fakeExec([new Error('launchctl missing')]);
+      await expect(createScheduler(baseDeps('darwin', exec, fakeFs()), NAME).exists()).resolves.toBe('unknown');
+    });
+  });
+
+  describe('linux', () => {
+    it.each([[customService], [customTimer]])('is present when %s exists, without calling systemctl', async (file) => {
+      const { exec, calls } = fakeExec([]);
+      await expect(createScheduler(baseDeps('linux', exec, fakeFs([file])), NAME).exists()).resolves.toBe('present');
+      expect(calls).toHaveLength(0);
+    });
+
+    it('is present when is-enabled exits 0', async () => {
+      const { exec } = fakeExec([{ code: 0, stdout: 'enabled', stderr: '' }]);
+      await expect(createScheduler(baseDeps('linux', exec, fakeFs()), NAME).exists()).resolves.toBe('present');
+    });
+
+    it('is present for a known non-enabled state such as masked', async () => {
+      const { exec } = fakeExec([{ code: 1, stdout: 'masked\n', stderr: '' }]);
+      await expect(createScheduler(baseDeps('linux', exec, fakeFs()), NAME).exists()).resolves.toBe('present');
+    });
+
+    it('is absent when systemd says the unit file does not exist', async () => {
+      const { exec } = fakeExec([{ code: 1, stdout: '', stderr: `Failed to get unit file state for ${NAME}.timer: No such file or directory` }]);
+      await expect(createScheduler(baseDeps('linux', exec, fakeFs()), NAME).exists()).resolves.toBe('absent');
+    });
+
+    it('is unknown when the failure is not a not-found message', async () => {
+      const { exec } = fakeExec([{ code: 1, stdout: '', stderr: 'Failed to connect to bus' }]);
+      await expect(createScheduler(baseDeps('linux', exec, fakeFs()), NAME).exists()).resolves.toBe('unknown');
+    });
+
+    it('is unknown when the probe throws', async () => {
+      const { exec } = fakeExec([new Error('spawn systemctl ENOENT')]);
+      await expect(createScheduler(baseDeps('linux', exec, fakeFs()), NAME).exists()).resolves.toBe('unknown');
+    });
+  });
+
+  describe('win32', () => {
+    const listing = (...names: string[]): ExecResult => ({
+      code: 0,
+      stdout: names.map((n) => `"\\${n.replace(/"/g, '""')}","N/A","Ready"`).join('\r\n') + '\r\n',
+      stderr: ''
+    });
+
+    it('is present when the task is in the CSV listing, case-insensitively', async () => {
+      const { exec, calls } = fakeExec([listing('Other', 'MY CUSTOM TASK')]);
+      await expect(createScheduler(baseDeps('win32', exec, fakeFs()), 'My Custom Task').exists()).resolves.toBe('present');
+      expect(calls).toEqual([{ command: 'schtasks', args: ['/Query', '/FO', 'CSV', '/NH'] }]);
+    });
+
+    it('matches names holding quotes through CSV unescaping', async () => {
+      const { exec } = fakeExec([listing('say "hi"')]);
+      await expect(createScheduler(baseDeps('win32', exec, fakeFs()), 'say "hi"').exists()).resolves.toBe('present');
+    });
+
+    it('is absent when only other tasks are listed, including a longer name with the same prefix', async () => {
+      const { exec } = fakeExec([listing('My Custom Task 2', 'Other')]);
+      await expect(createScheduler(baseDeps('win32', exec, fakeFs()), 'My Custom Task').exists()).resolves.toBe('absent');
+    });
+
+    it('is absent for an empty listing', async () => {
+      const { exec } = fakeExec([{ code: 0, stdout: '', stderr: '' }]);
+      await expect(createScheduler(baseDeps('win32', exec, fakeFs()), 'My Custom Task').exists()).resolves.toBe('absent');
+    });
+
+    it('is unknown when schtasks exits non-zero', async () => {
+      const { exec } = fakeExec([FAIL]);
+      await expect(createScheduler(baseDeps('win32', exec, fakeFs()), 'My Custom Task').exists()).resolves.toBe('unknown');
+    });
+
+    it('is unknown when the probe throws', async () => {
+      const { exec } = fakeExec([new Error('spawn schtasks ENOENT')]);
+      await expect(createScheduler(baseDeps('win32', exec, fakeFs()), 'My Custom Task').exists()).resolves.toBe('unknown');
+    });
+  });
+
+  it('is unknown on an unsupported platform', async () => {
+    const { exec } = fakeExec([]);
+    await expect(createScheduler(baseDeps('freebsd' as NodeJS.Platform, exec, fakeFs()), NAME).exists()).resolves.toBe('unknown');
+  });
+});
