@@ -5,6 +5,7 @@ vi.mock('@/utils/logger.js', () => ({
   logger: { debug: debugSpy, info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+import { HOOK_EVENT_KEEP_LIST } from '../hook-event-keep-list.js';
 import { placeholder, reduceBranch, reducePrompt, reduceRecord, type KeepList } from '../analytics-reduction.js';
 
 describe('placeholder', () => {
@@ -147,5 +148,37 @@ describe('kept keys with non-string values (CR-002)', () => {
     expect(JSON.stringify(out)).not.toContain('secret');
     expect(JSON.stringify(out)).not.toContain('free text');
     expect(out).toEqual({ tools: [{ note: 'REDACTED:NOTE' }, ['REDACTED:TOOLS']] });
+  });
+});
+
+describe('HOOK_EVENT_KEEP_LIST: model usage and session summary', () => {
+  it('keeps model names and usage enums so a reduced request can still be priced', () => {
+    const out = reduceRecord({
+      type: 'agent.usage.request', session_id: 's', request_id: 'req_1', message_id: 'msg_1',
+      model_raw: 'claude-opus-4-5-20251101', model: 'claude-opus-4-5', speed: 'standard',
+      inference_geo: 'us', service_tier: 'standard', stop_reason: 'end_turn', scope_kind: 'skill',
+      scope_name: 'commit', input_tokens: 10, output_tokens: 5,
+    }, HOOK_EVENT_KEEP_LIST);
+    expect(out.model_raw).toBe('claude-opus-4-5-20251101');
+    expect(out.model).toBe('claude-opus-4-5');
+    expect(out.speed).toBe('standard');
+    expect(out.stop_reason).toBe('end_turn');
+    expect(out.input_tokens).toBe(10);
+  });
+  it('keeps timestamps and name lists of a session summary but still redacts the title', () => {
+    const out = reduceRecord({
+      type: 'agent.session.summary', started_at: '2026-01-01T00:00:00Z', ended_at: '2026-01-01T01:00:00Z',
+      models: ['claude-opus-4-5'], primary_model: 'claude-opus-4-5', commands: ['commit'],
+      tools: { Bash: { calls: 2, errors: 0 } }, title: 'Fix acme bank migration', branch_dominant: 'feature/acme-bank',
+    }, HOOK_EVENT_KEEP_LIST);
+    expect(out.started_at).toBe('2026-01-01T00:00:00Z');
+    expect(out.models).toEqual(['claude-opus-4-5']);
+    expect(out.tools).toEqual({ Bash: { calls: 2, errors: 0 } });
+    expect(out.title).toBe('REDACTED:TITLE');
+    expect(out.branch_dominant).toBe('REDACTED:BRANCH-DOMINANT');
+  });
+  it('does not let free text ride along inside a kept list', () => {
+    const out = reduceRecord({ commands: ['commit', 'summarise the acme bank contract for me'] }, HOOK_EVENT_KEEP_LIST);
+    expect(out.commands).toEqual(['commit', 'REDACTED:COMMANDS']);
   });
 });

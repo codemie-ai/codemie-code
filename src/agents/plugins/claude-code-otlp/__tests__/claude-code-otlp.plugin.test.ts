@@ -1999,7 +1999,7 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
     it('sends the command and refs only, from the typed text, and redacts unknown fields', async () => {
       const injected = '<ide_opened_file>The user opened /repo/ABC-777.ts in the IDE.</ide_opened_file>';
       await plugin.processOtlpEvent(
-        promptEvent(`${injected}\n/review-pr !456 secret`, { cwd: project, future_field: 'private text' }),
+        promptEvent(`${injected}\n/review-pr !456 secret`, { cwd: project, future_field: 'private text', git_branch: 'feature/acme-bank-migration' }),
         { ensureOtlpProxy, forwardOtlpEventsToSpool }
       );
 

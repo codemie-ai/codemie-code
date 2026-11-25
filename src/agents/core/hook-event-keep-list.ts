@@ -44,6 +44,31 @@ export const HOOK_EVENT_KEEP_LIST: KeepList = {
     'agent_name',
     'mcp_server_name',
     'mcp_tool_name',
+    // Model usage: model names and fixed enums of `agent.usage.request`. Needed to price a request;
+    // a redacted model makes the dashboard report a partial estimate for the whole session.
+    'request_id',
+    'message_id',
+    'model',
+    'model_raw',
+    'speed',
+    'inference_geo',
+    'service_tier',
+    'stop_reason',
+    'scope_kind',
+    'scope_name',
+    // Session summary: timestamps, model names, and name lists/maps of tools, skills, agents and commands
+    // (a kept container keeps scalars and identifier-like strings only). `title`, `compactions` and
+    // `branch_counts` / `branch_dominant` stay redacted.
+    'started_at',
+    'ended_at',
+    'models',
+    'primary_model',
+    'tools',
+    'skills',
+    'agents',
+    'commands',
+    'primary_command',
+    'client_versions',
     // Reduced prompt
     'prompt_body',
     // Ticket attribution
