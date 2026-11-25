@@ -9,6 +9,7 @@ import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SSOCredentials } from '../../../../../../core/types.js';
+import { readSessionState, updateSessionState } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.state.js';
 
 vi.mock('@/utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({
@@ -18,6 +19,9 @@ vi.mock('../auth-state.js', () => ({ areCredentialsStale: vi.fn().mockReturnValu
 
 import { COPILOT_CLI_OTLP_AGENT, lateSessionEndSkip, recoverMissingSessionEnds, resetScheduledForTests } from '../copilot-usage-enrichment.js';
 import { appendSpool } from '../spool-io.js';
+import { getPluginRegistry, registerCorePlugins } from '../../index.js';
+import { listHookRecords } from '../copilot-usage-spool.js';
+import type { PluginContext } from '../../types.js';
 import { processSessionTick } from '../tick-processor.js';
 import { readStatus, writeStatus } from '../session-status.js';
 
@@ -112,6 +116,31 @@ afterEach(async () => {
 });
 
 describe('tick: recovered session end reaches the analytics API', () => {
+  it('recovers a completed run from the tick of the registered OTLP interceptor', async () => {
+    await spoolHook(hook('agent.session.start', 0), hook('agent.session.start', 10_000, { source: 'resume' }));
+    const file = join(dir, '.copilot', 'session-state', SID, 'events.jsonl');
+    await writeFile(file, [...transcript, line('session.resume', 10_000, {}), line('tool.execution_start', 11_000, {
+      toolCallId: 'resumed-tool', toolName: 'read_agent', arguments: {},
+    })].join('\n') + '\n');
+    await utimes(file, new Date(NOW - 60_000), new Date(NOW - 60_000));
+    const sessionStateRoot = join(dir, '.copilot', 'session-state');
+    expect(await updateSessionState(SID, { sessionStateRoot })).toBe(true);
+
+    registerCorePlugins();
+    const plugin = getPluginRegistry().getAll().find((item) => item.id === '@codemie/otlp');
+    expect(plugin).toBeDefined();
+    const interceptor = await plugin!.createInterceptor({ credentials } as PluginContext);
+    await (interceptor as unknown as { tick(): Promise<void> }).tick();
+
+    await vi.waitFor(async () => {
+      const records = await listHookRecords(SID);
+      expect(ofType(records, 'agent.session.end').map((row) => row['timestamp'])).toEqual([at(5_000)]);
+      expect(ofType(records, 'agent.session.summary').map((row) => [row['ended_at'], row['tool_calls']])).toEqual([[at(5_000), 3]]);
+      expect(ofType(records, 'agent.tool.start').map((row) => row['tool_use_id']).sort()).toEqual(['ra-1', 'ra-2']);
+    });
+    expect(readSessionState(SID).sessionStateRoot).toBe(sessionStateRoot);
+  });
+
   it('delivers one end, one final summary and each hook-less read_agent once, also after a failed send, a repeat tick and a late hook', async () => {
     await spoolHook(hook('agent.session.start', 0), hook('agent.tool.start', 1, { tool_name: 'view', tool_use_id: 'hooked-1' }));
     failFirst = 1;

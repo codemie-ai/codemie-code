@@ -2,14 +2,14 @@ import { realpathSync, statSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, relative, isAbsolute } from 'node:path';
-import { isSafeSessionId } from '../../../../../../agents/core/session-id.js';
-import { logger } from '../../../../../../utils/logger.js';
-import { sanitizeLogArgs } from '../../../../../../utils/security.js';
-import { getDefaultCopilotSessionStateRoot } from '../../../../../../agents/plugins/copilot-cli/copilot-cli.paths.js';
-import type { CopilotEvent } from '../../../../../../agents/plugins/copilot-cli/copilot-cli-event-types.js';
-import { buildDeferredUsageEvents, stableEventId, TEMPLATE_FIELDS, type DeferredUsageOptions } from '../../../../../../agents/plugins/copilot-cli-otlp/copilot-cli-otlp.usage.js';
-import { readTranscriptFromAsync } from '../../../../../../agents/plugins/copilot-cli-otlp/copilot-cli-otlp.transcript.js';
-import { deleteSessionStateFiles, readSessionState } from '../../../../../../agents/plugins/copilot-cli-otlp/copilot-cli-otlp.state.js';
+import { isSafeSessionId } from '@/agents/core/session-id.js';
+import { logger } from '@/utils/logger.js';
+import { sanitizeLogArgs } from '@/utils/security.js';
+import { getDefaultCopilotSessionStateRoot } from '@/agents/plugins/copilot-cli/copilot-cli.paths.js';
+import type { CopilotEvent } from '@/agents/plugins/copilot-cli/copilot-cli-event-types.js';
+import { buildDeferredUsageEvents, stableEventId, TEMPLATE_FIELDS, type DeferredUsageOptions } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.usage.js';
+import { readTranscriptFromAsync } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.transcript.js';
+import { deleteSessionStateFiles, readSessionState } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.state.js';
 import { appendSpool } from './spool-io.js';
 import { listHookRecords, readHookRecordsLocked } from './copilot-usage-spool.js';
 import type { OtlpHookLifecycle } from '../otlp.plugin.js';
@@ -148,16 +148,23 @@ export async function enrichSessionUsage(
     for (;;) {
       snapshot = await readEvents(sessionId, snapshot);
       const { events, truncated } = snapshot;
-      const shutdown = events.filter((e) => e.type === 'session.shutdown').pop();
-      const shutdownMs = shutdown?.timestamp ? Date.parse(shutdown.timestamp) : NaN;
-      // A resumed session can hold an older shutdown: only one after this sessionEnd counts.
-      if (shutdown && Number.isFinite(shutdownMs) && (!Number.isFinite(notBeforeMs) || shutdownMs >= notBeforeMs)) {
+      const shutdownIndex = Number.isFinite(notBeforeMs)
+        ? events.findIndex((event) => event.type === 'session.shutdown' && Date.parse(event.timestamp ?? '') >= notBeforeMs)
+        : events.reduce((last, event, index) =>
+          event.type === 'session.shutdown' && Number.isFinite(Date.parse(event.timestamp ?? '')) ? index : last, -1);
+      const shutdown = events[shutdownIndex];
+      if (shutdown?.timestamp) {
         const endedAt = shutdown.timestamp as string;
         if (await alreadyEnriched(sessionId, endedAt)) {
           return 'duplicate';
         }
-        await flushDeferredUsage(sessionId, template, events, { truncated });
-        deleteSessionStateFiles(sessionId);
+        await flushDeferredUsage(sessionId, template, events.slice(0, shutdownIndex + 1), { truncated });
+        const records = await listHookRecords(sessionId);
+        const resumed = records.some((record) => record['type'] === START_TYPE && timeOf(record) > Date.parse(endedAt))
+          || events.slice(shutdownIndex + 1).some((event) => event.type === 'session.start' || event.type === 'session.resume');
+        if (!resumed) {
+          deleteSessionStateFiles(sessionId);
+        }
         return 'enriched';
       }
       if (now() >= deadline) {
@@ -191,11 +198,6 @@ const inspected = new Map<string, string>();
 const timeOf = (record: Record<string, unknown>): number => Date.parse(String(record['timestamp'] ?? ''));
 /** The id a recovered end carries: deterministic per shutdown, and how the hook path recognises it. */
 const recoveredEndId = (sessionId: string, shutdownAt: string): string => stableEventId(SESSION_END_TYPE, sessionId, shutdownAt);
-
-/** An end of the run that started last (a resumed run starts again, so an earlier run's end does not count). */
-function endOfLastRun(records: Record<string, unknown>[], startMs: number): Record<string, unknown> | undefined {
-  return records.filter((r) => r['type'] === SESSION_END_TYPE && timeOf(r) >= startMs).pop();
-}
 
 /** The latest `agent.session.start` at or before `ms`: the run a timestamp belongs to (NaN when none). */
 function runStartAt(records: Record<string, unknown>[], ms: number): number {
@@ -248,16 +250,8 @@ export function lateSessionEndSkip(
 }
 
 /**
- * Copilot can abort `sessionEnd` on an interactive /exit, so no `agent.session.end` ever reaches the
- * spool and the enrichment above never starts, although `events.jsonl` records `session.shutdown`.
- * For each spooled Copilot session whose latest `agent.session.start` is followed by a settled
- * (`RECOVERY_SETTLE_MS`) transcript holding a shutdown at or after that start, the run is over:
- *  - no end after that start: append the end the hook never sent (identity fields copied from the session's
- *    own last record, so source attribution is kept), unless a real one lands first (checked under the
- *    spool lock), and schedule the normal enrichment;
- *  - an end but no final summary for that shutdown (enrichment failed, or the daemon restarted first):
- *    schedule the enrichment again. It is idempotent: stable event ids, summary keyed by `ended_at`.
- * Nothing is remembered before it has happened, so a failed append or enrichment is retried next tick.
+ * Recover each settled shutdown in the spool's run windows. A resumed transcript is cumulative:
+ * a historical shutdown uses only its prefix and must leave the active run's state intact.
  */
 export async function recoverMissingSessionEnds(
   sessionIds: readonly string[],
@@ -273,46 +267,55 @@ export async function recoverMissingSessionEnds(
       if (inspected.get(sessionId) === signature) continue;
 
       const records = await listHookRecords(sessionId);
-      const lastStart = records.filter((r) => r['type'] === START_TYPE).pop();
-      const startMs = lastStart ? timeOf(lastStart) : NaN;
-      const template = records[records.length - 1];
-      if (!lastStart || !template || !Number.isFinite(startMs) || !String(template['platform'] ?? '').startsWith('copilot')) {
-        continue;
+      const lastStart = runStartAt(records, Infinity);
+      const template = records.at(-1);
+      if (!template || !Number.isFinite(lastStart) || !String(template['platform'] ?? '').startsWith('copilot')) continue;
+      const newestFirst = [...records].reverse();
+
+      const { events, truncated } = await readEvents(sessionId);
+      const shutdowns = new Map<number, { timestamp: string; index: number }>();
+      for (const [index, event] of events.entries()) {
+        if (event.type !== 'session.shutdown' || !event.timestamp) continue;
+        const start = runStartAt(records, Date.parse(event.timestamp));
+        if (Number.isFinite(start)) shutdowns.set(start, { timestamp: event.timestamp, index });
       }
 
-      const { events } = await readEvents(sessionId);
-      const shutdown = events.filter((e) => e.type === 'session.shutdown').pop();
-      const endedMs = shutdown?.timestamp ? Date.parse(shutdown.timestamp) : NaN;
-      if (!shutdown?.timestamp || !Number.isFinite(endedMs) || endedMs < startMs) {
-        inspected.set(sessionId, signature); // no shutdown of this run: re-examined only when the file changes
-        continue;
-      }
+      inspected.set(sessionId, signature);
+      for (const [startMs, shutdown] of shutdowns) {
+        const existing = records.find((r) => r['type'] === SESSION_END_TYPE && runStartAt(records, timeOf(r)) === startMs);
+        if (existing && records.some((r) => r['type'] === SUMMARY_TYPE && r['is_final'] === true && r['ended_at'] === shutdown.timestamp)) continue;
 
-      const existing = endOfLastRun(records, startMs);
-      if (existing) {
-        // An end without a final summary is enriched; this signature is then done with until the file changes
-        // (a failed enrichment clears it). A truncated transcript never gets a summary, so it is not re-parsed every tick.
-        if (!(await alreadyEnriched(sessionId, shutdown.timestamp))) scheduleCopilotUsageEnrichment(COPILOT_CLI_OTLP_AGENT, [existing]);
-        inspected.set(sessionId, signature);
-        continue;
-      }
+        const endedMs = Date.parse(shutdown.timestamp);
+        const runTemplate = newestFirst.find((r) => timeOf(r) >= startMs && timeOf(r) <= endedMs) ?? template;
+        const end = existing ?? {
+          ...Object.fromEntries(TEMPLATE_FIELDS.filter((k) => runTemplate[k] !== undefined).map((k) => [k, runTemplate[k]])),
+          session_id: sessionId,
+          type: SESSION_END_TYPE,
+          timestamp: shutdown.timestamp,
+          event_id: recoveredEndId(sessionId, shutdown.timestamp),
+        };
+        if (!existing) {
+          const line = JSON.stringify({ agentName: COPILOT_CLI_OTLP_AGENT, hookEvent: JSON.stringify(end) }) + '\n';
+          const written = await appendSpool(sessionId, 'hooks', line, undefined, undefined, async () =>
+            runEndedOrSuperseded(await readHookRecordsLocked(sessionId), startMs, endedMs));
+          if (!written) {
+            inspected.delete(sessionId); // A newer start or an end won the race. Re-read the run windows next tick.
+            continue;
+          }
+        }
 
-      const end = {
-        ...Object.fromEntries(TEMPLATE_FIELDS.filter((k) => template[k] !== undefined).map((k) => [k, template[k]])),
-        session_id: sessionId,
-        type: SESSION_END_TYPE,
-        timestamp: shutdown.timestamp,
-        event_id: recoveredEndId(sessionId, shutdown.timestamp),
-      };
-      const line = JSON.stringify({ agentName: COPILOT_CLI_OTLP_AGENT, hookEvent: JSON.stringify(end) }) + '\n';
-      const written = await appendSpool(sessionId, 'hooks', line, undefined, undefined, async () =>
-        runEndedOrSuperseded(await readHookRecordsLocked(sessionId), startMs, endedMs));
-      // A real end that won the race is enriched by its own hook batch (or by the next tick).
-      if (written) {
-        scheduleCopilotUsageEnrichment(COPILOT_CLI_OTLP_AGENT, [end]);
-        inspected.set(sessionId, signature);
+        if (startMs === lastStart) {
+          scheduleCopilotUsageEnrichment(COPILOT_CLI_OTLP_AGENT, [end]);
+        } else {
+          scheduleEnrichment(sessionId, end, async () => {
+            if (await alreadyEnriched(sessionId, shutdown.timestamp)) return 'duplicate';
+            await flushDeferredUsage(sessionId, end, events.slice(0, shutdown.index + 1), { truncated });
+            return 'enriched';
+          });
+        }
       }
     } catch (err) {
+      inspected.delete(sessionId);
       logger.debug('[otlp-ingest] copilot session end recovery error', ...sanitizeLogArgs({ sessionId, err: err instanceof Error ? err.message : String(err) }));
     }
   }
@@ -326,21 +329,26 @@ export function scheduleCopilotUsageEnrichment(agentName: string, events: Record
     if (event['type'] !== SESSION_END_TYPE) continue;
     const sessionId = String(event['session_id'] ?? '');
     if (!isSafeSessionId(sessionId)) continue;
-    const key = `${sessionId}|${String(event['timestamp'] ?? '')}`;
-    if (scheduled.has(key)) continue;
-    scheduled.add(key);
-    void enrichSessionUsage(event)
-      .then((outcome) => {
-        // Only a finished enrichment is final; anything else may be retried by a later sessionEnd batch.
-        if (outcome !== 'enriched' && outcome !== 'duplicate') {
-          scheduled.delete(key);
-          inspected.delete(sessionId); // recovery looks again next tick
-        }
-        logger.debug('[otlp-ingest] copilot usage enrichment', ...sanitizeLogArgs({ sessionId, outcome }));
-      })
-      .catch(() => {
-        scheduled.delete(key);
-        inspected.delete(sessionId);
-      });
+    scheduleEnrichment(sessionId, event, () => enrichSessionUsage(event));
   }
+}
+
+function scheduleEnrichment(
+  sessionId: string,
+  event: Record<string, unknown>,
+  enrich: () => ReturnType<typeof enrichSessionUsage>
+): void {
+  const key = `${sessionId}|${String(event['timestamp'] ?? '')}`;
+  if (scheduled.has(key)) return;
+  scheduled.add(key);
+  const retry = () => {
+    scheduled.delete(key);
+    inspected.delete(sessionId);
+  };
+  void enrich()
+    .then((outcome) => {
+      if (outcome !== 'enriched' && outcome !== 'duplicate') retry();
+      logger.debug('[otlp-ingest] copilot usage enrichment', ...sanitizeLogArgs({ sessionId, outcome }));
+    })
+    .catch(retry);
 }
