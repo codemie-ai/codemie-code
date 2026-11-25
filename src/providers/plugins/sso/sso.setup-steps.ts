@@ -286,18 +286,24 @@ export const SSOSetupSteps: ProviderSetupSteps = {
 
       // Headless was chosen explicitly by the caller, so there is nothing to ask
       if (!headless) {
-        const { confirm } = await inquirer.prompt([
+        const { choice } = await inquirer.prompt([
           {
-            type: 'confirm',
-            name: 'confirm',
+            type: 'list',
+            name: 'choice',
             message: 'Re-authenticate now?',
-            default: true
+            choices: [
+              { name: 'Yes, open the browser', value: 'browser' },
+              { name: 'Yes, but paste the login result (no browser on this machine)', value: 'paste' },
+              { name: 'No', value: 'no' }
+            ],
+            default: 'browser'
           }
         ]);
 
-        if (!confirm) {
+        if (choice === 'no') {
           return false;
         }
+        headless = choice === 'paste';
       }
 
       // Run authentication
