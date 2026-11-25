@@ -114,8 +114,18 @@ vi.mock('../inspect-desktop.js', () => ({
   printDesktopInspection: vi.fn(),
 }));
 
-vi.mock('../../../../providers/plugins/sso/sso.auth.js', () => ({
-  CodeMieSSO: vi.fn(),
+// The SSO cookie record stored for each URL the resolver looks up; no JWT and no global record are stored.
+const storedCookies = vi.hoisted(() => vi.fn());
+vi.mock('../../../../utils/security.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../../utils/security.js')>()),
+  CredentialStore: {
+    getInstance: () => ({
+      retrieveSSOCredentials: async (url?: string) => (url === undefined ? null : storedCookies(url)),
+      retrieveJWTCredentials: async () => null,
+      clearSSOCredentials: async () => undefined,
+      clearJWTCredentials: async () => undefined,
+    }),
+  },
 }));
 
 vi.mock('../../../../cli/commands/skills/setup/sync.js', () => ({
@@ -324,7 +334,6 @@ describe('proxy connect --claude-desktop', () => {
   it('does not spawn the daemon when selected SSO profile has no stored credentials', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { ProviderRegistry } = await import('../../../../providers/index.js');
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { createProxyCommand } = await import('../index.js');
 
@@ -339,11 +348,7 @@ describe('proxy connect --claude-desktop', () => {
       name: 'ai-run-sso',
       authType: 'sso',
     } as ReturnType<typeof ProviderRegistry.getProvider>);
-    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-      return {
-        getStoredCredentials: vi.fn().mockResolvedValue(null),
-      };
-    } as unknown as typeof CodeMieSSO);
+    storedCookies.mockResolvedValue(null);
 
     const command = createProxyCommand();
     await expect(
@@ -362,7 +367,6 @@ describe('proxy connect --claude-desktop', () => {
   it('checks both credential URLs and suggests the selected profile URL when workspace URL differs', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { ProviderRegistry } = await import('../../../../providers/index.js');
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { createProxyCommand } = await import('../index.js');
 
@@ -377,10 +381,8 @@ describe('proxy connect --claude-desktop', () => {
       name: 'ai-run-sso',
       authType: 'sso',
     } as ReturnType<typeof ProviderRegistry.getProvider>);
-    const getStoredCredentials = vi.fn().mockResolvedValue(null);
-    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-      return { getStoredCredentials };
-    } as unknown as typeof CodeMieSSO);
+    const retrieveCookies = vi.fn().mockResolvedValue(null);
+    storedCookies.mockImplementation(retrieveCookies);
 
     const command = createProxyCommand();
     await expect(
@@ -391,17 +393,16 @@ describe('proxy connect --claude-desktop', () => {
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       '  Sign in first — run: codemie profile login --url https://codemie-preview.lab.epam.com'
     );
-    expect(getStoredCredentials).toHaveBeenNthCalledWith(
+    expect(retrieveCookies).toHaveBeenNthCalledWith(
       1,
       'https://codemie-preview.lab.epam.com/code-assistant-api'
     );
-    expect(getStoredCredentials).toHaveBeenNthCalledWith(2, 'https://codemie.lab.epam.com');
+    expect(retrieveCookies).toHaveBeenNthCalledWith(2, 'https://codemie.lab.epam.com');
   });
 
   it('suggests an explicit profile URL when CodeMie URL is unavailable', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { ProviderRegistry } = await import('../../../../providers/index.js');
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { createProxyCommand } = await import('../index.js');
 
@@ -415,9 +416,7 @@ describe('proxy connect --claude-desktop', () => {
       name: 'ai-run-sso',
       authType: 'sso',
     } as ReturnType<typeof ProviderRegistry.getProvider>);
-    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-      return { getStoredCredentials: vi.fn().mockResolvedValue(null) };
-    } as unknown as typeof CodeMieSSO);
+    storedCookies.mockResolvedValue(null);
 
     const command = createProxyCommand();
     await expect(
@@ -433,7 +432,6 @@ describe('proxy connect --claude-desktop', () => {
   it('prints Failed to verify credentials and exits 1 when the credential lookup throws', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { ProviderRegistry } = await import('../../../../providers/index.js');
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { createProxyCommand } = await import('../index.js');
 
@@ -448,9 +446,7 @@ describe('proxy connect --claude-desktop', () => {
       name: 'ai-run-sso',
       authType: 'sso',
     } as ReturnType<typeof ProviderRegistry.getProvider>);
-    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-      return { getStoredCredentials: vi.fn().mockRejectedValue(new Error('keychain locked')) };
-    } as unknown as typeof CodeMieSSO);
+    storedCookies.mockRejectedValue(new Error('keychain locked'));
 
     const command = createProxyCommand();
     await expect(
@@ -469,7 +465,6 @@ describe('proxy connect --claude-desktop', () => {
   it('calls syncRegisteredSkills and syncPluginSkills when starting the daemon', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { ProviderRegistry } = await import('../../../../providers/index.js');
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { syncRegisteredSkills } = await import('../../../../cli/commands/skills/setup/sync.js');
     const { syncPluginSkills } = await import('../../../../cli/commands/skills/setup/sync-plugin.js');
@@ -487,9 +482,7 @@ describe('proxy connect --claude-desktop', () => {
       name: 'ai-run-sso',
       authType: 'sso',
     } as ReturnType<typeof ProviderRegistry.getProvider>);
-    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
-    } as unknown as typeof CodeMieSSO);
+    storedCookies.mockResolvedValue({ cookies: { session: 'tok' } });
     vi.mocked(spawnDaemon).mockResolvedValue({
       url: 'http://localhost:4001',
       profile: 'test-profile',
@@ -510,7 +503,6 @@ describe('proxy connect --claude-desktop', () => {
   it('warns that a managed settings source overrides the config it just wrote', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { ProviderRegistry } = await import('../../../../providers/index.js');
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { writeDesktopConfig, describeManagedSettingsOverride } = await import('../connectors/desktop.js');
     const { createProxyCommand } = await import('../index.js');
@@ -526,9 +518,7 @@ describe('proxy connect --claude-desktop', () => {
       name: 'ai-run-sso',
       authType: 'sso',
     } as ReturnType<typeof ProviderRegistry.getProvider>);
-    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
-    } as unknown as typeof CodeMieSSO);
+    storedCookies.mockResolvedValue({ cookies: { session: 'tok' } });
     vi.mocked(spawnDaemon).mockResolvedValue({
       url: 'http://localhost:4001',
       profile: 'test-profile',
@@ -554,7 +544,6 @@ describe('proxy connect --claude-desktop', () => {
   it('stays silent about managed settings when no managed source is present', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { ProviderRegistry } = await import('../../../../providers/index.js');
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { writeDesktopConfig, describeManagedSettingsOverride } = await import('../connectors/desktop.js');
     const { createProxyCommand } = await import('../index.js');
@@ -570,9 +559,7 @@ describe('proxy connect --claude-desktop', () => {
       name: 'ai-run-sso',
       authType: 'sso',
     } as ReturnType<typeof ProviderRegistry.getProvider>);
-    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
-    } as unknown as typeof CodeMieSSO);
+    storedCookies.mockResolvedValue({ cookies: { session: 'tok' } });
     vi.mocked(spawnDaemon).mockResolvedValue({
       url: 'http://localhost:4001',
       profile: 'test-profile',
@@ -594,7 +581,6 @@ describe('proxy connect --claude-desktop', () => {
   it('uses the effective active profile when --profile is omitted', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { ProviderRegistry } = await import('../../../../providers/index.js');
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { writeDesktopConfig } = await import('../connectors/desktop.js');
     const { createProxyCommand } = await import('../index.js');
@@ -610,9 +596,7 @@ describe('proxy connect --claude-desktop', () => {
       name: 'ai-run-sso',
       authType: 'sso',
     } as ReturnType<typeof ProviderRegistry.getProvider>);
-    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
-    } as unknown as typeof CodeMieSSO);
+    storedCookies.mockResolvedValue({ cookies: { session: 'tok' } });
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
     vi.mocked(spawnDaemon).mockResolvedValue({
       url: 'http://localhost:4001',
@@ -671,7 +655,6 @@ describe('proxy start', () => {
     ['model m1', 'm1', 'm1'],
   ])('starts a daemon with the profile\'s model, given a config with %s', async (_label, configModel, expectedModel) => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { createProxyCommand } = await import('../index.js');
 
@@ -684,9 +667,7 @@ describe('proxy start', () => {
       codeMieProject: 'team-project',
       model: configModel,
     } as Awaited<ReturnType<typeof ConfigLoader.load>>);
-    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
-    } as unknown as typeof CodeMieSSO);
+    storedCookies.mockResolvedValue({ cookies: { session: 'tok' } });
     vi.mocked(spawnDaemon).mockResolvedValue({
       url: 'http://127.0.0.1:4001',
       profile: 'default',
@@ -713,7 +694,6 @@ describe('proxy start', () => {
 
   it('loads the config by the active profile\'s name when no --profile is given', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { createProxyCommand } = await import('../index.js');
 
@@ -724,9 +704,7 @@ describe('proxy start', () => {
       provider: 'ai-run-sso',
       baseUrl: 'https://example.com/api',
     } as Awaited<ReturnType<typeof ConfigLoader.load>>);
-    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
-    } as unknown as typeof CodeMieSSO);
+    storedCookies.mockResolvedValue({ cookies: { session: 'tok' } });
     vi.mocked(spawnDaemon).mockResolvedValue({
       url: 'http://127.0.0.1:4001',
       profile: 'work',
@@ -742,7 +720,6 @@ describe('proxy start', () => {
 
   it('starts a daemon a later connect of the same profile reuses', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { buildRequestedConfig, daemonMatchesRequest } = await import('../connect-orchestrator.js');
     const { createProxyCommand } = await import('../index.js');
@@ -756,9 +733,7 @@ describe('proxy start', () => {
     } as Awaited<ReturnType<typeof ConfigLoader.load>>;
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
     vi.mocked(ConfigLoader.load).mockResolvedValue(config);
-    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
-    } as unknown as typeof CodeMieSSO);
+    storedCookies.mockResolvedValue({ cookies: { session: 'tok' } });
     vi.mocked(spawnDaemon).mockResolvedValue({
       url: 'http://127.0.0.1:4001',
       profile: 'p',
@@ -776,7 +751,6 @@ describe('proxy start', () => {
 
   it('keeps explicit profile selection', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { createProxyCommand } = await import('../index.js');
 
@@ -786,9 +760,7 @@ describe('proxy start', () => {
       provider: 'ai-run-sso',
       baseUrl: 'https://custom.example.com/api',
     } as Awaited<ReturnType<typeof ConfigLoader.load>>);
-    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
-    } as unknown as typeof CodeMieSSO);
+    storedCookies.mockResolvedValue({ cookies: { session: 'tok' } });
     vi.mocked(spawnDaemon).mockResolvedValue({
       url: 'http://127.0.0.1:4001',
       profile: 'custom',
@@ -805,7 +777,6 @@ describe('proxy start', () => {
 
   it('starts with no identity on Desktop\'s gateway port while Claude Desktop is connected and nothing else names a port', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { readDesktopGateway } = await import('../connectors/desktop.js');
     const { createProxyCommand } = await import('../index.js');
@@ -817,9 +788,7 @@ describe('proxy start', () => {
       provider: 'ai-run-sso',
       baseUrl: 'https://example.com/api',
     } as Awaited<ReturnType<typeof ConfigLoader.load>>);
-    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
-    } as unknown as typeof CodeMieSSO);
+    storedCookies.mockResolvedValue({ cookies: { session: 'tok' } });
     vi.mocked(spawnDaemon).mockResolvedValue({
       url: 'http://127.0.0.1:4005',
       profile: 'default',
@@ -839,7 +808,6 @@ describe('proxy start', () => {
 
   it('names a running daemon of another profile as a conflict without its client, and stops or spawns nothing', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
     const { readDesktopGateway } = await import('../connectors/desktop.js');
     const { createProxyCommand } = await import('../index.js');
@@ -865,9 +833,7 @@ describe('proxy start', () => {
       provider: 'ai-run-sso',
       baseUrl: 'https://example.com/api',
     } as Awaited<ReturnType<typeof ConfigLoader.load>>);
-    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
-    } as unknown as typeof CodeMieSSO);
+    storedCookies.mockResolvedValue({ cookies: { session: 'tok' } });
 
     await expect(createProxyCommand().parseAsync(['start'], { from: 'user' })).rejects.toThrow('process.exit:1');
 
@@ -885,7 +851,6 @@ describe('proxy start', () => {
 
   it('names a running daemon of the same settings on another port than the record\'s as a conflict, and stops or spawns nothing', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const { checkStatus, readConnectionRecord, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
     const { createProxyCommand } = await import('../index.js');
 
@@ -911,9 +876,7 @@ describe('proxy start', () => {
       baseUrl: 'https://example.com/api',
       codeMieProject: 'proj',
     } as Awaited<ReturnType<typeof ConfigLoader.load>>);
-    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
-    } as unknown as typeof CodeMieSSO);
+    storedCookies.mockResolvedValue({ cookies: { session: 'tok' } });
 
     await expect(createProxyCommand().parseAsync(['start'], { from: 'user' })).rejects.toThrow('process.exit:1');
 
@@ -936,10 +899,9 @@ describe('proxy start', () => {
     ['no CodeMie URL', undefined],
   ])('suggests explicit login for proxy start with %s', async (_description, codeMieUrl) => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { createProxyCommand } = await import('../index.js');
-    const getStoredCredentials = vi.fn().mockResolvedValue(null);
+    const retrieveCookies = vi.fn().mockResolvedValue(null);
 
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
     vi.mocked(ConfigLoader.load).mockResolvedValue({
@@ -948,9 +910,7 @@ describe('proxy start', () => {
       baseUrl: 'https://custom.example.com/code-assistant-api',
       codeMieUrl,
     } as Awaited<ReturnType<typeof ConfigLoader.load>>);
-    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-      return { getStoredCredentials };
-    } as unknown as typeof CodeMieSSO);
+    storedCookies.mockImplementation(retrieveCookies);
 
     await expect(
       createProxyCommand().parseAsync(['start', '--profile', 'custom'], { from: 'user' })
@@ -965,7 +925,6 @@ describe('proxy start', () => {
   /** The SSO-backed profile `p` of the start-path table: project A, model m1, its URLs. */
   async function arrangeProfileP(overrides: Record<string, unknown> = {}) {
     const { ConfigLoader } = await import('../../../../utils/config.js');
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     vi.mocked(ConfigLoader.load).mockResolvedValue({
       name: 'p', provider: 'ai-run-sso', baseUrl: 'https://t', codeMieProject: 'A', model: 'm1',
       ssoConfig: { apiUrl: 'https://s' }, codeMieUrl: 'https://c', ...overrides,
@@ -973,9 +932,7 @@ describe('proxy start', () => {
     vi.mocked(ConfigLoader.resolveProfileIdentity).mockResolvedValue(
       { state: 'own', profileName: 'p', shared: {}, identity: {} } as unknown as Awaited<ReturnType<typeof ConfigLoader.resolveProfileIdentity>>
     );
-    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
-    } as unknown as typeof CodeMieSSO);
+    storedCookies.mockResolvedValue({ cookies: { session: 'tok' } });
     return ConfigLoader;
   }
 
@@ -1137,7 +1094,6 @@ describe('proxy start', () => {
 
     const setupStart = async (record: typeof validRecord | null) => {
       const { ConfigLoader } = await import('../../../../utils/config.js');
-      const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
       const daemon = await import('../daemon-manager.js');
       const { createProxyCommand } = await import('../index.js');
 
@@ -1148,9 +1104,7 @@ describe('proxy start', () => {
         provider: 'ai-run-sso',
         baseUrl: 'https://example.com/api',
       }) as Awaited<ReturnType<typeof ConfigLoader.load>>);
-      vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-        return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
-      } as unknown as typeof CodeMieSSO);
+      storedCookies.mockResolvedValue({ cookies: { session: 'tok' } });
       vi.mocked(daemon.spawnDaemon).mockImplementation(async opts => ({
         url: 'http://127.0.0.1:4001',
         profile: opts.profile,
@@ -1474,15 +1428,12 @@ describe('proxy connect --vscode', () => {
     });
 
     const { ProviderRegistry } = await import('../../../../providers/index.js');
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const { writeVsCodeLanguageModelsConfig } = await import('../connectors/vscode.js');
     vi.mocked(ProviderRegistry.getProvider).mockReturnValue({
       name: 'ai-run-sso',
       authType: 'sso',
     } as ReturnType<typeof ProviderRegistry.getProvider>);
-    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
-    } as unknown as typeof CodeMieSSO);
+    storedCookies.mockResolvedValue({ cookies: { session: 'tok' } });
     vi.mocked(writeVsCodeLanguageModelsConfig).mockResolvedValue({
       configPath: '/mock/chatLanguageModels.json',
       requiresSecretConfiguration: false,
@@ -2546,7 +2497,6 @@ describe('proxy restart', () => {
     resolvedBinding = 'own'
   ) => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const daemon = await import('../daemon-manager.js');
     const { createProxyCommand } = await import('../index.js');
 
@@ -2570,9 +2520,7 @@ describe('proxy restart', () => {
       profileName: name ?? configName,
       shared: {},
     }) as unknown as Awaited<ReturnType<typeof ConfigLoader.resolveProfileIdentity>>);
-    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
-    } as unknown as typeof CodeMieSSO);
+    storedCookies.mockResolvedValue({ cookies: { session: 'tok' } });
     vi.mocked(daemon.spawnDaemon).mockImplementation(async opts => ({
       pid: 5151,
       url: `http://127.0.0.1:${spawnedPort}`,
@@ -2692,10 +2640,7 @@ describe('proxy restart', () => {
 
   it('leaves the running daemon untouched when SSO credentials are missing', async () => {
     const { daemon, command } = await setup({ running: true, state: runningState });
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-      return { getStoredCredentials: vi.fn().mockResolvedValue(null) };
-    } as unknown as typeof CodeMieSSO);
+    storedCookies.mockResolvedValue(null);
 
     await expect(command.parseAsync(['restart'], { from: 'user' })).rejects.toThrow('process.exit:1');
 

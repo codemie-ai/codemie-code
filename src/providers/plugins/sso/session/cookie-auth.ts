@@ -1,9 +1,10 @@
 /**
- * Cookie auth for analytics/session sync: the Cookie header read once from the
+ * Auth value for analytics/session sync: the Cookie header (or bare token) read once from the
  * credential store, plus a check whether a later sign-in replaced what was sent.
  */
 
 import { logger } from '@/utils/logger.js';
+import type { CookieSSOAuth, SSOAuth } from '../auth/types.js';
 
 export const STORE_READ_DEADLINE_MS = 3000;
 
@@ -14,10 +15,10 @@ export const STORE_READ_DEADLINE_MS = 3000;
 export const PROXY_STORE_READ_DEADLINE_MS = 10_000;
 
 /**
- * Answers whether the Cookie header a request was sent with has since been
- * replaced by a newer sign-in. Resolves false whenever that cannot be told.
+ * Answers whether the credential a request was sent with (a Cookie header or a bare token) has
+ * since been replaced by a newer sign-in. Resolves false whenever that cannot be told.
  */
-export type CredentialsSupersededCheck = (sentCookies: string) => Promise<boolean>;
+export type CredentialsSupersededCheck = (sentAuthValue: string) => Promise<boolean>;
 
 /**
  * The Cookie header read from the credential store plus the check for whether a later sign-in
@@ -30,52 +31,12 @@ export interface CookieAuth {
   readTimedOut?: boolean;
 }
 
-interface CookieSet {
-  cookies: Record<string, string>;
+/** Anything that can re-read the credential the store holds now (a refresher, or a guarded read). */
+export interface AuthSource {
+  refreshNow(): Promise<SSOAuth | null>;
 }
 
-interface CookieSource {
-  refreshNow(): Promise<CookieSet | null>;
-}
-
-function hasInvalidHeaderChars(value: string): boolean {
-  // RFC 7230 field-vchar / obs-text; control characters other than HTAB are rejected.
-  for (let i = 0; i < value.length; i++) {
-    const code = value.charCodeAt(i);
-    if ((code <= 0x1f && code !== 0x09) || code === 0x7f) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Joins cookies into a Cookie header value. Entries with an empty name or
- * control characters in the name or value are skipped; yields an empty string
- * when no usable cookie remains.
- */
-export function buildCookieHeader(cookies: Record<string, string>): string {
-  const pairs: string[] = [];
-  for (const [key, value] of Object.entries(cookies)) {
-    const name = String(key).trim();
-    const val = String(value);
-    if (!name || hasInvalidHeaderChars(name) || hasInvalidHeaderChars(val)) {
-      continue;
-    }
-    pairs.push(`${name}=${val}`);
-  }
-  return pairs.join('; ');
-}
-
-/**
- * Names of the entries buildCookieHeader leaves out (an empty name shows as `<empty>`).
- * Names only: the values are credentials.
- */
-export function droppedCookieKeys(cookies: Record<string, string>): string[] {
-  return Object.entries(cookies)
-    .filter(([key, value]) => buildCookieHeader({ [key]: value }) === '')
-    .map(([key]) => String(key).trim() || '<empty>');
-}
+export { buildCookieHeader, hasUsableCookies, droppedCookieKeys } from '../auth/selection.js';
 
 /**
  * Debug-logs a failure by message only, run through the log sanitizer. The sanitizer is loaded on
@@ -132,16 +93,16 @@ export function readWithDeadline<T>(
 }
 
 /**
- * The Cookie header the store now holds when it differs from the one that was
- * sent, otherwise null. Assumes the store changes only at sign-in, so a
- * difference means a newer login replaced the credentials the request used.
- * Anything unreadable, empty or unknown yields null.
+ * The auth value (Cookie header or bare token) the store now holds when it differs from the one
+ * that was sent, otherwise null. Assumes the store changes only at sign-in, so a difference means
+ * a newer login replaced the credentials the request used. Anything unreadable, empty or unknown
+ * yields null.
  */
-export async function supersedingCookieHeader(
-  sentCookieHeader: string | undefined,
-  source?: CookieSource
+export async function supersedingAuthValue(
+  sent: string | undefined,
+  source?: AuthSource
 ): Promise<string | null> {
-  if (!source || !sentCookieHeader) {
+  if (!source || !sent) {
     return null;
   }
   try {
@@ -149,8 +110,7 @@ export async function supersedingCookieHeader(
     if (!fresh) {
       return null;
     }
-    const freshHeader = buildCookieHeader(fresh.cookies);
-    return freshHeader !== '' && freshHeader !== sentCookieHeader ? freshHeader : null;
+    return fresh.authValue !== '' && fresh.authValue !== sent ? fresh.authValue : null;
   } catch (error) {
     await logFailure('[cookie-auth] supersede check failed', error);
     return null;
@@ -158,64 +118,29 @@ export async function supersedingCookieHeader(
 }
 
 /**
- * True only when the store now holds usable credentials that differ from the
- * header that was sent. Anything unreadable or unknown is "not superseded".
+ * True only when the store now holds usable credentials that differ from the value that was
+ * sent. Anything unreadable or unknown is "not superseded".
  */
 export async function sentCredentialsSuperseded(
-  sentCookieHeader: string | undefined,
-  source?: CookieSource
+  sent: string | undefined,
+  source?: AuthSource
 ): Promise<boolean> {
-  return (await supersedingCookieHeader(sentCookieHeader, source)) !== null;
+  return (await supersedingAuthValue(sent, source)) !== null;
 }
 
 /**
- * Reads the stored credentials once and returns the Cookie header built from
- * them (empty string when the read throws, finds nothing or exceeds the deadline),
- * together with a check for whether a later sign-in superseded the header that was sent.
- * `readTimedOut` is set when the first read was cut off by the deadline, so a slow store is not
- * reported as an empty one. Long-lived callers that can afford to wait pass a longer `deadlineMs`.
+ * The Cookie header of a cookie login, together with a check for whether a later sign-in
+ * superseded the header that was sent. `readTimedOut` is passed through from the read that
+ * produced `first`, so a slow store is not reported as an empty one.
  */
-export async function readCookieAuth(
-  read: () => Promise<CookieSet | null>,
-  opts: { deadlineMs?: number } = {}
+export async function buildCookieAuth(
+  first: CookieSSOAuth,
+  source: AuthSource,
+  readTimedOut: boolean
 ): Promise<Required<CookieAuth>> {
-  let timedOut = false;
-  const guardedRead = readWithDeadline(read, opts.deadlineMs, () => {
-    timedOut = true;
-  });
-  const first = await guardedRead();
-  const readTimedOut = timedOut;
-  const source: CookieSource = { refreshNow: guardedRead };
-
-  let cookies = '';
-  try {
-    cookies = first ? buildCookieHeader(first.cookies) : '';
-  } catch (error) {
-    await logFailure('[cookie-auth] stored credentials are malformed', error);
-  }
-
   return {
-    cookies,
+    cookies: first.authValue,
     readTimedOut,
     credentialsSuperseded: (sentCookies: string) => sentCredentialsSuperseded(sentCookies, source),
   };
-}
-
-type AnalyticsEnv = NodeJS.ProcessEnv;
-type AnalyticsOverrides = { provider?: string; baseUrl?: string };
-
-/**
- * readCookieAuth over the analytics credentials stored for the given SSO URL;
- * the cookies are an empty string when none are stored or the read fails.
- */
-export async function readAnalyticsCookieAuth(
-  ssoUrl: string | undefined,
-  env: AnalyticsEnv = process.env,
-  overrides: AnalyticsOverrides = {}
-): Promise<Required<CookieAuth>> {
-  return readCookieAuth(async () => {
-    const { getStoredAnalyticsCredentials } = await import('@/providers/core/codemie-auth-helpers.js');
-    const found = await getStoredAnalyticsCredentials(ssoUrl, env, overrides);
-    return found?.credentials ?? null;
-  });
 }

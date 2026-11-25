@@ -425,6 +425,12 @@ export interface SSOAuthResult {
   success: boolean;
   apiUrl?: string;
   cookies?: Record<string, string>;
+  /**
+   * JWT bearer token, extracted from the callback payload's `authorization` field (with any
+   * `Bearer ` prefix stripped). Used when a reverse proxy in front of the backend strips cookies
+   * entirely (`cookies` then arrives absent or empty).
+   */
+  jwt?: string;
   error?: string;
 }
 
@@ -453,6 +459,10 @@ export interface SSOCredentials {
   cookies: Record<string, string>;
   apiUrl: string;
   expiresAt?: number;
+  /** Marks the record as a cookie login. Absent on records written before 2026-11. */
+  authType?: 'cookie';
+  /** When the record was stored (epoch ms); decides which login is newest. Absent on records written before 2026-11. */
+  storedAt?: number;
   /**
    * Signed-in email, attached at runtime by `withVerifiedOwner` (credential-owner.ts) for these exact
    * cookies. Not part of the stored login; absent until established.
@@ -467,26 +477,16 @@ export interface JWTCredentials {
   token: string;
   apiUrl: string;
   expiresAt?: number;
+  /** Marks the record as a JWT login. Absent on records written before 2026-11. */
+  authType?: 'jwt';
+  /** When the record was stored (epoch ms); decides which login is newest. Absent on records written before 2026-11. */
+  storedAt?: number;
 }
 
 /**
  * Unified authentication credentials
  */
 export type AuthCredentials = SSOCredentials | JWTCredentials;
-
-/**
- * Type guard for JWT credentials
- */
-export function isJWTCredentials(creds: AuthCredentials): creds is JWTCredentials {
-  return 'token' in creds && !('cookies' in creds);
-}
-
-/**
- * Type guard for SSO credentials
- */
-export function isSSOCredentials(creds: AuthCredentials): creds is SSOCredentials {
-  return 'cookies' in creds && !('token' in creds);
-}
 
 /**
  * CodeMie integration metadata

@@ -24,11 +24,11 @@ import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { logger } from '../../../../../utils/logger.js';
 import type { ProcessingContext } from '../../session/BaseProcessor.js';
 import { SessionSyncer } from '../../session/SessionSyncer.js';
-import type { SSOCredentials } from '../../../../core/types.js';
 import { ConfigurationError } from '../../../../../utils/errors.js';
 import type { ProxyConfig } from '../proxy-types.js';
 import { CredentialRefresher } from './credential-refresh.js';
-import { buildCookieHeader, droppedCookieKeys, sentCredentialsSuperseded } from '../../session/cookie-auth.js';
+import { sentCredentialsSuperseded } from '../../session/cookie-auth.js';
+import { describeAuthForLog, toProcessingAuthFields, type SSOAuth } from '../../auth/index.js';
 import { attemptOutcome } from '../../session/bounded-request.js';
 import { readFile } from 'fs/promises';
 import { SessionStore } from '@/agents/core/session/SessionStore.js';
@@ -51,9 +51,10 @@ export class SSOSessionSyncPlugin implements ProxyPlugin {
       throw new ConfigurationError('Session ID not available (session sync disabled)');
     }
 
-    // Guard: skip if credentials are JWT (not SSO)
-    if (!syncCredentials || !('cookies' in syncCredentials)) {
-      logger.debug('[SSOSessionSyncPlugin] Skipping: Not SSO credentials');
+    // Guard: skip only when there's no credential at all; cookie and JWT credentials are both
+    // handled below.
+    if (!syncCredentials) {
+      logger.debug('[SSOSessionSyncPlugin] Skipping: No credentials available');
       throw new ConfigurationError('SSO credentials not available (session sync disabled)');
     }
 
@@ -69,7 +70,7 @@ export class SSOSessionSyncPlugin implements ProxyPlugin {
       throw new ConfigurationError('Session sync disabled by configuration');
     }
 
-    // Built in sso.proxy.ts from whichever of syncCredentials/credentials has cookies — the
+    // Built in sso.proxy.ts from whichever of syncCredentials/credentials is set — the
     // guard above already confirmed one of them does, so this is always set.
     if (!context.syncCredentialRefresher) {
       logger.debug('[SSOSessionSyncPlugin] Skipping: sync credential refresher not available');
@@ -149,7 +150,7 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     private sessionId: string,
     private explicitSyncApiUrl: string | undefined,
     private proxyConfig: ProxyConfig,
-    private readonly credentials: CredentialRefresher<SSOCredentials>,
+    private readonly credentials: CredentialRefresher,
     clientType: string,
     version: string = '0.0.0',
     dryRun: boolean = false
@@ -169,15 +170,13 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
       logger.info(`[sso-session-sync] Local development mode: using ${devApiUrl} with user-id header`);
     }
 
-    // Build cookie header from the daemon-startup snapshot (only if not in local dev mode) —
+    // Build cookie/JWT auth from the daemon-startup snapshot (only if not in local dev mode) —
     // refreshed before every sync tick in syncSessions(), so a successful browser re-login
     // reaches this periodic sync too, not just the LLM-request path (PR #655 review, blocking).
-    const cookieHeader = this.isLocalDev ? '' : this.buildSyncCookieHeader(credentials.get().cookies);
-
     // Create processing context (shared by SessionSyncer)
     this.context = {
       apiBaseUrl: this.isLocalDev ? devApiUrl! : this.resolveSyncApiBaseUrl(),
-      cookies: cookieHeader,
+      cookies: '',
       apiKey: this.isLocalDev ? devApiKey : undefined,
       credentialsSuperseded: this.isLocalDev
         ? undefined
@@ -186,6 +185,9 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
       version,
       dryRun
     };
+    if (!this.isLocalDev) {
+      this.applyAuth(credentials.get());
+    }
 
     // Initialize SessionSyncer
     this.syncer = new SessionSyncer();
@@ -263,7 +265,7 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
       // completed between ticks is picked up here too, instead of this periodic sync forever
       // posting the stale startup-time cookie header (PR #655 review, blocking).
       if (!this.isLocalDev) {
-        this.context.cookies = this.buildSyncCookieHeader((await this.credentials.refresh()).cookies);
+        this.applyAuth(await this.credentials.refresh());
       }
 
       // Each run owns its controller: its outcomes are read from this signal alone
@@ -307,15 +309,20 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     }
   }
 
-  private buildSyncCookieHeader(cookies: Record<string, string>): string {
-    const dropped = droppedCookieKeys(cookies);
-    if (dropped.length > 0) {
+  /**
+   * Puts the credential's `cookies` / `jwtToken` pair on the processing context (the other one
+   * cleared), logging the names of cookie entries the Cookie header leaves out.
+   */
+  private applyAuth(auth: SSOAuth): void {
+    const dropped = describeAuthForLog(auth).droppedCookieNames;
+    if (dropped && dropped.length > 0) {
       logger.debug(`[${this.name}] Ignoring invalid cookie entries`, {
         invalidCookieCount: dropped.length,
         invalidCookieNames: dropped,
       });
     }
-    return buildCookieHeader(cookies);
+    this.context.jwtToken = undefined;
+    Object.assign(this.context, toProcessingAuthFields(auth));
   }
 
   private resolveSyncApiBaseUrl(): string {

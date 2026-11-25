@@ -1,11 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const getStoredCredentials = vi.fn();
+// The cookie login stored for a URL (the resolver's per-URL read). Global-slot reads (no URL)
+// find nothing, so the mock's call log lists exactly the URLs the gate looked up.
+const getStoredCredentials = vi.hoisted(() => vi.fn());
+const getStoredJwt = vi.hoisted(() => vi.fn(async (_url?: string): Promise<unknown> => null));
 
-vi.mock('@/providers/plugins/sso/sso.auth.js', () => ({
-  CodeMieSSO: vi.fn(function () {
-    return { getStoredCredentials };
-  }),
+vi.mock('@/utils/security.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/security.js')>()),
+  CredentialStore: {
+    getInstance: () => ({
+      retrieveSSOCredentials: async (url?: string): Promise<unknown> =>
+        url === undefined ? null : ((await getStoredCredentials(url)) ?? null),
+      retrieveJWTCredentials: async (url?: string): Promise<unknown> =>
+        url === undefined ? null : ((await getStoredJwt(url)) ?? null),
+      clearSSOCredentials: vi.fn(),
+      clearJWTCredentials: vi.fn(),
+    }),
+  },
 }));
 vi.mock('@/utils/analytics-auth-status.js', () => ({
   getAnalyticsAuthStatus: vi.fn(),
@@ -39,6 +50,7 @@ const PREVIEW = 'https://preview.example.com';
 describe('ensureCodeMieSsoAuth', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    getStoredJwt.mockReset();
     vi.mocked(getAnalyticsAuthStatus).mockResolvedValue(null);
     vi.mocked(startDetachedSsoLogin).mockResolvedValue('started');
     vi.mocked(getLastSignInAt).mockResolvedValue(null);
@@ -46,6 +58,15 @@ describe('ensureCodeMieSsoAuth', () => {
 
   it('passes with valid credentials and no auth-status marker', async () => {
     getStoredCredentials.mockResolvedValue({ cookies: { a: 'b' } });
+
+    expect(await ensureCodeMieSsoAuth(configured)).toEqual({ ok: true });
+    expect(startDetachedSsoLogin).not.toHaveBeenCalled();
+  });
+
+  // Deliberate behaviour change: a stored JWT login (no cookies) now counts as valid auth.
+  it('passes with a stored JWT login and no cookies', async () => {
+    getStoredCredentials.mockResolvedValue(null);
+    getStoredJwt.mockResolvedValue({ token: 'jwt-tok', apiUrl: 'https://codemie.example.com/code-assistant-api' });
 
     expect(await ensureCodeMieSsoAuth(configured)).toEqual({ ok: true });
     expect(startDetachedSsoLogin).not.toHaveBeenCalled();
@@ -333,6 +354,7 @@ describe('ensureCodeMieSsoAuth', () => {
 describe('ensureCodeMieSsoAuthOrWait', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    getStoredJwt.mockReset();
     vi.mocked(getAnalyticsAuthStatus).mockResolvedValue(null);
     vi.mocked(startDetachedSsoLogin).mockResolvedValue('started');
     vi.mocked(waitForDetachedSsoLogin).mockResolvedValue({ status: 'succeeded' });

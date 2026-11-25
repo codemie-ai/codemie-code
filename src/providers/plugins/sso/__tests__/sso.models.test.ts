@@ -11,22 +11,15 @@
  *   - letting real API/network errors propagate instead of catching them
  *     into `[]`.
  *
- * `getStoredCredentials` is still exercised for the fallback path (no cookies
- * supplied, e.g. `codemie models list`), where a genuine "no credentials yet"
- * result must still resolve to `[]`.
+ * The stored-credential resolver is still exercised for the fallback path (no
+ * login supplied, e.g. `codemie models list`), where a genuine "no credentials
+ * yet" result must still resolve to `[]`.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { CodeMieConfigOptions } from '../../../../env/types.js';
 
-const getStoredCredentialsMock = vi.hoisted(() => vi.fn());
 const fetchCodeMieLlmModelsMock = vi.hoisted(() => vi.fn());
-
-vi.mock('../sso.auth.js', () => ({
-  CodeMieSSO: class {
-    getStoredCredentials = getStoredCredentialsMock;
-  },
-}));
 
 vi.mock('../sso.http-client.js', () => ({
   fetchCodeMieLlmModels: fetchCodeMieLlmModelsMock,
@@ -34,7 +27,35 @@ vi.mock('../sso.http-client.js', () => ({
   CODEMIE_ENDPOINTS: { USER_SETTINGS: '/v1/settings/user' },
 }));
 
+// In-memory credential store: the resolver reads the cookie slot and the jwt- slot per URL, and
+// the global slot (no URL) when a URL has none.
+const { ssoByUrl, jwtByUrl, mockRetrieveSSOCredentials, mockRetrieveJWTCredentials } = vi.hoisted(() => {
+  const ssoByUrl = new Map<string | undefined, unknown>();
+  const jwtByUrl = new Map<string | undefined, unknown>();
+  return {
+    ssoByUrl,
+    jwtByUrl,
+    mockRetrieveSSOCredentials: vi.fn(async (url?: string): Promise<unknown> => ssoByUrl.get(url) ?? null),
+    mockRetrieveJWTCredentials: vi.fn(async (url?: string): Promise<unknown> => jwtByUrl.get(url) ?? null),
+  };
+});
+vi.mock('../../../../utils/security.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../../utils/security.js')>()),
+  CredentialStore: {
+    getInstance: () => ({
+      retrieveSSOCredentials: mockRetrieveSSOCredentials,
+      retrieveJWTCredentials: mockRetrieveJWTCredentials,
+      clearSSOCredentials: vi.fn(),
+      clearJWTCredentials: vi.fn(),
+    }),
+  },
+}));
+
 import { SSOModelProxy } from '../sso.models.js';
+import { toSSOAuth } from '../auth/selection.js';
+
+/** URLs the cookie slot was read for, global-slot reads left out. */
+const ssoReadUrls = (): unknown[] => mockRetrieveSSOCredentials.mock.calls.map((c) => c[0]).filter((u) => u !== undefined);
 
 function cfg(fields: Partial<CodeMieConfigOptions> = {}): CodeMieConfigOptions {
   return {
@@ -48,8 +69,36 @@ function cfg(fields: Partial<CodeMieConfigOptions> = {}): CodeMieConfigOptions {
 
 describe('SSOModelProxy.fetchModels', () => {
   beforeEach(() => {
-    getStoredCredentialsMock.mockReset();
     fetchCodeMieLlmModelsMock.mockReset();
+    ssoByUrl.clear();
+    jwtByUrl.clear();
+    mockRetrieveSSOCredentials.mockClear();
+    mockRetrieveJWTCredentials.mockClear();
+  });
+
+  it('uses a JWT login supplied by the setup wizard', async () => {
+    fetchCodeMieLlmModelsMock.mockResolvedValue([{ deployment_name: 'gpt-4o', label: 'GPT-4o' }]);
+    const apiUrl = 'https://codemie.example.com/code-assistant-api';
+    const config = {
+      ...cfg({ baseUrl: apiUrl }),
+      auth: toSSOAuth({ type: 'jwt', record: { token: 'wizard-jwt', apiUrl } }, apiUrl),
+    } as CodeMieConfigOptions;
+
+    await new SSOModelProxy().fetchModels(config);
+
+    expect(mockRetrieveSSOCredentials).not.toHaveBeenCalled();
+    expect(mockRetrieveJWTCredentials).not.toHaveBeenCalled();
+    expect(fetchCodeMieLlmModelsMock).toHaveBeenCalledWith('https://codemie.example.com/code-assistant-api', 'wizard-jwt', undefined);
+  });
+
+  it('falls back to a stored JWT when no SSO session is stored', async () => {
+    jwtByUrl.set('https://codemie.example.com', { token: 'stored-jwt', apiUrl: 'https://codemie.example.com/code-assistant-api' });
+    fetchCodeMieLlmModelsMock.mockResolvedValue([{ deployment_name: 'gpt-4o', label: 'GPT-4o' }]);
+
+    const models = await new SSOModelProxy().fetchModels(cfg({ codeMieUrl: 'https://codemie.example.com' }));
+
+    expect(models).toHaveLength(1);
+    expect(fetchCodeMieLlmModelsMock).toHaveBeenCalledWith('https://codemie.example.com/code-assistant-api', 'stored-jwt', undefined);
   });
 
   it('uses cookies supplied by the setup wizard directly, without resolving stored credentials', async () => {
@@ -64,7 +113,10 @@ describe('SSOModelProxy.fetchModels', () => {
         codeMieUrl: 'https://codemie.example.com',
         baseUrl: 'https://codemie.example.com/code-assistant-api',
       }),
-      cookies: { codemie_access_token: 'fresh-cookie' },
+      auth: toSSOAuth(
+        { type: 'cookie', record: { cookies: { codemie_access_token: 'fresh-cookie' }, apiUrl: 'https://codemie.example.com/code-assistant-api' } },
+        'https://codemie.example.com'
+      ),
     } as CodeMieConfigOptions;
 
     const models = await proxy.fetchModels(config);
@@ -72,7 +124,7 @@ describe('SSOModelProxy.fetchModels', () => {
     expect(models).toEqual([
       expect.objectContaining({ id: 'gpt-4o', name: 'GPT-4o' }),
     ]);
-    expect(getStoredCredentialsMock).not.toHaveBeenCalled();
+    expect(mockRetrieveSSOCredentials).not.toHaveBeenCalled();
     expect(fetchCodeMieLlmModelsMock).toHaveBeenCalledWith(
       'https://codemie.example.com/code-assistant-api',
       { codemie_access_token: 'fresh-cookie' },
@@ -86,14 +138,17 @@ describe('SSOModelProxy.fetchModels', () => {
     const proxy = new SSOModelProxy();
     const config = {
       ...cfg({ codeMieUrl: 'https://codemie.example.com' }),
-      cookies: { codemie_access_token: 'fresh-cookie' },
+      auth: toSSOAuth(
+        { type: 'cookie', record: { cookies: { codemie_access_token: 'fresh-cookie' }, apiUrl: 'https://codemie.example.com' } },
+        'https://codemie.example.com'
+      ),
     } as CodeMieConfigOptions;
 
     await expect(proxy.fetchModels(config)).rejects.toThrow(/ECONNREFUSED/);
   });
 
-  it('falls back to stored credentials when no cookies are supplied', async () => {
-    getStoredCredentialsMock.mockResolvedValue({
+  it('falls back to stored credentials when no login is supplied', async () => {
+    ssoByUrl.set('https://codemie.example.com', {
       apiUrl: 'https://codemie.example.com',
       cookies: { codemie_access_token: 'stored-cookie' },
     });
@@ -105,11 +160,10 @@ describe('SSOModelProxy.fetchModels', () => {
     const models = await proxy.fetchModels(cfg({ codeMieUrl: 'https://codemie.example.com' }));
 
     expect(models).toHaveLength(1);
-    expect(getStoredCredentialsMock).toHaveBeenCalled();
+    expect(mockRetrieveSSOCredentials).toHaveBeenCalled();
   });
 
   it('returns an empty array only for the genuine no-credentials-yet case', async () => {
-    getStoredCredentialsMock.mockResolvedValue(null);
 
     const proxy = new SSOModelProxy();
     const models = await proxy.fetchModels(cfg({ codeMieUrl: 'https://codemie.example.com' }));
@@ -119,7 +173,7 @@ describe('SSOModelProxy.fetchModels', () => {
   });
 
   it('propagates a real API failure from the stored-credentials fallback path too', async () => {
-    getStoredCredentialsMock.mockResolvedValue({
+    ssoByUrl.set('https://codemie.example.com', {
       apiUrl: 'https://codemie.example.com',
       cookies: { codemie_access_token: 'stored-cookie' },
     });
@@ -137,25 +191,23 @@ describe('SSOModelProxy.fetchModels', () => {
     const W = 'https://workspace.example.com';
 
     it('finds credentials via baseUrl for a baseUrl-only SSO profile and uses the credentials apiUrl', async () => {
-      getStoredCredentialsMock.mockResolvedValue({ cookies: { s: '1' }, apiUrl: `${P}/code-assistant-api` });
+      ssoByUrl.set(P, { cookies: { s: '1' }, apiUrl: `${P}/code-assistant-api` });
       fetchCodeMieLlmModelsMock.mockResolvedValue([{ deployment_name: 'gpt-x', label: 'GPT X' }]);
 
       const models = await new SSOModelProxy().fetchModels({ provider: 'ai-run-sso', baseUrl: P } as CodeMieConfigOptions);
 
-      expect(getStoredCredentialsMock).toHaveBeenCalledWith(P);
+      expect(mockRetrieveSSOCredentials).toHaveBeenCalledWith(P);
       expect(fetchCodeMieLlmModelsMock).toHaveBeenCalledWith(`${P}/code-assistant-api`, { s: '1' }, undefined);
       expect(models.map(m => m.id)).toEqual(['gpt-x']);
     });
 
     it('falls back to codeMieUrl when baseUrl misses', async () => {
-      getStoredCredentialsMock
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce({ cookies: { s: '1' }, apiUrl: `${P}/code-assistant-api` });
+      ssoByUrl.set(W, { cookies: { s: '1' }, apiUrl: `${P}/code-assistant-api` });
       fetchCodeMieLlmModelsMock.mockResolvedValue([{ deployment_name: 'gpt-x', label: 'GPT X' }]);
 
       const models = await new SSOModelProxy().fetchModels({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: W } as CodeMieConfigOptions);
 
-      expect(getStoredCredentialsMock.mock.calls.map(c => c[0])).toEqual([P, W]);
+      expect(ssoReadUrls()).toEqual([P, W]);
       // split host: the login stored under W was issued for the profile's API host
       expect(fetchCodeMieLlmModelsMock).toHaveBeenCalledWith(`${P}/code-assistant-api`, { s: '1' }, undefined);
       expect(models).toHaveLength(1);

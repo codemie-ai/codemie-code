@@ -3,12 +3,16 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { promptProfileProject, type ProjectPromptDeps } from '../launch-project-prompt.js';
+import { toSSOAuth } from '../../plugins/sso/auth/selection.js';
 
 vi.mock('../../../utils/logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-const cookieAuth = { apiUrl: 'https://a.example.com/code-assistant-api', cookies: { session: 'c' } };
+const cookieAuth = toSSOAuth(
+  { type: 'cookie', record: { apiUrl: 'https://a.example.com/code-assistant-api', cookies: { session: 'c' } } },
+  'https://a.example.com',
+);
 
 function scriptedPrompt(answers: Array<Record<string, unknown>>) {
   const calls: Array<Array<Record<string, unknown>>> = [];
@@ -92,7 +96,7 @@ describe('promptProfileProject', () => {
       { profileName: 'x', auth: cookieAuth, canStayOff: false, requiresIntegration: true },
       { fetchProjects: async () => ['p1', 'p2'], prompt, selectIntegration }
     );
-    expect(selectIntegration).toHaveBeenCalledWith(cookieAuth.apiUrl, cookieAuth.cookies, 'p2');
+    expect(selectIntegration).toHaveBeenCalledWith(cookieAuth, 'p2');
     expect(outcome).toEqual({ kind: 'picked', project: 'p2', integration: { id: 'i2', alias: 'two' } });
   });
 

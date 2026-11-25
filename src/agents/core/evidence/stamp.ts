@@ -12,7 +12,7 @@ import { parseProjectBinding, PROJECT_BINDING_ENV, type ProjectBindingState } fr
 import { createOrRead, readRecord, recordKey, touch, type EvidenceFields, type EvidenceRecord } from './record-store.js';
 import type { PendingFields } from './owner-pending.js';
 import { credentialFingerprint } from '@/providers/core/credential-owner.js';
-import { isSSOCredentials, type SSOCredentials } from '@/providers/core/types.js';
+import type { SSOAuth } from '@/providers/plugins/sso/auth/types.js';
 
 /** Adapter-supplied facts the base cannot know (Claude organization, settings.json routing). */
 export interface EvidenceInputs {
@@ -64,16 +64,16 @@ async function hookTimeFields(
 
 /** Facts to hold for a login whose owner is not known yet; nothing when there is no login or no usable API URL. */
 async function pendingFor(
-  credentials: SSOCredentials,
+  auth: SSOAuth | null,
   context: OtlpHookContext,
   inputs: EvidenceInputs,
   sessionId: string,
   policy: ProjectPolicy
 ): Promise<{ pending: { fp: string; fields: PendingFields } } | Record<string, never>> {
-  if (!isSSOCredentials(credentials) || Object.keys(credentials.cookies).length === 0) return {};
+  if (!auth) return {};
   try {
-    const api = apiIdentity(credentials.apiUrl);
-    return { pending: { fp: credentialFingerprint(credentials), fields: await hookTimeFields(context, inputs, sessionId, api, policy) } };
+    const api = apiIdentity(auth.apiUrl);
+    return { pending: { fp: credentialFingerprint(auth), fields: await hookTimeFields(context, inputs, sessionId, api, policy) } };
   } catch {
     return {};
   }
@@ -121,13 +121,13 @@ export async function stampEvidence(
   const sessionId = context.sessionId;
   if (!sessionId) return { ok: false, reason: 'session_id_absent' };
   try {
-    const credentials = await resolveHookCredentials();
-    if (!credentials?.apiUrl) return { ok: false, reason: 'no_credentials' };
-    const email = resolveEmailFromCredentials(credentials);
-    if (!email) return { ok: false, reason: 'no_owner', ...(await pendingFor(credentials, context, inputs, sessionId, policy)) };
+    const auth = await resolveHookCredentials();
+    if (!auth?.apiUrl) return { ok: false, reason: 'no_credentials' };
+    const email = resolveEmailFromCredentials(auth);
+    if (!email) return { ok: false, reason: 'no_owner', ...(await pendingFor(auth, context, inputs, sessionId, policy)) };
     let api: string;
     try {
-      api = apiIdentity(credentials.apiUrl);
+      api = apiIdentity(auth.apiUrl);
     } catch {
       return { ok: false, reason: 'api_url_unparsable' };
     }

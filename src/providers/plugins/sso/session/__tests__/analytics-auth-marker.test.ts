@@ -49,6 +49,25 @@ describe('markAuthInvalidUnlessSuperseded', () => {
       expect(mockMark).toHaveBeenCalledTimes(1);
     });
 
+    // Deliberate behaviour change: a rejected JWT now gets the same supersede check as cookies.
+    it('writes the marker for a rejected JWT that no newer sign-in replaced, asking the check with the token', async () => {
+      const credentialsSuperseded = vi.fn(async () => false);
+
+      await expect(mark({ cookies: '', jwtToken: 'jwt-tok', credentialsSuperseded })).resolves.toBe(true);
+
+      expect(credentialsSuperseded).toHaveBeenCalledWith('jwt-tok');
+      expect(mockMark).toHaveBeenCalledExactlyOnceWith('HTTP 401', BASE_URL);
+    });
+
+    it('skips the marker for a rejected JWT that a newer sign-in replaced', async () => {
+      const credentialsSuperseded = vi.fn(async () => true);
+
+      await expect(mark({ cookies: '', jwtToken: 'jwt-tok-superseded', credentialsSuperseded })).resolves.toBe(false);
+
+      expect(credentialsSuperseded).toHaveBeenCalledWith('jwt-tok-superseded');
+      expect(mockMark).not.toHaveBeenCalled();
+    });
+
     it('writes no marker when no credentials were sent at all, and says so at debug level', async () => {
       const credentialsSuperseded = vi.fn(async () => false);
 

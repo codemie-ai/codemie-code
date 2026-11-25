@@ -3,7 +3,7 @@ import { logger } from '@/utils/logger.js';
 import { buildAttributionHeaders } from '../header-injection.plugin.js';
 import type { ClassResult } from '@/agents/core/evidence/classify.js';
 import { readRecord, recordKey, type EvidenceRecord } from '@/agents/core/evidence/record-store.js';
-import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
+import type { SSOAuth } from '../../../auth/index.js';
 import { getPolicyState, type NamespaceId, type PolicyState } from './policy-cache.js';
 import { isStopped, writeStop } from '@/agents/core/evidence/stop-marker.js';
 import { consentHolds } from '@/agents/core/evidence/consent-store.js';
@@ -23,7 +23,7 @@ export interface EvidenceContext {
   record: EvidenceRecord;
   ns: NamespaceId;
   baseUrl: string;
-  credentials: SSOCredentials | JWTCredentials;
+  credentials: SSOAuth;
   result: ClassResult;
   /** The session selected contract mode: contract and frozen funding go on every request. */
   newContract: boolean;
@@ -121,7 +121,7 @@ export async function producerAttributionHeaders(sessionId: string, project: str
 export async function evidenceContext(
   sessionId: string,
   baseUrl: string,
-  credentials: SSOCredentials | JWTCredentials,
+  credentials: SSOAuth,
   endpoint: AnalyticsEndpoint,
   decided: ClassResult | undefined
 ): Promise<EvidenceContext | null> {

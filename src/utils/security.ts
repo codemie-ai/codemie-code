@@ -525,10 +525,10 @@ export class CredentialStore {
     return path.join(CREDENTIALS_DIR, `${storageKey}.enc`);
   }
 
-  private async readCredential(
+  private async readCredential<T = SSOCredentials>(
     accountName: string,
     filePath: string,
-  ): Promise<SSOCredentials | null> {
+  ): Promise<T | null> {
     const keytarModule = await getKeytar();
     if (keytarModule) {
       try {
@@ -602,55 +602,37 @@ export class CredentialStore {
   /**
    * Retrieve JWT credentials from secure storage
    * @param baseUrl - Optional base URL for per-URL retrieval
+   * @param opts.includeExpired - Return an expired record instead of null, so the caller can clear it
    * @returns JWT credentials or null if not found or expired
    */
-  async retrieveJWTCredentials(baseUrl?: string): Promise<JWTCredentials | null> {
-    // Determine storage key based on whether baseUrl is provided
-    const accountName = baseUrl ? `jwt-${deriveUrlStorageKey(baseUrl)}` : 'jwt-credentials';
-    const filePath = baseUrl
-      ? path.join(CREDENTIALS_DIR, `jwt-${deriveUrlStorageKey(baseUrl)}.enc`)
-      : path.join(CREDENTIALS_DIR, 'jwt-credentials.enc');
+  async retrieveJWTCredentials(
+    baseUrl?: string,
+    opts: { includeExpired?: boolean } = {},
+  ): Promise<JWTCredentials | null> {
+    const key = baseUrl ? `jwt-${deriveUrlStorageKey(baseUrl)}` : 'jwt-credentials';
+    let credentials = await this.readCredential<JWTCredentials>(key, this.credentialFilePath(key));
 
-    // Try keychain first if available
-    const keytarModule = await getKeytar();
-    if (keytarModule) {
-      try {
-        const encrypted = await keytarModule.getPassword(SERVICE_NAME, accountName);
-        if (encrypted) {
-          const decrypted = decryptWithKey(encrypted, this.encryptionKey);
-          const credentials = JSON.parse(decrypted) as JWTCredentials;
-
-          // Check token expiration
-          if (credentials.expiresAt && Date.now() > credentials.expiresAt) {
-            return null; // Token expired
-          }
-
-          return credentials;
+    // Credentials written before the key was normalized live under the raw-URL key; migrate on
+    // first read, as retrieveSSOCredentials does.
+    if (!credentials && baseUrl) {
+      const legacyKey = `jwt-${deriveLegacyUrlStorageKey(baseUrl)}`;
+      if (legacyKey !== key) {
+        const legacy = await this.readCredential<JWTCredentials>(legacyKey, this.credentialFilePath(legacyKey));
+        if (legacy) {
+          await this.storeJWTCredentials(legacy, baseUrl);
+          await this.deleteCredential(legacyKey, this.credentialFilePath(legacyKey));
+          credentials = legacy;
         }
-      } catch {
-        // Fall through to file storage
       }
     }
 
-    // Always try file storage as fallback
-    try {
-      const encrypted = await this.retrieveFromFile(filePath);
-      if (encrypted) {
-        const decrypted = decryptWithKey(encrypted, this.encryptionKey);
-        const credentials = JSON.parse(decrypted) as JWTCredentials;
-
-        // Check token expiration
-        if (credentials.expiresAt && Date.now() > credentials.expiresAt) {
-          return null; // Token expired
-        }
-
-        return credentials;
-      }
-    } catch {
-      // Unable to decrypt file storage
+    if (!credentials) {
+      return null;
     }
-
-    return null;
+    if (!opts.includeExpired && credentials.expiresAt && Date.now() > credentials.expiresAt) {
+      return null; // Token expired
+    }
+    return credentials;
   }
 
   /**
@@ -658,27 +640,14 @@ export class CredentialStore {
    * @param baseUrl - Optional base URL for per-URL deletion
    */
   async clearJWTCredentials(baseUrl?: string): Promise<void> {
-    // Determine storage key based on whether baseUrl is provided
-    const accountName = baseUrl ? `jwt-${deriveUrlStorageKey(baseUrl)}` : 'jwt-credentials';
-    const filePath = baseUrl
-      ? path.join(CREDENTIALS_DIR, `jwt-${deriveUrlStorageKey(baseUrl)}.enc`)
-      : path.join(CREDENTIALS_DIR, 'jwt-credentials.enc');
+    const key = baseUrl ? `jwt-${deriveUrlStorageKey(baseUrl)}` : 'jwt-credentials';
+    await this.deleteCredential(key, this.credentialFilePath(key));
 
-    // Clear keychain if available
-    const keytarModule = await getKeytar();
-    if (keytarModule) {
-      try {
-        await keytarModule.deletePassword(SERVICE_NAME, accountName);
-      } catch {
-        // Ignore errors, will try file storage next
+    if (baseUrl) {
+      const legacyKey = `jwt-${deriveLegacyUrlStorageKey(baseUrl)}`;
+      if (legacyKey !== key) {
+        await this.deleteCredential(legacyKey, this.credentialFilePath(legacyKey));
       }
-    }
-
-    // Also clear file storage
-    try {
-      await fs.unlink(filePath);
-    } catch {
-      // Ignore file not found errors
     }
   }
 

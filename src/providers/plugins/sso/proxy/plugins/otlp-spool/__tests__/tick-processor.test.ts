@@ -3,10 +3,10 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { toSSOAuth } from '@/providers/plugins/sso/auth/selection.js';
 import { mkdtemp, mkdir, rm, writeFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { SSOCredentials } from '../../../../../../core/types.js';
 
 const state = vi.hoisted(() => ({ root: '' }));
 
@@ -39,7 +39,7 @@ vi.mock('@/utils/logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-const credentials = { cookies: {}, apiUrl: 'http://localhost' } as unknown as SSOCredentials;
+const credentials = toSSOAuth({ type: 'cookie', record: { cookies: {}, apiUrl: 'http://localhost' } }, 'http://localhost');
 const SESSION = 'sess-1';
 
 async function seed(files: Record<string, string>): Promise<void> {
@@ -376,7 +376,7 @@ describe('processSessionTick (evidence holds, stamp_pending, loss reasons)', () 
   const EMAIL = 'dev@example.com';
   const payload = Buffer.from(JSON.stringify({ email: EMAIL })).toString('base64url');
   // Fabricated token: header.payload.signature with an email claim only.
-  const evidenceCreds = { cookies: { codemie_access_token: `e30.${payload}.sig` }, apiUrl: API } as unknown as SSOCredentials;
+  const evidenceCreds = toSSOAuth({ type: 'cookie', record: { cookies: { codemie_access_token: `e30.${payload}.sig` }, apiUrl: API } }, API);
   const hookEnvelope = (project: string, mark: boolean): string =>
     JSON.stringify({
       agentName: 'claude-code-otlp',

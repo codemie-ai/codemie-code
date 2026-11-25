@@ -5,6 +5,7 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { toSSOAuth } from '@/providers/plugins/sso/auth/selection.js';
 import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -35,7 +36,7 @@ vi.mock('@/utils/logger.js', () => ({ logger: { debug: vi.fn(), info: vi.fn(), w
 
 const SESSION = 'sess-scope';
 const API = 'https://api.example.com/code-assistant-api';
-const credentials = { cookies: { _oauth2_proxy: 'cookie-A' }, apiUrl: API, email: 'a@example.com' };
+const credentials = toSSOAuth({ type: 'cookie', record: { cookies: { _oauth2_proxy: 'cookie-A' }, apiUrl: API, email: 'a@example.com' } }, API);
 const event = (n: number) => ({ type: 'agent.tool.end', session_id: SESSION, codemie_project_name: 'work', event_id: `e${n}`, n });
 
 describe('owner-pending replay scope', () => {

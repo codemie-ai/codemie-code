@@ -20,6 +20,12 @@ export interface ProcessingContext {
   cookies: string;
   /** API key for localhost development (user-id header) */
   apiKey?: string;
+  /**
+   * JWT bearer token, used instead of `cookies` when the resolved SSO credential is a JWT
+   * (see `toProcessingAuthFields` in @/providers/plugins/sso/auth).
+   * Mutually exclusive with `cookies`; `apiKey` still takes priority over both.
+   */
+  jwtToken?: string;
   /** Reports whether a newer sign-in replaced the cookies that were sent, so a rejection is not recorded */
   credentialsSuperseded?: CredentialsSupersededCheck;
   /** Client type identifier */

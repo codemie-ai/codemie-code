@@ -58,6 +58,7 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
     baseUrl: config.baseUrl,
     cookies: config.cookies || '',
     apiKey: config.apiKey || '',
+    jwtToken: config.jwtToken || '',
     timeout: config.timeout || DEFAULT_API_TIMEOUT_MS,
     retryAttempts: config.retryAttempts || DEFAULT_RETRY_ATTEMPTS,
     version: config.version || '0.0.0',
@@ -89,6 +90,7 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
       baseUrl: apiConfig.baseUrl,
       cookies: apiConfig.cookies,
       apiKey: apiConfig.apiKey,
+      jwtToken: apiConfig.jwtToken,
       credentialsSuperseded: config.credentialsSuperseded
     });
   }
@@ -161,6 +163,9 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
           } else if (apiConfig.cookies) {
             // SSO: Cookie header
             headers['Cookie'] = apiConfig.cookies;
+          } else if (apiConfig.jwtToken) {
+            // Reverse-proxy-stripped-cookies fallback: JWT bearer token
+            headers['authorization'] = `Bearer ${apiConfig.jwtToken}`;
           }
 
           let response: Response;
@@ -322,6 +327,8 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
       headers['user-id'] = apiConfig.apiKey;
     } else if (apiConfig.cookies) {
       headers['Cookie'] = apiConfig.cookies;
+    } else if (apiConfig.jwtToken) {
+      headers['authorization'] = `Bearer ${apiConfig.jwtToken}`;
     }
 
     throwIfStopped(bounds);

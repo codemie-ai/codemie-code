@@ -1,11 +1,12 @@
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import { HTTPClient } from './base/http-client.js';
-import type { SSOAuthResult, SSOCredentials } from './types.js';
 import { ProviderName } from './types.js';
 import { ConfigurationError } from '../../utils/errors.js';
 import { isTlsVerificationEnabled } from '../../utils/system-proxy.js';
-import { logger } from '../../utils/logger.js';
+import type { SSOAuth, SSOLoginResult } from '../plugins/sso/auth/index.js';
+import { authMaterial } from '../plugins/sso/auth/material.js';
+import { buildCookieHeader } from '../plugins/sso/auth/selection.js';
 
 export const DEFAULT_CODEMIE_BASE_URL = 'https://codemie.lab.epam.com';
 
@@ -54,9 +55,7 @@ export function buildAuthHeaders(auth: Record<string, string> | string): Record<
   if (typeof auth === 'string') {
     headers.authorization = `Bearer ${auth}`;
   } else {
-    headers.cookie = Object.entries(auth)
-      .map(([key, value]) => `${key}=${value}`)
-      .join(';');
+    headers.cookie = buildCookieHeader(auth);
   }
 
   return headers;
@@ -90,7 +89,7 @@ export async function promptForCodeMieUrl(
 export async function authenticateWithCodeMie(
   codeMieUrl: string,
   timeout: number = 120000
-): Promise<SSOAuthResult> {
+): Promise<SSOLoginResult> {
   const { CodeMieSSO } = await import('../plugins/sso/sso.auth.js');
   const sso = new CodeMieSSO();
   return sso.authenticate({
@@ -109,12 +108,7 @@ export interface PlatformUrlSource {
   codeMieUrl?: string;
 }
 
-export interface PlatformCredentials {
-  credentials: SSOCredentials;
-  url: string;
-}
-
-function originOf(url: string): string {
+export function originOf(url: string): string {
   try {
     return new URL(url).origin;
   } catch {
@@ -126,7 +120,7 @@ export function isCodeMiePlatformProvider(provider: string | undefined): boolean
   return provider === ProviderName.AI_RUN_SSO || provider === ProviderName.BEARER_AUTH;
 }
 
-function isLoopbackUrl(url: string): boolean {
+export function isLoopbackUrl(url: string): boolean {
   try {
     const host = new URL(url).hostname;
     return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
@@ -162,7 +156,7 @@ export function getPlatformUrl(src: PlatformUrlSource): string | undefined {
   return getPlatformUrlCandidates(src)[0];
 }
 
-function platformSourceFromEnv(env: NodeJS.ProcessEnv): PlatformUrlSource {
+export function platformSourceFromEnv(env: NodeJS.ProcessEnv): PlatformUrlSource {
   // CODEMIE_BASE_URL is intentionally never read: the proxy rewrites it to a
   // localhost URL before the agent starts. CODEMIE_PROFILE_CONFIG keeps the original.
   let provider: string | undefined;
@@ -188,59 +182,13 @@ export function getPlatformUrlFromEnv(env: NodeJS.ProcessEnv): string | undefine
 }
 
 /**
- * Try each candidate in order. The workspace codeMieUrl is a single value shared
- * by all profiles, so it can point at a different environment than the active
- * profile. A credential found under a fallback candidate is therefore accepted
- * only if it was issued for the profile's own API host (credentials.apiUrl);
- * otherwise a dev login would be used for a prod profile. Loopback baseUrls are
- * exempt: inside an agent session baseUrl may be the local proxy URL.
+ * Origin of the profile's own API host, or undefined when it has none to enforce: a non-CodeMie
+ * provider, no baseUrl, or a loopback baseUrl (inside an agent session it may be the local proxy).
  */
-async function lookupStoredCredentials(src: PlatformUrlSource): Promise<PlatformCredentials | null> {
-  const candidates = getPlatformUrlCandidates(src);
-  if (candidates.length === 0) return null;
-
-  const profileOrigin =
-    isCodeMiePlatformProvider(src.provider) && src.baseUrl && !isLoopbackUrl(src.baseUrl)
-      ? originOf(src.baseUrl)
-      : undefined;
-
-  const { CodeMieSSO } = await import('../plugins/sso/sso.auth.js');
-  const sso = new CodeMieSSO();
-  for (const url of candidates) {
-    const credentials = await sso.getStoredCredentials(url);
-    if (!credentials) continue;
-
-    if (
-      profileOrigin &&
-      originOf(url) !== profileOrigin &&
-      (!credentials.apiUrl || originOf(credentials.apiUrl) !== profileOrigin)
-    ) {
-      logger.debug('[auth] Ignoring stored credentials issued for a different host than the profile URL', {
-        profileOrigin,
-        credentialsUrl: url,
-      });
-      continue;
-    }
-    return { credentials, url };
-  }
-  return null;
-}
-
-/**
- * Look up stored SSO credentials trying each platform URL candidate in order.
- * Note: an expired credential is deleted by getStoredCredentials, so a miss on
- * one candidate removes only that host's key.
- */
-export async function getStoredPlatformCredentials(
-  src: PlatformUrlSource
-): Promise<PlatformCredentials | null> {
-  return lookupStoredCredentials(src);
-}
-
-export async function getStoredPlatformCredentialsFromEnv(
-  env: NodeJS.ProcessEnv
-): Promise<PlatformCredentials | null> {
-  return lookupStoredCredentials(platformSourceFromEnv(env));
+export function getProfileOrigin(src: PlatformUrlSource): string | undefined {
+  return isCodeMiePlatformProvider(src.provider) && src.baseUrl && !isLoopbackUrl(src.baseUrl)
+    ? originOf(src.baseUrl)
+    : undefined;
 }
 
 /**
@@ -259,19 +207,6 @@ export function getAnalyticsPlatformSource(
     baseUrl: overrides.baseUrl ?? fromEnv.baseUrl,
     codeMieUrl: ssoUrl ?? fromEnv.codeMieUrl,
   };
-}
-
-/**
- * Stored login for analytics, session sync and hook auth checks. Same
- * profile-first lookup as model/chat traffic, so switching to a prod profile
- * never depends on (or re-authenticates against) the workspace environment.
- */
-export async function getStoredAnalyticsCredentials(
-  ssoUrl: string | undefined,
-  env: NodeJS.ProcessEnv = process.env,
-  overrides: { provider?: string; baseUrl?: string } = {}
-): Promise<PlatformCredentials | null> {
-  return lookupStoredCredentials(getAnalyticsPlatformSource(ssoUrl, env, overrides));
 }
 
 /* eslint-disable no-redeclare */
@@ -293,6 +228,11 @@ export function fetchCodeMieUserInfo(
 export function fetchCodeMieUserInfo(
   apiUrl: string,
   jwtToken: string,
+  options?: UserInfoRequestOptions
+): Promise<CodeMieUserInfo>;
+export function fetchCodeMieUserInfo(
+  apiUrl: string,
+  auth: Record<string, string> | string,
   options?: UserInfoRequestOptions
 ): Promise<CodeMieUserInfo>;
 export async function fetchCodeMieUserInfo(
@@ -338,12 +278,6 @@ export async function fetchCodeMieUserInfo(
   return userInfo;
 }
 
-/** Bearer-token auth for project selection (JWT profiles): the token is only sent to `apiUrl`. */
-export interface BearerProjectAuth {
-  apiUrl: string;
-  jwtToken: string;
-}
-
 /** Accessible projects of the account (member + admin), deduped and sorted case-insensitively. */
 export function accountProjects(userInfo: CodeMieUserInfo): string[] {
   const all = [...new Set([...(userInfo.applications || []), ...(userInfo.applications_admin || [])])];
@@ -351,20 +285,12 @@ export function accountProjects(userInfo: CodeMieUserInfo): string[] {
 }
 
 export async function selectCodeMieProject(
-  authResult: SSOAuthResult | BearerProjectAuth
+  auth: SSOAuth
 ): Promise<{ project: string; userEmail: string }> {
-  let userInfo: CodeMieUserInfo;
-  if ('jwtToken' in authResult) {
-    if (!authResult.apiUrl || !authResult.jwtToken) {
-      throw new ConfigurationError('API URL or token not provided for project selection');
-    }
-    userInfo = await fetchCodeMieUserInfo(authResult.apiUrl, authResult.jwtToken);
-  } else {
-    if (!authResult.apiUrl || !authResult.cookies) {
-      throw new ConfigurationError('API URL or cookies not found in authentication result');
-    }
-    userInfo = await fetchCodeMieUserInfo(authResult.apiUrl, authResult.cookies);
+  if (!auth.apiUrl) {
+    throw new ConfigurationError('API URL not provided for project selection');
   }
+  const userInfo = await fetchCodeMieUserInfo(auth.apiUrl, authMaterial(auth));
 
   const allProjects = accountProjects(userInfo);
 
@@ -402,18 +328,16 @@ export async function selectCodeMieProject(
 }
 
 /** Credentials for listing a profile's projects, bound to the host they were issued for. */
-export type ProjectListAuth =
-  | { apiUrl: string; cookies: Record<string, string> }
-  | { apiUrl: string; jwtToken: string };
+export type ProjectListAuth = SSOAuth;
 
 /**
  * Credentials and target for listing a profile's CodeMie projects at launch.
  * The list is fetched only from the host the credentials were issued for:
- * - ai-run-sso: stored cookies for the profile's own `baseUrl` (no shared-URL
+ * - ai-run-sso: stored credentials for the profile's own `baseUrl` (no shared-URL
  *   fallback), sent to `ensureApiBase(baseUrl)`;
  * - bearer-auth (JWT): the profile's token, sent to `ensureApiBase(baseUrl)`;
- * - subscription providers: stored analytics credentials for the resolved
- *   CodeMie URL (never the vendor `baseUrl`), sent to the host they were issued for.
+ * - subscription providers: stored credentials for the resolved CodeMie URL
+ *   (never the vendor `baseUrl`), sent to the host they were issued for.
  * Returns undefined when no usable credential exists for that host.
  */
 export async function resolveProjectListAuth(config: {
@@ -422,24 +346,24 @@ export async function resolveProjectListAuth(config: {
   codeMieUrl?: string;
   jwtToken?: string;
 }): Promise<ProjectListAuth | undefined> {
+  // Loaded lazily: the resolver imports this module statically.
+  const { resolveSSOAuth, resolveSSOAuthForUrl, explicitJwtAuth } = await import('../plugins/sso/auth/index.js');
+
   if (isCodeMiePlatformProvider(config.provider)) {
     if (!config.baseUrl || isLoopbackUrl(config.baseUrl)) return undefined;
     const apiUrl = ensureApiBase(config.baseUrl);
     if (config.provider === ProviderName.BEARER_AUTH) {
-      return config.jwtToken ? { apiUrl, jwtToken: config.jwtToken } : undefined;
+      return config.jwtToken ? explicitJwtAuth(config.jwtToken, apiUrl) : undefined;
     }
-    const found = await lookupStoredCredentials({ provider: config.provider, baseUrl: config.baseUrl });
-    if (!found?.credentials.cookies) return undefined;
-    return { apiUrl, cookies: found.credentials.cookies };
+    const auth = await resolveSSOAuth({ provider: config.provider, baseUrl: config.baseUrl });
+    return auth ? { ...auth, apiUrl } : undefined;
   }
 
   if (!config.codeMieUrl) return undefined;
-  const { CodeMieSSO } = await import('../plugins/sso/sso.auth.js');
-  const credentials = await new CodeMieSSO().getStoredCredentials(config.codeMieUrl);
-  if (!credentials?.cookies) return undefined;
+  const auth = await resolveSSOAuthForUrl(config.codeMieUrl);
+  if (!auth) return undefined;
   // The credentials are looked up by this profile's own resolved CodeMie URL, and are sent to the
   // API they were issued with (their apiUrl, else that URL). HTTPClient drops them on a
   // cross-origin redirect.
-  const apiUrl = ensureApiBase(credentials.apiUrl || config.codeMieUrl);
-  return { apiUrl, cookies: credentials.cookies };
+  return { ...auth, apiUrl: ensureApiBase(auth.apiUrl || config.codeMieUrl) };
 }

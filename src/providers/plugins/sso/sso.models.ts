@@ -10,10 +10,9 @@ import type { ModelInfo, CodeMieIntegration } from '../../core/types.js';
 import { BaseModelProxy } from '../../core/base/BaseModelProxy.js';
 import { ProviderRegistry } from '../../core/registry.js';
 import { SSOTemplate } from './sso.template.js';
-import { CodeMieSSO } from './sso.auth.js';
 import { fetchCodeMieLlmModels, fetchCodeMieIntegrations, CODEMIE_ENDPOINTS } from './sso.http-client.js';
 import { logger } from '../../../utils/logger.js';
-import { getStoredPlatformCredentials } from '../../core/codemie-auth-helpers.js';
+import { authMaterial, resolveSSOAuth, type SSOAuth } from './auth/index.js';
 
 /**
  * SSO Model Proxy
@@ -21,12 +20,9 @@ import { getStoredPlatformCredentials } from '../../core/codemie-auth-helpers.js
  * Fetches models from CodeMie SSO API and LiteLLM integrations
  */
 export class SSOModelProxy extends BaseModelProxy {
-  private sso: CodeMieSSO;
-
   constructor(baseUrl?: string) {
     // SSO doesn't have a fixed base URL, it's resolved from config
     super(baseUrl || '', 10000);
-    this.sso = new CodeMieSSO();
   }
 
   /**
@@ -60,12 +56,12 @@ export class SSOModelProxy extends BaseModelProxy {
    */
   async listModels(): Promise<ModelInfo[]> {
     try {
-      const credentials = await this.sso.getStoredCredentials(this.baseUrl);
-      if (!credentials) {
+      const auth = await resolveSSOAuth({ provider: 'ai-run-sso', baseUrl: this.baseUrl });
+      if (!auth) {
         throw new Error('No SSO credentials found. Run: codemie profile login');
       }
 
-      return await this.fetchModelsFromAPI(credentials.apiUrl, credentials.cookies);
+      return await this.fetchModelsFromAPI(auth.apiUrl || this.baseUrl, authMaterial(auth));
     } catch (error) {
       logger.debug('Failed to list SSO models:', error);
       throw error;
@@ -76,39 +72,38 @@ export class SSOModelProxy extends BaseModelProxy {
    * Fetch models for setup wizard
    *
    * Returns models from CodeMie SSO API. When the setup wizard already holds
-   * cookies from the just-completed browser auth (see sso.setup-steps.ts
-   * getCredentials()), those are used directly instead of re-resolving
+   * the login from the just-completed browser auth (see sso.setup-steps.ts
+   * getCredentials()), it is used directly instead of re-resolving
    * credentials from disk/keychain, avoiding a race with the credential
    * store write and reusing the same authenticated session.
    */
   async fetchModels(config: CodeMieConfigOptions): Promise<ModelInfo[]> {
-    const suppliedCookies = (config as CodeMieConfigOptions & { cookies?: Record<string, string> }).cookies;
+    const suppliedAuth = (config as CodeMieConfigOptions & { auth?: SSOAuth }).auth;
 
-    // Supplied cookies come with the auth result's API URL (config.baseUrl);
+    // The supplied login comes with the auth result's API URL (config.baseUrl);
     // codeMieUrl is the org/frontend URL and serves HTML, not the API.
-    if (suppliedCookies && config.baseUrl) {
+    if (suppliedAuth && config.baseUrl) {
       // Real API/network errors propagate so setup.js can show an actionable
       // message instead of silently reporting "Found 0 available models".
-      return await this.fetchModelsFromAPI(config.baseUrl, suppliedCookies, config.codeMieProject ?? undefined);
+      return await this.fetchModelsFromAPI(config.baseUrl, authMaterial(suppliedAuth), config.codeMieProject ?? undefined);
     }
 
     // Profile baseUrl first, workspace codeMieUrl as fallback
-    const found = await getStoredPlatformCredentials({ ...config, provider: 'ai-run-sso' });
+    const stored = await resolveSSOAuth({ ...config, provider: 'ai-run-sso' });
 
-    if (!found) {
+    if (!stored) {
       // Genuinely no credentials yet - setup wizard will handle auth.
       logger.debug('No SSO credentials found, returning empty model list');
       return [];
     }
 
     // Use API URL from credentials or the URL the credentials were found under
-    const { credentials, url } = found;
-    const apiUrl = credentials.apiUrl || url;
+    const apiUrl = stored.apiUrl || stored.url;
     if (!apiUrl) {
       throw new Error('No CodeMie URL configured');
     }
 
-    return await this.fetchModelsFromAPI(apiUrl, credentials.cookies, config.codeMieProject ?? undefined);
+    return await this.fetchModelsFromAPI(apiUrl, authMaterial(stored), config.codeMieProject ?? undefined);
   }
 
   /**
@@ -119,13 +114,14 @@ export class SSOModelProxy extends BaseModelProxy {
    * @returns Array of integrations (filtered if projectName provided)
    */
   async fetchIntegrations(codeMieUrl: string, projectName?: string): Promise<CodeMieIntegration[]> {
-    const credentials = await this.sso.getStoredCredentials(codeMieUrl);
-    if (!credentials) {
+    const stored = await resolveSSOAuth({ provider: 'ai-run-sso', codeMieUrl });
+    if (!stored) {
       logger.debug(`No SSO credentials found for URL: ${codeMieUrl}`);
       throw new Error('No SSO credentials found. Please authenticate first.');
     }
 
-    const apiUrl = credentials.apiUrl || codeMieUrl;
+    const apiUrl = stored.apiUrl || codeMieUrl;
+    const auth = authMaterial(stored);
 
     logger.debug(`Fetching integrations from: ${apiUrl}${CODEMIE_ENDPOINTS.USER_SETTINGS}`);
     if (projectName) {
@@ -134,10 +130,7 @@ export class SSOModelProxy extends BaseModelProxy {
 
     try {
       // Fetch user-level integrations from the SSO settings endpoint
-      const allIntegrations = await fetchCodeMieIntegrations(
-          apiUrl,
-          credentials.cookies
-      );
+      const allIntegrations = await fetchCodeMieIntegrations(apiUrl, auth);
 
       // Filter by project_name if specified
       if (projectName) {
@@ -177,11 +170,11 @@ export class SSOModelProxy extends BaseModelProxy {
    */
   private async fetchModelsFromAPI(
     apiUrl: string,
-    cookies: Record<string, string>,
+    auth: Record<string, string> | string,
     project?: string
   ): Promise<ModelInfo[]> {
     try {
-      const llmModels = await fetchCodeMieLlmModels(apiUrl, cookies, project);
+      const llmModels = await fetchCodeMieLlmModels(apiUrl, auth, project);
 
       const models: ModelInfo[] = [];
       for (const model of llmModels) {

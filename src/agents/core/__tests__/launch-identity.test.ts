@@ -17,6 +17,7 @@ import {
   type LaunchIdentity,
   type LaunchIdentityDeps,
 } from '../launch-identity.js';
+import { toSSOAuth } from '@/providers/plugins/sso/auth/selection.js';
 
 const TEST_DIR = path.join(process.cwd(), 'tmp-test-launch-identity');
 const HOME = path.join(TEST_DIR, '.codemie');
@@ -50,7 +51,10 @@ const readGlobal = async (): Promise<MultiProviderConfig> => JSON.parse(await fs
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHARS = /[\u0000-\u001f]/;
 
-const cookieAuth = { apiUrl: 'https://codemie.example.com/code-assistant-api', cookies: { s: '1' } };
+const cookieAuth = toSSOAuth(
+  { type: 'cookie', record: { apiUrl: 'https://codemie.example.com/code-assistant-api', cookies: { s: '1' } } },
+  'https://codemie.example.com',
+);
 
 describe('launch identity policy', () => {
   const saved: Record<string, string | undefined> = {};
@@ -146,7 +150,8 @@ describe('launch identity policy', () => {
 
       it('a profile on env A with the shared URL on env B saves A, not B', async () => {
         await writeGlobal('a', { a: sso({ baseUrl: 'https://codemie-preview.example.com/code-assistant-api' }) });
-        const resolveAuth = vi.fn(async (c: { baseUrl?: string }) => ({ apiUrl: c.baseUrl!, cookies: { s: '1' } }));
+        const resolveAuth = vi.fn(async (c: { baseUrl?: string }) =>
+          toSSOAuth({ type: 'cookie', record: { apiUrl: c.baseUrl!, cookies: { s: '1' } } }, c.baseUrl!));
         const config = await ConfigLoader.load(WORKING_DIR, { name: 'a' });
         expect(config.codeMieUrl).toBe('https://codemie.example.com'); // merged shared URL before the pick
 

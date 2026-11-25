@@ -82,7 +82,7 @@ vi.mock('../connectors/managed-mcp-remote.js', () => ({
   fetchManagedMcpServers: vi.fn().mockResolvedValue([]),
 }));
 vi.mock('../../../../providers/integration/setup-ui.js', () => ({ displaySetupInstructions: vi.fn() }));
-vi.mock('../../../../providers/plugins/sso/sso.auth.js', () => ({ CodeMieSSO: vi.fn() }));
+vi.mock('../../../../providers/plugins/sso/auth/index.js', () => ({ resolveSSOAuth: vi.fn() }));
 vi.mock('../../../../cli/commands/skills/setup/sync.js', () => ({
   syncRegisteredSkills: vi.fn().mockResolvedValue(undefined),
 }));
@@ -117,7 +117,7 @@ function emptyResult(backupDir: string | null = null): { backupDir: string | nul
 async function setupHappyMocks(provider = 'ai-run-sso'): Promise<void> {
   const { ConfigLoader } = await import('../../../../utils/config.js');
   const { ProviderRegistry } = await import('../../../../providers/index.js');
-  const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+  const { resolveSSOAuth } = await import('../../../../providers/plugins/sso/auth/index.js');
   const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
   const { detectAndAsk, applyConsented } = await import('@/agents/plugins/claude/cloud-provider-conflict/gate.js');
   vi.mocked(ConfigLoader.load).mockResolvedValue({
@@ -131,9 +131,16 @@ async function setupHappyMocks(provider = 'ai-run-sso'): Promise<void> {
     name: 'ai-run-sso',
     authType: 'sso',
   } as ReturnType<typeof ProviderRegistry.getProvider>);
-  vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-    return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 't' }) };
-  } as unknown as typeof CodeMieSSO);
+  vi.mocked(resolveSSOAuth).mockResolvedValue({
+    type: 'jwt',
+    apiUrl: 'https://x.example.com/api',
+    url: 'https://x.example.com',
+    headers: { authorization: 'Bearer t' },
+    authValue: 't',
+    fingerprint: 'fp',
+    token: 't',
+    source: 'store',
+  });
   vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
   vi.mocked(spawnDaemon).mockResolvedValue({
     pid: process.pid,

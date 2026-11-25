@@ -1,7 +1,7 @@
 import { logger } from '@/utils/logger.js';
 import { acquirePidLock } from '@/utils/pid-lock.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
-import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.js';
+import type { SSOAuth } from '../../../auth/index.js';
 import { readRecord, recordKey } from '@/agents/core/evidence/record-store.js';
 import { isStopped, writeNotice } from '@/agents/core/evidence/stop-marker.js';
 import { hasScopeEvidence } from '@/agents/core/evidence/session-scope.js';
@@ -49,7 +49,7 @@ async function stickyPersonalOf(key: string): Promise<boolean> {
  * the session lock is taken, so a slow backend never blocks spool appends. `undefined` = no identity.
  */
 async function tickPolicyState(
-  credentials: SSOCredentials | JWTCredentials,
+  credentials: SSOAuth,
   endpoint: AnalyticsEndpoint,
   reprobe: boolean,
   sessionId: string
@@ -75,7 +75,7 @@ async function applySessionEvidenceLocked(
   sessionId: string,
   status: SessionStatus,
   spool: SpoolState,
-  credentials: SSOCredentials | JWTCredentials,
+  credentials: SSOAuth,
   policy: PolicyState | undefined,
   now: number = Date.now()
 ): Promise<{ decision: TickEvidenceDecision; result?: ClassResult }> {
@@ -209,7 +209,7 @@ async function holdEndpointMismatch(sessionId: string, now: number = Date.now())
  */
 export async function processSessionTick(
   sessionId: string,
-  credentials: SSOCredentials | JWTCredentials
+  credentials: SSOAuth
 ): Promise<void> {
   // The daemon and wrapper share the spool. Hold the lock across checkpoint recovery and
   // forwarding so a live send cannot be mistaken for an interrupted one by another tick.
@@ -225,7 +225,7 @@ export async function processSessionTick(
 
 async function processLockedTick(
   sessionId: string,
-  credentials: SSOCredentials | JWTCredentials
+  credentials: SSOAuth
 ): Promise<void> {
   let shouldForward = false;
   let hooksOnly = false;

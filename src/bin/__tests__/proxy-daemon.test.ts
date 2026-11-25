@@ -8,6 +8,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { toSSOAuth } from '../../providers/plugins/sso/auth/selection.js';
 import type { WatcherCallbacks } from '../../cli/commands/proxy/watcher.js';
 import type { AwaitingLoginListener } from '../../cli/commands/proxy/awaiting-login-listener.js';
 
@@ -22,13 +23,11 @@ const runtimeConfigs: Array<Record<string, unknown>> = [];
 const resolversBuilt: unknown[][] = [];
 /** `config.desktopRepositoryResolver` at each proxy `start()`: the moment the proxy creates its plugins. */
 const resolversAtStart: unknown[] = [];
-const storedCredentials = vi.fn();
+const resolveSSOAuth = vi.fn();
 const loginListeners: AwaitingLoginListener[] = [];
 let watcherCallbacks: WatcherCallbacks;
 
-vi.mock('../../providers/core/codemie-auth-helpers.js', () => ({
-  getStoredPlatformCredentials: storedCredentials,
-}));
+vi.mock('../../providers/plugins/sso/auth/index.js', () => ({ resolveSSOAuth }));
 const startSignIn = vi.fn();
 const markAuthInvalid = vi.fn();
 vi.mock('../../providers/plugins/sso/sso.detached-login.js', async (importOriginal) => ({
@@ -124,7 +123,7 @@ describe('proxy-daemon entry point', () => {
   beforeEach(async () => {
     vi.resetModules();
     proxyStart.mockReset().mockResolvedValue({ port: 47999, url: 'http://127.0.0.1:47999' });
-    storedCredentials.mockReset().mockResolvedValue({ credentials: { cookies: { test: 'synthetic' } } });
+    resolveSSOAuth.mockReset().mockResolvedValue(toSSOAuth({ type: 'cookie', record: { cookies: { test: 'synthetic' }, apiUrl: 'https://codemie.test' } }, 'https://codemie.test'));
     runtimeStart.mockReset();
     runtimeStop.mockReset();
     cliVersion.mockReset().mockResolvedValue('1.2.3');

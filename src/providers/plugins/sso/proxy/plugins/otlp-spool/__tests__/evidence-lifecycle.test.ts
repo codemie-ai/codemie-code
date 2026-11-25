@@ -6,6 +6,8 @@ import { evidenceDir } from '@/agents/core/evidence/record-store.js';
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { toSSOAuth } from '@/providers/plugins/sso/auth/selection.js';
+import type { SSOAuth } from '@/providers/plugins/sso/auth/types.js';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -77,7 +79,7 @@ async function load() {
 type M = Awaited<ReturnType<typeof load>>;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const credentials = () => h.creds as import('../../../../../../core/types.js').SSOCredentials;
+const credentials = () => h.creds as SSOAuth;
 const stamp = (m: M, sid: string) =>
   m.stamp.stampEvidence({ cwd: '/repo', sessionId: sid }, { organization: h.cfg.org, routing: h.cfg.routing, collection_generation: 0 });
 const keyOf = (m: M, sid: string) => {
@@ -115,7 +117,7 @@ beforeEach(() => {
   for (const k of ['CODEMIE_PROJECT', 'CLAUDE_PROJECT_DIR', 'CODEMIE_SESSION_ID']) delete process.env[k];
   process.env.CODEMIE_HOME = home;
   process.env.OTLP_SEND_MAX_ATTEMPTS = '0'; // hooks-only sessions are forwarded on the first tick
-  h.creds = { cookies: { codemie_access_token: jwt('dev@example.com') }, apiUrl: 'https://analytics.example.com', timestamp: 0 };
+  h.creds = toSSOAuth({ type: 'cookie', record: { cookies: { codemie_access_token: jwt('dev@example.com') }, apiUrl: 'https://analytics.example.com', timestamp: 0 } }, 'https://analytics.example.com');
   h.cfg.project = 'proj-orig';
   h.cfg.org = 'Corp';
   h.cfg.routing = { routed: false, routing_proof: 'proven' };

@@ -2,8 +2,7 @@
  * JWT Authentication health check
  */
 
-import { CredentialStore } from '../../../../utils/security.js';
-import { resolveJwtTokenEnvVar } from '../../../../providers/plugins/jwt/jwt.utils.js';
+import { loadStoredJwtToken, resolveJwtTokenEnvVar } from '../../../../providers/plugins/jwt/jwt.utils.js';
 import { AuthMethod } from '../../../../providers/core/types.js';
 import { ConfigLoader } from '../../../../utils/config.js';
 import { HealthCheck, HealthCheckResult, HealthCheckDetail, ProgressCallback } from '../types.js';
@@ -35,10 +34,9 @@ export class JWTAuthCheck implements HealthCheck {
       const envToken = process.env[tokenEnvVar];
 
       if (!envToken) {
-        const store = CredentialStore.getInstance();
-        const storedCreds = await store.retrieveJWTCredentials(config.baseUrl);
+        const storedToken = await loadStoredJwtToken(config.baseUrl);
 
-        if (!storedCreds) {
+        if (!storedToken) {
           details.push({
             status: 'error',
             message: `JWT token not found in ${tokenEnvVar} or credential store`,
@@ -63,8 +61,7 @@ export class JWTAuthCheck implements HealthCheck {
 
       // Check 2: Token expiration (warn 7 days before expiry)
       onProgress?.('Checking JWT token expiration');
-      const token = envToken || (await CredentialStore.getInstance()
-        .retrieveJWTCredentials(config.baseUrl))?.token;
+      const token = envToken || await loadStoredJwtToken(config.baseUrl);
 
       if (token) {
         try {

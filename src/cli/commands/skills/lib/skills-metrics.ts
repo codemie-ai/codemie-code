@@ -77,7 +77,8 @@ export interface SkillMetricSession {
 
 interface SkillEventTransport {
   apiUrl: string;
-  cookieHeader: string;
+  /** Credential headers (Cookie or Authorization) of the resolved login. */
+  authHeaders: Record<string, string>;
   cliVersion: string;
 }
 
@@ -266,7 +267,7 @@ async function postOne(transport: SkillEventTransport, body: SkillEventBody): Pr
     'User-Agent': `codemie-cli/${transport.cliVersion}`,
     'X-CodeMie-CLI': `codemie-cli/${transport.cliVersion}`,
     'X-CodeMie-Client': 'codemie-cli',
-    Cookie: transport.cookieHeader,
+    ...transport.authHeaders,
   };
   if (body.repository) headers['X-CodeMie-Repository'] = encodeAttributionHeader(body.repository);
   if (body.branch) headers['X-CodeMie-Branch'] = encodeAttributionHeader(body.branch);
@@ -313,7 +314,7 @@ function redactSensitiveHeaders(headers: Record<string, string>): Record<string,
   return Object.fromEntries(
     Object.entries(headers).map(([key, value]) => [
       key,
-      key.toLowerCase() === 'cookie' ? '<redacted>' : value,
+      ['cookie', 'authorization'].includes(key.toLowerCase()) ? '<redacted>' : value,
     ])
   );
 }
@@ -363,29 +364,26 @@ async function tryBuildTransport(agentVersion: string): Promise<SkillEventTransp
     return null;
   }
 
-  let cookieHeader = '';
+  let authHeaders: Record<string, string> | undefined;
   let apiUrl: string | undefined;
   try {
-    const { CodeMieSSO } = await import('@/providers/plugins/sso/sso.auth.js');
-    const sso = new CodeMieSSO();
-    const credentials = await sso.getStoredCredentials(ssoUrl);
+    const { resolveSSOAuthForUrl } = await import('@/providers/plugins/sso/auth/index.js');
+    const auth = await resolveSSOAuthForUrl(ssoUrl);
 
-    if (credentials?.cookies) {
-      cookieHeader = Object.entries(credentials.cookies)
-        .map(([key, value]) => `${key}=${value}`)
-        .join('; ');
+    if (auth) {
+      authHeaders = { ...auth.headers };
+      // auth.apiUrl is the resolved API base (e.g.
+      // "<codeMieUrl>/code-assistant-api"). The bare baseUrl from the profile
+      // points at the LLM proxy for SSO providers and does NOT serve our
+      // events endpoint, so we prefer the credential-stored URL.
+      apiUrl = auth.apiUrl;
     }
-    // credentials.apiUrl is the resolved API base (e.g.
-    // "<codeMieUrl>/code-assistant-api"). The bare baseUrl from the profile
-    // points at the LLM proxy for SSO providers and does NOT serve our
-    // events endpoint, so we prefer the credential-stored URL.
-    apiUrl = credentials?.apiUrl;
   } catch (error) {
     logger.debug('[skills] Failed to load SSO credentials for events', error);
   }
 
-  if (!cookieHeader) {
-    logger.debug('[skills] Skipping event emission: no SSO cookies available');
+  if (!authHeaders) {
+    logger.debug('[skills] Skipping event emission: no SSO credentials available');
     return null;
   }
 
@@ -400,7 +398,7 @@ async function tryBuildTransport(agentVersion: string): Promise<SkillEventTransp
   }
 
   logger.debug('[skills] Built skill events transport', { apiUrl });
-  return { apiUrl, cookieHeader, cliVersion: agentVersion };
+  return { apiUrl, authHeaders, cliVersion: agentVersion };
 }
 
 function readPackageVersion(): string {

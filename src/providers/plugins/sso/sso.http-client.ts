@@ -293,6 +293,7 @@ function modelsFetchError(statusCode: number | undefined, statusMessage: string 
  *
  * Overload 1: SSO cookies
  * Overload 2: JWT token string
+ * Overload 3: either, as a resolved `authMaterial()`
  */
 /* eslint-disable no-redeclare */
 export function fetchCodeMieLlmModels(
@@ -303,6 +304,11 @@ export function fetchCodeMieLlmModels(
 export function fetchCodeMieLlmModels(
   apiUrl: string,
   jwtToken: string,
+  project: string | undefined
+): Promise<LlmModel[]>;
+export function fetchCodeMieLlmModels(
+  apiUrl: string,
+  auth: Record<string, string> | string,
   project: string | undefined
 ): Promise<LlmModel[]>;
 export async function fetchCodeMieLlmModels(
@@ -346,6 +352,11 @@ export function fetchCodeMieModels(
 export function fetchCodeMieModels(
   apiUrl: string,
   jwtToken: string,
+  project: string | undefined
+): Promise<string[]>;
+export function fetchCodeMieModels(
+  apiUrl: string,
+  auth: Record<string, string> | string,
   project: string | undefined
 ): Promise<string[]>;
 export async function fetchCodeMieModels(
@@ -460,6 +471,11 @@ export function fetchCodeMieIntegrations(
 export function fetchCodeMieIntegrations(
   apiUrl: string,
   jwtToken: string,
+  endpointPath?: string
+): Promise<CodeMieIntegration[]>;
+export function fetchCodeMieIntegrations(
+  apiUrl: string,
+  auth: Record<string, string> | string,
   endpointPath?: string
 ): Promise<CodeMieIntegration[]>;
 export async function fetchCodeMieIntegrations(

@@ -6,6 +6,7 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { toSSOAuth } from '@/providers/plugins/sso/auth/selection.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -32,7 +33,7 @@ vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({ readState: readStateM
 vi.mock('@/utils/logger.js', () => ({ logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 
 const SESSION = 'sess-1';
-const credentials = { cookies: { codemie_access_token: 'tok' }, apiUrl: 'https://api', timestamp: 0 };
+const credentials = toSSOAuth({ type: 'cookie', record: { cookies: { codemie_access_token: 'tok' }, apiUrl: 'https://api', timestamp: 0 } }, 'https://api');
 const T0 = Date.UTC(2026, 10, 3, 9);
 const MIN = 60_000;
 const DAY = 24 * 60 * MIN;

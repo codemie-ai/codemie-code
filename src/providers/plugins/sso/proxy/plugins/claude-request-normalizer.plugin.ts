@@ -11,6 +11,7 @@ import { CLAUDE_DESKTOP, VSCODE_CLAUDE_CODE } from '../proxy-clients.js';
 import { fetchCodeMieLlmModels } from '../../sso.http-client.js';
 import { isClaudeServableDeployment, resolveClaudeDeployment } from './claude-model-resolver.js';
 import { CredentialRefresher } from './credential-refresh.js';
+import { authMaterial } from '../../auth/index.js';
 
 // standard = leave thinking untouched; none = strip it; adaptive = requires the
 // adaptive thinking API + output_config.effort.
@@ -218,7 +219,7 @@ class ClaudeRequestNormalizerInterceptor implements ProxyInterceptor {
   // Re-reads stored credentials (throttled) rather than the daemon-startup snapshot, so a
   // successful browser re-login reaches the model catalogue fetch too (PR #655 review,
   // blocking) — this TTL-gated refetch (every MODEL_CACHE_TTL_MS) is exactly where it matters.
-  private readonly credentials?: CredentialRefresher<NonNullable<PluginContext['credentials']>>;
+  private readonly credentials?: CredentialRefresher;
 
   constructor(private readonly context: PluginContext) {
     this.credentials = context.credentialRefresher;
@@ -337,9 +338,7 @@ class ClaudeRequestNormalizerInterceptor implements ProxyInterceptor {
       const apiUrl = credentials.apiUrl || this.context.config.targetApiUrl;
       // Whole catalog, not one project's: this only looks up metadata for requests
       // the client already sends, so a model outside the project must still resolve.
-      const models = 'cookies' in credentials
-        ? await fetchCodeMieLlmModels(apiUrl, credentials.cookies, undefined)
-        : await fetchCodeMieLlmModels(apiUrl, credentials.token, undefined);
+      const models = await fetchCodeMieLlmModels(apiUrl, authMaterial(credentials), undefined);
 
       this.availableModels = models
         .filter((model) => model.enabled !== false)

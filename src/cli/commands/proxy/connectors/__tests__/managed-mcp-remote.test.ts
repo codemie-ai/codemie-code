@@ -3,7 +3,7 @@
  * @group unit
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { CodeMieSSO } from '@/providers/plugins/sso/sso.auth.js';
+import { CredentialStore } from '@/utils/security.js';
 import { HTTPClient } from '@/providers/core/base/http-client.js';
 import { fetchManagedMcpServers, isValidOAuthConfig } from '../managed-mcp-remote.js';
 
@@ -16,9 +16,15 @@ function rawOk(body: unknown, statusCode = 200) {
 
 describe('fetchManagedMcpServers', () => {
   let getRawMock: ReturnType<typeof vi.fn>;
+  /** The cookie record stored for the URL; no JWT and no global record are stored. */
+  let retrieveSSOCredentials: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    vi.spyOn(CodeMieSSO.prototype, 'getStoredCredentials').mockResolvedValue(CREDS as any);
+    retrieveSSOCredentials = vi.fn(async (url?: string) => (url === undefined ? null : CREDS));
+    vi.spyOn(CredentialStore, 'getInstance').mockReturnValue({
+      retrieveSSOCredentials,
+      retrieveJWTCredentials: vi.fn(async () => null),
+    } as unknown as CredentialStore);
     // The fetch goes through the shared HTTPClient (like every other CodeMie
     // request), so mock its getRaw rather than global fetch.
     getRawMock = vi.fn();
@@ -45,7 +51,7 @@ describe('fetchManagedMcpServers', () => {
     expect(String(calledUrl)).toBe('https://api.codemie.test/v1/mcp/managed-servers?client=claude-desktop');
     // buildAuthHeaders attaches the cookie plus the standard CLI-identifying
     // headers that every other CodeMie request sends.
-    expect((headers as Record<string, string>).cookie).toBe('codemie_access_token=abc;sid=xyz');
+    expect((headers as Record<string, string>).cookie).toBe('codemie_access_token=abc; sid=xyz');
     expect((headers as Record<string, string>)['X-CodeMie-Client']).toBe('codemie-cli');
   });
 
@@ -67,10 +73,10 @@ describe('fetchManagedMcpServers', () => {
   });
 
   it('preserves a base path on the API URL (e.g. /code-assistant-api)', async () => {
-    (CodeMieSSO.prototype.getStoredCredentials as any).mockResolvedValue({
+    retrieveSSOCredentials.mockImplementation(async (url?: string) => (url === undefined ? null : {
       apiUrl: 'https://codemie.example.com/code-assistant-api',
       cookies: { codemie_access_token: 'abc' },
-    });
+    }));
     getRawMock.mockResolvedValue(rawOk([]));
     await fetchManagedMcpServers('claude-desktop', 'https://codemie.example.com');
     expect(String(getRawMock.mock.calls[0][0])).toBe(
@@ -79,7 +85,7 @@ describe('fetchManagedMcpServers', () => {
   });
 
   it('returns null when credentials are missing', async () => {
-    (CodeMieSSO.prototype.getStoredCredentials as any).mockResolvedValue(null);
+    retrieveSSOCredentials.mockResolvedValue(null);
     expect(await fetchManagedMcpServers('claude-desktop', 'https://codemie.test')).toBeNull();
     expect(getRawMock).not.toHaveBeenCalled();
   });

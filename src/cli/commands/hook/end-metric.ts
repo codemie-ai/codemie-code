@@ -1,12 +1,16 @@
 import { logger } from '@/utils/logger.js';
-import type { CookieAuth } from '@/providers/plugins/sso/session/cookie-auth.js';
+import {
+  analyticsAuthFields,
+  hasAnalyticsAuth,
+  type CredentialedAnalyticsAuth,
+} from '@/providers/plugins/sso/session/analytics-auth.js';
 import type { SessionStore } from '@/agents/core/session/SessionStore.js';
 import type { Session } from '@/agents/core/session/types.js';
 import type { MetricsSender } from '@/providers/plugins/sso/session/processors/metrics/metrics-api-client.js';
 import type { HookProcessingConfig } from '../hook.js';
 import { configSendPathApiUrl, getConfigValue } from './config-value.js';
 import type { SessionEndOptions } from './session-end-options.js';
-import { loadAnalyticsCookies } from './analytics-cookies.js';
+import { loadAnalyticsAuth } from './analytics-auth.js';
 import { noteAwaitingDestination, type RequestOutcome } from '@/providers/plugins/sso/session/bounded-request.js';
 import { stampRejection } from '@/agents/core/session/delivery-budget.js';
 
@@ -63,16 +67,16 @@ async function sendDeferredStartMetric(
 }
 
 /**
- * The cookies of the end metric: the config's, else the stored SSO credentials. Undefined
- * without credentials: nothing is sent and no delivery attempt is spent — the record waits for a
- * launch that has them.
+ * The credentials (cookies or a JWT) of the end metric: the config's, else the stored SSO
+ * credential. Undefined without credentials: nothing is sent and no delivery attempt is spent —
+ * the record waits for a launch that has them.
  */
-export async function endMetricCookieAuth(
+export async function endMetricAuth(
   ssoUrl: string,
   config: HookProcessingConfig | undefined
-): Promise<CookieAuth | undefined> {
-  const auth = await loadAnalyticsCookies('[hook:SessionEnd]', ssoUrl, config);
-  if (!auth.cookies) {
+): Promise<CredentialedAnalyticsAuth | undefined> {
+  const auth = await loadAnalyticsAuth('[hook:SessionEnd]', ssoUrl, config);
+  if (!hasAnalyticsAuth(auth)) {
     logger.info(
       auth.readTimedOut
         ? `[hook:SessionEnd] The credential store did not answer in time for ${ssoUrl}`
@@ -173,8 +177,8 @@ export async function sendSessionEndMetrics(
       reason
     };
 
-    const cookieAuth = await endMetricCookieAuth(ssoUrl, config);
-    if (!cookieAuth) return;
+    const auth = await endMetricAuth(ssoUrl, config);
+    if (!auth) return;
 
     // Use MetricsSender to send session end metric
     const { MetricsSender } = await import(
@@ -185,8 +189,7 @@ export async function sendSessionEndMetrics(
 
     const sender = new MetricsSender({
       baseUrl: apiUrl,
-      cookies: cookieAuth.cookies,
-      credentialsSuperseded: cookieAuth.credentialsSuperseded,
+      ...analyticsAuthFields(auth),
       timeout: 10000,
       retryAttempts: options.hookProcess ? 0 : 2,
       version: cliVersion,

@@ -62,10 +62,10 @@ async function resolveIdentityTier(
   cwd: string
 ): Promise<Pick<IdentityFields, 'user_email' | 'developer_name' | 'identity_source'>> {
   try {
-    const credentials = await resolveHookCredentials();
-    const identity = await resolveIdentity(credentials, cwd);
+    const auth = await resolveHookCredentials();
+    const identity = await resolveIdentity(auth, cwd);
     return {
-      user_email: resolveEmailFromCredentials(credentials),
+      user_email: resolveEmailFromCredentials(auth),
       developer_name: identity.developerName,
       identity_source: identity.identitySource,
     };

@@ -28,10 +28,14 @@ vi.mock('@/utils/logger.js', () => ({
   },
 }));
 vi.mock('../proxy/otlp-cold-start.js', () => ({ ensureOtlpProxy: vi.fn() }));
-vi.mock('../../../providers/core/codemie-auth-helpers.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../../providers/core/codemie-auth-helpers.js')>()),
-  getStoredAnalyticsCredentials: vi.fn(async () => ({ credentials: { cookies: { session: 'abc' } } })),
-}));
+vi.mock('../../../providers/plugins/sso/auth/index.js', async (importOriginal) => {
+  const { toSSOAuth } = await import('../../../providers/plugins/sso/auth/selection.js');
+  return {
+    ...(await importOriginal<typeof import('../../../providers/plugins/sso/auth/index.js')>()),
+    resolveAnalyticsSSOAuth: vi.fn(async (ssoUrl: string) =>
+      toSSOAuth({ type: 'cookie', record: { cookies: { session: 'abc' }, apiUrl: ssoUrl } }, ssoUrl)),
+  };
+});
 vi.mock('@/agents/core/evidence/hook-identity.js', () => ({
   currentEvidenceIdentity: vi.fn(async () => ({ api_identity: 'api-x', owner_hash: 'owner-x' })),
 }));

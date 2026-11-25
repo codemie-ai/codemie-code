@@ -43,10 +43,15 @@ vi.mock('@/utils/exec.js', async (importOriginal) => {
   return { ...actual, exec: vi.fn(actual.exec) };
 });
 
-vi.mock('../../../providers/core/codemie-auth-helpers.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../../providers/core/codemie-auth-helpers.js')>()),
-  getStoredAnalyticsCredentials: vi.fn(async () => ({ credentials: { cookies: { session: 'abc' } } })),
-}));
+// The stored analytics login is a cookie record for the SSO URL.
+vi.mock('../../../providers/plugins/sso/auth/index.js', async (importOriginal) => {
+  const { toSSOAuth } = await import('../../../providers/plugins/sso/auth/selection.js');
+  return {
+    ...(await importOriginal<typeof import('../../../providers/plugins/sso/auth/index.js')>()),
+    resolveAnalyticsSSOAuth: vi.fn(async (ssoUrl: string) =>
+      toSSOAuth({ type: 'cookie', record: { cookies: { session: 'abc' }, apiUrl: ssoUrl } }, ssoUrl)),
+  };
+});
 
 const { processEvent, createHookCommand } = await import('../hook.js');
 const { deliverSessionRecord } = await import('../hook/delivery.js');
@@ -1687,8 +1692,9 @@ describe('SessionEnd inside the agent hook process', () => {
   it('a start with no stored credentials leaves an undelivered record in place: no request, no attempt, never renamed unsent', async () => {
     const session = baseRecord({ status: 'completed', endTime: Date.parse('2026-10-01T10:30:00Z') });
     writeRecord(session);
-    const { getStoredAnalyticsCredentials } = await import('../../../providers/core/codemie-auth-helpers.js');
-    vi.mocked(getStoredAnalyticsCredentials).mockResolvedValue(null);
+    const { resolveAnalyticsSSOAuth } = await import('../../../providers/plugins/sso/auth/index.js');
+    const storedAuth = vi.mocked(resolveAnalyticsSSOAuth).getMockImplementation();
+    vi.mocked(resolveAnalyticsSSOAuth).mockResolvedValue(null);
     const nextStart = { CODEMIE_URL: HOST, CODEMIE_BASE_URL: API, CODEMIE_TARGET_API_URL: UPSTREAM, CODEMIE_PROFILE_NAME: 'work', CODEMIE_CLI_VERSION: '9.9.9' };
     const attempts: Array<number | string | undefined> = [];
     try {
@@ -1697,7 +1703,7 @@ describe('SessionEnd inside the agent hook process', () => {
         attempts.push(existsSync(join(sessionsDir, `${session.sessionId}.json`)) ? readRecord(session.sessionId).deliveryRealAttempts : 'renamed');
       }
     } finally {
-      vi.mocked(getStoredAnalyticsCredentials).mockImplementation(async () => ({ credentials: { cookies: { session: 'abc' } } }) as Awaited<ReturnType<typeof getStoredAnalyticsCredentials>>);
+      vi.mocked(resolveAnalyticsSSOAuth).mockImplementation(storedAuth!);
     }
 
     expect(attempts).toEqual([undefined, undefined, undefined, undefined]);

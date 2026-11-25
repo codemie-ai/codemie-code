@@ -79,6 +79,7 @@ export function createSyncProcessor(): SessionProcessor {
         baseUrl: context.apiBaseUrl,
         cookies: context.cookies,
         apiKey: context.apiKey,
+        jwtToken: context.jwtToken,
         timeout: DEFAULT_API_TIMEOUT_MS,
         retryAttempts: context.stopAtFirstFailure ? 1 : DEFAULT_RETRY_ATTEMPTS, // TOTAL attempts (1 = no retry; the client reads 0 as "default 3"): a timer run ends at its first outcome that is not ok
         version: context.version,

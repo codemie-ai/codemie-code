@@ -1,29 +1,36 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-
-const mockGetStoredAnalyticsCredentials = vi.fn();
+import type { CookieSSOAuth, SSOAuth } from '../../auth/types.js';
 
 const mockLoggerDebug = vi.hoisted(() => vi.fn());
 
 vi.mock('@/utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: mockLoggerDebug },
 }));
-vi.mock('@/providers/core/codemie-auth-helpers.js', () => ({
-  getStoredAnalyticsCredentials: mockGetStoredAnalyticsCredentials,
-}));
 
 const {
   STORE_READ_DEADLINE_MS,
-  PROXY_STORE_READ_DEADLINE_MS,
   buildCookieHeader,
   droppedCookieKeys,
+  hasUsableCookies,
   readWithDeadline,
   sentCredentialsSuperseded,
-  supersedingCookieHeader,
-  readCookieAuth,
-  readAnalyticsCookieAuth,
+  supersedingAuthValue,
+  buildCookieAuth,
 } = await import('../cookie-auth.js');
-
+const { toSSOAuth } = await import('../../auth/selection.js');
 type Creds = { cookies: Record<string, string> };
+
+const API_URL = 'https://api';
+
+/** A stored cookie login as the resolver returns it. */
+function cookieAuth(cookies: Record<string, string>): CookieSSOAuth {
+  return toSSOAuth({ type: 'cookie', record: { cookies, apiUrl: API_URL } }, API_URL) as CookieSSOAuth;
+}
+
+/** A stored JWT login as the resolver returns it. */
+function jwtAuth(token: string): SSOAuth {
+  return toSSOAuth({ type: 'jwt', record: { token, apiUrl: API_URL } }, API_URL);
+}
 
 describe('buildCookieHeader', () => {
   it('joins name=value pairs with "; "', () => {
@@ -49,6 +56,23 @@ describe('buildCookieHeader', () => {
   });
 });
 
+describe('hasUsableCookies', () => {
+  it('is true for cookies that build a header', () => {
+    expect(hasUsableCookies({ a: '1' })).toBe(true);
+  });
+
+  it('is false for empty or entirely unusable cookies', () => {
+    expect(hasUsableCookies({})).toBe(false);
+    expect(hasUsableCookies({ 'bad\nname': 'x' })).toBe(false);
+  });
+
+  it('is false, not a throw, for a missing or malformed cookies field', () => {
+    expect(hasUsableCookies(undefined)).toBe(false);
+    expect(hasUsableCookies(null)).toBe(false);
+    expect(hasUsableCookies('a=1')).toBe(false);
+  });
+});
+
 describe('droppedCookieKeys', () => {
   it('lists the names buildCookieHeader leaves out, an empty name as <empty>, and never a value', () => {
     expect(droppedCookieKeys({ a: '1', '': 'x', ' ': 'y', bad: 'l\nb', 'n\nm': 'v' })).toEqual([
@@ -66,12 +90,12 @@ describe('droppedCookieKeys', () => {
 
 describe('sentCredentialsSuperseded', () => {
   it('is true when the re-read header differs from the sent one', async () => {
-    const source = { refreshNow: vi.fn().mockResolvedValue({ cookies: { s: 'new' } }) };
+    const source = { refreshNow: vi.fn().mockResolvedValue(cookieAuth({ s: 'new' })) };
     expect(await sentCredentialsSuperseded('s=old', source)).toBe(true);
   });
 
   it('is false when headers are equal', async () => {
-    const source = { refreshNow: vi.fn().mockResolvedValue({ cookies: { s: 'same' } }) };
+    const source = { refreshNow: vi.fn().mockResolvedValue(cookieAuth({ s: 'same' })) };
     expect(await sentCredentialsSuperseded('s=same', source)).toBe(false);
   });
 
@@ -80,7 +104,7 @@ describe('sentCredentialsSuperseded', () => {
   });
 
   it('is false when nothing was sent, without consulting the source', async () => {
-    const source = { refreshNow: vi.fn().mockResolvedValue({ cookies: { s: 'new' } }) };
+    const source = { refreshNow: vi.fn().mockResolvedValue(cookieAuth({ s: 'new' })) };
     expect(await sentCredentialsSuperseded('', source)).toBe(false);
     expect(await sentCredentialsSuperseded(undefined, source)).toBe(false);
   });
@@ -96,30 +120,30 @@ describe('sentCredentialsSuperseded', () => {
   });
 
   it('is false when the re-read builds an empty header', async () => {
-    const source = { refreshNow: vi.fn().mockResolvedValue({ cookies: { '': 'x' } }) };
+    const source = { refreshNow: vi.fn().mockResolvedValue(cookieAuth({ '': 'x' })) };
     expect(await sentCredentialsSuperseded('s=old', source)).toBe(false);
   });
 });
 
-describe('supersedingCookieHeader', () => {
+describe('supersedingAuthValue', () => {
   it('returns the stored header when it differs from the sent one', async () => {
-    const source = { refreshNow: vi.fn().mockResolvedValue({ cookies: { s: 'new' } }) };
-    expect(await supersedingCookieHeader('s=old', source)).toBe('s=new');
+    const source = { refreshNow: vi.fn().mockResolvedValue(cookieAuth({ s: 'new' })) };
+    expect(await supersedingAuthValue('s=old', source)).toBe('s=new');
   });
 
   it.each([
-    ['equal headers', 's=same', { cookies: { s: 'same' } }],
+    ['equal headers', 's=same', cookieAuth({ s: 'same' })],
     ['an empty store', 's=old', null],
-    ['an unusable stored header', 's=old', { cookies: { '': 'x' } }],
+    ['an unusable stored header', 's=old', cookieAuth({ '': 'x' })],
   ])('returns null for %s', async (_label, sent, stored) => {
     const source = { refreshNow: vi.fn().mockResolvedValue(stored) };
-    expect(await supersedingCookieHeader(sent, source)).toBeNull();
+    expect(await supersedingAuthValue(sent, source)).toBeNull();
   });
 
   it('returns null when the re-read throws, without a source or when nothing was sent', async () => {
-    expect(await supersedingCookieHeader('s=old', { refreshNow: vi.fn().mockRejectedValue(new Error('boom')) })).toBeNull();
-    expect(await supersedingCookieHeader('s=old')).toBeNull();
-    expect(await supersedingCookieHeader('', { refreshNow: vi.fn() })).toBeNull();
+    expect(await supersedingAuthValue('s=old', { refreshNow: vi.fn().mockRejectedValue(new Error('boom')) })).toBeNull();
+    expect(await supersedingAuthValue('s=old')).toBeNull();
+    expect(await supersedingAuthValue('', { refreshNow: vi.fn() })).toBeNull();
   });
 });
 
@@ -230,148 +254,57 @@ describe('readWithDeadline', () => {
   });
 });
 
-describe('readCookieAuth', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('builds the header from the first read and reads once up front', async () => {
-    const read = vi.fn().mockResolvedValue({ cookies: { a: '1', b: '2' } });
-    const auth = await readCookieAuth(read);
+describe('buildCookieAuth', () => {
+  it('builds the header from the first read', async () => {
+    const source = { refreshNow: vi.fn() };
+    const auth = await buildCookieAuth(cookieAuth({ a: '1', b: '2' }), source, false);
     expect(auth.cookies).toBe(buildCookieHeader({ a: '1', b: '2' }));
-    expect(read).toHaveBeenCalledTimes(1);
+    expect(source.refreshNow).not.toHaveBeenCalled();
   });
 
-  it('returns an empty header when nothing is stored', async () => {
-    const auth = await readCookieAuth(vi.fn().mockResolvedValue(null));
-    expect(auth.cookies).toBe('');
+  it('passes the read deadline outcome through', async () => {
+    const source = { refreshNow: vi.fn() };
+    expect(await buildCookieAuth(cookieAuth({ a: '1' }), source, true)).toMatchObject({ readTimedOut: true });
+    expect(await buildCookieAuth(cookieAuth({ a: '1' }), source, false)).toMatchObject({ readTimedOut: false });
   });
 
-  it('returns an empty header when the first read throws', async () => {
-    const auth = await readCookieAuth(vi.fn().mockRejectedValue(new Error('boom')));
-    expect(auth.cookies).toBe('');
-  });
-
-  it('reports superseded when the re-read differs', async () => {
-    const read = vi
-      .fn()
-      .mockResolvedValueOnce({ cookies: { s: 'old' } })
-      .mockResolvedValueOnce({ cookies: { s: 'new' } });
-    const auth = await readCookieAuth(read);
+  it('reports superseded when the source re-read differs', async () => {
+    const source = { refreshNow: vi.fn().mockResolvedValue(cookieAuth({ s: 'new' })) };
+    const auth = await buildCookieAuth(cookieAuth({ s: 'old' }), source, false);
     expect(await auth.credentialsSuperseded(auth.cookies)).toBe(true);
-    expect(read).toHaveBeenCalledTimes(2);
+    expect(source.refreshNow).toHaveBeenCalledTimes(1);
   });
 
-  it('reports not superseded when the re-read is equal', async () => {
-    const read = vi.fn().mockResolvedValue({ cookies: { s: 'same' } });
-    const auth = await readCookieAuth(read);
+  it('reports not superseded when the source re-read is equal', async () => {
+    const source = { refreshNow: vi.fn().mockResolvedValue(cookieAuth({ s: 'same' })) };
+    const auth = await buildCookieAuth(cookieAuth({ s: 'same' }), source, false);
     expect(await auth.credentialsSuperseded(auth.cookies)).toBe(false);
   });
 
-  it('reports not superseded when the re-read is null', async () => {
-    const read = vi
-      .fn()
-      .mockResolvedValueOnce({ cookies: { s: 'old' } })
-      .mockResolvedValueOnce(null);
-    const auth = await readCookieAuth(read);
+  it('reports not superseded when the source re-read is null', async () => {
+    const source = { refreshNow: vi.fn().mockResolvedValue(null) };
+    const auth = await buildCookieAuth(cookieAuth({ s: 'old' }), source, false);
     expect(await auth.credentialsSuperseded(auth.cookies)).toBe(false);
-  });
-
-  it('reports not superseded when the re-read throws', async () => {
-    const read = vi
-      .fn()
-      .mockResolvedValueOnce({ cookies: { s: 'old' } })
-      .mockRejectedValueOnce(new Error('boom'));
-    const auth = await readCookieAuth(read);
-    expect(await auth.credentialsSuperseded(auth.cookies)).toBe(false);
-  });
-
-  it('yields an empty header when the first read never answers, and a later check starts a fresh read', async () => {
-    const read = vi
-      .fn()
-      .mockImplementationOnce(() => new Promise(() => {}))
-      .mockResolvedValueOnce({ cookies: { s: 'new' } });
-    const pending = readCookieAuth(read);
-    await vi.advanceTimersByTimeAsync(STORE_READ_DEADLINE_MS);
-    const auth = await pending;
-
-    expect(auth.cookies).toBe('');
-    expect(await auth.credentialsSuperseded('s=old')).toBe(true);
-    expect(read).toHaveBeenCalledTimes(2);
-  });
-
-  it('marks a read cut off by the deadline as timed out, unlike an empty store', async () => {
-    const pending = readCookieAuth(() => new Promise(() => {}));
-    await vi.advanceTimersByTimeAsync(STORE_READ_DEADLINE_MS);
-    const timedOut = await pending;
-    const empty = await readCookieAuth(vi.fn().mockResolvedValue(null));
-
-    expect(timedOut).toMatchObject({ cookies: '', readTimedOut: true });
-    expect(empty).toMatchObject({ cookies: '', readTimedOut: false });
-  });
-
-  it('waits up to the deadline it is given instead of the default', async () => {
-    const read = vi.fn(
-      () => new Promise<{ cookies: Record<string, string> }>((resolve) => setTimeout(() => resolve({ cookies: { a: '1' } }), STORE_READ_DEADLINE_MS + 1_000))
-    );
-    const pending = readCookieAuth(read, { deadlineMs: PROXY_STORE_READ_DEADLINE_MS });
-    await vi.advanceTimersByTimeAsync(STORE_READ_DEADLINE_MS + 1_000);
-    const auth = await pending;
-
-    expect(auth).toMatchObject({ cookies: 'a=1', readTimedOut: false });
-  });
-
-  it('reports not superseded when the re-read never answers', async () => {
-    const read = vi
-      .fn()
-      .mockResolvedValueOnce({ cookies: { s: 'old' } })
-      .mockImplementationOnce(() => new Promise(() => {}));
-    const auth = await readCookieAuth(read);
-    const check = auth.credentialsSuperseded(auth.cookies);
-    await vi.advanceTimersByTimeAsync(STORE_READ_DEADLINE_MS);
-    expect(await check).toBe(false);
   });
 });
 
-describe('readAnalyticsCookieAuth', () => {
-  beforeEach(() => {
-    mockGetStoredAnalyticsCredentials.mockReset();
+describe('supersede across credential types', () => {
+  // Deliberate behaviour change: a JWT sign-in now supersedes a sent Cookie header (and vice
+  // versa); the comparison is on the auth value, whatever the type.
+  it('reports a cookie header superseded by a JWT sign-in', async () => {
+    const source = { refreshNow: vi.fn().mockResolvedValue(jwtAuth('jwt')) };
+    expect(await sentCredentialsSuperseded('s=old', source)).toBe(true);
+    expect(await supersedingAuthValue('s=old', source)).toBe('jwt');
   });
 
-  it('reads the stored analytics credentials and unwraps the cookies', async () => {
-    mockGetStoredAnalyticsCredentials.mockResolvedValue({ credentials: { cookies: { s: '1' } } });
-    const env = { CODEMIE_URL: 'https://x' } as NodeJS.ProcessEnv;
-    const overrides = { provider: 'ai-run-sso', baseUrl: 'https://api' };
-
-    const auth = await readAnalyticsCookieAuth('https://sso', env, overrides);
-
-    expect(auth.cookies).toBe('s=1');
-    expect(mockGetStoredAnalyticsCredentials).toHaveBeenCalledWith('https://sso', env, overrides);
+  it('reports a sent token superseded by a cookie sign-in', async () => {
+    const source = { refreshNow: vi.fn().mockResolvedValue(cookieAuth({ s: 'new' })) };
+    expect(await sentCredentialsSuperseded('jwt', source)).toBe(true);
   });
 
-  it('re-runs the same read with the same arguments', async () => {
-    mockGetStoredAnalyticsCredentials
-      .mockResolvedValueOnce({ credentials: { cookies: { s: 'old' } } })
-      .mockResolvedValueOnce({ credentials: { cookies: { s: 'new' } } });
-    const env = {} as NodeJS.ProcessEnv;
-    const overrides = { baseUrl: 'https://api' };
-
-    const auth = await readAnalyticsCookieAuth('https://sso', env, overrides);
-    expect(await auth.credentialsSuperseded(auth.cookies)).toBe(true);
-
-    expect(mockGetStoredAnalyticsCredentials).toHaveBeenCalledTimes(2);
-    expect(mockGetStoredAnalyticsCredentials).toHaveBeenNthCalledWith(1, 'https://sso', env, overrides);
-    expect(mockGetStoredAnalyticsCredentials).toHaveBeenNthCalledWith(2, 'https://sso', env, overrides);
-  });
-
-  it('yields an empty header when no credentials are stored', async () => {
-    mockGetStoredAnalyticsCredentials.mockResolvedValue(null);
-    const auth = await readAnalyticsCookieAuth('https://sso', {} as NodeJS.ProcessEnv);
-    expect(auth.cookies).toBe('');
+  it('reports a sent token not superseded by the same token', async () => {
+    const source = { refreshNow: vi.fn().mockResolvedValue(jwtAuth('jwt')) };
+    expect(await sentCredentialsSuperseded('jwt', source)).toBe(false);
   });
 });
 
@@ -418,12 +351,5 @@ describe('diagnostics', () => {
 
     expect(mockLoggerDebug).toHaveBeenCalledWith('[cookie-auth] supersede check failed', expect.anything());
     expect(logged()).not.toContain('super-secret-value');
-  });
-
-  it('logs and yields an empty header when the stored credentials are malformed', async () => {
-    const result = await readCookieAuth(async () => ({}) as never);
-
-    expect(result.cookies).toBe('');
-    expect(mockLoggerDebug).toHaveBeenCalledWith('[cookie-auth] stored credentials are malformed', expect.anything());
   });
 });

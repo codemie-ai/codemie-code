@@ -30,12 +30,16 @@ vi.mock('../../../session/SessionSyncer.js', () => ({
   SessionSyncer: SessionSyncerMock
 }));
 
-// CredentialRefresher (shared with sso-auth.plugin.ts) re-reads stored credentials from disk/
-// keychain — mock it out so this suite stays pure unit (no real I/O, no fake-timer interaction
-// with a real pending promise). Defaults to "no fresher credentials found" (null), same as the
-// production fallback; individual tests may override to simulate a picked-up re-login.
-const { getStoredPlatformCredentials } = vi.hoisted(() => ({ getStoredPlatformCredentials: vi.fn() }));
-vi.mock('@/providers/core/codemie-auth-helpers.js', () => ({ getStoredPlatformCredentials }));
+// CredentialRefresher (shared with auth-injection.plugin.ts) re-reads stored credentials from disk/
+// keychain through the SSO auth resolver — mock that out so this suite stays pure unit (no real
+// I/O, no fake-timer interaction with a real pending promise). Defaults to "no fresher credentials
+// found" (null), same as the production fallback; individual tests may override to simulate a
+// picked-up re-login.
+const { resolveSSOAuth } = vi.hoisted(() => ({ resolveSSOAuth: vi.fn() }));
+vi.mock('@/providers/plugins/sso/auth/resolver.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/providers/plugins/sso/auth/resolver.js')>()),
+  resolveSSOAuth,
+}));
 vi.mock('@/utils/analytics-auth-status.js', () => ({
   getAnalyticsAuthStatus: vi.fn().mockResolvedValue(null),
 }));
@@ -46,6 +50,8 @@ vi.mock('@/providers/plugins/sso/sso.detached-login.js', () => ({
 // Imported after vi.mock is declared (hoisted anyway).
 import { SSOSessionSyncPlugin } from '../sso.session-sync.plugin.js';
 import { CredentialRefresher } from '../credential-refresh.js';
+import { toSSOAuth } from '@/providers/plugins/sso/auth/selection.js';
+import type { SSOAuth } from '@/providers/plugins/sso/auth/types.js';
 
 const DEFAULT_INTERVAL = 120000;
 
@@ -58,21 +64,35 @@ const MANAGED_ENV = [
   'CODEMIE_DEV_API_KEY'
 ] as const;
 
-function buildContext(overrides: Partial<PluginContext> = {}, syncCodeMieUrl?: string): PluginContext {
-  const credentials = 'credentials' in overrides ? overrides.credentials : { cookies: { auth: 'cookie-value' } } as never;
-  const syncCredentials = overrides.syncCredentials;
+/** A stored record shape (cookies or a token), as the store would hold it. */
+type RawCredentials = { cookies: Record<string, string>; apiUrl?: string } | { token: string; apiUrl?: string };
+
+/** The SSOAuth the resolver would build from a stored record. */
+function auth(raw: RawCredentials): SSOAuth {
+  const apiUrl = raw.apiUrl ?? 'https://api.example.com';
+  return 'cookies' in raw
+    ? toSSOAuth({ type: 'cookie', record: { cookies: raw.cookies, apiUrl } }, apiUrl)
+    : toSSOAuth({ type: 'jwt', record: { token: raw.token, apiUrl } }, apiUrl);
+}
+
+interface ContextOverrides extends Omit<Partial<PluginContext>, 'credentials' | 'syncCredentials'> {
+  credentials?: RawCredentials;
+  syncCredentials?: RawCredentials;
+}
+
+function buildContext(overrides: ContextOverrides = {}, syncCodeMieUrl?: string): PluginContext {
+  const credentials = 'credentials' in overrides
+    ? overrides.credentials && auth(overrides.credentials)
+    : auth({ cookies: { auth: 'cookie-value' } });
+  const syncCredentials = overrides.syncCredentials && auth(overrides.syncCredentials);
   const refresherParams = { provider: 'ai-run-sso', baseUrl: 'https://api.example.com', codeMieUrl: syncCodeMieUrl };
-  // Mirrors sso.proxy.ts: syncCredentialRefresher wraps whichever of syncCredentials/credentials
-  // actually has SSO cookies, reusing the same refresher instance as credentialRefresher when
-  // it falls back to the identical `credentials` snapshot (PR #661 review).
+  // Mirrors sso.proxy.ts: syncCredentialRefresher wraps syncCredentials, falling back to
+  // credentials, reusing the same refresher instance as credentialRefresher when it falls back
+  // to the identical `credentials` snapshot (PR #661 review).
   const credentialRefresher = credentials
-    ? new CredentialRefresher(credentials as never, refresherParams)
+    ? new CredentialRefresher(credentials, refresherParams)
     : undefined;
-  const syncSource = syncCredentials && 'cookies' in syncCredentials
-    ? syncCredentials
-    : credentials && 'cookies' in credentials
-      ? credentials
-      : undefined;
+  const syncSource = syncCredentials ?? credentials ?? undefined;
   // Mirrors sso.proxy.ts: a distinct sync source gets params keyed to `syncCodeMieUrl` alone (no
   // `provider`), not the main-profile `refresherParams`, so a refresh re-reads the sync host's
   // own credentials instead of the main profile's (PR #661 review, point 3).
@@ -81,7 +101,7 @@ function buildContext(overrides: Partial<PluginContext> = {}, syncCodeMieUrl?: s
     ? undefined
     : syncSource === credentials && credentialRefresher
       ? credentialRefresher
-      : new CredentialRefresher(syncSource as never, syncOnlyRefresherParams);
+      : new CredentialRefresher(syncSource, syncOnlyRefresherParams);
   return {
     config: {
       targetApiUrl: 'https://api.example.com',
@@ -93,10 +113,11 @@ function buildContext(overrides: Partial<PluginContext> = {}, syncCodeMieUrl?: s
       ...(overrides.config as object)
     },
     logger,
+    ...overrides,
     credentials,
+    syncCredentials,
     credentialRefresher,
     syncCredentialRefresher,
-    ...overrides
   } as PluginContext;
 }
 
@@ -122,8 +143,8 @@ describe('SSOSessionSyncPlugin', () => {
       processorResults: {},
       failedProcessors: []
     });
-    getStoredPlatformCredentials.mockReset();
-    getStoredPlatformCredentials.mockResolvedValue(null);
+    resolveSSOAuth.mockReset();
+    resolveSSOAuth.mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -159,20 +180,29 @@ describe('SSOSessionSyncPlugin', () => {
           targetApiUrl: 'https://api.example.com',
           clientType: 'claude'
           // sessionId omitted
-        } as never
+        }
       });
       await expect(plugin.createInterceptor(ctx)).rejects.toBeInstanceOf(ConfigurationError);
       expect(SessionSyncerMock).not.toHaveBeenCalled();
       expect(syncMock).not.toHaveBeenCalled();
     });
 
-    it('throws ConfigurationError when credentials have no cookies (JWT, not SSO)', async () => {
+    it('throws ConfigurationError when there are no credentials at all', async () => {
       const ctx = buildContext({
-        credentials: { token: 'jwt-token' } as never,
+        credentials: undefined,
         syncCredentials: undefined
       });
       await expect(plugin.createInterceptor(ctx)).rejects.toBeInstanceOf(ConfigurationError);
       expect(SessionSyncerMock).not.toHaveBeenCalled();
+    });
+
+    it('creates an interceptor for JWT-only credentials (a reverse proxy stripped cookies)', async () => {
+      const ctx = buildContext({
+        credentials: { token: 'jwt-token', apiUrl: 'https://api.example.com' },
+        syncCredentials: undefined
+      });
+      const interceptor = await plugin.createInterceptor(ctx);
+      expect(interceptor.name).toBe('sso-session-sync');
     });
 
     it('throws ConfigurationError when clientType is missing', async () => {
@@ -181,7 +211,7 @@ describe('SSOSessionSyncPlugin', () => {
           targetApiUrl: 'https://api.example.com',
           sessionId: 'session-123'
           // clientType omitted
-        } as never
+        }
       });
       await expect(plugin.createInterceptor(ctx)).rejects.toBeInstanceOf(ConfigurationError);
       expect(SessionSyncerMock).not.toHaveBeenCalled();
@@ -197,8 +227,8 @@ describe('SSOSessionSyncPlugin', () => {
     it('honours syncCredentials over credentials for the SSO cookie check', async () => {
       // credentials are JWT-shaped, but syncCredentials carry cookies -> allowed
       const ctx = buildContext({
-        credentials: { token: 'jwt' } as never,
-        syncCredentials: { cookies: { auth: 'c' } } as never
+        credentials: { token: 'jwt' },
+        syncCredentials: { cookies: { auth: 'c' } }
       });
       const interceptor = await plugin.createInterceptor(ctx);
       expect(interceptor.name).toBe('sso-session-sync');
@@ -211,8 +241,8 @@ describe('SSOSessionSyncPlugin', () => {
       // endpoint's own. syncCredentialRefresher now always prefers syncCredentials.
       vi.useFakeTimers();
       const ctx = buildContext({
-        credentials: { cookies: { auth: 'main-profile-cookie' } } as never,
-        syncCredentials: { cookies: { auth: 'sync-endpoint-cookie' } } as never
+        credentials: { cookies: { auth: 'main-profile-cookie' } },
+        syncCredentials: { cookies: { auth: 'sync-endpoint-cookie' } }
       });
       const interceptor = await plugin.createInterceptor(ctx);
 
@@ -231,24 +261,18 @@ describe('SSOSessionSyncPlugin', () => {
       // very next refresh. The lookup is now keyed to `syncCodeMieUrl` alone (no `provider`).
       vi.useFakeTimers();
       const syncCodeMieUrl = 'https://sync.example.com';
-      getStoredPlatformCredentials.mockImplementation(async (params: { provider?: string }) => {
+      resolveSSOAuth.mockImplementation(async (params: { provider?: string }) => {
         if (params.provider) {
           // Main-profile refresher: would return the main profile's own fresh cookies.
-          return {
-            credentials: { cookies: { auth: 'main-profile-cookie-refreshed' }, apiUrl: 'https://api.example.com' },
-            url: 'https://api.example.com',
-          };
+          return auth({ cookies: { auth: 'main-profile-cookie-refreshed' }, apiUrl: 'https://api.example.com' });
         }
         // Sync-only refresher: the sync endpoint's own fresh cookies.
-        return {
-          credentials: { cookies: { auth: 'sync-endpoint-cookie-refreshed' }, apiUrl: syncCodeMieUrl },
-          url: syncCodeMieUrl,
-        };
+        return auth({ cookies: { auth: 'sync-endpoint-cookie-refreshed' }, apiUrl: syncCodeMieUrl });
       });
 
       const ctx = buildContext({
-        credentials: { cookies: { auth: 'main-profile-cookie' } } as never,
-        syncCredentials: { cookies: { auth: 'sync-endpoint-cookie' } } as never,
+        credentials: { cookies: { auth: 'main-profile-cookie' } },
+        syncCredentials: { cookies: { auth: 'sync-endpoint-cookie' } },
       }, syncCodeMieUrl);
       const interceptor = await plugin.createInterceptor(ctx);
 
@@ -267,7 +291,7 @@ describe('SSOSessionSyncPlugin', () => {
       const ctx = buildContext({
         credentials: {
           cookies: { auth: 'good', '': 'empty-name', bad: 'line\r\nbreak', 'ba\nd2': 'v', other: 'ok' }
-        } as never
+        }
       });
       const interceptor = await plugin.createInterceptor(ctx);
 
@@ -293,7 +317,7 @@ describe('SSOSessionSyncPlugin', () => {
       const ctx = buildContext({
         credentials: {
           cookies: { auth: 'good-secret', '': 'orphan-secret', bad: 'line\r\nbreak-secret', other: 'ok' }
-        } as never
+        }
       });
       const interceptor = await plugin.createInterceptor(ctx);
 
@@ -333,7 +357,7 @@ describe('SSOSessionSyncPlugin', () => {
     it('rebuilds the cookie header from a freshly re-read credential before each sync tick', async () => {
       vi.useFakeTimers();
       // First tick: no fresher credentials found yet — keeps the startup-snapshot cookie.
-      getStoredPlatformCredentials.mockResolvedValueOnce(null);
+      resolveSSOAuth.mockResolvedValueOnce(null);
       const interceptor = await plugin.createInterceptor(buildContext());
 
       await interceptor.onProxyStart?.();
@@ -342,12 +366,77 @@ describe('SSOSessionSyncPlugin', () => {
 
       // A browser re-login completed between ticks — the throttle window (5s) has long since
       // elapsed by the next 120s tick, so the next sync must pick up the fresh cookie.
-      getStoredPlatformCredentials.mockResolvedValueOnce({
-        credentials: { cookies: { auth: 'fresh-after-relogin' }, apiUrl: 'https://api.example.com' },
-        url: 'https://api.example.com',
-      });
+      resolveSSOAuth.mockResolvedValueOnce(auth({ cookies: { auth: 'fresh-after-relogin' }, apiUrl: 'https://api.example.com' }));
       await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL);
       expect(syncMock.mock.calls[1][1]).toMatchObject({ cookies: 'auth=fresh-after-relogin' });
+
+      await interceptor.onProxyStop?.();
+    });
+  });
+
+  describe('JWT fallback credentials', () => {
+    const API = 'https://api.example.com';
+
+    async function startWith(credentials: RawCredentials): Promise<Awaited<ReturnType<SSOSessionSyncPlugin['createInterceptor']>>> {
+      vi.useFakeTimers();
+      const interceptor = await plugin.createInterceptor(buildContext({ credentials }));
+      await interceptor.onProxyStart?.();
+      return interceptor;
+    }
+
+    it('syncs with the JWT and an empty cookie header', async () => {
+      const interceptor = await startWith({ token: 'jwt-startup', apiUrl: API });
+
+      await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL);
+      expect(syncMock.mock.calls[0][1]).toMatchObject({ cookies: '', jwtToken: 'jwt-startup' });
+
+      await interceptor.onProxyStop?.();
+    });
+
+    it('picks up a rotated JWT before a later sync tick', async () => {
+      const interceptor = await startWith({ token: 'jwt-startup', apiUrl: API });
+      await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL);
+
+      resolveSSOAuth.mockResolvedValueOnce(auth({ token: 'jwt-relogin', apiUrl: API }));
+      await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL);
+      expect(syncMock.mock.calls[1][1]).toMatchObject({ cookies: '', jwtToken: 'jwt-relogin' });
+
+      await interceptor.onProxyStop?.();
+    });
+
+    it('switches to the JWT when a re-read finds only a JWT (a re-login changed the type)', async () => {
+      const interceptor = await startWith({ cookies: { auth: 'cookie-value' }, apiUrl: API });
+      await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL);
+      expect(syncMock.mock.calls[0][1]).toMatchObject({ cookies: 'auth=cookie-value' });
+
+      resolveSSOAuth.mockResolvedValueOnce(auth({ token: 'jwt-relogin', apiUrl: API }));
+      await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL);
+      expect(syncMock.mock.calls[1][1]).toMatchObject({ cookies: '', jwtToken: 'jwt-relogin' });
+
+      await interceptor.onProxyStop?.();
+    });
+
+    it('switches to the cookies when a re-read finds only cookies, dropping the JWT', async () => {
+      const interceptor = await startWith({ token: 'jwt-startup', apiUrl: API });
+      await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL);
+
+      resolveSSOAuth.mockResolvedValueOnce(auth({ cookies: { auth: 'fresh' }, apiUrl: API }));
+      await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL);
+      const context = syncMock.mock.calls[1][1];
+      expect(context).toMatchObject({ cookies: 'auth=fresh' });
+      expect(context.jwtToken).toBeUndefined();
+
+      await interceptor.onProxyStop?.();
+    });
+
+    it('does not send the JWT in local-dev mode', async () => {
+      process.env.CODEMIE_DEV_API_URL = 'http://localhost:8080';
+      process.env.CODEMIE_DEV_API_KEY = 'dev-key';
+      const interceptor = await startWith({ token: 'jwt-startup', apiUrl: API });
+
+      await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL);
+      expect(syncMock.mock.calls[0][1]).toMatchObject({ cookies: '', apiKey: 'dev-key' });
+      expect(syncMock.mock.calls[0][1].jwtToken).toBeUndefined();
 
       await interceptor.onProxyStop?.();
     });
@@ -369,20 +458,14 @@ describe('SSOSessionSyncPlugin', () => {
       const syncContext = await runOneTick();
       expect(syncContext.credentialsSuperseded).toBeTypeOf('function');
 
-      getStoredPlatformCredentials.mockResolvedValue({
-        credentials: { cookies: { auth: 'fresh-after-relogin' }, apiUrl: 'https://api.example.com' },
-        url: 'https://api.example.com',
-      });
+      resolveSSOAuth.mockResolvedValue(auth({ cookies: { auth: 'fresh-after-relogin' }, apiUrl: 'https://api.example.com' }));
       await expect(syncContext.credentialsSuperseded!('auth=cookie-value')).resolves.toBe(true);
     });
 
     it('reports false when the stored cookies equal the ones that were sent', async () => {
       const syncContext = await runOneTick();
 
-      getStoredPlatformCredentials.mockResolvedValue({
-        credentials: { cookies: { auth: 'cookie-value' }, apiUrl: 'https://api.example.com' },
-        url: 'https://api.example.com',
-      });
+      resolveSSOAuth.mockResolvedValue(auth({ cookies: { auth: 'cookie-value' }, apiUrl: 'https://api.example.com' }));
       await expect(syncContext.credentialsSuperseded!('auth=cookie-value')).resolves.toBe(false);
     });
 
