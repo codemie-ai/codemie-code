@@ -195,6 +195,32 @@ describe('analytics reduction setting', () => {
       expect(JSON.parse(await fs.readFile(path.join(home, 'analytics-reduction-projects.json'), 'utf-8'))).toEqual([project]);
     });
 
+    it('removes a project from the list and leaves the others', async () => {
+      const { readOptedInProjects, addOptedInProject, removeOptedInProject } = await import('../analytics-reduction-setting.js');
+      const other = path.join(root, 'other');
+      await addOptedInProject(project);
+      await addOptedInProject(other);
+      await removeOptedInProject(project);
+      expect(await readOptedInProjects()).toEqual([other]);
+      await removeOptedInProject(project);
+      expect(await readOptedInProjects()).toEqual([other]);
+    });
+
+    it('does not destroy an unreadable list on remove', async () => {
+      const { removeOptedInProject } = await import('../analytics-reduction-setting.js');
+      const f = await put(path.join(home, 'analytics-reduction-projects.json'), '<<<<<<<');
+      await expect(removeOptedInProject(project)).rejects.toThrow();
+      expect(await fs.readFile(f, 'utf-8')).toBe('<<<<<<<');
+    });
+
+    it('turns a project flag off with an explicit false and keeps every other key', async () => {
+      const { readReductionFlag, writeProjectReductionFlag } = await import('../analytics-reduction-setting.js');
+      const file = await put(path.join(project, CONFIG), JSON.stringify({ version: 2, profiles: {}, analytics: { promptReduction: true } }));
+      await writeProjectReductionFlag(project, false);
+      expect(await readReductionFlag(file)).toBe('off');
+      expect(JSON.parse(await fs.readFile(file, 'utf-8'))).toMatchObject({ version: 2, analytics: { promptReduction: false } });
+    });
+
     it('rejects a relative path', async () => {
       const { addOptedInProject } = await import('../analytics-reduction-setting.js');
       await expect(addOptedInProject('rel/dir')).rejects.toThrow();

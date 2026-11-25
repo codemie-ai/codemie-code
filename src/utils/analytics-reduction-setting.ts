@@ -102,9 +102,9 @@ async function writeFlag(file: string, value: boolean): Promise<void> {
   await writeFileAtomic(file, JSON.stringify(next, null, indent) + trailing);
 }
 
-/** Turns reduction on for one project; touches only `analytics.promptReduction`. */
-export async function writeProjectReductionFlag(projectDir: string): Promise<void> {
-  await writeFlag(projectConfigFile(projectDir), true);
+/** Turns reduction on (default) or off (explicit `false`) for one project; touches only `analytics.promptReduction`. */
+export async function writeProjectReductionFlag(projectDir: string, on: boolean = true): Promise<void> {
+  await writeFlag(projectConfigFile(projectDir), on);
 }
 
 /** Sets reduction on or off globally (off stores an explicit `false`). */
@@ -142,4 +142,16 @@ export async function addOptedInProject(absPath: string): Promise<void> {
   }
   if (current.includes(absPath)) return;
   await writeFileAtomic(getCodemiePath(OPTED_IN_FILE), JSON.stringify([...current, absPath], null, 2) + '\n');
+}
+
+/** Removes one absolute project path from the opted-in list; a missing path is a no-op, an unreadable list is left untouched and an error thrown. */
+export async function removeOptedInProject(absPath: string): Promise<void> {
+  const current = await readOptedInProjects();
+  if (current === 'unreadable') {
+    throw new ConfigurationError(
+      `Opted-in project list at ${getCodemiePath(OPTED_IN_FILE)} is unreadable; not overwriting it. Fix or move the file, then retry.`
+    );
+  }
+  if (!current.includes(absPath)) return;
+  await writeFileAtomic(getCodemiePath(OPTED_IN_FILE), JSON.stringify(current.filter((entry) => entry !== absPath), null, 2) + '\n');
 }

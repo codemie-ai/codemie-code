@@ -25,6 +25,7 @@ import {
   addOptedInProject,
   readOptedInProjects,
   readReductionFlag,
+  removeOptedInProject,
   writeGlobalReductionFlag,
   writeProjectReductionFlag,
 } from '../../utils/analytics-reduction-setting.js';
@@ -516,11 +517,24 @@ export async function runAnalyticsReductionStep(): Promise<void> {
   }
 
   let flagWritten = false;
+  let flagTurnedOff = false;
   try {
     if (reduction === 'off') {
       if (globalOn) {
         await writeGlobalReductionFlag(false);
         console.log(chalk.green('✓ Turned off for all projects'));
+      }
+      if (projectState === 'on') {
+        await writeProjectReductionFlag(projectDir, false);
+        flagWritten = true;
+        flagTurnedOff = true;
+        await removeOptedInProject(projectDir);
+        console.log(chalk.green(`✓ Turned off for ${projectName}`));
+        console.log(chalk.dim('  Saved in .codemie/codemie-cli.config.json'));
+      } else if (!globalOn) {
+        console.log(chalk.dim('Already off, nothing to change.'));
+      }
+      if (globalOn) {
         await printProjectsStillOn();
       }
       return;
@@ -542,7 +556,7 @@ export async function runAnalyticsReductionStep(): Promise<void> {
   } catch (error) {
     const message = error instanceof ConfigurationError || error instanceof Error ? error.message : String(error);
     if (flagWritten) {
-      console.log(chalk.yellow(`Prompts are hidden for ${projectName}, but the list of projects with this setting could not be updated: ${message}`));
+      console.log(chalk.yellow(`Prompts are ${flagTurnedOff ? 'no longer hidden' : 'hidden'} for ${projectName}, but the list of projects with this setting could not be updated: ${message}`));
     } else {
       console.log(chalk.red(`Could not save the analytics privacy setting: ${message}`));
     }

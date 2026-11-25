@@ -7,8 +7,9 @@ const writeProjectReductionFlag = vi.fn();
 const writeGlobalReductionFlag = vi.fn();
 const addOptedInProject = vi.fn();
 const readOptedInProjects = vi.fn();
+const removeOptedInProject = vi.fn();
 vi.mock('../../../utils/analytics-reduction-setting.js', () => ({
-  readReductionFlag, writeProjectReductionFlag, writeGlobalReductionFlag, addOptedInProject, readOptedInProjects,
+  readReductionFlag, writeProjectReductionFlag, writeGlobalReductionFlag, addOptedInProject, readOptedInProjects, removeOptedInProject,
 }));
 const isProtobuf = vi.fn();
 vi.mock('../proxy/connectors/claude-code-otlp.js', () => ({ isClaudeCodeOtlpOnProtobuf: isProtobuf }));
@@ -90,6 +91,28 @@ describe('runAnalyticsReductionStep', () => {
     expect(writeGlobalReductionFlag).toHaveBeenCalledWith(false);
     expect(out).toContain('Still on for: billing-api');
     expect(out).not.toContain('old-project');
+  });
+
+  it('Off with global off and this project on turns the project flag off and drops it from the opted-in list', async () => {
+    readReductionFlag.mockImplementation(async (file: string) => (file.includes('.codemie') && !file.includes('/home') ? 'on' : 'off'));
+    readReductionFlag.mockResolvedValueOnce('off').mockResolvedValueOnce('on');
+    prompt.mockResolvedValueOnce({ reduction: 'off' });
+    await runAnalyticsReductionStep();
+    expect(writeGlobalReductionFlag).not.toHaveBeenCalled();
+    expect(writeProjectReductionFlag).toHaveBeenCalledTimes(1);
+    const [dir, on] = writeProjectReductionFlag.mock.calls[0] as [string, boolean];
+    expect(on).toBe(false);
+    expect(removeOptedInProject).toHaveBeenCalledWith(dir);
+    expect(out).toContain('Turned off for');
+  });
+
+  it('Off with global off and the project already off changes nothing', async () => {
+    prompt.mockResolvedValueOnce({ reduction: 'off' });
+    await runAnalyticsReductionStep();
+    expect(writeGlobalReductionFlag).not.toHaveBeenCalled();
+    expect(writeProjectReductionFlag).not.toHaveBeenCalled();
+    expect(removeOptedInProject).not.toHaveBeenCalled();
+    expect(out).toContain('Already off');
   });
 
   it('shows a write failure and does not throw', async () => {
