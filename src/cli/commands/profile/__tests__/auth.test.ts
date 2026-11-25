@@ -21,9 +21,8 @@ vi.mock('../../../../providers/core/registry.js', () => ({
 vi.mock('../../../../utils/logger.js', () => ({
   logger: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn(), success: vi.fn() },
 }));
-vi.mock('ora', () => ({
-  default: () => ({ start: () => ({ succeed: vi.fn(), fail: vi.fn() }) }),
-}));
+const mockOra = vi.hoisted(() => vi.fn());
+vi.mock('ora', () => ({ default: mockOra }));
 
 import { createLoginCommand, createLogoutCommand, createRefreshCommand } from '../auth.js';
 
@@ -41,6 +40,8 @@ describe('profile auth commands', () => {
     mockAuthenticate.mockReset();
     mockConfigLoad.mockReset();
     mockAuthenticate.mockResolvedValue({ success: true });
+    mockOra.mockReset();
+    mockOra.mockReturnValue({ start: () => ({ succeed: vi.fn(), fail: vi.fn() }) });
     vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
@@ -55,6 +56,32 @@ describe('profile auth commands', () => {
       mockConfigLoad.mockResolvedValue({ provider: 'ai-run-sso', baseUrl: P, codeMieUrl: W });
       await run(createLoginCommand(), ['--url', 'https://explicit.example.com']);
       expect(mockAuthenticate).toHaveBeenCalledWith({ codeMieUrl: 'https://explicit.example.com', timeout: 120000 });
+    });
+  });
+
+  describe('headless login', () => {
+    it.each([['--no-browser'], ['--headless']])('%s authenticates headless without a spinner', async (flag) => {
+      mockConfigLoad.mockResolvedValue({ provider: 'ai-run-sso', baseUrl: P });
+      await run(createLoginCommand(), [flag]);
+      expect(mockAuthenticate).toHaveBeenCalledWith({ codeMieUrl: P, timeout: 120000, headless: true });
+      expect(mockOra).not.toHaveBeenCalled();
+    });
+
+    it('refresh --no-browser keeps existing credentials when authenticate fails', async () => {
+      mockConfigLoad.mockResolvedValue({ provider: 'ai-run-sso', baseUrl: P });
+      mockGetStoredCredentials.mockResolvedValue({ cookies: {}, apiUrl: P });
+      mockAuthenticate.mockResolvedValue({ success: false, error: 'bad paste' });
+      await run(createRefreshCommand(), ['--no-browser']);
+      expect(mockAuthenticate).toHaveBeenCalledWith({ codeMieUrl: P, timeout: 120000, headless: true });
+      expect(mockClearStoredCredentials).not.toHaveBeenCalled();
+    });
+
+    it('refresh --no-browser never clears credentials before a successful store', async () => {
+      mockConfigLoad.mockResolvedValue({ provider: 'ai-run-sso', baseUrl: P });
+      mockGetStoredCredentials.mockResolvedValue({ cookies: {}, apiUrl: P });
+      mockAuthenticate.mockRejectedValue(new Error('boom'));
+      await run(createRefreshCommand(), ['--headless']);
+      expect(mockClearStoredCredentials).not.toHaveBeenCalled();
     });
   });
 
