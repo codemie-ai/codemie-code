@@ -12,7 +12,7 @@
 
 - AC1: With several entries in `_meta.json`, connect finds the CodeMie entry (named `CodeMie Proxy`) through `_meta.json`.
 - AC2: The CodeMie entry's `<UUID>.json` gets the full field set `writeDesktopConfig` writes today: gateway URL, key, authScheme and inferenceCredentialKind, `modelDiscoveryEnabled`, `coworkEgressAllowedHosts`, `managedMcpServers`, with stale inference, sign-in and bedrock keys removed.
-- AC3: MCP servers the user added in that entry are kept.
+- AC3: MCP servers the user added in that entry are kept, and so are managed MCP servers the user edited since CodeMie last wrote them (detected by a per-name fingerprint in the managed-MCP marker, which is tied to the config it was written for).
 - AC4: If the CodeMie entry is not active, connect sets `appliedId` to it and says so in its output.
 - AC5: If it is already active and its entry exists, `_meta.json` is not rewritten.
 - AC6: When another config is active, that config's file is not modified.

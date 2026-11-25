@@ -44,6 +44,7 @@ import {
   getDesktopBaseDir,
   getDesktopConfigPath,
   getManagedMcpStatePath,
+  isCodeMieOwnedDesktopEntry,
   type ManagedMcpServerEntry,
   mapCanonicalToDesktop,
   mergeManagedMcpServers,
@@ -728,10 +729,15 @@ describe('writeDesktopConfig', () => {
     expect(meta).toEqual({ appliedId: existingId, entries: [{ id: existingId, name: 'Default' }] });
   });
 
-  it('writes the entry the connect gate resolved, even when this key would pick another', async () => {
+  it('writes the entry the connect gate resolved, even when this key would not pick the applied one', async () => {
+    const otherDaemonConfig = JSON.stringify({
+      inferenceProvider: 'gateway',
+      inferenceGatewayBaseUrl: 'http://127.0.0.1:4001',
+      inferenceGatewayApiKey: 'another-daemon-key',
+    });
     await mkdir(libDir, { recursive: true });
     await writeFile(metaPath, JSON.stringify({ appliedId: 'm', entries: [{ id: 'm', name: 'Default' }] }), 'utf-8');
-    await writeFile(join(libDir, 'm.json'), LOOPBACK_GATEWAY_CONFIG, 'utf-8');
+    await writeFile(join(libDir, 'm.json'), otherDaemonConfig, 'utf-8');
     const gatePath = join(libDir, 'gate-resolved.json');
 
     const result = await writeDesktopConfig(
@@ -739,7 +745,7 @@ describe('writeDesktopConfig', () => {
     );
 
     expect(result).toEqual({ configPath: gatePath, activated: true, switchedFrom: 'Default' });
-    expect(await readFile(join(libDir, 'm.json'), 'utf-8')).toBe(LOOPBACK_GATEWAY_CONFIG);
+    expect(await readFile(join(libDir, 'm.json'), 'utf-8')).toBe(otherDaemonConfig);
     expect(JSON.parse(await readFile(metaPath, 'utf-8'))).toEqual({
       appliedId: 'gate-resolved',
       entries: [{ id: 'm', name: 'Default' }, { id: 'gate-resolved', name: 'CodeMie Proxy' }],
@@ -2493,5 +2499,519 @@ describe('moveDesktopToNamedKey', () => {
 
     expect((await lstat(join(lib, 'a.json'))).isSymbolicLink()).toBe(true);
     expect(existsSync(target)).toBe(false);
+  });
+});
+
+const SEALED_KEY = '__sealed__:v1:QUJD';
+const CODEMIE_SHAPE = {
+  inferenceCredentialKind: 'static',
+  modelDiscoveryEnabled: true,
+  coworkEgressAllowedHosts: JSON.stringify(['*']),
+};
+
+function loopbackEntry(apiKey: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    inferenceProvider: 'gateway',
+    inferenceGatewayBaseUrl: 'http://127.0.0.1:4001',
+    inferenceGatewayApiKey: apiKey,
+    ...extra,
+  };
+}
+
+function stubGateway503(): void {
+  globalThis.fetch = vi.fn().mockResolvedValue({
+    ok: false,
+    status: 503,
+    statusText: 'Service Unavailable',
+    headers: { get: () => 'application/json' },
+  }) as unknown as typeof globalThis.fetch;
+}
+
+/** A temp Claude-3p base dir with helpers to seed `configLibrary` and read it back. */
+function useDesktopLibrary(prefix: string): {
+  paths: () => { baseDir: string; libDir: string; metaPath: string; statePath: string };
+  seed: (meta: unknown, files?: Record<string, unknown>) => Promise<void>;
+  readMeta: () => Promise<Record<string, any>>;
+  readConfig: (id: string) => Promise<Record<string, any>>;
+} {
+  let baseDir = '';
+  let originalFetch: typeof globalThis.fetch;
+  beforeEach(async () => {
+    baseDir = join(tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    await rm(baseDir, { recursive: true, force: true });
+    originalFetch = globalThis.fetch;
+    stubGateway503();
+  });
+  afterEach(async () => {
+    globalThis.fetch = originalFetch;
+    await rm(baseDir, { recursive: true, force: true });
+  });
+  const paths = () => ({
+    baseDir,
+    libDir: join(baseDir, 'configLibrary'),
+    metaPath: join(baseDir, 'configLibrary', '_meta.json'),
+    statePath: join(baseDir, 'managed-state.json'),
+  });
+  return {
+    paths,
+    async seed(meta, files = {}) {
+      const { libDir, metaPath } = paths();
+      await mkdir(libDir, { recursive: true });
+      await writeFile(metaPath, JSON.stringify(meta), 'utf-8');
+      for (const [id, content] of Object.entries(files)) {
+        await writeFile(join(libDir, `${id}.json`), typeof content === 'string' ? content : JSON.stringify(content), 'utf-8');
+      }
+    },
+    readMeta: async () => JSON.parse(await readFile(paths().metaPath, 'utf-8')),
+    readConfig: async (id) => JSON.parse(await readFile(join(paths().libDir, `${id}.json`), 'utf-8')),
+  };
+}
+
+describe('isCodeMieOwnedDesktopEntry', () => {
+  it('accepts a loopback gateway holding the shared or the claude-desktop key', () => {
+    expect(isCodeMieOwnedDesktopEntry(loopbackEntry('k'), 'k')).toBe(true);
+    expect(isCodeMieOwnedDesktopEntry(loopbackEntry('k.claude-desktop'), 'k')).toBe(true);
+  });
+
+  it('rejects a loopback gateway holding another key, and anything that is not a gateway config', () => {
+    expect(isCodeMieOwnedDesktopEntry(loopbackEntry('ollama'), 'k')).toBe(false);
+    expect(isCodeMieOwnedDesktopEntry(null, 'k')).toBe(false);
+    expect(isCodeMieOwnedDesktopEntry({ someUserPreference: 'x' }, 'k')).toBe(false);
+    expect(isCodeMieOwnedDesktopEntry({ ...loopbackEntry('k'), inferenceGatewayBaseUrl: 'https://qa.example.com' }, 'k')).toBe(false);
+  });
+
+  it('accepts a sealed key only with the exact shape connect writes', () => {
+    expect(isCodeMieOwnedDesktopEntry(loopbackEntry(SEALED_KEY), 'k')).toBe(false);
+    expect(isCodeMieOwnedDesktopEntry(loopbackEntry(SEALED_KEY, CODEMIE_SHAPE), 'k')).toBe(true);
+    for (const broken of [
+      { inferenceCredentialKind: 'interactive' },
+      { modelDiscoveryEnabled: false },
+      { coworkEgressAllowedHosts: JSON.stringify(['example.com']) },
+    ]) {
+      expect(isCodeMieOwnedDesktopEntry(loopbackEntry(SEALED_KEY, { ...CODEMIE_SHAPE, ...broken }), 'k')).toBe(false);
+    }
+  });
+});
+
+describe('CodeMie ownership of the applied Desktop entry', () => {
+  const lib = useDesktopLibrary('desktop-owner');
+  const FOREIGN_SEALED = loopbackEntry(SEALED_KEY, { someUserPreference: 'third-party' });
+
+  it('resolves to a new entry when the applied sealed loopback gateway lacks the shape connect writes', async () => {
+    await lib.seed({ appliedId: 'f', entries: [{ id: 'f', name: 'Third Party' }] }, { f: FOREIGN_SEALED });
+    const { libDir } = lib.paths();
+
+    const target = await resolveCodeMieDesktopConfig(libDir, await lib.readMeta(), 'k');
+
+    expect(target).toMatchObject({ isNew: true, appliedId: 'f', previousAppliedName: 'Third Party' });
+    expect(target.configId).not.toBe('f');
+  });
+
+  it('reuses an applied sealed entry that carries the shape connect writes', async () => {
+    await lib.seed({ appliedId: 'm', entries: [{ id: 'm', name: 'My CodeMie' }] }, { m: loopbackEntry(SEALED_KEY, CODEMIE_SHAPE) });
+    const { libDir } = lib.paths();
+
+    await expect(resolveCodeMieDesktopConfig(libDir, await lib.readMeta(), 'k')).resolves.toMatchObject({
+      configId: 'm', isNew: false,
+    });
+  });
+
+  it('connect creates a new CodeMie Proxy entry and leaves the foreign applied config byte-identical', async () => {
+    await lib.seed({ appliedId: 'f', entries: [{ id: 'f', name: 'Third Party' }] }, { f: FOREIGN_SEALED });
+    const { baseDir, libDir, statePath } = lib.paths();
+    const before = await readFile(join(libDir, 'f.json'), 'utf-8');
+
+    const result = await writeDesktopConfig('http://127.0.0.1:4001', 'k', baseDir, [], statePath);
+
+    expect(result.configPath).not.toBe(join(libDir, 'f.json'));
+    expect(result).toMatchObject({ activated: true, switchedFrom: 'Third Party' });
+    expect(await readFile(join(libDir, 'f.json'), 'utf-8')).toBe(before);
+    const meta = await lib.readMeta();
+    expect(meta.entries).toEqual([
+      { id: 'f', name: 'Third Party' },
+      { id: meta.appliedId, name: 'CodeMie Proxy' },
+    ]);
+  });
+
+  it('disconnect finds no CodeMie entry behind a foreign applied sealed gateway', async () => {
+    await lib.seed({ appliedId: 'f', entries: [{ id: 'f', name: 'Third Party' }] }, { f: FOREIGN_SEALED });
+    const { baseDir, libDir, statePath } = lib.paths();
+    const before = await readFile(join(libDir, 'f.json'), 'utf-8');
+
+    const result = await removeDesktopConfig(baseDir, statePath);
+
+    expect(result).toEqual({ removed: false, deletedConfigFile: false, reason: 'no CodeMie Claude Desktop config' });
+    expect(await readFile(join(libDir, 'f.json'), 'utf-8')).toBe(before);
+    await expect(readCodeMieDesktopGateway(baseDir, join(baseDir, 'no-state.json'))).resolves.toBeNull();
+  });
+
+  it('disconnect refuses a CodeMie Proxy entry holding a sealed key without the connect shape', async () => {
+    await lib.seed({ appliedId: 'c', entries: [{ id: 'c', name: 'CodeMie Proxy' }] }, { c: FOREIGN_SEALED });
+    const { baseDir, libDir, statePath } = lib.paths();
+
+    const result = await removeDesktopConfig(baseDir, statePath);
+
+    expect(result).toEqual({
+      removed: false,
+      configPath: join(libDir, 'c.json'),
+      deletedConfigFile: false,
+      reason: 'its local gateway is not CodeMie\'s',
+    });
+    expect(JSON.parse(await readFile(join(libDir, 'c.json'), 'utf-8'))).toEqual(FOREIGN_SEALED);
+  });
+
+  it('disconnect cleans a CodeMie Proxy entry whose sealed key came with the connect shape', async () => {
+    await lib.seed({ appliedId: 'c', entries: [{ id: 'c', name: 'CodeMie Proxy' }] }, { c: loopbackEntry(SEALED_KEY, CODEMIE_SHAPE) });
+    const { baseDir, statePath } = lib.paths();
+
+    const result = await removeDesktopConfig(baseDir, statePath);
+
+    expect(result).toMatchObject({ removed: true, deletedConfigFile: true });
+  });
+});
+
+describe('disconnect with a stale CodeMie Proxy file and an applied legacy entry', () => {
+  const lib = useDesktopLibrary('desktop-stale-named');
+  const STALE_NAMED = loopbackEntry('some-old-key');
+
+  async function seedStaleNamedAndLegacy(): Promise<void> {
+    await lib.seed(
+      { appliedId: 'legacy', entries: [{ id: 'c', name: 'CodeMie Proxy' }, { id: 'legacy', name: 'My CodeMie' }] },
+      { c: STALE_NAMED, legacy: loopbackEntry('codemie-proxy', { unrelatedUserKey: 'kept' }) },
+    );
+  }
+
+  it('cleans the applied entry that points at the current proxy and leaves the stale file', async () => {
+    await seedStaleNamedAndLegacy();
+    const { baseDir, libDir, statePath } = lib.paths();
+
+    const result = await removeDesktopConfig(baseDir, statePath);
+
+    expect(result).toEqual({ removed: true, configPath: join(libDir, 'legacy.json'), deletedConfigFile: false });
+    expect(await lib.readConfig('legacy')).toEqual({ unrelatedUserKey: 'kept' });
+    expect(await lib.readConfig('c')).toEqual(STALE_NAMED);
+  });
+
+  it('reads the applied entry as the CodeMie gateway', async () => {
+    await seedStaleNamedAndLegacy();
+    const { baseDir } = lib.paths();
+
+    await expect(readCodeMieDesktopGateway(baseDir, join(baseDir, 'no-state.json'))).resolves.toEqual({ port: 4001 });
+  });
+
+  it('keeps the named file and its refusal reason when the applied entry is not CodeMie\'s either', async () => {
+    await lib.seed(
+      { appliedId: 'other', entries: [{ id: 'c', name: 'CodeMie Proxy' }, { id: 'other', name: 'QA' }] },
+      { c: STALE_NAMED, other: { inferenceProvider: 'gateway', inferenceGatewayBaseUrl: 'https://qa.example.com', inferenceGatewayApiKey: 'q' } },
+    );
+    const { baseDir, libDir, statePath } = lib.paths();
+
+    await expect(removeDesktopConfig(baseDir, statePath)).resolves.toEqual({
+      removed: false,
+      configPath: join(libDir, 'c.json'),
+      deletedConfigFile: false,
+      reason: 'its local gateway is not CodeMie\'s',
+    });
+  });
+});
+
+describe('managed MCP state tied to a config', () => {
+  const lib = useDesktopLibrary('desktop-state-config');
+  const USER_OLD_NAME = { name: 'oldserver', url: 'https://mine.example.com/mcp', transport: 'http', oauth: false };
+
+  it('records the config id of the entry it was written for', async () => {
+    const { baseDir, statePath } = lib.paths();
+
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
+
+    const state = JSON.parse(await readFile(statePath, 'utf-8'));
+    expect(configPath.endsWith(`${state.configId}.json`)).toBe(true);
+    expect(state.managedNames).toContain('Notion');
+    expect(typeof state.fingerprints.notion).toBe('string');
+  });
+
+  it('keeps a user server named like a server managed in another config', async () => {
+    await lib.seed(
+      { appliedId: 'b', entries: [{ id: 'a', name: 'Old Profile' }, { id: 'b', name: 'CodeMie Proxy' }] },
+      { b: { ...loopbackEntry('codemie-proxy'), managedMcpServers: JSON.stringify([USER_OLD_NAME]) } },
+    );
+    const { baseDir, statePath } = lib.paths();
+    await writeFile(statePath, JSON.stringify({ configId: 'a', managedNames: ['oldserver'] }), 'utf-8');
+
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
+
+    const servers = JSON.parse(JSON.parse(await readFile(configPath, 'utf-8')).managedMcpServers);
+    expect(servers).toContainEqual(USER_OLD_NAME);
+    expect(JSON.parse(await readFile(statePath, 'utf-8')).configId).toBe('b');
+  });
+
+  it('still revokes a server it managed in the same config', async () => {
+    await lib.seed(
+      { appliedId: 'b', entries: [{ id: 'b', name: 'CodeMie Proxy' }] },
+      { b: { ...loopbackEntry('codemie-proxy'), managedMcpServers: JSON.stringify([USER_OLD_NAME]) } },
+    );
+    const { baseDir, statePath } = lib.paths();
+    await writeFile(statePath, JSON.stringify({ configId: 'b', managedNames: ['oldserver'] }), 'utf-8');
+
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
+
+    const servers = JSON.parse(JSON.parse(await readFile(configPath, 'utf-8')).managedMcpServers);
+    expect(servers.some((s: { name: string }) => s.name === 'oldserver')).toBe(false);
+  });
+
+  it('adopts a state without a config id when the target holds a CodeMie-written entry', async () => {
+    await lib.seed(
+      { appliedId: 'b', entries: [{ id: 'b', name: 'CodeMie Proxy' }] },
+      { b: { ...loopbackEntry('codemie-proxy.claude-desktop'), managedMcpServers: JSON.stringify([USER_OLD_NAME]) } },
+    );
+    const { baseDir, statePath } = lib.paths();
+    await writeFile(statePath, JSON.stringify({ managedNames: ['oldserver'] }), 'utf-8');
+
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
+
+    const servers = JSON.parse(JSON.parse(await readFile(configPath, 'utf-8')).managedMcpServers);
+    expect(servers.some((s: { name: string }) => s.name === 'oldserver')).toBe(false);
+  });
+
+  it('ignores a state without a config id when the target is not a CodeMie-written entry', async () => {
+    await lib.seed(
+      { appliedId: 'b', entries: [{ id: 'b', name: 'CodeMie Proxy' }] },
+      { b: { someUserPreference: 'x', managedMcpServers: JSON.stringify([USER_OLD_NAME]) } },
+    );
+    const { baseDir, statePath } = lib.paths();
+    await writeFile(statePath, JSON.stringify({ managedNames: ['oldserver'] }), 'utf-8');
+
+    const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
+
+    const servers = JSON.parse(JSON.parse(await readFile(configPath, 'utf-8')).managedMcpServers);
+    expect(servers).toContainEqual(USER_OLD_NAME);
+  });
+
+  it('disconnect removes the state tied to the removed config and keeps one tied to another', async () => {
+    await lib.seed(
+      { appliedId: 'b', entries: [{ id: 'b', name: 'CodeMie Proxy' }] },
+      { b: { ...loopbackEntry('codemie-proxy'), managedMcpServers: JSON.stringify([USER_OLD_NAME]) } },
+    );
+    const { baseDir, statePath } = lib.paths();
+    const foreignState = JSON.stringify({ configId: 'a', managedNames: ['oldserver'] });
+    await writeFile(statePath, foreignState, 'utf-8');
+
+    const first = await removeDesktopConfig(baseDir, statePath);
+
+    expect(first.removed).toBe(true);
+    expect(await readFile(statePath, 'utf-8')).toBe(foreignState);
+    // the user server was not treated as managed, so it is kept
+    expect(JSON.parse(JSON.parse(await readFile(first.configPath as string, 'utf-8')).managedMcpServers)).toEqual([USER_OLD_NAME]);
+
+    await writeFile(statePath, JSON.stringify({ configId: 'b', managedNames: [] }), 'utf-8');
+    await lib.seed({ appliedId: 'b', entries: [{ id: 'b', name: 'CodeMie Proxy' }] }, { b: loopbackEntry('codemie-proxy') });
+    await removeDesktopConfig(baseDir, statePath);
+    expect(existsSync(statePath)).toBe(false);
+  });
+});
+
+describe('serialized Desktop config writes', () => {
+  const lib = useDesktopLibrary('desktop-lock');
+
+  it('two concurrent connects on an empty library register one CodeMie Proxy entry', async () => {
+    const { baseDir, statePath } = lib.paths();
+
+    const [first, second] = await Promise.all([
+      writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath),
+      writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath),
+    ]);
+
+    const meta = await lib.readMeta();
+    expect(meta.entries.filter((entry: { name: string }) => entry.name === 'CodeMie Proxy')).toHaveLength(1);
+    expect(meta.entries).toHaveLength(1);
+    expect(first.configPath).toBe(second.configPath);
+    expect(first.configPath).toBe(join(lib.paths().libDir, `${meta.appliedId}.json`));
+    expect(existsSync(`${statePath}.lock`)).toBe(false);
+  });
+
+  it('rejects a pinned target when an owned entry appeared meanwhile, and writes nothing', async () => {
+    await lib.seed(
+      { appliedId: 'qa', entries: [{ id: 'c', name: 'CodeMie Proxy' }, { id: 'qa', name: 'QA' }] },
+      { c: loopbackEntry('codemie-proxy'), qa: { inferenceProvider: 'gateway', inferenceGatewayBaseUrl: 'https://qa.example.com' } },
+    );
+    const { baseDir, libDir, statePath, metaPath } = lib.paths();
+    const metaBefore = await readFile(metaPath, 'utf-8');
+    const configBefore = await readFile(join(libDir, 'c.json'), 'utf-8');
+
+    await expect(
+      writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath, undefined, join(libDir, 'pinned-new.json'))
+    ).rejects.toThrow(/changed while connecting; run the command again/);
+
+    expect(await readFile(metaPath, 'utf-8')).toBe(metaBefore);
+    expect(await readFile(join(libDir, 'c.json'), 'utf-8')).toBe(configBefore);
+    expect(existsSync(join(libDir, 'pinned-new.json'))).toBe(false);
+    expect(existsSync(statePath)).toBe(false);
+  });
+
+  it('accepts a pinned target when no owned entry exists yet', async () => {
+    const { baseDir, libDir, statePath } = lib.paths();
+
+    const result = await writeDesktopConfig(
+      'http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath, undefined, join(libDir, 'pinned-new.json')
+    );
+
+    expect(result.configPath).toBe(join(libDir, 'pinned-new.json'));
+  });
+
+  it('fails with a retry message when another codemie process holds the lock', async () => {
+    const { baseDir, statePath } = lib.paths();
+    // a foreign live holder: this process's parent is alive and is not this process
+    await mkdir(baseDir, { recursive: true });
+    await writeFile(`${statePath}.lock`, JSON.stringify({ pid: process.ppid }), 'utf-8');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const pending = writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
+      const assertion = expect(pending).rejects.toThrow(/Another codemie connect or disconnect is changing.*run the command again/);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      vi.setSystemTime(Date.now() + 60_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('disconnect takes the same lock and leaves none behind', async () => {
+    await lib.seed({ appliedId: 'c', entries: [{ id: 'c', name: 'CodeMie Proxy' }] }, { c: loopbackEntry('codemie-proxy') });
+    const { baseDir, statePath } = lib.paths();
+
+    await removeDesktopConfig(baseDir, statePath);
+
+    expect(existsSync(`${statePath}.lock`)).toBe(false);
+  });
+});
+
+describe('user-edited managed MCP servers', () => {
+  const SAMPLE = { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http' as const, oauth: true };
+
+  describe('reconcileManagedMcpServers', () => {
+    it('returns the fingerprints of the managed entries it wrote, keyed by lowercase name', () => {
+      const { fingerprints } = reconcileManagedMcpServers([], [{ ...SAMPLE, name: 'Sample' }], []);
+
+      expect(Object.keys(fingerprints)).toEqual(['sample']);
+      expect(fingerprints.sample).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it('keeps an entry the user edited since CodeMie wrote it and does not write the managed one', () => {
+      const { fingerprints } = reconcileManagedMcpServers([], [SAMPLE], []);
+      const edited = { ...SAMPLE, url: 'https://my-fork.example.com/mcp' };
+
+      const result = reconcileManagedMcpServers([edited], [SAMPLE], ['sample'], fingerprints);
+
+      expect(result.servers).toEqual([edited]);
+      expect(result.fingerprints).toEqual(fingerprints);
+    });
+
+    it('does not duplicate by url when it keeps an edited entry', () => {
+      const { fingerprints } = reconcileManagedMcpServers([], [SAMPLE], []);
+      const edited = { ...SAMPLE, oauth: false };
+
+      const result = reconcileManagedMcpServers([edited], [SAMPLE], ['sample'], fingerprints);
+
+      expect(result.servers.filter((s) => (s as { url: string }).url === SAMPLE.url)).toHaveLength(1);
+    });
+
+    it('replaces an unedited entry with the new managed one', () => {
+      const { servers: written, fingerprints } = reconcileManagedMcpServers([], [SAMPLE], []);
+      const moved = { ...SAMPLE, url: 'https://mcp.example.com/mcp/sample-v2' };
+
+      const result = reconcileManagedMcpServers(written, [moved], ['sample'], fingerprints);
+
+      expect(result.servers).toEqual([moved]);
+      expect(result.fingerprints.sample).not.toBe(fingerprints.sample);
+    });
+
+    it('does not count the source key Desktop stamps on an unedited entry as an edit', () => {
+      const { servers: written, fingerprints } = reconcileManagedMcpServers([], [SAMPLE], []);
+      const stamped = { ...(written[0] as object), source: 'user' };
+      const moved = { ...SAMPLE, url: 'https://mcp.example.com/mcp/sample-v2' };
+
+      const result = reconcileManagedMcpServers([stamped], [moved], ['sample'], fingerprints);
+
+      expect(result.servers).toEqual([moved]);
+    });
+
+    it('replaces the entry when no fingerprint was recorded for its name', () => {
+      const edited = { ...SAMPLE, url: 'https://my-fork.example.com/mcp' };
+
+      const result = reconcileManagedMcpServers([edited], [SAMPLE], ['sample'], {});
+
+      expect(result.servers).toEqual([SAMPLE]);
+    });
+
+    it('keeps the old fingerprint of a kept entry, so it stays the user\'s on later runs', () => {
+      const { fingerprints } = reconcileManagedMcpServers([], [SAMPLE], []);
+      const edited = { ...SAMPLE, url: 'https://my-fork.example.com/mcp' };
+
+      const second = reconcileManagedMcpServers([edited], [SAMPLE], ['sample'], fingerprints);
+      const third = reconcileManagedMcpServers(second.servers, [SAMPLE], ['sample'], second.fingerprints);
+
+      expect(third.servers).toEqual([edited]);
+    });
+  });
+
+  describe('through writeDesktopConfig and removeDesktopConfig', () => {
+    const lib = useDesktopLibrary('desktop-edited-mcp');
+    const connect = (org: ManagedMcpServerEntry[]) => {
+      const { baseDir, statePath } = lib.paths();
+      return writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+    };
+    const serversOf = async (configPath: string): Promise<Array<Record<string, any>>> =>
+      JSON.parse(JSON.parse(await readFile(configPath, 'utf-8')).managedMcpServers);
+    async function editServer(configPath: string, name: string, change: Record<string, unknown>): Promise<void> {
+      const config = JSON.parse(await readFile(configPath, 'utf-8'));
+      const servers = JSON.parse(config.managedMcpServers) as Array<Record<string, unknown>>;
+      config.managedMcpServers = JSON.stringify(servers.map((s) => (s.name === name ? { ...s, ...change } : s)));
+      await writeFile(configPath, JSON.stringify(config), 'utf-8');
+    }
+
+    it('keeps a managed server the user edited across reconnects', async () => {
+      const { configPath } = await connect([SAMPLE]);
+      await editServer(configPath, 'sample', { url: 'https://my-fork.example.com/mcp' });
+
+      await connect([SAMPLE]);
+      await connect([SAMPLE]);
+
+      const sample = (await serversOf(configPath)).filter((s) => s.name === 'sample');
+      expect(sample).toEqual([{ ...SAMPLE, url: 'https://my-fork.example.com/mcp' }]);
+    });
+
+    it('updates an unedited managed server to a new catalog url', async () => {
+      const { configPath } = await connect([SAMPLE]);
+
+      await connect([{ ...SAMPLE, url: 'https://mcp.example.com/mcp/sample-v2' }]);
+
+      expect((await serversOf(configPath)).filter((s) => s.name === 'sample')).toEqual([
+        { ...SAMPLE, url: 'https://mcp.example.com/mcp/sample-v2' },
+      ]);
+    });
+
+    it('does not take the source key Desktop re-stamps for an edit', async () => {
+      const { configPath } = await connect([SAMPLE]);
+      await editServer(configPath, 'sample', { source: 'user' });
+
+      await connect([{ ...SAMPLE, url: 'https://mcp.example.com/mcp/sample-v2' }]);
+
+      expect((await serversOf(configPath)).find((s) => s.name === 'sample')?.url).toBe('https://mcp.example.com/mcp/sample-v2');
+    });
+
+    it('keeps the user-edited managed server and the added one on disconnect, and drops the unedited ones', async () => {
+      const { configPath } = await connect([SAMPLE]);
+      await editServer(configPath, 'sample', { url: 'https://my-fork.example.com/mcp' });
+      const config = JSON.parse(await readFile(configPath, 'utf-8'));
+      const added = { name: 'teamtools', url: 'https://tools.example.com/mcp', transport: 'http', oauth: false };
+      config.managedMcpServers = JSON.stringify([...JSON.parse(config.managedMcpServers), added]);
+      await writeFile(configPath, JSON.stringify(config), 'utf-8');
+      const { baseDir, statePath } = lib.paths();
+
+      const result = await removeDesktopConfig(baseDir, statePath);
+
+      expect(result).toMatchObject({ removed: true, deletedConfigFile: false });
+      expect(await serversOf(configPath)).toEqual([{ ...SAMPLE, url: 'https://my-fork.example.com/mcp' }, added]);
+    });
   });
 });

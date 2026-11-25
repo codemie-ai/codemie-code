@@ -257,6 +257,8 @@ Behavior:
 
 The command updates the `CodeMie Proxy` configuration and makes it the active one, even when you had switched Claude Desktop to another configuration; that configuration is left untouched, and the command prints `Switched Claude Desktop's active configuration from "<name>" to "CodeMie Proxy".` when it changed which one is active.
 
+MCP servers you added to the `CodeMie Proxy` configuration, and managed MCP servers you edited there since the last connect, are kept on reconnect and on `disconnect`; only unedited managed entries are updated or removed.
+
 On Linux this requires Claude Desktop's Ubuntu/Debian beta. If `/etc/claude-desktop/managed-settings.json` is present, the command warns that the write **may** have no effect: Claude Desktop applies a managed (MDM) source in preference to local configuration. The check is presence-only — the file is never read.
 
 The warning is not a verdict. A managed source that sets only `disableAutoUpdates` and `autoUpdaterEnforcementHours` leaves every other setting local, so the write still applies. If routing really is being ignored, ask your administrator to carry the gateway settings in the managed source — do not delete the file, which is root-owned and typically redeployed by MDM.

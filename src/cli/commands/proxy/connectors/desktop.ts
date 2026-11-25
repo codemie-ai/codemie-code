@@ -1,7 +1,7 @@
 import { readFile, writeFile, mkdir, rename, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   getClaudeDesktopBaseDir,
   getClaudeDesktopManagedSettingsPath,
@@ -15,6 +15,7 @@ import {
 } from '@/telemetry/clients/claude-desktop/claude-desktop.gateway.js';
 import { isSafeSessionId } from '@/agents/core/session-id.js';
 import { writeFileAtomic } from '@/utils/atomic-write.js';
+import { withPidLock } from '@/utils/pid-lock.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { getCodemiePath } from '@/utils/paths.js';
@@ -541,6 +542,12 @@ export function summarizeManagedOauthShapes(
 export interface ReconcileResult {
   servers: unknown[];
   managedNames: string[];
+  /**
+   * `sha256` fingerprints ({@link fingerprintManagedMcpEntry}) of what CodeMie last wrote for each managed
+   * name, keyed by lowercase name. An entry the user edited is not re-fingerprinted: it keeps the fingerprint
+   * recorded before, so it is still seen as edited, and stays the user's, on every later run.
+   */
+  fingerprints: Record<string, string>;
 }
 
 /**
@@ -558,32 +565,76 @@ function stripDesktopLocalKeys(server: unknown): unknown {
   return copy;
 }
 
+/** JSON with every object's keys sorted, so equal values serialize alike whatever the key order. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (isRecord(value)) {
+    const members = Object.keys(value)
+      .filter((key) => value[key] !== undefined)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`);
+    return `{${members.join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
 /**
- * Reconcile the managed MCP set into an existing managedMcpServers array.
- *
- * - `managed`: the entries CodeMie owns this run (public defaults + fetched
- *   internal), already in Desktop shape.
- * - `previouslyManagedNames`: names CodeMie wrote on the prior run. Required so
- *   that an entry removed from the managed set is dropped even though Claude
- *   Desktop re-stamps entries it persists (we cannot rely on a custom marker
- *   field surviving Desktop's rewrite).
- *
- * Genuine user-added entries (never managed by us) are preserved.
- * Managed entries appear first in the returned array; user entries follow.
+ * Fingerprint of a managed MCP entry: `sha256` of its canonical JSON after the keys Desktop stamps itself
+ * ({@link DESKTOP_LOCAL_MCP_KEYS}) are dropped, so Desktop re-stamping an entry is not an edit.
  */
-export function reconcileManagedMcpServers(
+export function fingerprintManagedMcpEntry(entry: unknown): string {
+  return createHash('sha256').update(canonicalJson(stripDesktopLocalKeys(entry))).digest('hex');
+}
+
+interface ManagedMcpPartition {
+  /** The managed entries to write: fresh clones, without those whose existing entry the user edited. */
+  written: ManagedMcpServerEntry[];
+  /** The existing entries that stay: the user's own, and the managed ones the user edited. */
+  preserved: unknown[];
+  /** Lowercase names of managed entries whose existing entry the user edited. */
+  editedNames: Set<string>;
+}
+
+/**
+ * Split an existing managedMcpServers array into the managed entries to write and the entries that stay.
+ *
+ * An existing entry whose name is managed (now or on an earlier run) and for which `fingerprints` holds the
+ * fingerprint CodeMie last wrote is the user's when its own fingerprint differs: it is kept, and the managed
+ * entry of that name is not written. Without a recorded fingerprint (legacy state, first run, failed fetch)
+ * the entry is replaced.
+ */
+function partitionManagedMcpServers(
   existingServers: unknown,
   managed: ManagedMcpServerEntry[],
-  previouslyManagedNames: string[] = [],
-): ReconcileResult {
-  const managedNames = managed.map((s) => s.name);
+  previouslyManagedNames: string[],
+  fingerprints: Record<string, string>
+): ManagedMcpPartition {
   const ownedLower = new Set(
-    [...previouslyManagedNames, ...managedNames].map((n) => n.toLowerCase()),
+    [...previouslyManagedNames, ...managed.map((s) => s.name)].map((n) => n.toLowerCase()),
   );
+  const existing = parseJsonArray(existingServers);
+
+  const editedNames = new Set<string>();
+  const editedEntries = new Set<unknown>();
+  for (const server of existing) {
+    const name = getManagedMcpServerName(server);
+    if (!name || !isValidMcpServerName(name)) continue;
+    const lower = name.toLowerCase();
+    if (!ownedLower.has(lower)) continue;
+    const recorded = fingerprints[lower];
+    if (recorded !== undefined && fingerprintManagedMcpEntry(server) !== recorded) {
+      editedNames.add(lower);
+      editedEntries.add(server);
+    }
+  }
+
+  const written = managed
+    .filter((entry) => !editedNames.has(entry.name.toLowerCase()))
+    .map(cloneManagedEntry);
   // URL comparison is intentionally case-sensitive; managed entries come from
   // controlled sources (DEFAULT_MANAGED_MCP_SERVERS or the backend catalog) and
-  // are matched verbatim.
-  const managedUrls = new Set(managed.map((s) => s.url));
+  // are matched verbatim. Only the entries actually written claim their URL.
+  const managedUrls = new Set(written.map((s) => s.url));
 
   // Unlike selectDefaultsForFailedFetch (which asks "which names/URLs are
   // already claimed?" and must treat unreadable as unknown-therefore-claimed),
@@ -591,7 +642,8 @@ export function reconcileManagedMcpServers(
   // yields no identifiable entries to preserve, and a non-array value cannot be
   // written back into a field Desktop reads as an array — so [] is the
   // conservative answer to *this* question, not an inconsistency with the other.
-  const filtered = parseJsonArray(existingServers).filter((server) => {
+  const preserved = existing.filter((server) => {
+    if (editedEntries.has(server)) return true;
     const name = getManagedMcpServerName(server);
     const url = getManagedMcpServerUrl(server);
     if (!name) {
@@ -605,14 +657,74 @@ export function reconcileManagedMcpServers(
     return true;
   }).map(stripDesktopLocalKeys);
 
+  return { written, preserved, editedNames };
+}
+
+/**
+ * Reconcile the managed MCP set into an existing managedMcpServers array.
+ *
+ * - `managed`: the entries CodeMie owns this run (public defaults + fetched
+ *   internal), already in Desktop shape.
+ * - `previouslyManagedNames`: names CodeMie wrote on the prior run. Required so
+ *   that an entry removed from the managed set is dropped even though Claude
+ *   Desktop re-stamps entries it persists (we cannot rely on a custom marker
+ *   field surviving Desktop's rewrite).
+ * - `fingerprints`: what CodeMie last wrote per lowercase name (see
+ *   {@link ReconcileResult.fingerprints}). An existing managed entry that no longer matches its fingerprint
+ *   was edited by the user and is kept as it is.
+ *
+ * Genuine user-added entries (never managed by us) are preserved.
+ * Managed entries appear first in the returned array; user entries follow.
+ */
+export function reconcileManagedMcpServers(
+  existingServers: unknown,
+  managed: ManagedMcpServerEntry[],
+  previouslyManagedNames: string[] = [],
+  fingerprints: Record<string, string> = {},
+): ReconcileResult {
+  const managedNames = managed.map((s) => s.name);
+  const { written, preserved, editedNames } = partitionManagedMcpServers(
+    existingServers,
+    managed,
+    previouslyManagedNames,
+    fingerprints,
+  );
+
+  const nextFingerprints: Record<string, string> = {};
+  for (const entry of written) {
+    nextFingerprints[entry.name.toLowerCase()] = fingerprintManagedMcpEntry(entry);
+  }
+  for (const lower of editedNames) {
+    if (managedNames.some((name) => name.toLowerCase() === lower)) {
+      nextFingerprints[lower] = fingerprints[lower];
+    }
+  }
+
   return {
-    servers: [...managed.map(cloneManagedEntry), ...filtered],
+    servers: [...written, ...preserved],
     managedNames,
+    fingerprints: nextFingerprints,
   };
 }
 
+/**
+ * The CLI-owned marker of what CodeMie last wrote into managedMcpServers. One slot, tied to the config
+ * (`configId`) it was written for: the history of one Desktop config says nothing about another's.
+ */
 interface ManagedMcpState {
+  /** Id of the config entry the state was written for; absent in a state an earlier CLI wrote. */
+  configId?: string;
   managedNames: string[];
+  /** See {@link ReconcileResult.fingerprints}. */
+  fingerprints?: Record<string, string>;
+}
+
+/** What a stored {@link ManagedMcpState} tells about one config. */
+interface ManagedMcpHistory {
+  managedNames: string[];
+  fingerprints: Record<string, string>;
+  /** The state belongs to this config (tied to it, or adopted from an earlier CLI): disconnect may remove the file. */
+  tied: boolean;
 }
 
 /** Default location of the CLI-owned managed-MCP marker state. */
@@ -620,30 +732,69 @@ export function getManagedMcpStatePath(): string {
   return getCodemiePath('proxy', 'desktop-managed-mcp-state.json');
 }
 
-async function readManagedMcpState(statePath: string): Promise<string[]> {
-  if (!existsSync(statePath)) return [];
-  try {
-    const parsed = JSON.parse(await readFile(statePath, 'utf-8')) as ManagedMcpState;
-    return Array.isArray(parsed.managedNames)
-      ? parsed.managedNames.filter((n): n is string => typeof n === 'string')
-      : [];
-  } catch {
-    return [];
-  }
+const NO_MANAGED_MCP_HISTORY: ManagedMcpHistory = { managedNames: [], fingerprints: {}, tied: false };
+
+function stringRecord(value: unknown): Record<string, string> {
+  if (!isRecord(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter((pair): pair is [string, string] => typeof pair[1] === 'string')
+  );
 }
 
-async function writeManagedMcpState(statePath: string, managedNames: string[]): Promise<void> {
+/**
+ * The managed-MCP history that applies to config `configId`: the state when it is tied to that config, or
+ * when it is an earlier CLI's untied state and the target already holds an entry CodeMie wrote
+ * (`targetOwned`). A state tied to another config, a missing one and an unreadable one give no history.
+ */
+async function readManagedMcpState(
+  statePath: string,
+  configId: string,
+  targetOwned: boolean
+): Promise<ManagedMcpHistory> {
+  if (!existsSync(statePath)) return NO_MANAGED_MCP_HISTORY;
+  let parsed: Partial<ManagedMcpState> = {};
+  try {
+    const raw: unknown = JSON.parse(await readFile(statePath, 'utf-8'));
+    if (isRecord(raw)) parsed = raw as Partial<ManagedMcpState>;
+  } catch {
+    // An unreadable marker holds no history; it counts as an untied one, which disconnect may clean.
+  }
+  const tiedToConfig = parsed.configId === configId;
+  const adopted = parsed.configId === undefined && targetOwned;
+  if (!tiedToConfig && !adopted) return NO_MANAGED_MCP_HISTORY;
+  return {
+    managedNames: Array.isArray(parsed.managedNames)
+      ? parsed.managedNames.filter((n): n is string => typeof n === 'string')
+      : [],
+    fingerprints: stringRecord(parsed.fingerprints),
+    tied: true,
+  };
+}
+
+async function writeManagedMcpState(statePath: string, state: ManagedMcpState): Promise<void> {
   const dir = join(statePath, '..');
   if (!existsSync(dir)) {
     await mkdir(dir, { recursive: true });
   }
   // Atomic write (tmp + rename), mirroring daemon-manager.writeState. A crash
   // mid-write must never leave a truncated marker: readManagedMcpState would
-  // parse-fail and fall back to [], silently orphaning every previously-managed
+  // parse-fail and fall back to no history, silently orphaning every previously-managed
   // entry (it would no longer match by name and be preserved as a user entry).
   const tmp = `${statePath}.tmp`;
-  await writeFile(tmp, JSON.stringify({ managedNames }, null, 2), 'utf-8');
+  await writeFile(tmp, JSON.stringify(state, null, 2), 'utf-8');
   await rename(tmp, statePath);
+}
+
+/** Runs `fn` while holding the Desktop-config lock next to the managed-MCP marker; one codemie process at a time. */
+function withDesktopConfigLock<T>(managedStatePath: string, fn: () => Promise<T>): Promise<T> {
+  return withPidLock(
+    `${managedStatePath}.lock`,
+    fn,
+    () => new ConfigurationError(
+      'Another codemie connect or disconnect is changing the Claude Desktop configuration. ' +
+      'Wait for it to finish, then run the command again.'
+    )
+  );
 }
 
 export interface DesktopGatewayConfig {
@@ -737,6 +888,24 @@ export async function getDesktopConfigPath(baseDir: string = getDesktopBaseDir()
   return join(libDir, `${randomUUID()}.json`);
 }
 
+/**
+ * True when a parsed Desktop config entry is positively CodeMie's: a loopback gateway pointed at the local proxy
+ * of `localKey`. A key matching the daemon's (shared, or `<key>.claude-desktop`) proves it. A sealed key proves
+ * nothing, since Desktop seals any key, so it counts only when the entry also has the exact shape `connect`
+ * writes. Never throws.
+ */
+export function isCodeMieOwnedDesktopEntry(entry: unknown, localKey: string): boolean {
+  const gateway = desktopGatewayOfEntry(entry);
+  if (!gateway || !isDesktopPointedAtLocalProxy(gateway, localKey)) return false;
+  if (!gateway.sealed) return true;
+  return (
+    isRecord(entry) &&
+    entry.inferenceCredentialKind === 'static' &&
+    entry.modelDiscoveryEnabled === true &&
+    entry.coworkEgressAllowedHosts === JSON.stringify([...DEFAULT_COWORK_EGRESS_ALLOWED_HOSTS])
+  );
+}
+
 async function readConfigEntry(configPath: string): Promise<unknown> {
   try {
     return JSON.parse(await readFile(configPath, 'utf-8'));
@@ -748,7 +917,8 @@ async function readConfigEntry(configPath: string): Promise<unknown> {
 /**
  * Picks the Claude Desktop config entry CodeMie owns, whichever entry is applied: (a) the entry named
  * {@link CODEMIE_DESKTOP_CONFIG_NAME} (the applied one of several, else the first), even when its file is missing;
- * (b) the applied entry when its file already points at the local proxy of `localKey`; (c) a new UUID. Entries
+ * (b) the applied entry when it is positively CodeMie's ({@link isCodeMieOwnedDesktopEntry}: pointed at the local
+ * proxy of `localKey`, a sealed key only with the shape `connect` writes); (c) a new UUID. Entries
  * whose id is not a safe file name are skipped. A safe `pinnedId` (the entry an earlier resolve chose) replaces the
  * three rules. Read-only.
  */
@@ -773,7 +943,7 @@ export async function resolveCodeMieDesktopConfig(
     configId = named.find((entry) => entry.id === appliedId)?.id ?? named[0]?.id;
     if (!configId && appliedId) {
       const applied = await readConfigEntry(join(libDir, `${appliedId}.json`));
-      if (isDesktopPointedAtLocalProxy(desktopGatewayOfEntry(applied), localKey)) configId = appliedId;
+      if (isCodeMieOwnedDesktopEntry(applied, localKey)) configId = appliedId;
     }
     isNew = configId === undefined;
   }
@@ -785,17 +955,23 @@ export async function resolveCodeMieDesktopConfig(
 }
 
 /**
- * The id of the CodeMie entry ({@link resolveCodeMieDesktopConfig}) when its file exists. A named entry without a
- * file gives way to the applied entry when that one points at the local proxy of `localKey`. Read-only.
+ * The id of the CodeMie entry ({@link resolveCodeMieDesktopConfig}) when its file exists and is CodeMie's
+ * ({@link isCodeMieOwnedDesktopEntry}). A named entry whose file is missing or not CodeMie's (a stale key) gives
+ * way to the applied entry when that one is CodeMie's. With neither validated, the named entry's file is still
+ * returned when it exists, so the caller can say why it was left. Read-only.
  */
 async function findCodeMieConfigOnDisk(libDir: string, meta: ConfigMeta, localKey: string): Promise<string | undefined> {
   const target = await resolveCodeMieDesktopConfig(libDir, meta, localKey);
   if (target.isNew) return undefined;
-  if (existsSync(join(libDir, `${target.configId}.json`))) return target.configId;
+  const namedPath = join(libDir, `${target.configId}.json`);
+  const namedExists = existsSync(namedPath);
+  if (namedExists && isCodeMieOwnedDesktopEntry(await readConfigEntry(namedPath), localKey)) return target.configId;
   const { appliedId } = target;
-  if (!appliedId || appliedId === target.configId) return undefined;
-  const applied = await readConfigEntry(join(libDir, `${appliedId}.json`));
-  return isDesktopPointedAtLocalProxy(desktopGatewayOfEntry(applied), localKey) ? appliedId : undefined;
+  if (appliedId && appliedId !== target.configId) {
+    const applied = await readConfigEntry(join(libDir, `${appliedId}.json`));
+    if (isCodeMieOwnedDesktopEntry(applied, localKey)) return appliedId;
+  }
+  return namedExists ? target.configId : undefined;
 }
 
 /** The safe config id of `configPath` when it is a `<id>.json` directly under `libDir`, else undefined. */
@@ -854,7 +1030,11 @@ export interface WriteDesktopConfigResult {
  *
  * `targetConfigPath` is the entry an earlier {@link getCodeMieDesktopConfigPath} chose (the connect gate inspected
  * it), so the write lands on the same file whichever gateway key each side read; a path outside the library is
- * ignored and the entry is resolved here.
+ * ignored and the entry is resolved here. It is a pin, not an order: when an entry CodeMie owns has appeared
+ * meanwhile under another id, the write fails and asks to run the command again.
+ *
+ * The model check runs first; everything that reads or writes `_meta.json`, the config file or the managed-MCP
+ * marker then runs under a lock, so two concurrent connects register one entry and never overwrite each other.
  */
 export async function writeDesktopConfig(
   proxyUrl: string,
@@ -865,6 +1045,35 @@ export async function writeDesktopConfig(
   project?: string,
   targetConfigPath?: string
 ): Promise<WriteDesktopConfigResult> {
+  // Check the Claude models the profile's project offers Desktop, so a project with none
+  // fails here with a clear message. The list itself is not written: with no
+  // `inferenceModels` in its config Desktop asks the proxy's `GET /v1/models` on every
+  // start (DesktopModelsPlugin), so later changes on the project's Models tab reach it.
+  // `null` means the upstream catalog failed, so the check is skipped rather than failed.
+  // Network I/O: done before the lock is taken, never under it.
+  const discoveredModels = await fetchClaudeModels(proxyUrl, gatewayKey, project);
+  if (discoveredModels !== null && discoveredModels.length === 0) {
+    throw new ConfigurationError(
+      project
+        ? `Project "${project}" does not allow any Claude models. Select at least one Claude model or router ` +
+          'on the project\'s Models tab, then run `codemie proxy connect --claude-desktop` again.'
+        : `Local proxy did not expose any Claude models from ${buildProxyLlmModelsUrl(proxyUrl, undefined)}.`
+    );
+  }
+  return withDesktopConfigLock(managedStatePath, () =>
+    writeDesktopConfigLocked(proxyUrl, gatewayKey, baseDir, orgMcpServers, managedStatePath, discoveredModels, targetConfigPath)
+  );
+}
+
+async function writeDesktopConfigLocked(
+  proxyUrl: string,
+  gatewayKey: string,
+  baseDir: string,
+  orgMcpServers: ManagedMcpServerEntry[] | null,
+  managedStatePath: string,
+  discoveredModels: DesktopModel[] | null,
+  targetConfigPath: string | undefined
+): Promise<WriteDesktopConfigResult> {
   const libDir = join(baseDir, 'configLibrary');
   if (!existsSync(libDir)) {
     await mkdir(libDir, { recursive: true });
@@ -874,7 +1083,16 @@ export async function writeDesktopConfig(
   const metaPath = join(libDir, '_meta.json');
   const meta = await readConfigMeta(metaPath);
 
-  const target = await resolveCodeMieDesktopConfig(libDir, meta, gatewayKey, configIdOfPath(libDir, targetConfigPath));
+  const pinnedId = configIdOfPath(libDir, targetConfigPath);
+  const target = await resolveCodeMieDesktopConfig(libDir, meta, gatewayKey, pinnedId);
+  if (pinnedId !== undefined) {
+    const current = await resolveCodeMieDesktopConfig(libDir, meta, gatewayKey);
+    if (!current.isNew && current.configId !== pinnedId) {
+      throw new ConfigurationError(
+        'Claude Desktop configuration changed while connecting; run the command again.'
+      );
+    }
+  }
   const { configId } = target;
   const configPath = join(libDir, `${configId}.json`);
 
@@ -886,21 +1104,8 @@ export async function writeDesktopConfig(
       existing = {};
     }
   }
+  const targetOwned = isCodeMieOwnedDesktopEntry(existing, gatewayKey);
 
-  // Check the Claude models the profile's project offers Desktop, so a project with none
-  // fails here with a clear message. The list itself is not written: with no
-  // `inferenceModels` in its config Desktop asks the proxy's `GET /v1/models` on every
-  // start (DesktopModelsPlugin), so later changes on the project's Models tab reach it.
-  // `null` means the upstream catalog failed, so the check is skipped rather than failed.
-  const discoveredModels = await fetchClaudeModels(proxyUrl, gatewayKey, project);
-  if (discoveredModels !== null && discoveredModels.length === 0) {
-    throw new ConfigurationError(
-      project
-        ? `Project "${project}" does not allow any Claude models. Select at least one Claude model or router ` +
-          'on the project\'s Models tab, then run `codemie proxy connect --claude-desktop` again.'
-        : `Local proxy did not expose any Claude models from ${buildProxyLlmModelsUrl(proxyUrl, undefined)}.`
-    );
-  }
   // `orgMcpServers === null` means the catalog fetch FAILED (or was skipped for a
   // missing CodeMie URL) — distinct from a successful fetch that returned []. On
   // failure we must NOT revoke previously-managed org entries (a transient backend
@@ -929,11 +1134,14 @@ export async function writeDesktopConfig(
       })
     );
   }
-  const previouslyManagedNames = orgFetchSucceeded ? await readManagedMcpState(managedStatePath) : [];
-  const { servers: managedMcpServers, managedNames } = reconcileManagedMcpServers(
+  const history = orgFetchSucceeded
+    ? await readManagedMcpState(managedStatePath, configId, targetOwned)
+    : NO_MANAGED_MCP_HISTORY;
+  const { servers: managedMcpServers, managedNames, fingerprints } = reconcileManagedMcpServers(
     existing.managedMcpServers,
     managedSet,
-    previouslyManagedNames,
+    history.managedNames,
+    history.fingerprints,
   );
 
   // Marker write-ahead (successful fetch only): record the UNION of previously-
@@ -945,8 +1153,12 @@ export async function writeDesktopConfig(
   // later reclaim them. On a failed fetch we leave the prior marker untouched so
   // a later successful run can still revoke.
   if (orgFetchSucceeded) {
-    const unionNames = [...new Set([...previouslyManagedNames, ...managedNames])];
-    await writeManagedMcpState(managedStatePath, unionNames);
+    const unionNames = [...new Set([...history.managedNames, ...managedNames])];
+    await writeManagedMcpState(managedStatePath, {
+      configId,
+      managedNames: unionNames,
+      fingerprints: history.fingerprints,
+    });
   }
 
   // Summarize the reconciled list we are about to serialize (not the org catalog
@@ -1010,7 +1222,7 @@ export async function writeDesktopConfig(
   // durable (see the write-ahead union above). This releases names dropped from
   // the managed set so they no longer count as owned on the next run.
   if (orgFetchSucceeded) {
-    await writeManagedMcpState(managedStatePath, managedNames);
+    await writeManagedMcpState(managedStatePath, { configId, managedNames, fingerprints });
   }
 
   const entries = Array.isArray(meta.entries) ? [...meta.entries] : [];
@@ -1115,8 +1327,9 @@ export async function readCodeMieDesktopGateway(baseDir?: string, stateFile?: st
     const localKey = (await readState(stateFile))?.gatewayKey ?? DEFAULT_GATEWAY_KEY;
     const configId = await findCodeMieConfigOnDisk(libDir, meta, localKey);
     if (!configId) return null;
-    const gateway = desktopGatewayOfEntry(await readConfigEntry(join(libDir, `${configId}.json`)));
-    return gateway && isDesktopPointedAtLocalProxy(gateway, localKey) ? { port: gateway.port } : null;
+    const entry = await readConfigEntry(join(libDir, `${configId}.json`));
+    const gateway = desktopGatewayOfEntry(entry);
+    return gateway && isCodeMieOwnedDesktopEntry(entry, localKey) ? { port: gateway.port } : null;
   } catch (error) {
     logger.debug('[proxy] Claude Desktop CodeMie config not readable', ...sanitizeLogArgs(error));
     return null;
@@ -1140,11 +1353,16 @@ export async function removeDesktopConfig(
   baseDir: string = getDesktopBaseDir(),
   managedStatePath: string = getManagedMcpStatePath()
 ): Promise<RemoveDesktopConfigResult> {
-  const libDir = join(baseDir, 'configLibrary');
-  const metaPath = join(libDir, '_meta.json');
+  const metaPath = join(baseDir, 'configLibrary', '_meta.json');
   if (!existsSync(metaPath)) {
     return { removed: false, deletedConfigFile: false, reason: 'Claude Desktop config not found' };
   }
+  return withDesktopConfigLock(managedStatePath, () => removeDesktopConfigLocked(baseDir, managedStatePath));
+}
+
+async function removeDesktopConfigLocked(baseDir: string, managedStatePath: string): Promise<RemoveDesktopConfigResult> {
+  const libDir = join(baseDir, 'configLibrary');
+  const metaPath = join(libDir, '_meta.json');
 
   let meta: ConfigMeta;
   try {
@@ -1179,7 +1397,7 @@ export async function removeDesktopConfig(
   if (!isCodeMieGatewayConfig(existing)) {
     return { removed: false, configPath, deletedConfigFile: false, reason: 'no CodeMie gateway configured' };
   }
-  if (!isDesktopPointedAtLocalProxy(desktopGatewayOfEntry(existing), localKey)) {
+  if (!isCodeMieOwnedDesktopEntry(existing, localKey)) {
     return { removed: false, configPath, deletedConfigFile: false, reason: 'its local gateway is not CodeMie\'s' };
   }
 
@@ -1191,15 +1409,17 @@ export async function removeDesktopConfig(
   delete existing.coworkEgressAllowedHosts;
 
   // Drop every server CodeMie manages (names recorded on earlier runs plus the bundled
-  // defaults) but keep the ones the user added. Passing the defaults as the "managed" set
-  // makes the reconcile also match them by URL; the first `defaults.length` results are
-  // those clones, so they are sliced off.
-  const previouslyManagedNames = await readManagedMcpState(managedStatePath);
-  const userServers = reconcileManagedMcpServers(
+  // defaults) but keep the ones the user added and the managed ones the user edited since
+  // CodeMie wrote them. Passing the defaults as the "managed" set makes the partition also
+  // match them by URL; what it writes back is dropped, what it preserves stays. The guard
+  // above proved the entry is CodeMie's, so a marker of an earlier CLI counts for it.
+  const history = await readManagedMcpState(managedStatePath, configId, true);
+  const userServers = partitionManagedMcpServers(
     existing.managedMcpServers,
     [...DEFAULT_MANAGED_MCP_SERVERS],
-    previouslyManagedNames
-  ).servers.slice(DEFAULT_MANAGED_MCP_SERVERS.length);
+    history.managedNames,
+    history.fingerprints
+  ).preserved;
   if (userServers.length > 0) {
     existing.managedMcpServers = JSON.stringify(userServers);
   } else {
@@ -1231,7 +1451,8 @@ export async function removeDesktopConfig(
     await writeFileAtomic(configPath, JSON.stringify(existing, null, 2));
   }
 
-  await rm(managedStatePath, { force: true });
+  // The marker is single-slot: only the one tied to this config goes with it.
+  if (history.tied) await rm(managedStatePath, { force: true });
 
   logger.info(
     '[proxy] Removed CodeMie config from Claude Desktop',
