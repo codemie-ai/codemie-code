@@ -130,12 +130,6 @@ export function selectBudgetRow(rows: BudgetRow[], project: string | null | unde
   return undefined;
 }
 
-export function matchBudgetRow(rows, userEmail) {
-  if (!Array.isArray(rows) || !userEmail) return null;
-  const target = `${userEmail.trim().toLowerCase()} (cli)`;
-  return rows.find(r => r.project_name?.trim().toLowerCase() === target) ?? null;
-}
-
 export function formatBudgetSegment(row) {
   if (!row) return null;
   const pct = Math.round(row.total ?? 0);

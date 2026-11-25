@@ -536,6 +536,127 @@ describe('resolveBudget', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it('profile.codeMieProject selects the project row when CODEMIE_PROJECT env var is absent', async () => {
+    const projectRow = { project_name: 'my-project (cli)', current_spending: 5, total: 4, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 120, is_default: false };
+    const personalRow = { project_name: 'me@x.com (cli)', current_spending: 1.78, total: 1.19, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 150, is_default: true };
+
+    const readFile = readFileFor({
+      activeProfile: 'default',
+      userEmail: 'me@x.com',
+      workspace: { codeMieUrl: 'https://x' },
+      profiles: { default: { baseUrl: 'https://x/api', codeMieProject: 'my-project' } },
+    });
+    const getAuthHeadersImpl = vi.fn().mockResolvedValue({ cookie: 'a=b' });
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ data: { rows: [projectRow, personalRow] } }),
+    });
+
+    const prevProject = process.env.CODEMIE_PROJECT;
+    delete process.env.CODEMIE_PROJECT;
+    try {
+      const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl });
+
+      expect(result.budgetError).toBeNull();
+      expect(result.budget?.text).toContain('$5.00');
+    } finally {
+      if (prevProject !== undefined) process.env.CODEMIE_PROJECT = prevProject;
+    }
+  });
+
+  it('workspace.codeMieProject is used when neither env var nor profile.codeMieProject is set', async () => {
+    const projectRow = { project_name: 'ws-project (cli)', current_spending: 3, total: 2, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 100, is_default: false };
+    const personalRow = { project_name: 'me@x.com (cli)', current_spending: 1.78, total: 1.19, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 150, is_default: true };
+
+    const readFile = readFileFor({
+      activeProfile: 'default',
+      userEmail: 'me@x.com',
+      workspace: { codeMieUrl: 'https://x', codeMieProject: 'ws-project' },
+      profiles: { default: { baseUrl: 'https://x/api' } },
+    });
+    const getAuthHeadersImpl = vi.fn().mockResolvedValue({ cookie: 'a=b' });
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ data: { rows: [projectRow, personalRow] } }),
+    });
+
+    const prevProject = process.env.CODEMIE_PROJECT;
+    delete process.env.CODEMIE_PROJECT;
+    try {
+      const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl });
+
+      expect(result.budgetError).toBeNull();
+      expect(result.budget?.text).toContain('$3.00');
+    } finally {
+      if (prevProject !== undefined) process.env.CODEMIE_PROJECT = prevProject;
+    }
+  });
+
+  it('CODEMIE_PROJECT env var takes precedence over profile.codeMieProject', async () => {
+    const envRow = { project_name: 'env-project (cli)', current_spending: 7, total: 5, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 140, is_default: false };
+    const profileRow = { project_name: 'profile-project (cli)', current_spending: 2, total: 1, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 200, is_default: false };
+    const personalRow = { project_name: 'me@x.com (cli)', current_spending: 1.78, total: 1.19, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 150, is_default: true };
+
+    const readFile = readFileFor({
+      activeProfile: 'default',
+      userEmail: 'me@x.com',
+      workspace: { codeMieUrl: 'https://x' },
+      profiles: { default: { baseUrl: 'https://x/api', codeMieProject: 'profile-project' } },
+    });
+    const getAuthHeadersImpl = vi.fn().mockResolvedValue({ cookie: 'a=b' });
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ data: { rows: [envRow, profileRow, personalRow] } }),
+    });
+
+    const prevProject = process.env.CODEMIE_PROJECT;
+    process.env.CODEMIE_PROJECT = 'env-project';
+    try {
+      const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl });
+
+      expect(result.budgetError).toBeNull();
+      expect(result.budget?.text).toContain('$7.00');
+    } finally {
+      if (prevProject === undefined) delete process.env.CODEMIE_PROJECT;
+      else process.env.CODEMIE_PROJECT = prevProject;
+    }
+  });
+
+  it('AC7 at resolveBudget level: no matching row → budget null, non-reauthenticate error (filtered to null by main)', async () => {
+    // selectBudgetRow returns undefined → resolveBudget throws 'budget row not found' →
+    // caught internally → budgetError set. main() only forwards 'reauthenticate', so the
+    // status bar shows no segment and no error — this test pins the resolveBudget contract.
+    const unrelatedRow = { project_name: 'other-project (cli)', current_spending: 5, total: 4, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 120, is_default: false };
+
+    const readFile = readFileFor({
+      activeProfile: 'default',
+      userEmail: 'me@x.com',
+      workspace: { codeMieUrl: 'https://x' },
+      profiles: { default: { baseUrl: 'https://x/api' } },
+    });
+    const getAuthHeadersImpl = vi.fn().mockResolvedValue({ cookie: 'a=b' });
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ data: { rows: [unrelatedRow] } }),
+    });
+
+    const prevProject = process.env.CODEMIE_PROJECT;
+    process.env.CODEMIE_PROJECT = 'unknown-project';
+    try {
+      const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl });
+
+      expect(result.budget).toBeNull();
+      expect(result.budgetError).toBe('budget row not found');
+    } finally {
+      if (prevProject === undefined) delete process.env.CODEMIE_PROJECT;
+      else process.env.CODEMIE_PROJECT = prevProject;
+    }
+  });
+
   it('AC8: cache miss when same profile but different project', async () => {
     // A fresh cache written for project 'proj-a' must not be used when the session is on 'proj-b'
     const readFile = readFileFor(
