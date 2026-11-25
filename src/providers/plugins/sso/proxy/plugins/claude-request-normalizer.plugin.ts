@@ -9,7 +9,7 @@ import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
 import { CLAUDE_DESKTOP, VSCODE_CLAUDE_CODE } from '../proxy-clients.js';
 import { fetchCodeMieLlmModels } from '../../sso.http-client.js';
-import { isClaudeServableDeployment, resolveClaudeDeployment } from './claude-model-resolver.js';
+import { isClaudeServableDeployment, isClaudeTierAlias, resolveClaudeDeployment } from './claude-model-resolver.js';
 import { CredentialRefresher } from './credential-refresh.js';
 
 // standard = leave thinking untouched; none = strip it; adaptive = requires the
@@ -245,7 +245,12 @@ class ClaudeRequestNormalizerInterceptor implements ProxyInterceptor {
         return;
       }
 
-      const caps = capabilitiesFor(model);
+      // A bare alias (`haiku`, sent by Copilot CLI for an agent file's `model:`) carries no
+      // version, so its capabilities are read from the deployment it resolves to.
+      const aliasResolved = requestedModel && isClaudeTierAlias(requestedModel)
+        ? await this.resolveModel(requestedModel)
+        : undefined;
+      const caps = capabilitiesFor(aliasResolved ?? model);
 
       const modifiedBySampling = handleDeprecatedSamplingParams(body, caps, model);
 
@@ -262,7 +267,7 @@ class ClaudeRequestNormalizerInterceptor implements ProxyInterceptor {
       // so this must run before any tenant-id rewrite below.
       let modifiedByModel = false;
       if (requestedModel) {
-        const resolved = await this.resolveModel(requestedModel);
+        const resolved = aliasResolved ?? await this.resolveModel(requestedModel);
         if (resolved && resolved !== requestedModel) {
           body.model = resolved;
           modifiedByModel = true;

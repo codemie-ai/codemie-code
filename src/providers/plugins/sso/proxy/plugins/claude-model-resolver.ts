@@ -29,6 +29,12 @@
 const RELEASE_DATE_PATTERN =
   /[-._](?:(?:20\d{2})[-._](?:\d{2})[-._](?:\d{2})|(?:20\d{2})(?:\d{2})(?:\d{2}))(?!\d)/;
 const CLAUDE_SEGMENT_PATTERN = /opus|sonnet|haiku/i;
+/**
+ * Claude Code's bare tier aliases. Copilot CLI sends one verbatim when a
+ * custom agent's file names it (`model: haiku`), with no catalog of its own
+ * to map it through, so the gateway sees a model it has no deployment for.
+ */
+const TIER_ALIAS_PATTERN = /^(opus|sonnet|haiku)$/i;
 const VERTEX_SUFFIX_PATTERN = /-vertex$/i;
 
 /** Identity of a Claude model, independent of naming convention or dated deployment. */
@@ -120,9 +126,30 @@ export function rankDeploymentsByRecency(ids: string[]): string[] {
     .map((entry) => entry.id);
 }
 
+/** True when `name` is a bare tier alias (`haiku`, `sonnet`, `opus`) rather than a model id. */
+export function isClaudeTierAlias(name: string): boolean {
+  return TIER_ALIAS_PATTERN.test(name);
+}
+
+/** The newest deployment of `segment`'s family: highest version, then `rankDeploymentsByRecency`. */
+function newestOfFamily(segment: string, available: string[]): string | undefined {
+  const family = available
+    .map((id) => ({ id, identity: parseIdentity(id) }))
+    .filter((entry) => entry.identity?.segment === segment);
+  const top = family.reduce<ModelIdentity | null>((best, { identity }) => {
+    if (identity === null) return best;
+    if (best === null || identity.major > best.major || (identity.major === best.major && identity.minor > best.minor)) {
+      return identity;
+    }
+    return best;
+  }, null);
+  if (top === null) return undefined;
+  return rankDeploymentsByRecency(family.filter((entry) => sameIdentity(entry.identity, top)).map((entry) => entry.id))[0];
+}
+
 /**
  * Resolve the Claude model a client asked for to a deployment the gateway
- * has. Never substitutes a different capability tier (Opus for Sonnet, etc.)
+ * has. A bare tier alias resolves to the newest deployment of that tier. Never substitutes a different capability tier (Opus for Sonnet, etc.)
  * — an unresolved request passes through unchanged so the gateway's own
  * error reaches the client, the same contract `resolveTenantModelId` uses
  * client-side.
@@ -130,6 +157,12 @@ export function rankDeploymentsByRecency(ids: string[]): string[] {
 export function resolveClaudeDeployment(requested: string, available: string[]): ClaudeModelResolution {
   if (available.includes(requested)) {
     return { model: requested, kind: 'exact' };
+  }
+
+  const alias = requested.match(TIER_ALIAS_PATTERN);
+  if (alias) {
+    const newest = newestOfFamily(alias[1].toLowerCase(), available);
+    return newest ? { model: newest, kind: 'resolved' } : { model: requested, kind: 'unresolved' };
   }
 
   const wanted = parseIdentity(requested);
