@@ -25,7 +25,7 @@ export const placeholder = (kind: string): string =>
     .toUpperCase()}`;
 
 /** Ticket keys found in a branch name (as written, de-duplicated, space-joined) or `REDACTED:BRANCH`. */
-export function reduceBranch(branch: string | undefined): string | undefined {
+function reduceBranchUnsafe(branch: string | undefined): string | undefined {
   if (branch === undefined) {
     return undefined;
   }
@@ -57,7 +57,7 @@ export interface ReducePromptOptions {
  * the ticket and MR refs found in the whole prompt, or the refs alone, or `REDACTED:PROMPT`.
  * Runs on the raw text so a ref past any later length cut survives; output is at most 200 characters.
  */
-export function reducePrompt(raw: string, opts: ReducePromptOptions = {}): string {
+function reducePromptUnsafe(raw: string, opts: ReducePromptOptions = {}): string {
   const marker = opts.autoMarker || autoPromptMarker(raw);
   if (marker) {
     return marker.slice(0, MAX_REDUCED_PROMPT);
@@ -88,6 +88,26 @@ export function reducePrompt(raw: string, opts: ReducePromptOptions = {}): strin
   return kept.length > 0 ? kept.join(' ') : placeholder('prompt');
 }
 
+/** Ticket keys found in a branch name, or `REDACTED:BRANCH`. Never throws: a failure becomes `REDACTED:FAILED`. */
+export function reduceBranch(branch: string | undefined): string | undefined {
+  try {
+    return reduceBranchUnsafe(branch);
+  } catch (err) {
+    logger.debug(`[analytics-reduction] failed to reduce branch: ${err instanceof Error ? err.name : 'UnknownError'}`);
+    return FAILED;
+  }
+}
+
+/** Reduced prompt text. Never throws: a failure becomes `REDACTED:FAILED`. */
+export function reducePrompt(raw: string, opts: ReducePromptOptions = {}): string {
+  try {
+    return reducePromptUnsafe(raw, opts);
+  } catch (err) {
+    logger.debug(`[analytics-reduction] failed to reduce prompt: ${err instanceof Error ? err.name : 'UnknownError'}`);
+    return FAILED;
+  }
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return false;
@@ -108,12 +128,46 @@ function reduceValue(key: string, value: unknown, keepList: KeepList): unknown {
     return reduceRecord(value, nested);
   }
   if (keepList.keep.has(key)) {
-    return value;
+    return reduceKept(key, value);
   }
   if (Array.isArray(value)) {
     return [placeholder(key)];
   }
   // strings, objects and any other type carry potential content
+  return placeholder(key);
+}
+
+/** Single-token identifier (tool, model, id): the only free-form string allowed inside a kept container. */
+const NESTED_IDENTIFIER_RE = /^[A-Za-z0-9_.:@/+-]{1,128}$/;
+
+/**
+ * A kept key keeps its string verbatim. A container (array/object) under a kept key keeps scalars and
+ * identifier-like strings only; any other nested string is replaced, so free text cannot ride along.
+ */
+function reduceKept(key: string, value: unknown): unknown {
+  if (typeof value === 'string') {
+    return value;
+  }
+  return reduceNested(key, value);
+}
+
+function reduceNested(key: string, value: unknown): unknown {
+  if (value === null || typeof value === 'number' || typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'string') {
+    return NESTED_IDENTIFIER_RE.test(value) ? value : placeholder(key);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => reduceNested(key, item));
+  }
+  if (isPlainObject(value)) {
+    const out: Record<string, unknown> = {};
+    for (const entryKey of Object.keys(value)) {
+      out[entryKey] = reduceNested(entryKey, value[entryKey]);
+    }
+    return out;
+  }
   return placeholder(key);
 }
 

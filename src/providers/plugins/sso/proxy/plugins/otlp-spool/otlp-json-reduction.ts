@@ -15,6 +15,12 @@ const MAX_DEPTH = 64;
 const STRING_VALUE_KEYS = ['stringValue', 'string_value'] as const;
 const NON_TEXT_VALUE_KEYS = ['intValue', 'int_value', 'doubleValue', 'double_value', 'boolValue', 'bool_value'] as const;
 
+/** Free-text carriers outside KeyValue nodes: always replaced. */
+const ALWAYS_REDACTED_TEXT_KEYS = new Set(['description', 'body', 'message', 'severityText', 'severity_text']);
+/** Names (span, metric, scope, event): kept only when a single identifier-like token. */
+const IDENTIFIER_TEXT_KEYS = new Set(['name']);
+const IDENTIFIER_RE = /^[A-Za-z0-9_.:@/+-]{1,128}$/;
+
 const isObject = (node: unknown): node is JsonObject => typeof node === 'object' && node !== null && !Array.isArray(node);
 
 function isKeyValue(node: JsonObject): node is JsonObject & { key: string; value: JsonObject } {
@@ -49,6 +55,15 @@ function reduceKeyValue(node: JsonObject & { key: string; value: JsonObject }): 
   return { ...node, value: textValue(value, placeholder(key)) };
 }
 
+function reduceChild(name: string, child: unknown, depth: number): unknown {
+  if (name === 'body' && isObject(child)) return textValue(child, placeholder('body'));
+  if (typeof child === 'string') {
+    if (ALWAYS_REDACTED_TEXT_KEYS.has(name)) return placeholder(name);
+    if (IDENTIFIER_TEXT_KEYS.has(name) && !IDENTIFIER_RE.test(child)) return placeholder(name);
+  }
+  return walk(child, depth + 1);
+}
+
 function walk(node: unknown, depth: number): unknown {
   if (depth >= MAX_DEPTH) return placeholder('depth');
   if (Array.isArray(node)) return node.map((item) => walk(item, depth + 1));
@@ -56,7 +71,7 @@ function walk(node: unknown, depth: number): unknown {
   if (isKeyValue(node)) return reduceKeyValue(node);
   const out: JsonObject = {};
   for (const [name, child] of Object.entries(node)) {
-    out[name] = name === 'body' && isObject(child) ? textValue(child, placeholder('body')) : walk(child, depth + 1);
+    out[name] = reduceChild(name, child, depth);
   }
   return out;
 }

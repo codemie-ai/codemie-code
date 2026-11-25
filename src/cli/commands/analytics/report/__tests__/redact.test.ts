@@ -46,3 +46,30 @@ describe('redactPayload', () => {
     expect(REPORT_SESSION_KEEP_LIST.keep.has('title')).toBe(false);
   });
 });
+
+describe('redactPayloadPerSession (CR-003)', () => {
+  it('reduces every session when the global flag is on, whatever the cwd', async () => {
+    const { mkdtemp, mkdir, writeFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const home = await mkdtemp(join(tmpdir(), 'reduce-home-'));
+    const optedIn = await mkdtemp(join(tmpdir(), 'reduce-proj-on-'));
+    const plain = await mkdtemp(join(tmpdir(), 'reduce-proj-off-'));
+    await mkdir(join(optedIn, '.codemie'), { recursive: true });
+    await writeFile(join(optedIn, '.codemie', 'codemie-cli.config.json'), JSON.stringify({ analytics: { promptReduction: true } }));
+    const previousHome = process.env.CODEMIE_HOME;
+    process.env.CODEMIE_HOME = home;
+    try {
+      const { redactPayloadPerSession } = await import('../redact.js');
+      const p = payload();
+      const on = { ...p.sessions[0], sessionId: 'on', project: optedIn, branch: 'main' };
+      const off = { ...p.sessions[0], sessionId: 'off', project: plain, branch: 'main' };
+      const out = await redactPayloadPerSession({ meta: p.meta, sessions: [on, off] }, {});
+      expect(out.sessions.find((s) => s.sessionId === 'on')?.branch).toBe('REDACTED:BRANCH');
+      expect(out.sessions.find((s) => s.sessionId === 'off')?.branch).toBe('main');
+    } finally {
+      if (previousHome === undefined) delete process.env.CODEMIE_HOME;
+      else process.env.CODEMIE_HOME = previousHome;
+    }
+  });
+});

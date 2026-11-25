@@ -1341,7 +1341,7 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       });
     });
 
-    it('keeps the same story id and event id as a run with reduction off', async () => {
+    it('keeps the same story id as a run with reduction off (event ids are keyed digests when reduced)', async () => {
       detectGitBranchMock.mockResolvedValue('feature/EPMCDME-17748-private-name');
       const on = makeRepo(true);
       await run({ cwd: on.cwd, prompt: '/review-pr !456 secret', payload: payload() });

@@ -466,21 +466,29 @@ export async function runAnalyticsReductionStep(): Promise<void> {
     defaultChoice = 'off';
   }
 
-  const { reduction } = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'reduction',
-      message: 'Reduce prompts in analytics?',
-      choices,
-      default: defaultChoice
-    }
-  ]);
+  let reduction: ReductionChoice;
+  try {
+    ({ reduction } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'reduction',
+        message: 'Reduce prompts in analytics?',
+        choices,
+        default: defaultChoice
+      }
+    ]));
+  } catch (error) {
+    console.log(chalk.yellow(`Prompt reduction step skipped: ${error instanceof Error ? error.message : String(error)}`));
+    return;
+  }
 
+  let flagWritten = false;
   try {
     if (reduction === 'off') {
       if (globalOn) {
         await writeGlobalReductionFlag(false);
         console.log(chalk.green('✓ Prompt reduction turned off globally'));
+        console.log(chalk.dim('  Projects that opted in on their own keep reduction on until their project setting is removed.'));
       }
       return;
     }
@@ -489,13 +497,18 @@ export async function runAnalyticsReductionStep(): Promise<void> {
       console.log(chalk.green('✓ Prompt reduction turned on globally'));
     } else if (reduction === 'project') {
       await writeProjectReductionFlag(projectDir);
+      flagWritten = true;
       await addOptedInProject(projectDir);
       console.log(chalk.green(`✓ Prompt reduction turned on for ${projectDir}`));
       console.log(chalk.dim(`  Saved in ${join(projectDir, '.codemie', 'codemie-cli.config.json')}`));
     }
   } catch (error) {
     const message = error instanceof ConfigurationError || error instanceof Error ? error.message : String(error);
-    console.log(chalk.red(`Could not save the prompt reduction setting: ${message}`));
+    if (flagWritten) {
+      console.log(chalk.yellow(`Prompt reduction is on for ${projectDir}, but the opted-in project list could not be updated: ${message}`));
+    } else {
+      console.log(chalk.red(`Could not save the prompt reduction setting: ${message}`));
+    }
     return;
   }
 

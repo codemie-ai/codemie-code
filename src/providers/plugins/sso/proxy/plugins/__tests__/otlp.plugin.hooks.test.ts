@@ -10,7 +10,7 @@ import type { ProxyHTTPClient } from '../../proxy-http-client.js';
 
 const recordStampLossMock = vi.fn().mockResolvedValue(undefined);
 const appendSpoolMock = vi.fn(
-  async (_sessionId: string, _stream: string, _data: string, _projectNames?: string[]) => {}
+  async (_sessionId: string, _stream: string, _data: string, _projectNames?: string[], _carriedSince?: number, _reduced?: boolean) => {}
 );
 vi.mock('../otlp-spool/spool-io.js', () => ({ appendSpool: appendSpoolMock, recordStampLoss: recordStampLossMock }));
 
@@ -106,6 +106,15 @@ describe('OtlpPlugin — POST /v1/analytics/hooks', () => {
     expect(spooled).not.toContain('explicit-folder');
     expect(spooled).not.toContain('forged-route');
     expect(spooled).not.toContain('x-codemie-');
+  });
+
+  it('passes the reduced flag to appendSpool only when a hook event is stamped analytics_reduction (CR-006)', async () => {
+    await postHooks({ agentName: 'claude-code-otlp', hookEvents: [hookEvent('s1', { analytics_reduction: true })] });
+    expect(appendSpoolMock.mock.calls[0][5]).toBe(true);
+
+    appendSpoolMock.mockClear();
+    await postHooks({ agentName: 'claude-code-otlp', hookEvents: [hookEvent('s2')] });
+    expect(appendSpoolMock.mock.calls[0][5]).toBe(false);
   });
 
   it('rejects with 400 on an empty body', async () => {

@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { getCodemiePath } from '@/utils/paths.js';
 import { logger } from '@/utils/logger.js';
@@ -18,6 +18,39 @@ function readKeyFile(path: string): Buffer | null {
 }
 
 /**
+ * Writes a complete key to a temp file, then publishes it atomically: `link` for a missing file (a concurrent creator
+ * wins and its key is read), `rename` over a wrong-length file (repair). No reader ever sees a partial key.
+ */
+function writeKeyAtomically(path: string, missing: boolean): Buffer {
+  mkdirSync(dirname(path), { recursive: true });
+  const fresh = randomBytes(KEY_BYTES);
+  const temp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+  try {
+    writeFileSync(temp, fresh, { mode: 0o600, flag: 'wx' });
+    if (!missing) {
+      renameSync(temp, path);
+      return fresh;
+    }
+    try {
+      linkSync(temp, path);
+      return fresh;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      const existing = readKeyFile(path);
+      if (existing) return existing;
+      renameSync(temp, path);
+      return fresh;
+    }
+  } finally {
+    try {
+      unlinkSync(temp);
+    } catch {
+      // already renamed into place, or never written
+    }
+  }
+}
+
+/**
  * The local HMAC key (32 random bytes, mode 0600, created on first use, never logged or sent).
  * If it cannot be read or created, a random per-process key is used: a reduced event never falls back
  * to the unkeyed hash, at the cost of ids that are not stable across processes.
@@ -27,22 +60,15 @@ function loadEventKey(): Buffer {
   if (memoizedKey?.path === path) return memoizedKey.key;
   try {
     let key: Buffer | null = null;
+    let missing = false;
     try {
       key = readKeyFile(path);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      missing = true;
     }
     if (!key) {
-      mkdirSync(dirname(path), { recursive: true });
-      const fresh = randomBytes(KEY_BYTES);
-      try {
-        writeFileSync(path, fresh, { mode: 0o600, flag: 'wx' });
-        key = fresh;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-        key = readKeyFile(path);
-        if (!key) throw new Error('invalid analytics event key');
-      }
+      key = writeKeyAtomically(path, missing);
     }
     memoizedKey = { path, key };
     return key;

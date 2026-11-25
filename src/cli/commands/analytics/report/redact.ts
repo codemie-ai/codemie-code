@@ -82,6 +82,42 @@ export function redactPayload(payload: ReportPayload, mode: ReportPrivacyMode): 
  * Privacy mode for the local report. Reduction on and not `--unreduced` gives `reduce`; else
  * `--redact` gives `redact`; else `undefined` (unchanged). Read per run, never cached.
  */
+/**
+ * Applies the privacy mode per session: the global setting is the floor, and a session's own project config
+ * (nearest to the session's project directory) can turn reduction on for it. `unreduced` skips reduction only.
+ * Sync and export span projects, so the current directory must not decide for every session.
+ */
+export async function redactPayloadPerSession(
+  payload: ReportPayload,
+  options: { redact?: boolean; unreduced?: boolean }
+): Promise<ReportPayload> {
+  const decisions = new Map<string, boolean>();
+  const modes: Array<ReportPrivacyMode | undefined> = [];
+  for (const session of payload.sessions) {
+    let on = false;
+    if (!options.unreduced) {
+      const key = session.project;
+      if (!decisions.has(key)) {
+        decisions.set(key, await isReportReductionOn(key || process.cwd()));
+      }
+      on = decisions.get(key) === true;
+    }
+    modes.push(on ? 'reduce' : options.redact ? 'redact' : undefined);
+  }
+  if (modes.every((mode) => mode === undefined)) {
+    return payload;
+  }
+  const sessions = payload.sessions.map((session, index) => {
+    const mode = modes[index];
+    return mode === 'reduce' ? reduceSession(session) : mode === 'redact' ? redactSession(session) : session;
+  });
+  const { projectFilter } = payload.meta;
+  return {
+    meta: { ...payload.meta, projectFilter: projectFilter === 'all' ? projectFilter : REDACTED_PROJECT_FILTER },
+    sessions,
+  };
+}
+
 export async function resolveReportPrivacyMode(
   options: { redact?: boolean; unreduced?: boolean },
   cwd: string = process.cwd()
@@ -94,5 +130,11 @@ export async function resolveReportPrivacyMode(
 
 /** True when the global or nearest project setting turns prompt reduction on (unreadable counts as on). */
 export async function isReportReductionOn(cwd: string = process.cwd()): Promise<boolean> {
-  return isReductionOn({ configDirs: [await findNearestConfigDir(cwd)] });
+  let configDir = cwd;
+  try {
+    configDir = await findNearestConfigDir(cwd);
+  } catch {
+    // an unreadable directory falls back to the start directory; the global flag still applies
+  }
+  return isReductionOn({ configDirs: [configDir] });
 }

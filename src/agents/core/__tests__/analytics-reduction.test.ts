@@ -114,3 +114,28 @@ describe('reducePrompt', () => {
     expect(reducePrompt(raw, {}).length).toBeLessThanOrEqual(200);
   });
 });
+
+describe('never-throwing prompt and branch reduction (CR-001)', () => {
+  it('reducePrompt degrades to REDACTED:FAILED when the input breaks it', () => {
+    const hostile = { toString: () => { throw new Error('boom'); } } as unknown as string;
+    expect(reducePrompt(hostile)).toBe('REDACTED:FAILED');
+  });
+  it('reduceBranch degrades to REDACTED:FAILED when the input breaks it', () => {
+    const hostile = { matchAll: () => { throw new Error('boom'); } } as unknown as string;
+    expect(reduceBranch(hostile)).toBe('REDACTED:FAILED');
+  });
+});
+
+describe('kept keys with non-string values (CR-002)', () => {
+  const keep: KeepList = { keep: new Set(['tools', 'cwd']) };
+  it('keeps a string verbatim and identifiers nested in a kept container', () => {
+    const out = reduceRecord({ cwd: '/a b/c', tools: [{ name: 'Bash', count: 2 }, 'Read'] }, keep);
+    expect(out).toEqual({ cwd: '/a b/c', tools: [{ name: 'Bash', count: 2 }, 'Read'] });
+  });
+  it('replaces free text nested in a kept container', () => {
+    const out = reduceRecord({ tools: [{ note: 'my secret client plan' }, ['more free text']] }, keep);
+    expect(JSON.stringify(out)).not.toContain('secret');
+    expect(JSON.stringify(out)).not.toContain('free text');
+    expect(out).toEqual({ tools: [{ note: 'REDACTED:NOTE' }, ['REDACTED:TOOLS']] });
+  });
+});
