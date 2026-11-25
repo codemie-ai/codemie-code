@@ -12,6 +12,13 @@ import { readTranscriptFromAsync } from '../../../../../../agents/plugins/copilo
 import { deleteSessionStateFiles, readSessionState } from '../../../../../../agents/plugins/copilot-cli-otlp/copilot-cli-otlp.state.js';
 import { appendSpool } from './spool-io.js';
 import { listHookRecords, readHookRecordsLocked } from './copilot-usage-spool.js';
+import type { OtlpHookLifecycle } from '../otlp.plugin.js';
+
+export const copilotHookLifecycle: OtlpHookLifecycle = {
+  beforeSessionTicks: recoverMissingSessionEnds,
+  skipAppend: lateSessionEndSkip,
+  afterBatchAccepted: scheduleCopilotUsageEnrichment,
+};
 
 /**
  * Deferred usage for Copilot CLI sessions (native and managed), owned by the persistent proxy daemon.

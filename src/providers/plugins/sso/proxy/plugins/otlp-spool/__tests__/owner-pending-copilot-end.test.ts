@@ -98,16 +98,16 @@ describe('owner-pending replay of a held native Copilot sessionEnd', () => {
     await enrich.recoverMissingSessionEnds([SID], () => NOW);
     expect(await spooledEnds()).toEqual([at(5_000)]);
 
-    await replay.processPendingOwner(credentials as never, NOW);
+    await replay.processPendingOwner(credentials as never, NOW, enrich.copilotHookLifecycle);
 
     expect(await spooledEnds()).toEqual([at(5_000)]);
     expect(await queued()).toBe(0);
   });
 
   it('control: with no recovered end a refused replay (the pending start is ahead of it) is unchanged: nothing appended, still queued to retry', async () => {
-    const { replay } = await setup(false);
+    const { replay, enrich } = await setup(false);
 
-    await replay.processPendingOwner(credentials as never, NOW);
+    await replay.processPendingOwner(credentials as never, NOW, enrich.copilotHookLifecycle);
 
     expect(await spooledEnds()).toEqual([]);
     expect(await queued()).toBe(1);

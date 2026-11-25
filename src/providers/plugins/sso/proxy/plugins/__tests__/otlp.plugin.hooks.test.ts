@@ -16,7 +16,11 @@ vi.mock('../otlp-spool/spool-io.js', () => ({ appendSpool: appendSpoolMock, reco
 
 const scheduleMock = vi.fn();
 const lateSkipMock = vi.fn((_agent: string, _sid: string, _events: unknown[]): (() => Promise<boolean>) | undefined => undefined);
-vi.mock('../otlp-spool/copilot-usage-enrichment.js', () => ({ scheduleCopilotUsageEnrichment: scheduleMock, lateSessionEndSkip: lateSkipMock, recoverMissingSessionEnds: vi.fn() }));
+const hookLifecycle = {
+  beforeSessionTicks: vi.fn(),
+  skipAppend: lateSkipMock,
+  afterBatchAccepted: scheduleMock,
+};
 
 const getAnalyticsAgentMock = vi.fn((name: string) =>
   name === 'claude-code-otlp' || name === 'copilot-cli-otlp' ? { name } : undefined
@@ -56,7 +60,7 @@ function hooksContext(body: unknown, overrides: Partial<ProxyContext> = {}): Pro
 }
 
 async function postHooks(body: unknown, overrides: Partial<ProxyContext> = {}) {
-  const plugin = new OtlpPlugin();
+  const plugin = new OtlpPlugin(hookLifecycle);
   const interceptor = plugin.createInterceptor({} as never);
   const res = fakeResponse();
   await interceptor.handleRequest(hooksContext(body, overrides), {} as IncomingMessage, res, {} as ProxyHTTPClient);
