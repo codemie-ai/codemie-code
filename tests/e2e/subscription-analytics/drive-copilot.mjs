@@ -10,7 +10,7 @@
 //
 // Exits non-zero when any assertion fails. Results: $E2E_OUT (json).
 import { spawn, spawnSync } from 'node:child_process';
-import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -154,6 +154,41 @@ for (const [label, sid] of [['native BYOK', n1], ['managed shell, unrelated BYOK
 const o2 = await overview();
 const f2 = find(o2, 'funding') || {};
 check('overview: negatives add nothing to api_cost_usd or funding.api_based', num(find(o2, 'api_cost_usd')) === api1 && f2.api_based?.session_count === 1 && num(f2.api_based?.cost_usd) === num(funding1.api_based?.cost_usd), { api1, f2 });
+
+// 3. Unpinned inherited exports (a fresh nested native Copilot after a resume/continue launch): no new claim.
+const n3 = await session('unpinned-nested', (sid) => { const { CODEMIE_COPILOT_NATIVE_SESSION_ID: _pin, ...rest } = managedEnv(sid); return rest; });
+await settle(n3, false);
+const n3s = await stored(n3);
+const n3h = (await wire(n3))[0]?.headers || {};
+check('unpinned nested native: no codemie classification, api_based funding or funding header', n3s.dims[0]?.subscription_type !== 'codemie' && n3s.dims[0]?.funding_route !== 'api_based' && !n3h['x-codemie-funding-route'], { n3s, n3h });
+
+// 4. Independent collection controls: a Claude collection-generation change must not stop a recorded Copilot session in the real daemon sender.
+const g1 = randomUUID();
+const g1env = managedEnv(g1);
+replayTranscript(g1);
+hook('generation: sessionStart', 'sessionStart', g1, g1env, { source: 'new' });
+await settle(g1, true);
+const { updateClaudeAnalyticsPreferences } = await distImport('agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js');
+await updateClaudeAnalyticsPreferences((p) => ({ ...p, collectionGeneration: p.collectionGeneration + 1 }));
+const before = (await stored(g1)).counts.usage_requests;
+hook('generation: agentStop', 'agentStop', g1, g1env);
+hook('generation: sessionEnd', 'sessionEnd', g1, g1env, { reason: 'complete' });
+for (let i = 0; i < 40 && (await stored(g1)).counts.usage_requests === before; i++) await sleep(1000);
+const g1s = await stored(g1);
+check('Claude generation change: recorded Copilot session still delivers usage and keeps api_based', g1s.counts.usage_requests > before && g1s.dims[0]?.funding_route === 'api_based', { before, g1s });
+check('Claude generation change: no stop marker for the Copilot session', !existsSync(join(CH, 'analytics', 'state', 'evidence')) || !readdirSync(join(CH, 'analytics', 'state', 'evidence')).some((f) => f.endsWith('.stop.json')), readdirSync(join(CH, 'analytics', 'state', 'evidence')));
+
+// 5. Sticky boundary: a recorded session that loses route proof sends nothing more (no legacy bytes).
+const s1 = randomUUID();
+const s1env = managedEnv(s1);
+replayTranscript(s1);
+hook('sticky: sessionStart', 'sessionStart', s1, s1env, { source: 'new' });
+await settle(s1, true);
+const s1before = await stored(s1);
+hook('sticky: agentStop (proof lost)', 'agentStop', s1, { ...s1env, COPILOT_PROVIDER_BASE_URL: 'https://byok.example.invalid/v1' });
+await settle(s1, false);
+const s1after = await stored(s1);
+check('sticky: after lost proof no usage or events reach the backend', s1after.counts.usage_requests === s1before.counts.usage_requests && s1after.log_events === s1before.log_events && s1after.dims[0]?.funding_route === 'api_based', { s1before, s1after });
 
 flush();
 const failed = results.filter((r) => !r.ok);

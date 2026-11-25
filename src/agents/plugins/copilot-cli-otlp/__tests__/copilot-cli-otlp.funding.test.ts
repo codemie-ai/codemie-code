@@ -168,6 +168,60 @@ describe('sessions that must never acquire a CodeMie funding claim', () => {
   });
 });
 
+describe('session binding for a new funding claim', () => {
+  it('an unpinned launch (resume/continue) cannot create a claim: a fresh nested native Copilot inheriting the exports stays unrecorded', async () => {
+    delete process.env[PINNED_NATIVE_SESSION_ENV];
+    await start('new');
+    await hook('preToolUse', { toolName: 'bash', toolArgs: '{}', toolCallId: 't1' });
+    expect(await recordOf()).toBeUndefined();
+    for (const s of spooled) expect(s.options).toBeUndefined();
+  });
+
+  it('an unpinned resume of an already recorded session is still supported', async () => {
+    await start('new');
+    delete process.env[PINNED_NATIVE_SESSION_ENV];
+    await start('resume');
+    await hook('preToolUse', { toolName: 'bash', toolArgs: '{}', toolCallId: 't1' });
+    expect(spooled.map((s) => s.options)).toEqual([{ evidenceV: 1 }, { evidenceV: 1 }, { evidenceV: 1 }]);
+  });
+});
+
+describe('sticky attribution boundary', () => {
+  it('a recorded session that loses route proof sends nothing (no legacy bytes), stays stopped, and uses no stale claim', async () => {
+    await start();
+    process.env.COPILOT_PROVIDER_BASE_URL = 'https://byok.example.org/v1';
+    await hook('preToolUse', { toolName: 'bash', toolArgs: '{}', toolCallId: 't1' });
+    expect(spooled).toHaveLength(1); // only the proven start
+    expect(await isStopped(recordKey(apiIdentity(creds.apiUrl), ownerHash(creds.email), sid))).toBe(true);
+    process.env.COPILOT_PROVIDER_BASE_URL = PROXY; // proof returning does not reopen a stopped session
+    await hook('preToolUse', { toolName: 'bash', toolArgs: '{}', toolCallId: 't2' });
+    expect(spooled).toHaveLength(1);
+  });
+
+  it('a native session with a record under the same id (no managed launch) is stopped, not forwarded as legacy', async () => {
+    await start();
+    for (const k of ['CODEMIE_SESSION_ID', PINNED_NATIVE_SESSION_ENV]) delete process.env[k];
+    await hook('preToolUse', { toolName: 'bash', toolArgs: '{}', toolCallId: 't1' });
+    expect(spooled).toHaveLength(1);
+  });
+});
+
+describe('independent collection controls', () => {
+  it('a Claude collection-generation change neither stops a Copilot session nor blocks its sender; Copilot controls still apply', async () => {
+    const { updateClaudeAnalyticsPreferences } = await import('@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js');
+    const { sendGuard } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/evidence-send.js');
+    await start();
+    const record = (await recordOf())!;
+    await updateClaudeAnalyticsPreferences((p) => ({ ...p, collectionGeneration: p.collectionGeneration + 1 }));
+    await hook('preToolUse', { toolName: 'bash', toolArgs: '{}', toolCallId: 't1' });
+    expect(spooled).toHaveLength(2);
+    const key = recordKey(apiIdentity(creds.apiUrl), ownerHash(creds.email), sid);
+    expect(await sendGuard(key, record)).toBe(true); // the forwarder's own consumer
+    // a Claude-recorded session (no agent marker) is still bound to the generation
+    expect(await sendGuard(key, { ...record, agent: undefined })).toBe(false);
+  });
+});
+
 describe('pre-existing spool data and resume', () => {
   it('a mid-session hook with no record is never upgraded; a resume start without a record stays legacy', async () => {
     await hook('preToolUse', { toolName: 'bash', toolArgs: '{}', toolCallId: 't1' });

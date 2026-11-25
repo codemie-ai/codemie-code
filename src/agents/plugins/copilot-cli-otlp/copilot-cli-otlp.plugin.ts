@@ -17,11 +17,11 @@ import { readWorkspaceManifest } from '@/agents/plugins/copilot-cli/copilot-cli.
 import { currentEvidenceIdentity } from '@/agents/core/evidence/hook-identity.js';
 import { readRecord, recordKey } from '@/agents/core/evidence/record-store.js';
 import { isStopped, writeStop } from '@/agents/core/evidence/stop-marker.js';
-import { scopeViolation } from '@/agents/core/evidence/session-scope.js';
+import { currentGeneration, scopeViolation } from '@/agents/core/evidence/session-scope.js';
+import { hasPendingOwnerSession } from '@/agents/core/evidence/owner-pending.js';
 import { resolveProjectAtCwd } from '@/agents/core/event-fields/identity-fields.js';
-import { readClaudeAnalyticsPreferences } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from './copilot-cli-otlp.constants.js';
-import { copilotEvidenceInputs, isFreshStart } from './copilot-cli-otlp.evidence.js';
+import { copilotEvidenceInputs, copilotRouteProof, isFreshStart } from './copilot-cli-otlp.evidence.js';
 import { buildStopPass, type StopPass } from './copilot-cli-otlp.stop-pass.js';
 import { TOOL_STATE_BUDGET_MS, readSessionState, resolveRootSessionId, sweepStaleStateFiles, updateSessionState } from './copilot-cli-otlp.state.js';
 import { recordOpenStarts, resolveEndToolUseId } from './copilot-cli-otlp.tool-correlation.js';
@@ -113,7 +113,7 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
     const evidenceInputs = await copilotEvidenceInputs({
       sessionId: input.sessionId,
       managed: isManagedSession(input.sessionId),
-      hookSource: input.source,
+      pinned: process.env[PINNED_NATIVE_SESSION_ENV] === input.sessionId,
       freshStart: isFreshStart(input.codemieEventName, input.source),
     });
     // Only a CodeMie-proven session is recorded (and its project pinned); every other session keeps the unrecorded path.
@@ -126,19 +126,21 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
    */
   protected override async transitionGate(input: CopilotCliHookInput): Promise<'continue' | 'stop'> {
     try {
+      const proven = copilotRouteProof(isManagedSession(input.sessionId)) !== undefined;
+      // Sticky attribution: a session the evidence store knows keeps its claim only while the route is still proven.
       const id = await currentEvidenceIdentity();
-      if (!id) return 'continue';
+      if (!id) return !proven && (await hasPendingOwnerSession(input.sessionId)) ? 'stop' : 'continue';
       const key = recordKey(id.api_identity, id.owner_hash, input.sessionId);
       const found = await readRecord(key);
-      if (!found) return 'continue';
+      if (!found) return !proven && (await hasPendingOwnerSession(input.sessionId)) ? 'stop' : 'continue';
       if (found.kind !== 'existing' && found.kind !== 'created') return 'stop';
       if (await isStopped(key)) return 'stop';
-      const prefs = await readClaudeAnalyticsPreferences();
-      if (prefs.kind !== 'ok') return 'stop';
-      const violation = await scopeViolation(found.record, {
+      const generation = await currentGeneration(found.record);
+      if (generation === undefined) return 'stop';
+      const violation = !proven ? 'scope_unproven' as const : await scopeViolation(found.record, {
         cwd: input.cwd,
         projectAtCwd: await resolveProjectAtCwd(input.cwd, found.record.profile, { configuredWins: true, walkFromCwd: true }),
-        generation: prefs.value.collectionGeneration,
+        generation,
       });
       if (!violation) return 'continue';
       await writeStop(key, violation, input.sessionId);

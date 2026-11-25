@@ -4,7 +4,6 @@ import { hasRecordForSession } from '@/agents/core/evidence/record-store.js';
 import { hasPendingOwnerSession } from '@/agents/core/evidence/owner-pending.js';
 import { fundingRoute, routedViaCodemie, type RoutingInput } from '@/agents/core/evidence/routing.js';
 import type { EvidenceInputs } from '@/agents/core/evidence/stamp.js';
-import { readClaudeAnalyticsPreferences } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
 
 /** Copilot `sessionStart` sources that begin a session; anything else (`resume`, unknown) continues one. */
 const FRESH_SOURCES = new Set(['new', 'startup']);
@@ -34,13 +33,8 @@ function readLaunchProfile(env: NodeJS.ProcessEnv): LaunchProfile | undefined {
  * Proof is the launcher's own exports: its loopback proxy is the endpoint Copilot was given, and that proxy's upstream
  * is the launch profile's model route (same rule as Claude's managed launch).
  */
-export async function copilotEvidenceInputs(args: {
-  sessionId: string;
-  managed: boolean;
-  hookSource: string | undefined;
-  freshStart: boolean;
-}, env: NodeJS.ProcessEnv = process.env): Promise<EvidenceInputs | undefined> {
-  if (!args.managed) return undefined;
+export function copilotRouteProof(managed: boolean, env: NodeJS.ProcessEnv = process.env): Pick<EvidenceInputs, 'routing' | 'funding_route'> | undefined {
+  if (!managed) return undefined;
   const profile = readLaunchProfile(env);
   if (!profile) return undefined;
   const authType = profile.provider ? ProviderRegistry.getProvider(profile.provider)?.authType : undefined;
@@ -60,15 +54,34 @@ export async function copilotEvidenceInputs(args: {
   const routing = routedViaCodemie(routingInput);
   if (!routing.routed || routing.routing_proof !== 'proven') return undefined;
   const funding = fundingRoute(routingInput, routing);
-  if (funding !== 'api_based') return undefined;
+  return funding === 'api_based' ? { routing, funding_route: funding } : undefined;
+}
 
-  // A session with data but no record is never upgraded mid-flight: its earlier events already went out as legacy.
-  if (!args.freshStart && !(await hasRecordForSession(args.sessionId)) && !(await hasPendingOwnerSession(args.sessionId))) {
-    logger.debug(`[copilot-cli-otlp] session has no evidence record (start source: ${args.hookSource ?? 'none'}); staying on the legacy path`);
+/** A session already known to the evidence store (record, or events held for its owner). */
+export async function isRecordedSession(sessionId: string): Promise<boolean> {
+  return (await hasRecordForSession(sessionId)) || (await hasPendingOwnerSession(sessionId));
+}
+
+/**
+ * Inputs for this hook, or `undefined` for the unrecorded path. A NEW funding claim needs a concrete session binding:
+ * a fresh start whose id is the one the launcher pinned (`--session-id`). An unpinned launch (resume/continue) cannot
+ * tell its own session from a nested native Copilot that inherited the exports, so it only continues a session that is
+ * already recorded. Whether a recorded session still has route proof is the caller's (sticky) decision.
+ */
+export async function copilotEvidenceInputs(args: {
+  sessionId: string;
+  managed: boolean;
+  pinned: boolean;
+  freshStart: boolean;
+}, env: NodeJS.ProcessEnv = process.env): Promise<EvidenceInputs | undefined> {
+  const proof = copilotRouteProof(args.managed, env);
+  if (!proof) return undefined;
+  if (!(args.freshStart && args.pinned) && !(await isRecordedSession(args.sessionId))) {
+    logger.debug('[copilot-cli-otlp] no session binding or record for a new funding claim; staying on the unrecorded path');
     return undefined;
   }
-  const prefs = await readClaudeAnalyticsPreferences();
-  return { routing, funding_route: funding, collection_generation: prefs.kind === 'ok' ? prefs.value.collectionGeneration : 0 };
+  // Copilot's own enable/exclusion controls gate every hook; its records do not follow the Claude generation.
+  return { ...proof, collection_generation: 0, agent: 'copilot-cli-otlp' };
 }
 
 export const isFreshStart = (eventName: string, source: string | undefined): boolean =>
