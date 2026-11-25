@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "task": "Fix Windows install.ps1 so benign npm stderr captured via 2>&1 in Get-PackageVersion does not abort under global $ErrorActionPreference='Stop' (EPMCDME-16967).",
+  "generated": "2026-11-20T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 1, "label": "XS" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 1, "label": "XS" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 9,
+  "size": "XS",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "technical_risk", "reason": "Single Get-PackageVersion function in install.ps1, but no exact precedent in repo; $PSNativeCommandUseErrorActionPreference is PS 7.3+ only while Windows PowerShell 5.1 is default, and no Pester tests exist, so verification is manual. Scored M, not higher, since the change is small and trivially reversible." },
+    { "dimension": "requirements_clarity", "reason": "Bug and root cause are clear; minor open question on supported PowerShell versions and whether stdout/stderr should be separated so the returned version is not warning text." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
