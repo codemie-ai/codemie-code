@@ -52,6 +52,14 @@ export const PROJECT_NOT_FOUND_EXIT_CODE = 2;
 const MEMBER_404_NOTE =
   "A 404 cannot tell a missing project from a missing user.";
 
+function parseNonNegativeInt(value: string, flag: string): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new Error(`${flag} must be a non-negative integer, got '${value}'`);
+  }
+  return n;
+}
+
 /**
  * The single not-found rule: the only caller of getProjectDetail for
  * exists/get/members, and the only place that reads the HTTP status.
@@ -69,15 +77,18 @@ async function readProjectDetail(
     if (error instanceof ApiError) {
       const status =
         error.statusCode ?? (error as ApiError & { status?: number }).status;
-      if (status === 404) {
+      // 404 (missing) and 403 (not visible) are both "not found or not accessible"
+      if (status === 404 || status === 403) {
         spinner.stop();
-        if (json) {
-          console.log(JSON.stringify({ name, exists: false }));
-        }
         console.error(
           chalk.red(`Project '${name}' not found or not accessible`),
         );
-        process.exit(PROJECT_NOT_FOUND_EXIT_CODE);
+        // Exit from the write callback so piped JSON is flushed first
+        process.stdout.write(
+          json ? JSON.stringify({ name, exists: false }) + "\n" : "",
+          () => process.exit(PROJECT_NOT_FOUND_EXIT_CODE),
+        );
+        return new Promise<never>(() => undefined);
       }
     }
     throw error;
@@ -164,8 +175,8 @@ function registerListCommand(cmd: Command): void {
     .action(async (opts) =>
       run("Fetching projects...", "list projects", async (client, spinner) => {
         const result = await listProjects(client, {
-          page: parseInt(opts.page, 10),
-          per_page: parseInt(opts.perPage, 10),
+          page: parseNonNegativeInt(opts.page, "--page"),
+          per_page: parseNonNegativeInt(opts.perPage, "--per-page"),
           ...(opts.search ? { search: opts.search } : {}),
           ...(opts.sortBy ? { sort_by: opts.sortBy } : {}),
           ...(opts.sortOrder ? { sort_order: opts.sortOrder } : {}),
@@ -206,7 +217,7 @@ function registerGetCommand(cmd: Command): void {
     .option("--json", "Output in JSON format")
     .action(async (name: string, opts) =>
       run("Fetching project...", "get project", async (client, spinner) => {
-        const p = await readProjectDetail(client, name, spinner, false);
+        const p = await readProjectDetail(client, name, spinner, Boolean(opts.json));
         spinner.stop();
 
         if (opts.json) {
@@ -241,7 +252,7 @@ function registerMembersCommand(cmd: Command): void {
     .option("--json", "Output in JSON format")
     .action(async (name: string, opts) =>
       run("Fetching members...", "list project members", async (client, spinner) => {
-        const p = await readProjectDetail(client, name, spinner, false);
+        const p = await readProjectDetail(client, name, spinner, Boolean(opts.json));
         spinner.stop();
         if (opts.json) {
           outputJson(p.members);
@@ -418,8 +429,11 @@ function registerBulkAssignCommand(cmd: Command): void {
     .option("--json", "Output in JSON format")
     .action(async (name: string, opts) =>
       run("Assigning users...", "bulk assign users", async (client, spinner) => {
-        const users = JSON.parse(await readFile(opts.file, "utf-8")) as BulkAssignmentUserItem[];
-        const result = await bulkAssignUsersToProject(client, name, users);
+        const users: unknown = JSON.parse(await readFile(opts.file, "utf-8"));
+        if (!Array.isArray(users)) {
+          throw new Error(`${opts.file} must contain a JSON array of {user_id, is_project_admin}`);
+        }
+        const result = await bulkAssignUsersToProject(client, name, users as BulkAssignmentUserItem[]);
         spinner.stop();
         if (opts.json) return outputJson(result);
         printBulkResult(result);
