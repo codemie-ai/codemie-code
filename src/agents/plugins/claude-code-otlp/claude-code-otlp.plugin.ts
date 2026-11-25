@@ -219,22 +219,29 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
    */
   protected override async transitionGate(hookInput: HookInput): Promise<'continue' | 'stop'> {
     try {
-      const id = await currentEvidenceIdentity();
+      let id = await currentEvidenceIdentity();
       const sessionId = hookInput.session_id;
+      let identityRecoveredAfterAuth = false;
       if (!id) {
-        // No owner to key a record by. Only a fresh session, one already held for its owner, or one with a record may go on
-        // (held for replay, which re-checks it); an unknown mid-session scope never gets a record made from an outage.
+        // A prompt checks auth before the ownerless transition. If sign-in restores the owner while that check waits,
+        // let this authenticated prompt establish the session's first evidence record; older activity is not backfilled.
         this.identityUnverifiedAtGate = true;
         if (hookInput.hook_event_name === 'UserPromptSubmit') {
           this.promptAuthResult = await this.ensureProxyAuth();
           if (!this.promptAuthResult.ok) {
-            this.emitBlock(this.promptAuthBlock(this.promptAuthResult));
+            const decision = this.promptAuthBlock(this.promptAuthResult);
+            logger.error(`[${this.name}] Blocking prompt: ${decision.reason}`);
+            this.emitBlock(decision);
             return 'stop';
           }
+          id = await currentEvidenceIdentity();
+          identityRecoveredAfterAuth = Boolean(id);
         }
-        const source = readOptionalString(hookInput, 'source');
-        const fresh = hookInput.hook_event_name === 'SessionStart' && (source === 'startup' || source === 'clear');
-        return fresh || (await hasPendingOwnerSession(sessionId)) || (await hasRecordForSession(sessionId)) ? 'continue' : 'stop';
+        if (!id) {
+          const source = readOptionalString(hookInput, 'source');
+          const fresh = hookInput.hook_event_name === 'SessionStart' && (source === 'startup' || source === 'clear');
+          return fresh || (await hasPendingOwnerSession(sessionId)) || (await hasRecordForSession(sessionId)) ? 'continue' : 'stop';
+        }
       }
       const key = recordKey(id.api_identity, id.owner_hash, sessionId);
       if (await isStopped(key)) {
@@ -248,7 +255,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       if (!found) {
         const source = readOptionalString(hookInput, 'source');
         const freshSession = hookInput.hook_event_name === 'SessionStart' && (source === 'startup' || source === 'clear');
-        if (freshSession || (await hasPendingOwnerSession(sessionId))) return 'continue';
+        if (freshSession || (await hasPendingOwnerSession(sessionId)) || (
+          identityRecoveredAfterAuth && hookInput.hook_event_name === 'UserPromptSubmit'
+        )) return 'continue';
         return this.stopSession(key, 'resume_unknown', sessionId);
       }
       const record = found.record;

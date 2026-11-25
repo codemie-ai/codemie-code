@@ -216,6 +216,8 @@ describe('hook-side transitions', () => {
 
     it('blocks a no-owner UserPromptSubmit when authentication is missing', async () => {
       const t = await setup();
+      const { logger } = await import('@/utils/logger.js');
+      const errorSpy = vi.spyOn(logger, 'error');
       identityMock.mockResolvedValue(null);
       authGateMock.mockResolvedValue({
         ok: false,
@@ -227,6 +229,7 @@ describe('hook-side transitions', () => {
       await t.plugin.processOtlpEvent(JSON.stringify(hook({ session_id: 'unknown' })), deps as never);
 
       expect(authGateMock).toHaveBeenCalledTimes(1);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Blocking prompt:'));
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"decision":"block"'));
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"hookEventName":"UserPromptSubmit"'));
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"suppressOriginalPrompt":true'));
@@ -245,6 +248,17 @@ describe('hook-side transitions', () => {
       expect(logSpy).not.toHaveBeenCalled();
       expect(deps.ensureOtlpProxy).not.toHaveBeenCalled();
       expect(deps.forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+    });
+
+    it('continues the first prompt when authentication restores an owner for the session', async () => {
+      const t = await setup();
+      identityMock.mockClear();
+      identityMock
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ api_identity: api, owner_hash: owner });
+
+      expect(await t.gate(hook({ session_id: 'unknown' }))).toBe('continue');
+      expect(identityMock).toHaveBeenCalledTimes(2);
     });
 
     it('blocks a recorded ownerless prompt before starting the proxy when authentication is missing', async () => {
