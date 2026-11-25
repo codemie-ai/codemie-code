@@ -391,7 +391,8 @@ export async function startDetachedSsoLogin(codeMieUrl: string): Promise<Detache
 
 const EXPIRED_LEAD = 'Your CodeMie sign-in session has expired — this is expected and not a problem with your prompt.';
 const MANUAL_RESUME = 'After login completes, re-send your prompt.';
-const OPEN_FAILED = `${EXPIRED_LEAD}\nCould not open the browser sign-in automatically. Run \`codemie profile login\`. ${MANUAL_RESUME}`;
+const HEADLESS_HINT = 'No browser on this machine? Run `codemie profile login --no-browser` to paste the login result instead.';
+const OPEN_FAILED = `${EXPIRED_LEAD}\nCould not open the browser sign-in automatically. Run \`codemie profile login\`. ${MANUAL_RESUME}\n${HEADLESS_HINT}`;
 
 /**
  * All user-facing re-auth text lives here. `resume: 'auto'` is for hooks that wait for the sign-in.
@@ -407,14 +408,14 @@ export function describeLogin(
     return 'CodeMie could not verify your credentials. Check your CodeMie API key or profile configuration, then re-send your prompt.';
   }
   if (wait?.status === 'failed') {
-    return `${EXPIRED_LEAD}\nThe browser sign-in did not complete: ${wait.error ?? 'unknown error'}.\nRun \`codemie profile login\` to sign in. ${MANUAL_RESUME}`;
+    return `${EXPIRED_LEAD}\nThe browser sign-in did not complete: ${wait.error ?? 'unknown error'}.\nRun \`codemie profile login\` to sign in. ${MANUAL_RESUME}\n${HEADLESS_HINT}`;
   }
   if (wait?.status === 'succeeded') {
     // Reached only when the post-sign-in re-check still failed, e.g. the login was for another profile/URL.
-    return `${EXPIRED_LEAD}\nThe browser sign-in finished, but this CodeMie profile is still not authenticated (the sign-in may have been for a different profile or URL).\nRun \`codemie profile login\` for this profile. ${MANUAL_RESUME}`;
+    return `${EXPIRED_LEAD}\nThe browser sign-in finished, but this CodeMie profile is still not authenticated (the sign-in may have been for a different profile or URL).\nRun \`codemie profile login\` for this profile. ${MANUAL_RESUME}\n${HEADLESS_HINT}`;
   }
   if (wait?.status === 'timeout') {
-    return `${EXPIRED_LEAD}\nThe browser sign-in did not finish in time.\nComplete it, or run \`codemie profile login\`. ${MANUAL_RESUME}`;
+    return `${EXPIRED_LEAD}\nThe browser sign-in did not finish in time.\nComplete it, or run \`codemie profile login\`. ${MANUAL_RESUME}\n${HEADLESS_HINT}`;
   }
   switch (outcome) {
     case 'started':
@@ -425,12 +426,12 @@ export function describeLogin(
           : 'A browser sign-in is already in progress.';
       const next =
         resume === 'auto'
-          ? 'Finish signing in and your prompt will continue automatically.'
-          : `Complete the sign-in. ${MANUAL_RESUME}\nIf you closed the browser window, run \`codemie profile login\`.`;
+          ? `Finish signing in and your prompt will continue automatically.\n${HEADLESS_HINT}`
+          : `Complete the sign-in. ${MANUAL_RESUME}\nIf you closed the browser window, run \`codemie profile login\`.\n${HEADLESS_HINT}`;
       return `${EXPIRED_LEAD}\n${opened}\n${next}`;
     }
     case 'cooldown':
-      return `${EXPIRED_LEAD}\nThe previous sign-in attempt did not complete. Run \`codemie profile login\`. ${MANUAL_RESUME}`;
+      return `${EXPIRED_LEAD}\nThe previous sign-in attempt did not complete. Run \`codemie profile login\`. ${MANUAL_RESUME}\n${HEADLESS_HINT}`;
     case 'signed-in-recently':
       return `A sign-in finished moments ago; re-send your prompt. If it is rejected again, wait about ${Math.round(COOLDOWN_MS / 1000)} seconds and re-send: a new sign-in then opens automatically.`;
     case 'failed':
