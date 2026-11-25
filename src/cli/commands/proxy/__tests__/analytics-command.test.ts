@@ -438,7 +438,7 @@ describe('createProxyAnalyticsCommand', () => {
     const names = createProxyAnalyticsCommand()
       .commands.map((c) => c.name())
       .sort();
-    expect(names).toEqual(['connect-folder', 'consent', 'disable', 'disconnect-folder', 'enable', 'exclude', 'include', 'status']);
+    expect(names).toEqual(['connect-folder', 'consent', 'disable', 'disconnect-folder', 'enable', 'exclude', 'include', 'resend', 'status']);
   });
 
   it('the group description names what the group does now: enable/disable, include/exclude, consent, status', async () => {
@@ -601,7 +601,7 @@ describe('createProxyAnalyticsCommand', () => {
         .filter((c) => !['connect-folder', 'disconnect-folder'].includes(c.name()))
         .flatMap((c) => (c.name() === 'consent' ? [...c.commands] : [c]))
         .filter((c) => c.name() !== 'list');
-      expect(leaves.map((c) => c.name()).sort()).toEqual(['disable', 'enable', 'exclude', 'grant', 'include', 'revoke', 'status']);
+      expect(leaves.map((c) => c.name()).sort()).toEqual(['disable', 'enable', 'exclude', 'grant', 'include', 'resend', 'revoke', 'status']);
       for (const sub of leaves) {
         const help = sub.helpInformation();
         expect(help, sub.name()).toContain('--claude-otlp');
