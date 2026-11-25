@@ -3,6 +3,7 @@
  * Real config files and real ConfigLoader; only the agent process (adapter.run), provider setup and
  * the cwd are stubbed. Launch side: the CODEMIE_MODEL_SOURCE, CODEMIE_MODEL_ENV_ORIGIN and
  * CODEMIE_PROFILE_MODEL the launcher hands the agent, and the banner text built from them.
+ * Status side: the Model row text of `codemie profile status` (loadStatusConfig()).
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,6 +15,7 @@ import type { AgentAdapter } from '../types.js';
 import { ProviderRegistry } from '../../../providers/core/registry.js';
 import '../../../providers/index.js';
 import { ConfigLoader } from '../../../utils/config.js';
+import { loadStatusConfig } from '../../../cli/commands/profile/index.js';
 import {
   describeModel,
   MODEL_ENV_ORIGIN_ENV,
@@ -97,18 +99,22 @@ describe('CODEMIE_MODEL override at launch', () => {
 
   it('marks a shell override with the profile model it replaced', async () => {
     process.env.CODEMIE_MODEL = ENV_MODEL;
+    const status = await loadStatusConfig(repo);
     const env = await launch(repo);
 
     expect(env).toMatchObject({ CODEMIE_MODEL_SOURCE: 'env', CODEMIE_MODEL_ENV_ORIGIN: 'shell', CODEMIE_PROFILE_MODEL: PROFILE_MODEL });
     expect(bannerModel(env)).toBe(`${ENV_MODEL} (CODEMIE_MODEL from shell env overrides profile: ${PROFILE_MODEL})`);
+    expect(status.modelText).toBe(bannerModel(env));
   });
 
   it('marks a .env override', async () => {
     await fs.writeFile(path.join(repo, '.env'), `CODEMIE_MODEL=${ENV_MODEL}\n`);
+    const status = await loadStatusConfig(repo);
     const env = await launch(repo);
 
     expect(env).toMatchObject({ CODEMIE_MODEL_SOURCE: 'env', CODEMIE_MODEL_ENV_ORIGIN: 'dotenv', CODEMIE_PROFILE_MODEL: PROFILE_MODEL });
     expect(bannerModel(env)).toBe(`${ENV_MODEL} (CODEMIE_MODEL from .env overrides profile: ${PROFILE_MODEL})`);
+    expect(status.modelText).toBe(bannerModel(env));
   });
 
   it.each([
@@ -116,10 +122,32 @@ describe('CODEMIE_MODEL override at launch', () => {
     ['empty', ''],
   ])('reports the profile model when CODEMIE_MODEL is %s', async (_name, value) => {
     if (value !== undefined) process.env.CODEMIE_MODEL = value;
+    const status = await loadStatusConfig(repo);
     const env = await launch(repo);
 
     expect(env).toMatchObject({ CODEMIE_MODEL_SOURCE: 'default', CODEMIE_MODEL_ENV_ORIGIN: '', CODEMIE_PROFILE_MODEL: '' });
     expect(bannerModel(env)).toBe(PROFILE_MODEL);
+    expect(status.modelText).toBe(PROFILE_MODEL);
+  });
+
+  it('status from a repo subfolder reads the same .codemie as the launcher', async () => {
+    const sub = path.join(repo, 'sub');
+    await fs.mkdir(sub, { recursive: true });
+    const globalPath = path.join(tmp, 'home', 'codemie-cli.config.json');
+    const config = JSON.parse(await fs.readFile(globalPath, 'utf-8'));
+    config.activeProfile = 'x';
+    config.profiles.x = { ...config.profiles.p, model: 'x-model', codeMieProject: 'x-project' };
+    await fs.writeFile(globalPath, JSON.stringify(config));
+    await fs.writeFile(path.join(repo, '.codemie', 'codemie-cli.config.json'), JSON.stringify({ version: 2, activeProfile: 'p', profiles: {} }));
+    process.env.CODEMIE_MODEL = ENV_MODEL;
+
+    const status = await loadStatusConfig(sub);
+    const env = await launch(sub);
+
+    expect(status.configDir).toBe(repo);
+    expect(status.config.name).toBe('p');
+    expect(status.modelText).toBe(`${ENV_MODEL} (CODEMIE_MODEL from shell env overrides profile: ${PROFILE_MODEL})`);
+    expect(status.modelText).toBe(bannerModel(env));
   });
 
   it('counts an env model equal to the profile model as env, without a marker', async () => {
