@@ -23,13 +23,12 @@ const BUNDLE_FILENAME = 'statusline.bundle.mjs';
 // Claude Code re-runs the statusLine command on its own event triggers (a new assistant message,
 // /compact, etc. — see https://code.claude.com/docs/en/statusline#how-status-lines-work);
 // `refreshInterval` is only the fallback timer for when those events "go quiet" (e.g. an idle
-// session). This used to sit at 60s to match the (since-removed) budget segment's HTTP cache TTL
-// (see CACHE_TTL_MS in plugin/statusline.ts) — re-running any faster than that would have just
-// repeated the same cached network figure. Every remaining segment (routed-model widget, cost,
-// context bar) is now a cheap local file read, so a stale event trigger (observed: the "routed to"
-// arrow not appearing until the next prompt is sent) sits invisible for up to a full minute with no
-// good reason. A short interval makes it self-correct almost immediately instead.
-const REFRESH_INTERVAL = 3;
+// session). Keep it at the budget segment's HTTP cache TTL (CACHE_TTL_MS in plugin/statusline.ts):
+// the budget segment is rendered and calls GET /v1/analytics/budget_usage, whose outcome (success
+// or failure) is cached for that TTL. A faster timer would just re-render the cached figure.
+// It was lowered to 3s in #503 when the budget call had been removed; #594 restored the call
+// without restoring this value.
+const REFRESH_INTERVAL = 60;
 
 export interface InstallStatuslineResult {
   scriptPath: string;

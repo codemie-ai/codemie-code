@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { closeSync, openSync, readSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readSync } from 'node:fs';
 import { join } from 'node:path';
 import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
 import { isSafeSessionId } from '@/agents/core/session-id.js';
@@ -272,6 +272,12 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
 
   private async onSessionEnd(input: CopilotCliHookInput): Promise<CliForwardDecision> {
     const stateRoot = getCopilotSessionStateRoot();
+    // A session Copilot never wrote a state folder for has no prompt, tool call or usage to report:
+    // VS Code's headless runtime fires a lone sessionEnd on resume, and `copilot` + `/exit` creates no log.
+    if (isSafeSessionId(input.sessionId) && !existsSync(join(stateRoot, input.sessionId))) {
+      logger.debug('[copilot-cli-otlp] sessionEnd for a session without session-state; not forwarded');
+      return { decision: 'forward', payload: [] };
+    }
     if (!(await updateSessionState(input.sessionId, { sessionStateRoot: stateRoot }, 1_000))) {
       logger.debug('[copilot-cli-otlp] failed to record session-state root');
     }
