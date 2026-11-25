@@ -2,7 +2,7 @@
  * Tests for deriveExpiresAt — JWT exp extraction from cookie dict.
  * @group unit
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const { retrieveSSOCredentials, clearSSOCredentials, storeSSOCredentials } = vi.hoisted(() => ({
   retrieveSSOCredentials: vi.fn(),
@@ -186,5 +186,34 @@ describe('CodeMieSSO.authenticate headless', () => {
     promptForPastedToken.mockRejectedValue(Object.assign(new Error('x'), { name: 'AbortError' }));
     const result = await new CodeMieSSO().authenticate({ codeMieUrl: 'https://codemie.example.com', headless: true });
     expect(result).toEqual({ success: false, error: 'Authentication cancelled by user' });
+  });
+});
+
+describe('CodeMieSSO browser callback', () => {
+  const BASE = 'https://codemie.example.com';
+  const cookies = { _oauth2_proxy: 'x' };
+  const token = Buffer.from(JSON.stringify({ cookies })).toString('base64');
+  type CallbackHandler = { codeMieUrl: string; handleCallback(url: URL): Promise<Record<string, unknown>> };
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }));
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('resolves a ?token= callback URL into apiUrl and cookies', async () => {
+    const sso = new CodeMieSSO() as unknown as CallbackHandler;
+    sso.codeMieUrl = BASE;
+    const result = await sso.handleCallback(new URL(`http://localhost:1234/?token=${encodeURIComponent(token)}`));
+    expect(result).toEqual({ success: true, apiUrl: `${BASE}/code-assistant-api`, cookies });
+  });
+
+  it('reports a callback without a token as a failure', async () => {
+    const sso = new CodeMieSSO() as unknown as CallbackHandler;
+    sso.codeMieUrl = BASE;
+    const result = await sso.handleCallback(new URL('http://localhost:1234/?foo=bar'));
+    expect(result.success).toBe(false);
+    expect(typeof result.error).toBe('string');
   });
 });

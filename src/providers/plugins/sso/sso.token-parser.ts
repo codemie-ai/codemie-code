@@ -33,11 +33,20 @@ function safeDecodeURIComponent(value: string): string {
   }
 }
 
+/** A token parameter in a query string. Base64 never contains ?, &, so a raw token cannot match. */
+const REDIRECT_TOKEN_PARAM = /[?&](?:token|auth|data)=/;
+
+/** A redirect: a URL, a bare query, or a scheme-less address carrying a token parameter. */
+function looksLikeRedirect(input: string): boolean {
+  return /^https?:\/\//i.test(input) || input.startsWith('?') || REDIRECT_TOKEN_PARAM.test(input);
+}
+
 function extractRawToken(input: string): string | null {
-  if (/^https?:\/\//i.test(input) || input.startsWith('?')) {
+  if (looksLikeRedirect(input)) {
     let search: string;
     try {
-      search = input.startsWith('?') ? input : new URL(input).search;
+      // A scheme-less address (localhost:1234/?token=...) parses against a placeholder base
+      search = input.startsWith('?') ? input : new URL(input, 'http://localhost').search;
     } catch {
       return null;
     }
@@ -66,6 +75,13 @@ function decodeToken(raw: string): { cookies: Record<string, string> } {
   return { cookies: cookies as Record<string, string> };
 }
 
+/**
+ * Decode a pasted or callback token into session cookies and the API URL.
+ *
+ * @throws ConfigurationError with the invalid-token message when the input is empty, carries no token,
+ *   or does not decode, and with the missing-cookies message when the decoded token has no cookies object.
+ *   A failed or timed-out config.js fetch is not an error: the default API URL is used instead.
+ */
 export async function parseSSOToken(input: string, opts: ParseSSOTokenOptions): Promise<ParsedSSOToken> {
   const trimmed = (input ?? '').trim();
   if (!trimmed) {

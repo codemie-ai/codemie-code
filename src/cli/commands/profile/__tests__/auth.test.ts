@@ -67,6 +67,18 @@ describe('profile auth commands', () => {
       expect(mockOra).not.toHaveBeenCalled();
     });
 
+    it('exits non-zero when a headless login fails', async () => {
+      process.exitCode = undefined;
+      mockConfigLoad.mockResolvedValue({ provider: 'ai-run-sso', baseUrl: P });
+      mockAuthenticate.mockResolvedValue({ success: false, error: 'bad paste' });
+      try {
+        await run(createLoginCommand(), ['--no-browser']);
+        expect(process.exitCode).toBe(1);
+      } finally {
+        process.exitCode = undefined;
+      }
+    });
+
     it('refresh --no-browser keeps existing credentials when authenticate fails', async () => {
       mockConfigLoad.mockResolvedValue({ provider: 'ai-run-sso', baseUrl: P });
       mockGetStoredCredentials.mockResolvedValue({ cookies: {}, apiUrl: P });

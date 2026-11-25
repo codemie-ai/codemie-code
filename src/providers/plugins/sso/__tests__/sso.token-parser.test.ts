@@ -29,6 +29,11 @@ describe('parseSSOToken', () => {
     expect(result.cookies).toEqual(cookies);
   });
 
+  it('accepts a scheme-less redirect address carrying a token param', async () => {
+    const result = await parseSSOToken(`localhost:1234/?token=${encodeURIComponent(raw)}`, { codeMieUrl: BASE });
+    expect(result.cookies).toEqual(cookies);
+  });
+
   it('uses VITE_API_URL from config.js when available', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
