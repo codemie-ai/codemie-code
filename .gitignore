@@ -68,6 +68,7 @@ local/*
 .playwright-mcp/
 codemie-analytics-*.html
 .worktrees/
+.claude/worktrees/
 .playwright-cli/
 output/playwright
 
