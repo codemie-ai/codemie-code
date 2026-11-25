@@ -314,6 +314,27 @@ describe('createProxyAnalyticsCommand', () => {
       vi.doUnmock('@/agents/core/evidence/hook-identity.js');
     });
 
+    it('shows the all-folders consent as any repository, with allFolders: true in --json on that entry only', async () => {
+      const { connectAllFolders, connectFolder } = await import('@/agents/core/evidence/consent-store.js');
+      const folder = await (await import('@/agents/core/project-allowlist.js')).canonicalizePath(projectRoot);
+      await connectFolder({ owner_hash: 'o', api_identity: 'a', project: 'proj-x' }, folder);
+      await connectAllFolders({ owner_hash: 'o', api_identity: 'a' });
+      vi.doMock('@/agents/core/evidence/hook-identity.js', () => ({
+        currentEvidenceIdentity: async () => ({ owner_hash: 'o', api_identity: 'a' }),
+      }));
+      await runCommand(['status', '--claude-code-otlp']);
+      expect(plainOutput()).toContain('any repository');
+      expect(plainOutput()).toContain(`${folder} (proj-x)`);
+      logSpy.mockClear();
+      await runCommand(['status', '--claude-code-otlp', '--json']);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+      expect(parsed.consentedFolders).toEqual([
+        { folder, project: 'proj-x' },
+        { folder: '*', project: '*', allFolders: true },
+      ]);
+      vi.doUnmock('@/agents/core/evidence/hook-identity.js');
+    });
+
     it('does not read the daemon in text mode', async () => {
       const { checkProxyHealth, collectDeliveryHealth } = mockRunningDaemon({ status: 'healthy', pendingBytes: 0 });
       await runCommand(['status', '--claude-code-otlp']);

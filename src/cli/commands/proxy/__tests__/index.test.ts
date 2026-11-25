@@ -3103,6 +3103,20 @@ describe('proxy connect: which Claude client routes were typed', () => {
     expect(options.explicitRoutes).toEqual({ claudeDesktop: false, vscodeClaudeCode: false });
   });
 
+  it('--include-personal-subscriptions is registered and maps to includePersonalSubscriptions: true', async () => {
+    const { createProxyCommand } = await import('../index.js');
+    const connect = createProxyCommand().commands.find((command) => command.name() === 'connect');
+    expect(connect?.options.some((option) => option.long === '--include-personal-subscriptions')).toBe(true);
+
+    const withFlag = await connectWith('--claude-otlp', '--include-personal-subscriptions') as { includePersonalSubscriptions?: boolean };
+    expect(withFlag.includePersonalSubscriptions).toBe(true);
+  });
+
+  it('includePersonalSubscriptions is false without the flag', async () => {
+    const withoutFlag = await connectWith('--claude-otlp') as { includePersonalSubscriptions?: boolean };
+    expect(withoutFlag.includePersonalSubscriptions).toBe(false);
+  });
+
   it('a typed --claude-desktop or --vscode-claude-code is explicit, with or without --claude-otlp', async () => {
     expect((await connectWith('--claude-desktop')).explicitRoutes).toEqual({ claudeDesktop: true, vscodeClaudeCode: false });
     connectTargets.mockClear();
