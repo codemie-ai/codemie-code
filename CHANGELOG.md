@@ -4,16 +4,25 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-11-24
+
 ### Added
 
 - `codemie proxy connect --claude-otlp --include-personal-subscriptions` sends analytics from personal Claude subscriptions: for this repository with `--scope project`, for any repository with `--scope user`. Without the flag, an interactive connect asks; `--yes` records consent only with the flag
 - `codemie proxy analytics consent grant --all` and `revoke --all` manage a consent that covers any repository (`any repository` in `consent list` and `status`)
 - `codemie proxy doctor` shows an `On hold:` / `Fix:` pair under `Unsent data` for sessions held back for lack of consent
 
+### Fixed
+
+- The statusline refreshes every 60 seconds again instead of polling budget usage every 3 seconds
+- Copilot sessions without session state no longer end with a spurious session-end event in analytics
+- The CodeMie Claude extension stays enabled when `--plugin-dir` is passed to Claude
+
 ## [0.17.1] - 2026-11-23
 
 ### Fixed
 
+- Analytics prices GPT-6.2 Sol and Gemini 4 Carbon sessions instead of leaving their cost empty
 - A Claude Code `Agent` or `Task` call that was denied or failed (by a hook, a permission prompt or an error) is no longer counted as an agent in the session's agent count in CLI Analytics; calls that ran are counted as before, and a call whose result has not arrived yet is counted only once that result succeeds. In the per-record agent metrics of a live session, a call whose turn is still held back at the end of the session (for example, a sibling tool call that never got a result) and that is followed by a later turn can be missed; the session summary count is not affected. Skill counts are unchanged
 - `codemie-claude` detects Claude settings that route requests through Amazon Bedrock instead of the CodeMie gateway and stops with guidance (and offers to switch) instead of silently bypassing CodeMie
 - Claude Desktop collection stops while analytics are disabled, and `proxy analytics disable` / `exclude` name the channels they do not cover
