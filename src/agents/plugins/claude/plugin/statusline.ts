@@ -634,7 +634,7 @@ export function isManagedSession(env: NodeJS.ProcessEnv = process.env): boolean 
 export function buildStatusLine({ projectName, branch, model, actualModel, ctxPct, tokIn, tokOut, cost, costExact, durationMs, budget = null as { pct: number; text: string } | null, budgetError = null as string | null, managed = false }) {
   const parts: string[] = [];
 
-  if (managed) parts.push(`${c(C.boldPurple, '[')}${c(C.brightGreen, '⏺')}${c(C.boldPurple, ' CodeMie]')}`);
+  if (managed) parts.push(`${c(C.boldPurple, '[')}${c(C.brightGreen, '•')}${c(C.boldPurple, ' CodeMie]')}`);
 
   if (projectName) parts.push(c(C.purple, `[${truncate(projectName, MAX_PROJECT_CHARS)}]`));
   if (budget)            parts.push(c(budgetColor(budget.pct), budget.text));
