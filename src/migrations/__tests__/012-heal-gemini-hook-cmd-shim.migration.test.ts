@@ -112,6 +112,33 @@ describe('012-heal-gemini-hook-cmd-shim', () => {
     expect(await readdir(join(file, '..'))).toEqual(['hooks.json']);
   });
 
+  it.each(['EPERM', 'EBUSY'])(
+    'returns write-failed after exhausting rename retries on persistent %s, leaving the original intact',
+    async (code) => {
+      const file = await seed(geminiDir);
+      const before = await readFile(file, 'utf-8');
+      const renameMock = vi.fn().mockRejectedValue(Object.assign(new Error(code), { code }));
+      vi.doMock('fs/promises', async (imp) => ({ ...(await imp<typeof import('fs/promises')>()), rename: renameMock }));
+      const res = await run();
+      expect(res).toMatchObject({ success: false, reason: 'write-failed' });
+      expect(renameMock).toHaveBeenCalledTimes(3);
+      expect(await readdir(join(file, '..'))).toEqual(['hooks.json']);
+      expect(await readFile(file, 'utf-8')).toBe(before);
+    },
+  );
+
+  it('does not retry a non-retryable rename error (EACCES) and returns write-failed', async () => {
+    const file = await seed(geminiDir);
+    const before = await readFile(file, 'utf-8');
+    const renameMock = vi.fn().mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
+    vi.doMock('fs/promises', async (imp) => ({ ...(await imp<typeof import('fs/promises')>()), rename: renameMock }));
+    const res = await run();
+    expect(res).toMatchObject({ success: false, reason: 'write-failed' });
+    expect(renameMock).toHaveBeenCalledTimes(1);
+    expect(await readdir(join(file, '..'))).toEqual(['hooks.json']);
+    expect(await readFile(file, 'utf-8')).toBe(before);
+  });
+
   it('is a no-op on non-win32', async () => {
     platSpy?.mockReturnValue('linux');
     const file = await seed(geminiDir);
