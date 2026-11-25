@@ -1,8 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ChildProcess } from 'node:child_process';
-import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { exec, VERSION_PROBE_OPTIONS } from '../exec.js';
 
 function isAlive(pid: number): boolean {
@@ -23,9 +20,37 @@ async function waitFor(cond: () => boolean, ms: number): Promise<boolean> {
   return cond();
 }
 
-async function readPid(file: string): Promise<number> {
-  await waitFor(() => existsSync(file) && readFileSync(file, 'utf8').length > 0, 3000);
-  return Number(readFileSync(file, 'utf8'));
+/**
+ * Make every child behave as if it ignores SIGTERM: the signal is recorded and swallowed, any other
+ * signal goes through. Platform-independent (a Windows process cannot ignore SIGTERM) and independent
+ * of child startup time, since the pid comes from the spawned ChildProcess instead of a file the child
+ * writes once it has booted.
+ */
+function ignoreSigterm(): {
+  calls: { sig: string; at: number }[];
+  child: () => ChildProcess | undefined;
+  restore: () => void;
+} {
+  const realKill = ChildProcess.prototype.kill;
+  const calls: { sig: string; at: number }[] = [];
+  const targets: ChildProcess[] = [];
+  const spy = vi.spyOn(ChildProcess.prototype, 'kill').mockImplementation(function (
+    this: ChildProcess,
+    sig?: NodeJS.Signals | number
+  ) {
+    targets.push(this);
+    calls.push({ sig: String(sig), at: Date.now() });
+    return sig === 'SIGTERM' ? true : realKill.call(this, sig);
+  });
+  return {
+    calls,
+    child: () => targets[0],
+    restore: () => {
+      spy.mockRestore();
+      const pid = targets[0]?.pid;
+      if (pid && isAlive(pid)) process.kill(pid, 'SIGKILL');
+    },
+  };
 }
 
 const node = process.execPath;
@@ -60,37 +85,37 @@ describe('exec timeout hardening', () => {
   });
 
   it('SIGKILLs a SIGTERM-ignoring child after the grace period', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'exec-kill-'));
-    const pidFile = join(dir, 'pid');
-    const script = `require("fs").writeFileSync(${JSON.stringify(pidFile)},String(process.pid));process.on("SIGTERM",()=>{});setInterval(()=>{},1000)`;
-    let pid = 0;
+    const { calls, child, restore } = ignoreSigterm();
     try {
-      await expect(exec(node, ['-e', script], { timeout: 1000, killGraceMs: 300, closeStdin: true }))
+      await expect(exec(node, ['-e', 'setInterval(()=>{},1000)'], { timeout: 1000, killGraceMs: 300, closeStdin: true }))
         .rejects.toThrow('timed out');
-      pid = await readPid(pidFile);
-      expect(pid).toBeGreaterThan(0);
-      expect(await waitFor(() => !isAlive(pid), 3000)).toBe(true);
+      expect(await waitFor(() => calls.some((c) => c.sig === 'SIGKILL'), 3000)).toBe(true);
+      const term = calls[0];
+      const kill = calls.find((c) => c.sig === 'SIGKILL')!;
+      expect(term.sig).toBe('SIGTERM');
+      expect(kill.at - term.at).toBeGreaterThanOrEqual(250);
+      expect(await waitFor(() => !isAlive(child()!.pid!), 3000)).toBe(true);
     } finally {
-      if (pid && isAlive(pid)) process.kill(pid, 'SIGKILL');
-      rmSync(dir, { recursive: true, force: true });
+      restore();
     }
   });
 
   it('a child holding stdout open does not keep the call pending past timeout', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'exec-stdout-'));
-    const pidFile = join(dir, 'pid');
-    const script = `require("fs").writeFileSync(${JSON.stringify(pidFile)},String(process.pid));process.on("SIGTERM",()=>{});setInterval(()=>process.stdout.write("x"),100)`;
-    let pid = 0;
+    const { child, restore } = ignoreSigterm();
     const start = Date.now();
     try {
-      await expect(exec(node, ['-e', script], { timeout: 1000, killGraceMs: 300, closeStdin: true }))
-        .rejects.toThrow('timed out');
+      await expect(exec(
+        node,
+        ['-e', 'setInterval(()=>process.stdout.write("x"),100)'],
+        { timeout: 1000, killGraceMs: 300, closeStdin: true }
+      )).rejects.toThrow('timed out');
       expect(Date.now() - start).toBeLessThan(2500);
-      pid = await readPid(pidFile);
-      expect(await waitFor(() => !isAlive(pid), 3000)).toBe(true);
+      expect(child()!.stdout!.destroyed).toBe(true);
+      expect(child()!.stderr!.destroyed).toBe(true);
+      // The child dies once its pipe is gone (broken pipe) or on the grace-period SIGKILL, whichever is first.
+      expect(await waitFor(() => !isAlive(child()!.pid!), 3000)).toBe(true);
     } finally {
-      if (pid && isAlive(pid)) process.kill(pid, 'SIGKILL');
-      rmSync(dir, { recursive: true, force: true });
+      restore();
     }
   });
 
