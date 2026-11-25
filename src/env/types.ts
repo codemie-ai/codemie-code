@@ -210,6 +210,8 @@ export interface MultiProviderConfig {
   codemieAssistants?: CodemieAssistant[];
   userEmail?: string;
   workspace?: WorkspaceConfig;
+  /** Analytics settings (EPMCDME-17748). Written by `codemie setup`; every config rewrite must carry it over. */
+  analytics?: { promptReduction?: boolean };
   profiles: Record<string, ProviderProfile>;
 }
 

@@ -78,6 +78,30 @@ describe('ConfigLoader - Project-Level Configuration', () => {
       expect(config.profiles.default).toBeDefined();
     });
 
+    it('keeps the analytics setting a previous setup saved when it rewrites the project config', async () => {
+      const workingDir = path.join(TEST_DIR, 'project');
+      await fs.writeFile(
+        LOCAL_CONFIG_PATH,
+        JSON.stringify({ version: 2, activeProfile: 'old', profiles: { old: {} }, analytics: { promptReduction: true } })
+      );
+
+      await ConfigLoader.initProjectConfig(workingDir, { profileName: 'new' });
+
+      const config = JSON.parse(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8'));
+      expect(config.activeProfile).toBe('new');
+      expect(config.analytics).toEqual({ promptReduction: true });
+    });
+
+    it('writes no analytics key when the project config had none or was unreadable', async () => {
+      const workingDir = path.join(TEST_DIR, 'project');
+      await fs.writeFile(LOCAL_CONFIG_PATH, '{ not json');
+
+      await ConfigLoader.initProjectConfig(workingDir);
+
+      const config = JSON.parse(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8'));
+      expect(config.analytics).toBeUndefined();
+    });
+
     it('should apply codeMieProject override into workspace, not the profile', async () => {
       const workingDir = path.join(TEST_DIR, 'project');
       await ConfigLoader.initProjectConfig(workingDir, {

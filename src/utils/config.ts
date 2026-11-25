@@ -1236,16 +1236,31 @@ export class ConfigLoader {
 
     const { profile, workspace } = this.splitProfileAndWorkspace(rawOverrides);
 
+    const configPath = path.join(configDir, 'codemie-cli.config.json');
+
+    // This rewrite builds the file from scratch, so carry over the analytics setting an earlier
+    // `codemie setup` saved here (EPMCDME-17748); an unreadable file simply has none to carry.
+    let analytics: MultiProviderConfig['analytics'];
+    try {
+      const existing = (await this.loadJsonConfig(configPath)) as Record<string, unknown>;
+      const value = existing['analytics'];
+      if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+        analytics = value as MultiProviderConfig['analytics'];
+      }
+    } catch {
+      analytics = undefined;
+    }
+
     const config: MultiProviderConfig = {
       version: 2,
       activeProfile: profileName,
       profiles: {
         [profileName]: profile as any
       },
-      ...(Object.keys(this.removeUndefined(workspace)).length > 0 ? { workspace } : {})
+      ...(Object.keys(this.removeUndefined(workspace)).length > 0 ? { workspace } : {}),
+      ...(analytics ? { analytics } : {})
     };
 
-    const configPath = path.join(configDir, 'codemie-cli.config.json');
     await fs.writeFile(
       configPath,
       JSON.stringify(config, null, 2),
