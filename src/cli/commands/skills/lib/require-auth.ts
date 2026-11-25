@@ -14,7 +14,8 @@ import { logger } from '@/utils/logger.js';
 import { getPlatformUrl, getStoredPlatformCredentials } from '@/providers/core/codemie-auth-helpers.js';
 
 const NOT_AUTHENTICATED_MESSAGE =
-  'CodeMie SSO authentication required. Run "codemie setup" or "codemie profile login" first.';
+  'CodeMie SSO authentication required. Run "codemie setup" or "codemie profile login" first.\n' +
+  'No browser on this machine? Run "codemie profile login --no-browser".';
 
 /**
  * Verify SSO credentials are present.

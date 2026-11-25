@@ -55,4 +55,13 @@ describe('requireAuthenticatedSession', () => {
 
     await expect(requireAuthenticatedSession()).rejects.toThrow('exit:1');
   });
+
+  it('points machines without a browser at --no-browser when not authenticated', async () => {
+    mockConfigLoad.mockResolvedValue({ provider: 'ai-run-sso', baseUrl: P });
+    mockGetStoredCredentials.mockResolvedValue(null);
+
+    await expect(requireAuthenticatedSession()).rejects.toThrow('exit:1');
+    const printed = (console.error as unknown as ReturnType<typeof vi.fn>).mock.calls.map(c => String(c[0])).join(' ');
+    expect(printed).toContain('codemie profile login --no-browser');
+  });
 });
