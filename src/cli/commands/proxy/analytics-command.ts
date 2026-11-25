@@ -241,11 +241,13 @@ async function selectStatusConnectors(opts: ConnectorOptions, fallback: Analytic
  * The signed-in account's consented folders: empty when nobody is signed in (no consent can apply then), null when
  * the store cannot be read.
  */
-async function readConsentedFolders(): Promise<Array<{ folder: string; project: string }> | null> {
+async function readConsentedFolders(): Promise<Array<{ folder: string; project: string; allFolders?: true }> | null> {
   const identity = await currentEvidenceIdentity();
   if (!identity) return [];
   const listed = await listConsents(identity);
-  return listed.kind === 'ok' ? listed.entries.map(({ folder, project }) => ({ folder, project })) : null;
+  return listed.kind === 'ok'
+    ? listed.entries.map(({ folder, project, all_folders }) => ({ folder, project, ...(all_folders && { allFolders: true as const }) }))
+    : null;
 }
 
 async function showStatus(opts: ConnectorOptions & { json?: boolean }): Promise<void> {
@@ -272,7 +274,7 @@ async function showStatus(opts: ConnectorOptions & { json?: boolean }): Promise<
         ? { message: 'Consented folders: unknown (the work-consent store cannot be read)' }
         : consentedFolders.length === 0
           ? { message: 'Consented folders: none' }
-          : { message: 'Consented folders:', items: consentedFolders.map((c) => `${c.folder} (${c.project})`) };
+          : { message: 'Consented folders:', items: consentedFolders.map((c) => (c.allFolders ? 'any repository' : `${c.folder} (${c.project})`)) };
     const hint = renderHint({ reason: 'Delivery health', command: 'codemie proxy doctor' });
     console.log([...sections, [...formatReportRows([consentRow]), hint].join('\n')].join('\n\n'));
     printNext('proxy analytics status');

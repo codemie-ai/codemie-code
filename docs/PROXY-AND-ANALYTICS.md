@@ -75,10 +75,13 @@ Both scopes write the same file, your user-level `~/.claude/settings.json`; no r
 ### Grant work-folder consent
 
 ```bash
-codemie proxy analytics consent grant      # allow collection from the current folder
-codemie proxy analytics consent list       # review granted folders
-codemie proxy analytics consent revoke     # withdraw it
+codemie proxy analytics consent grant          # allow collection from the current repository
+codemie proxy analytics consent grant --all    # allow it in any repository
+codemie proxy analytics consent list           # review what is granted
+codemie proxy analytics consent revoke [--all] # withdraw it (--all: the any-repository consent only)
 ```
+
+`codemie proxy connect --claude-otlp --include-personal-subscriptions` records the consent while connecting: for this repository with `--scope project`, for any repository with `--scope user` (the default). Without the flag an interactive connect asks `Include analytics from personal Claude subscriptions in this repository?` (or `... in any repository?`) after `Enable Claude Code analytics?` is confirmed; `Decline` prints the command to enable it later. `proxy doctor` shows an `On hold:` / `Fix:` pair under `Unsent data` for sessions waiting for consent.
 
 ### Disconnect everything
 
