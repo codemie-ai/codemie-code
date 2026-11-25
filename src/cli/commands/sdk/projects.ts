@@ -279,7 +279,7 @@ function registerCreateCommand(cmd: Command): void {
   cmd
     .command("create")
     .description(
-      "Create a project and print the response as JSON\n" +
+      "Create a project\n" +
         "Examples:\n" +
         '  $ codemie sdk projects create --data \'{"name":"my-project","description":"Demo"}\'\n' +
         "  $ codemie sdk projects create --json path/to/project.json",
@@ -291,7 +291,7 @@ function registerCreateCommand(cmd: Command): void {
         const data = await parseDataOrJsonFile(opts.data, opts.json);
         const result = await createProject(client, data as ProjectCreateRequest);
         spinner.stop();
-        outputJson(result);
+        printSuccess(`Project ${chalk.cyan(result.name)} created.`);
       }),
     );
 
@@ -301,7 +301,7 @@ function registerUpdateCommand(cmd: Command): void {
   cmd
     .command("update <name>")
     .description(
-      "Update a project and print the response as JSON\n" +
+      "Update a project\n" +
         "Examples:\n" +
         '  $ codemie sdk projects update my-project --data \'{"description":"New"}\'\n' +
         "  $ codemie sdk projects update my-project --json path/to/update.json",
@@ -313,7 +313,7 @@ function registerUpdateCommand(cmd: Command): void {
         const data = await parseDataOrJsonFile(opts.data, opts.json);
         const result = await updateProject(client, name, data as ProjectUpdateRequest);
         spinner.stop();
-        outputJson(result);
+        printSuccess(`Project ${chalk.cyan(result.name)} updated.`);
       }),
     );
 
