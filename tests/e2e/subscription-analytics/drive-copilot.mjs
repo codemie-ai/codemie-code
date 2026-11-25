@@ -50,6 +50,7 @@ w(join(CH, 'codemie-cli.config.json'), {
   version: 2,
   // The ACTIVE profile is another CodeMie profile with another project: a launch must never be read as this one.
   activeProfile: 'active-p',
+  workspace: {}, // already-decoupled config: migration 007 must not hoist the per-profile projects into a shared workspace
   profiles: {
     [PROFILE]: { provider: 'ai-run-sso', baseUrl: URL_, codeMieUrl: URL_, codeMieProject: 'work-proj', model: 'claude-sonnet-4.6' },
     'active-p': { provider: 'ai-run-sso', baseUrl: URL_, codeMieUrl: URL_, codeMieProject: 'active-proj', model: 'claude-sonnet-4.6' },
@@ -133,9 +134,10 @@ await settle(m1, true);
 const m1s = await stored(m1);
 check('managed: stored with subscription_type codemie and funding_route api_based', m1s.dims[0]?.subscription_type === 'codemie' && m1s.dims[0]?.funding_route === 'api_based', m1s);
 check('managed: stored under the launch profile project (not the active profile\'s)', m1s.dims[0]?.project_name === 'work-proj', m1s);
-check('managed: persisted project_origin is the launch profile\'s resolved origin', typeof m1s.dims[0]?.project_origin === 'string' && m1s.dims[0].project_origin.length > 0, m1s.dims[0]);
+// work-proj sits on the selected global profile and no workspace mapping exists, so the origin is exactly `profile` (not none).
+check('managed: persisted project_origin is profile', m1s.dims[0]?.project_origin === 'profile', m1s.dims[0]);
 const m1h =(await wire(m1))[0]?.headers || {};
-check('managed: wire carries contract, funding and codemie classification', m1h['x-codemie-publication-contract'] === '1' && m1h['x-codemie-funding-route'] === 'api_based' && m1h['x-codemie-subscription-type'] === 'codemie' && m1h['x-codemie-routed-via-codemie'] === 'true', m1h);
+check('managed: wire carries contract, funding and codemie classification', m1h['x-codemie-publication-contract'] === '1' && m1h['x-codemie-funding-route'] === 'api_based' && m1h['x-codemie-subscription-type'] === 'codemie' && m1h['x-codemie-routed-via-codemie'] === 'true' && m1h['x-codemie-project'] === 'work-proj' && m1h['x-codemie-project-source'] === 'profile', m1h);
 const o1 = await overview();
 const api1 = num(find(o1, 'api_cost_usd'));
 const funding1 = find(o1, 'funding') || {};

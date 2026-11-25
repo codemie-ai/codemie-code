@@ -222,6 +222,18 @@ describe('sticky attribution boundary', () => {
       expect(await readRecord(otherKey())).toBeUndefined();
     });
 
+    it('missing identity with proof still present on a recorded session (no owner-held events) sends no unstamped batch', async () => {
+      const { resolveHookCredentials } = await import('@/agents/core/hook-credentials.js');
+      await start();
+      vi.mocked(resolveHookCredentials).mockResolvedValue(undefined as never);
+      try {
+        await hook('preToolUse', { toolName: 'bash', toolArgs: '{}', toolCallId: 't1' });
+      } finally {
+        vi.mocked(resolveHookCredentials).mockResolvedValue(creds as never);
+      }
+      expect(spooled).toHaveLength(1);
+    });
+
     it('missing identity with lost proof on a recorded session sends nothing', async () => {
       const { resolveHookCredentials } = await import('@/agents/core/hook-credentials.js');
       await start();

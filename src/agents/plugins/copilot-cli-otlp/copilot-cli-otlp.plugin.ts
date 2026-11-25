@@ -130,7 +130,11 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
       // Sticky attribution: a session the evidence store knows keeps its claim only while the route is still proven.
       const id = await currentEvidenceIdentity();
       // A session-wide existence check is only a stop signal: it never authorizes anything.
-      if (!id) return !proven && (await isKnownSession(input.sessionId)) ? 'stop' : 'continue';
+      if (!id) {
+        // No identity to read a record with: a known session continues only as proven, owner-held recovery (it is stamped and held for its owner).
+        if (!(await isKnownSession(input.sessionId))) return 'continue';
+        return proven && (await hasPendingOwnerSession(input.sessionId)) ? 'continue' : 'stop';
+      }
       const key = recordKey(id.api_identity, id.owner_hash, input.sessionId);
       const found = await readRecord(key);
       if (!found) {
