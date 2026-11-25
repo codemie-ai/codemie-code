@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "generated": "2026-11-25T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 6, "label": "XXL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 25,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 25,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Diff spans the CLI layer (profile login/refresh in src/cli/commands/profile/auth.ts, setup wizard in src/cli/commands/setup.ts, skills auth gate in src/cli/commands/skills/lib/require-auth.ts, src/agents/core/AgentCLI.ts), the SSO provider plugin (sso.auth.ts, sso.setup-steps.ts, plus new sso.paste-prompt.ts and sso.token-parser.ts), the anthropic-subscription and moonshot-subscription setup steps, and shared core contracts (src/providers/core/codemie-auth-helpers.ts, src/providers/core/types.ts). Base XL for 4+ components across multiple subsystems; bumped to XXL because shared contracts changed (ProviderSetupSteps.getCredentials/promptForReauth options and SSOAuthConfig.headless) and core utilities are touched." },
+    { "dimension": "technical_risk", "reason": "Base L: no existing precedent for pasting SSO session credentials through a no-echo TTY reader (src/providers/plugins/sso/sso.paste-prompt.ts, raw-mode stdin handling) and no precedent for the paste-back token decode path (sso.token-parser.ts). Red flag applied: the change affects authentication (SSO cookie acquisition, headless Claude `claude auth login` guidance), bumping to XL. The closest existing pattern (browser callback in sso.auth.ts handleCallback) shares the parser, so validation is covered; error-path and parser tests exist (sso.token-parser.test.ts, sso.paste-prompt.test.ts), so no additional bump." },
+    { "dimension": "file_change_estimate", "reason": "Diffstat reports 25 files changed (956 insertions, 142 deletions), which maps to XXL (16+) under the actual-mode file-count mapping. Test files (about 11 of the 25) are included in that count. The count is not a new/modified split; no git read was available to separate new from modified files." },
+    { "dimension": "affected_layers", "reason": "4 layers touched: CLI/UI (terminal prompts, commander commands), Service (SSO auth and provider setup steps), core provider contracts, and External (CodeMie backend login endpoints and the Claude CLI auth subprocess). No persistence or schema change, so not XL. Scored L rather than M because the external integrations are touched directly by the new headless flows." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from L (4) to XL (5): affects authentication (SSO credential acquisition via paste-back, headless Claude login).",
+    "Component Scope bumped from XL (5) to XXL (6): touches core shared utilities and provider contracts (src/providers/core/codemie-auth-helpers.ts, src/providers/core/types.ts)."
+  ],
+  "split_recommendation": null
+}

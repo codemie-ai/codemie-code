@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "task": "Add a non-interactive device-code-style SSO login flow (print URL, accept pasted token) for headless machines without a local browser (EPMCDME-16958).",
+  "generated": "2026-11-24T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 19,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "requirements_clarity", "reason": "The backend contract for a non-loopback login and a displayable or pasteable token is outside this repo and unverified (issue #229 not read). Whether the detached sso-login, setup-steps and auth-helper callers take the new mode is an open design decision." },
+    { "dimension": "technical_risk", "reason": "No precedent in the SSO module for a paste-token flow. The pasted token carries session cookies, so prompt and echo handling and log sanitization are security-sensitive. The closest pattern, handleCallback parsing, is private and coupled to the HTTP request, and it does not cover input validation of untrusted pasted text." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk held at L: secret handling of a pasted token has no existing pattern covering the input-validation and echo surface"
+  ],
+  "split_recommendation": null
+}

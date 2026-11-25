@@ -1,0 +1,678 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": false,
+  "decision": "request-changes",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "User approved check round; CR-001 fixed by rewording commit subjects with ticket in footer (content identical); CR-002 to CR-010 resolved in da734d1b"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "User accepted all recommended dispositions: 10 blocking fix-now, 14 advisory fix-later"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "User approved check round; CR-001 fixed by rewording commit subjects with ticket in footer (content identical); CR-002 to CR-010 resolved in da734d1b"
+    }
+  ],
+  "reviewed_head": "1c6be0f8b2f11b926add500ad688aa6d84d6e8c3",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "CR-001 is the only open blocker: the commit subjects at HEAD 316912eb still carry EPMCDME-16958 and the fix-up changes no commit. The other nine blocking findings are resolved on source or test proof, but the CR-004 proof, setup-headless.test.ts, is untracked and outside changed_files, so it must be committed with the fix.",
+  "confidence": "high",
+  "check_confidence": "medium",
+  "risk_flags": [
+    "public-api"
+  ],
+  "open": 1,
+  "closed": {
+    "fixed": 9,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "commits e86f57af2db33ba048c13e61c08e22b4d5a4aec7..HEAD",
+      "title": "Ticket key in commit subjects",
+      "problem": "All six commit subjects carry EPMCDME-16958. git-workflow.md anti-pattern: when scope already conveys context, reference the ticket in the body footer.",
+      "impact": "Subject lines become permanent history; commit-format is a blocking standard in this gate.",
+      "recommendation": "Reword each subject to <type>(<scope>): <subject> without the key and move EPMCDME-16958 into a body footer.",
+      "status": "unresolved",
+      "check_notes": "Subjects at HEAD 316912eb still carry EPMCDME-16958; the fix-up changes no commit and no source path.",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/profile/auth.ts",
+      "line": 111,
+      "title": "Failed headless login exits 0",
+      "problem": "handleLogin failure branch (lines 111-115) prints the error and returns without setting process.exitCode, so a failed profile login --no-browser exits 0.",
+      "impact": "Scripts and CI treat a failed paste-back login as success. The branch is shared with browser login, so the gap predates the flag but is newly reachable from headless automation.",
+      "recommendation": "Set process.exitCode = 1 in the failure branch and cover the exit code in a test.",
+      "status": "resolved",
+      "check_notes": "auth.ts sets process.exitCode = 1 in both failure branches (lines 115 and 121); exit-code test added in auth.test.ts.",
+      "fix": {
+        "change": "handleLogin failure branch and outer catch set process.exitCode = 1",
+        "test": "exits non-zero when a headless login fails (profile/__tests__/auth.test.ts)"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/setup.ts",
+      "line": 243,
+      "title": "handlePluginSetup takes six positional parameters",
+      "problem": "handlePluginSetup has six positional parameters; code-quality guide caps at 4-5 and asks for destructuring when there are several.",
+      "impact": "Blocking code-quality standard; each new flag extends the positional list.",
+      "recommendation": "Pass storageLocation and headless through one destructured options object parameter.",
+      "status": "resolved",
+      "check_notes": "handlePluginSetup takes four positional params plus one destructured options object (setup.ts:243-248).",
+      "fix": {
+        "change": "handlePluginSetup takes storageLocation and headless as one destructured options object",
+        "test": "n/a (wiring covered by CR-004 test)"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/setup.ts",
+      "line": 255,
+      "title": "setup --no-browser wiring has no test",
+      "problem": "The flag-to-getCredentials wiring (setup.ts lines 235 and 255) is covered by no test. Existing headless tests call getCredentials directly, so dropping the flag would leave tests green.",
+      "impact": "codemie setup --no-browser could silently run the browser SSO path with no test failing.",
+      "recommendation": "Add a test running the setup command with --no-browser asserting authenticate receives headless true, plus a no-flag case asserting it does not.",
+      "status": "resolved",
+      "check_notes": "setup-headless.test.ts asserts headless true for --no-browser and --headless and false without the flag. The file is untracked and not in changed_files; it must be committed with the fix.",
+      "fix": {
+        "change": "added setup --no-browser / --headless wiring tests through createSetupCommand",
+        "test": "asks the SSO credential step to run headless with --no-browser (cli/commands/__tests__/setup-headless.test.ts)"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/providers/plugins/anthropic-subscription/anthropic-subscription.auth.ts",
+      "line": 18,
+      "title": "claude auth login has no headless timeout message",
+      "problem": "Design requires claude auth login to fail with a clear timeout message. runClaudeBrowserLogin is unchanged (300000 ms), so expiry surfaces as the generic 'Command timed out after 300000ms'.",
+      "impact": "Required spec behaviour is partial. A headless user whose login times out gets no pointer to claude setup-token or CLAUDE_CODE_OAUTH_TOKEN.",
+      "recommendation": "In the headless path, catch the timeout and raise a ConfigurationError naming claude auth login, claude setup-token and CLAUDE_CODE_OAUTH_TOKEN.",
+      "status": "resolved",
+      "check_notes": "runHeadlessClaudeLogin (setup-steps.ts:47-57) wraps any login failure, timeout included, in a message naming both routes. Fix sits in a changed file; the cited helper is unchanged.",
+      "fix": {
+        "change": "headless claude login runs through runHeadlessClaudeLogin, which maps any failure to a fixed message naming both routes",
+        "test": "names both routes when the headless login does not complete (anthropic-subscription.headless.test.ts)"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/providers/plugins/anthropic-subscription/anthropic-subscription.setup-steps.ts",
+      "line": 47,
+      "title": "No-TTY error omits claude login routes",
+      "problem": "AC13 partial: the no-TTY ConfigurationError at line 47 names neither claude auth login nor claude setup-token / CLAUDE_CODE_OAUTH_TOKEN. Only the instruction block and final-status error name both.",
+      "impact": "Required message text is missing on a failure path; a user in a non-TTY shell gets no actionable route.",
+      "recommendation": "Name claude auth login and claude setup-token with CLAUDE_CODE_OAUTH_TOKEN in the no-TTY error and in the claude login failure path.",
+      "status": "resolved",
+      "check_notes": "NO_TTY_CLAUDE_MESSAGE names claude auth login, claude setup-token and CLAUDE_CODE_OAUTH_TOKEN; the login-failure message does too.",
+      "fix": {
+        "change": "no-TTY error names claude auth login, claude setup-token and CLAUDE_CODE_OAUTH_TOKEN",
+        "test": "names both routes when the headless TTY check fails (anthropic-subscription.headless.test.ts)"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/sso.auth.ts",
+      "line": 308,
+      "title": "Browser callback wiring has no test",
+      "problem": "handleCallback (line 395, reached via line 308) now delegates to parseSSOToken. The only non-headless test stubs startLocalServer and waitForCallback, and nothing drives handleCallback with a real URL.",
+      "impact": "Default browser sign-in could fail or store wrong credentials and no test would fail.",
+      "recommendation": "Add a test driving the callback handler with a real ?token= URL and asserting success, apiUrl and cookies.",
+      "status": "resolved",
+      "check_notes": "New browser-callback describe drives handleCallback with a ?token= URL; handleCallback (sso.auth.ts:395-405) delegates to parseSSOToken and the test asserts the exact success shape. Test-only fix; source unchanged and correct.",
+      "fix": {
+        "change": "none to source; browser callback path now covered by a direct handleCallback test",
+        "test": "resolves a ?token= callback URL into apiUrl and cookies (sso/__tests__/sso.auth.test.ts)"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-008",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/sso.paste-prompt.ts",
+      "line": 23,
+      "title": "promptForPastedToken exceeds 50-line limit",
+      "problem": "promptForPastedToken spans lines 23-81 (59 lines), over the code-quality 50-line rule. getCredentials in anthropic-subscription.setup-steps.ts also grew to about 80 lines.",
+      "impact": "Blocking code-quality standard.",
+      "recommendation": "Split into module-private helpers (raw-mode setup, data handling, finish); move the headless TTY precheck and instruction printing out of getCredentials.",
+      "status": "resolved",
+      "check_notes": "promptForPastedToken now spans 46 lines (sso.paste-prompt.ts:48-93). getCredentials (about 75 lines) is not the cited function and was already over 50 before this change.",
+      "fix": {
+        "change": "promptForPastedToken split into assertCanPrompt and applyKey helpers; body now under 50 lines",
+        "test": "n/a (behaviour unchanged; existing sso.paste-prompt tests pass)"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-009",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/sso.token-parser.ts",
+      "line": 36,
+      "title": "Scheme-less pasted redirect address rejected",
+      "problem": "extractRawToken only parses input starting with http(s):// or ?. An address such as localhost:port/?token=... is returned as a raw token, fails base64 JSON decode, and yields INVALID_TOKEN.",
+      "impact": "A copied redirect address without its scheme, the input the paste flow exists for, is rejected and consumes one of three attempts.",
+      "recommendation": "Treat input carrying token, auth or data query params as a URL even without a scheme, and add a test for localhost:port/?token=... input.",
+      "status": "resolved",
+      "check_notes": "looksLikeRedirect (sso.token-parser.ts:39-42) treats token, auth or data query params as redirects; scheme-less input parses against a placeholder base; test added.",
+      "fix": {
+        "change": "extractRawToken treats scheme-less addresses carrying token/auth/data params as redirects",
+        "test": "accepts a scheme-less redirect address carrying a token param (sso.token-parser.test.ts)"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-010",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/sso/sso.token-parser.ts",
+      "line": 69,
+      "title": "Exported parseSSOToken lacks JSDoc with @throws",
+      "problem": "parseSSOToken is exported and throws ConfigurationError but has no JSDoc with @throws. promptForPastedToken (sso.paste-prompt.ts:23) has the same gap.",
+      "impact": "Blocking code-quality standard for exported functions.",
+      "recommendation": "Add JSDoc blocks to both exports with a @throws ConfigurationError line listing the invalid-token, missing-cookies, no-TTY, timeout and abort cases.",
+      "status": "resolved",
+      "check_notes": "JSDoc with @throws ConfigurationError added to promptForPastedToken (sso.paste-prompt.ts:41-47) and parseSSOToken (sso.token-parser.ts:78-84).",
+      "fix": {
+        "change": "JSDoc with @throws added to parseSSOToken and promptForPastedToken",
+        "test": "n/a (documentation)"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-011",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/agents/core/AgentCLI.ts",
+      "line": 389,
+      "title": "Analytics re-auth hint has no test",
+      "problem": "The codemie profile login --no-browser hint at AgentCLI.ts lines 389-390 is covered by no test. No test references the 'Re-authenticate later' or 'analytics authentication is invalid' strings.",
+      "impact": "Removing the hint would go unnoticed. This is user guidance only, with no behaviour consequence today.",
+      "recommendation": "Add a test asserting the output contains the codemie profile login --no-browser --url line for the configured codeMieUrl.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-012",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/providers/plugins/anthropic-subscription/anthropic-subscription.setup-steps.ts",
+      "line": 48,
+      "title": "No-TTY text duplicated from NO_TTY_MESSAGE",
+      "problem": "The no-TTY text is a literal here and NO_TTY_MESSAGE in sso.paste-prompt.ts line 19. The two copies can drift, and the anthropic test asserts on a regex.",
+      "impact": "No behaviour today; drift risk only.",
+      "recommendation": "Share one constant or reference the shared message.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-013",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/providers/plugins/sso/sso.auth.ts",
+      "line": 171,
+      "title": "Abort branch matches the wrong error",
+      "problem": "The catch checks name === 'AbortError' or message === 'AbortError'. promptForPastedToken rejects with ConfigurationError(ABORT_MESSAGE), so the branch never matches. The generic path returns the same text. The test mocks a rejection named AbortError, so it passes.",
+      "impact": "No user-visible effect today because the returned text is identical. The test does not exercise the real error.",
+      "recommendation": "Match ConfigurationError with ABORT_MESSAGE explicitly, drop the message === 'AbortError' comparison, and make the test reject with the real error.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-014",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/providers/plugins/sso/sso.auth.ts",
+      "line": 205,
+      "title": "Headless output ignores the quiet flag",
+      "problem": "authenticateHeadless prints the URL and instructions via console.log unconditionally. types.ts (SSOAuthConfig.quiet) documents quiet as suppressing stdout for callers whose stdout contract forbids extra output.",
+      "impact": "No production caller combines quiet with headless today. A future hook caller doing so would corrupt its stdout.",
+      "recommendation": "Route the headless prints through the quiet guard, or reject quiet with headless explicitly, and document the choice.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-015",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/providers/plugins/sso/sso.auth.ts",
+      "line": 221,
+      "title": "Headless VITE_API_URL override lacks store-level test",
+      "problem": "Headless success returns parsed.apiUrl. The headless store test stubs fetch as ok:false and never reads the stored apiUrl. The override is covered only at parser level.",
+      "impact": "A wrong stored API base on the headless path would not be caught.",
+      "recommendation": "Add an authenticate test with fetch returning VITE_API_URL and assert storeSSOCredentials receives that apiUrl.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-016",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/providers/plugins/sso/sso.auth.ts",
+      "line": 395,
+      "title": "Browser callback error text changed without note",
+      "problem": "handleCallback now returns INVALID_TOKEN / MISSING_COOKIES instead of the original 'Missing token parameter in OAuth callback' and 'Token missing cookies field'. No src caller or test matches the old text.",
+      "impact": "AC15 says the non-flag path behaves as today; the wording change is undocumented.",
+      "recommendation": "Note the wording change in the change description, or keep the old strings on the callback path.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-017",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/providers/plugins/sso/sso.paste-prompt.ts",
+      "line": 63,
+      "title": "Arrow-key escape text appended to pasted token",
+      "problem": "onData keeps every character at or above space. ESC is dropped, but '[' and the final letter of an arrow sequence are appended, so the buffer gains '[A'. The regex the edge lens suggested is not in the code.",
+      "impact": "A token with an arrow key pressed during paste is rejected, consuming one of three attempts.",
+      "recommendation": "Strip CSI (ESC [ ... final byte) and ESC O sequences before appending.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-018",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/providers/plugins/sso/sso.paste-prompt.ts",
+      "line": 64,
+      "title": "Paste buffer has no size cap",
+      "problem": "The buffer grows without limit until a newline arrives or the 120 s deadline fires.",
+      "impact": "Only large user-generated pastes; negligible in practice.",
+      "recommendation": "Cap the buffer length and reject oversize input with a fixed message.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-019",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/providers/plugins/sso/sso.paste-prompt.ts",
+      "line": 69,
+      "title": "Raw-mode failure leaks timer and abort listener",
+      "problem": "The timer (line 69) and abort listener (line 73) are registered before setRawMode (line 76) runs inside the executor. If it throws, the promise rejects with a raw Error while the timer stays alive until the deadline and the listener stays attached.",
+      "impact": "Rare: setRawMode throws only on unusual streams. The process stays alive up to the deadline and the error text is not the fixed message.",
+      "recommendation": "Move setRawMode and setEncoding ahead of timer and listener registration, or wrap them in try and map failures to NO_TTY_MESSAGE.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-020",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/providers/plugins/sso/sso.paste-prompt.ts",
+      "line": 77,
+      "title": "stdin encoding changed and never restored",
+      "problem": "setEncoding('utf8') at line 77 is never restored, and finish() calls stdin.pause() unconditionally (line 46) even when the caller had stdin flowing.",
+      "impact": "Later readers in the same process inherit utf8 string mode and paused state. Narrow, and it depends on what runs after the login.",
+      "recommendation": "Save and restore the previous encoding, and pause only when stdin was not already flowing.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-021",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/providers/plugins/sso/sso.setup-steps.ts",
+      "line": 282,
+      "title": "promptForReauth headless branch has no caller",
+      "problem": "promptForReauth(config, headless) is called only with one argument (auth-validation.ts:35). The headless branch is reached only from tests (sso.setup-steps.test.ts lines 121-128).",
+      "impact": "Dead parameter with no behaviour today; misleading for future maintainers.",
+      "recommendation": "Remove the parameter, or wire a production caller that passes headless and cover it.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-022",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/providers/plugins/sso/sso.token-parser.ts",
+      "line": 62,
+      "title": "Malformed cookies accepted as valid",
+      "problem": "decodeToken accepts an empty cookies object and non-string values. Line 66 casts without checking, so a non-string value is stringified as [object Object] in the cookie header (line 87).",
+      "impact": "A malformed pasted token is stored as valid credentials and fails later. The browser path shares this decoder.",
+      "recommendation": "Require a non-empty object whose values are strings; otherwise throw MISSING_COOKIES.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-023",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/providers/plugins/sso/sso.token-parser.ts",
+      "line": 84,
+      "title": "AbortSignal.any unavailable on early Node 20",
+      "problem": "AbortSignal.any (line 84) is not defined on early Node 20 releases (my understanding: added in 20.3). engines declares >=20.0.0 (package.json lines 186-187). The TypeError is swallowed by the catch at line 97, so VITE_API_URL is silently ignored.",
+      "impact": "Only on Node 20.0-20.2; headless login succeeds against the default API base with no error.",
+      "recommendation": "Guard with typeof AbortSignal.any === 'function', or raise the engines floor to 20.3, and add a test for the no-override fallback.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-024",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/providers/plugins/sso/sso.token-parser.ts",
+      "line": 97,
+      "title": "Ctrl+C during config.js fetch still stores credentials",
+      "problem": "The catch at line 97 swallows the abort from opts.signal, so parseSSOToken returns success with the default apiUrl and authenticate stores credentials after the user cancelled.",
+      "impact": "Narrow window, only while the config.js fetch (up to 5 s) is in flight; credentials are stored after a cancel message.",
+      "recommendation": "Rethrow ConfigurationError with ABORT_MESSAGE when opts.signal is aborted, before the fallback.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "AC1 profile login --no-browser prints URL; no server, no browser",
+      "status": "pass",
+      "notes": "auth.ts flag passes headless; headless branch skips server and open."
+    },
+    {
+      "kind": "spec",
+      "item": "AC2 command prompts for the token without echoing it",
+      "status": "pass",
+      "notes": "sso.paste-prompt.ts uses raw mode and never echoes; test checks no echo."
+    },
+    {
+      "kind": "spec",
+      "item": "AC3 raw token and full localhost redirect URL both succeed and store as browser flow",
+      "status": "pass",
+      "notes": "parseSSOToken handles raw and URL input; store path shared. Scheme-less URL case is CR-009."
+    },
+    {
+      "kind": "spec",
+      "item": "AC4 invalid or empty paste gives clear error, stores nothing, bounded retries",
+      "status": "pass",
+      "notes": "3 attempts under one deadline computed once; store only on success."
+    },
+    {
+      "kind": "spec",
+      "item": "AC5 profile refresh honors flag; failed headless refresh does not log user out",
+      "status": "pass",
+      "notes": "handleRefresh skips clear when headless; non-headless path clears first; tests cover failure."
+    },
+    {
+      "kind": "spec",
+      "item": "AC6 setup --no-browser accepted; setup SSO logins headless; other provider steps unaffected",
+      "status": "pass",
+      "notes": "Flags wired and passed to getCredentials; no setup call site invokes promptForReauth. Wiring untested (CR-004)."
+    },
+    {
+      "kind": "spec",
+      "item": "AC7 agent-launch re-auth prompt offers browser / paste token / no, browser default",
+      "status": "pass",
+      "notes": "promptForReauth list prompt with browser as default."
+    },
+    {
+      "kind": "spec",
+      "item": "AC8 paste token at re-auth prompt runs headless and stores on success; no declines",
+      "status": "pass",
+      "notes": "Paste sets headless true; no returns false before authenticating."
+    },
+    {
+      "kind": "spec",
+      "item": "AC9 with no TTY the re-auth prompt prints the error, returns false, shows no choice",
+      "status": "pass",
+      "notes": "auth-validation TTY gate unchanged; existing tests cover it."
+    },
+    {
+      "kind": "spec",
+      "item": "AC10 setup --no-browser with anthropic prints paste instructions, then runs claude auth login interactively",
+      "status": "pass",
+      "notes": "Instructions printed before login; exec inherits stdio."
+    },
+    {
+      "kind": "spec",
+      "item": "AC11 in that flow, if already loggedIn (including oauth_token) login is skipped",
+      "status": "pass",
+      "notes": "Existing loggedIn branch unchanged; headless test covers oauth_token."
+    },
+    {
+      "kind": "spec",
+      "item": "AC12 in that flow, with no TTY setup fails fast with a clear message instead of hanging",
+      "status": "pass",
+      "notes": "TTY check throws before instructions and before runClaudeBrowserLogin."
+    },
+    {
+      "kind": "spec",
+      "item": "AC13 instruction and failure messages name claude auth login and claude setup-token plus CLAUDE_CODE_OAUTH_TOKEN",
+      "status": "partial",
+      "notes": "No-TTY error and claude login failure path name neither route. See CR-006."
+    },
+    {
+      "kind": "spec",
+      "item": "AC14 without the flag anthropic setup runs browser login as today; only error text changes",
+      "status": "pass",
+      "notes": "Non-headless branch unchanged apart from final-status text."
+    },
+    {
+      "kind": "spec",
+      "item": "AC15 without the flag authenticate() behaves as today; SSOAuthConfig consumers compile unchanged",
+      "status": "pass",
+      "notes": "headless optional; browser path delegates to parseSSOToken. Callback error strings changed (CR-016)."
+    },
+    {
+      "kind": "spec",
+      "item": "AC16 token and cookies never appear in logs, console output or error messages",
+      "status": "pass",
+      "notes": "Pasted buffer never written; errors are fixed strings; no logger call receives input or cookies."
+    },
+    {
+      "kind": "spec",
+      "item": "AC17 no TTY, timeout and Ctrl+C each end headless mode with clear message and restored terminal",
+      "status": "pass",
+      "notes": "Fixed messages; finish restores raw mode and pauses stdin. Abort-path imperfections in CR-013 and CR-024."
+    },
+    {
+      "kind": "spec",
+      "item": "AC18 sso-login, hook and daemon auth gate keep behaviour; only message text changes",
+      "status": "pass",
+      "notes": "Those files are not in the diff; describeLogin text is the only shared change."
+    },
+    {
+      "kind": "spec",
+      "item": "AC19 describeLogin, requireAuthenticatedSession and AgentCLI messages mention codemie profile login --no-browser",
+      "status": "pass",
+      "notes": "Hint added to listed outcomes; existing assertions updated. AgentCLI hint untested (CR-011)."
+    },
+    {
+      "kind": "spec",
+      "item": "AC20 before merge the SSO flow is exercised once against a real backend",
+      "status": "pending-stage-7",
+      "notes": "Runtime check outside the diff; never-bound callback port is the open backend risk."
+    },
+    {
+      "kind": "spec",
+      "item": "Design: claude auth login runs with a clear timeout message",
+      "status": "partial",
+      "notes": "runClaudeBrowserLogin unchanged at 300000 ms; expiry gives only the generic timeout text (CR-005)."
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "partial",
+      "notes": "Six subjects are valid type(scope) but each carries EPMCDME-16958; guide says reference the ticket in the body footer (CR-001)."
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "promptForPastedToken is 59 lines (limit 50); handlePluginSetup has 6 params; new exports lack JSDoc @throws (CR-003, CR-008, CR-010)."
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "No logging of pasted input or cookies; fixed error strings; credentials stored via CredentialStore."
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "Ten blocking findings: two critical spec gaps (claude login timeout message, no-TTY route guidance), a headless login failure that exits 0, a scheme-less pasted redirect address rejected, untested browser-callback and setup-flag wiring, and four standards blockers (commit subjects, function length, parameter count, JSDoc). All four lenses and standards ran with parseable output, nothing was truncated, and the spec was present so acceptance was not skipped. Zero deferred; 14 advisory; 11 dismissed (see code-review-dismissed.local.md); no reachability gap, oversized diff or standards coverage gap.",
+    "confidence": "high",
+    "risk_flags": [
+      "public-api"
+    ]
+  },
+  "advisory_status": []
+}
