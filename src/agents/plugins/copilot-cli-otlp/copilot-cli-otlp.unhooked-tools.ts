@@ -1,6 +1,5 @@
 import { maskAndBoundFields } from '@/agents/core/otlp-field-limits.js';
-import { reduceRecord } from '@/agents/core/analytics-reduction.js';
-import { HOOK_EVENT_KEEP_LIST } from '@/agents/core/hook-event-keep-list.js';
+import { reduceHookEvent } from '@/agents/core/hook-event-keep-list.js';
 import type {
   CopilotEvent,
   CopilotToolCompleteData,
@@ -70,7 +69,7 @@ export function buildUnhookedToolEvents(
 ): Record<string, unknown>[] {
   const finish = (event: Record<string, unknown>): Record<string, unknown> => {
     const limited = maskAndBoundFields(event);
-    return opts.reduced ? reduceRecord({ ...limited, analytics_reduction: true }, HOOK_EVENT_KEEP_LIST) : limited;
+    return opts.reduced ? reduceHookEvent({ ...limited, analytics_reduction: true }) : limited;
   };
   const hooked = hookedToolCallIds(events);
   if (hooked.size === 0) return [];

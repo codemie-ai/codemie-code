@@ -16,8 +16,9 @@
  */
 
 import { reduceBranch, reducePrompt, reduceRecord } from '@/agents/core/analytics-reduction.js';
-import { isReductionOn } from '@/utils/analytics-reduction-setting.js';
-import { findNearestConfigDir } from '@/agents/core/event-fields/identity-fields.js';
+import { existsSync } from 'node:fs';
+import { isReductionOn, readOptedInProjects } from '@/utils/analytics-reduction-setting.js';
+import { findAllConfigDirs } from '@/agents/core/event-fields/identity-fields.js';
 import type { KeepList } from '@/agents/core/analytics-reduction.js';
 import type { ReportPayload, ReportSessionRecord } from './types.js';
 
@@ -47,7 +48,7 @@ export function projectBasename(path: string): string {
   return segments.length > 0 ? segments[segments.length - 1] : '';
 }
 
-function redactSession(session: ReportSessionRecord): ReportSessionRecord {
+export function redactSession(session: ReportSessionRecord): ReportSessionRecord {
   // `agentSessionFile` is dropped (not blanked) so it stays absent-iff-no-log (`hadLog`).
   const { agentSessionFile: _agentSessionFile, ...rest } = session;
   return {
@@ -57,24 +58,13 @@ function redactSession(session: ReportSessionRecord): ReportSessionRecord {
   };
 }
 
-function reduceSession(session: ReportSessionRecord): ReportSessionRecord {
+export function reduceSession(session: ReportSessionRecord): ReportSessionRecord {
   const { agentSessionFile: _agentSessionFile, title, branch, ...rest } = session;
   const reduced = reduceRecord({ ...rest, project: projectBasename(session.project) }, REPORT_SESSION_KEEP_LIST);
   return {
     ...(reduced as Omit<ReportSessionRecord, 'title' | 'branch' | 'agentSessionFile'>),
     title: title ? reducePrompt(title) : '',
     branch: branch ? (reduceBranch(branch) ?? '') : '',
-  };
-}
-
-export function redactPayload(payload: ReportPayload, mode: ReportPrivacyMode): ReportPayload {
-  const { projectFilter } = payload.meta;
-  return {
-    meta: {
-      ...payload.meta,
-      projectFilter: projectFilter === 'all' ? projectFilter : REDACTED_PROJECT_FILTER,
-    },
-    sessions: payload.sessions.map(mode === 'reduce' ? reduceSession : redactSession),
   };
 }
 
@@ -122,19 +112,31 @@ export async function resolveReportPrivacyMode(
   options: { redact?: boolean; unreduced?: boolean },
   cwd: string = process.cwd()
 ): Promise<ReportPrivacyMode | undefined> {
-  if (!options.unreduced && (await isReportReductionOn(cwd))) {
+  // The console report mixes every project's sessions, so the current directory alone must not decide: it is
+  // reduced when this directory's project is on, or when any project on this machine opted in (fail closed).
+  if (!options.unreduced && ((await isReportReductionOn(cwd)) || (await anyProjectOptedIn()))) {
     return 'reduce';
   }
   return options.redact ? 'redact' : undefined;
 }
 
-/** True when the global or nearest project setting turns prompt reduction on (unreadable counts as on). */
+/** Whether any project opted in; an unreadable list counts as yes. */
+async function anyProjectOptedIn(): Promise<boolean> {
+  const projects = await readOptedInProjects();
+  return projects === 'unreadable' || projects.length > 0;
+}
+
 export async function isReportReductionOn(cwd: string = process.cwd()): Promise<boolean> {
-  let configDir = cwd;
+  // A session whose project directory is gone (moved or deleted) has no config to read: it is reduced when any
+  // project opted in, never sent unreduced by default.
+  if (!existsSync(cwd)) {
+    return (await isReductionOn({ configDirs: [] })) || (await anyProjectOptedIn());
+  }
+  let configDirs = [cwd];
   try {
-    configDir = await findNearestConfigDir(cwd);
+    configDirs = await findAllConfigDirs(cwd);
   } catch {
     // an unreadable directory falls back to the start directory; the global flag still applies
   }
-  return isReductionOn({ configDirs: [configDir] });
+  return isReductionOn({ configDirs });
 }

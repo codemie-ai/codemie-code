@@ -1,8 +1,7 @@
 import type { CopilotEvent, CopilotShutdownData } from '@/agents/plugins/copilot-cli/copilot-cli-event-types.js';
 import { extractCopilotToolActivity, type OpenToolCall } from '@/agents/plugins/copilot-cli/copilot-cli.tool-activity.js';
 import { extractSlashCommand, isSubagentPrompt } from '@/agents/plugins/copilot-cli/copilot-cli.constants.js';
-import { reduceRecord } from '@/agents/core/analytics-reduction.js';
-import { HOOK_EVENT_KEEP_LIST } from '@/agents/core/hook-event-keep-list.js';
+import { reduceHookEvent } from '@/agents/core/hook-event-keep-list.js';
 import { buildUsageRows, stableEventId, USAGE_REQUEST_EVENT_TYPE, type PendingMessage } from './copilot-cli-otlp.request-usage.js';
 import { buildUnhookedToolEvents } from './copilot-cli-otlp.unhooked-tools.js';
 
@@ -267,6 +266,6 @@ export function buildDeferredUsageEvents(
 
   const merged = outgoing.map((event) => ({ ...common, ...event }));
   return reduced
-    ? merged.map((event) => reduceRecord({ ...event, analytics_reduction: true }, HOOK_EVENT_KEEP_LIST))
+    ? merged.map((event) => reduceHookEvent({ ...event, analytics_reduction: true }))
     : merged;
 }

@@ -12,7 +12,7 @@
  * envelope identifier. Identity fields (`user_email`, `developer_name`, `identity_source`) and
  * `file_path` stay redacted.
  */
-import type { KeepList } from './analytics-reduction.js';
+import { reduceBranch, reduceRecord, type KeepList } from './analytics-reduction.js';
 
 export const HOOK_EVENT_KEEP_LIST: KeepList = {
   keep: new Set<string>([
@@ -81,3 +81,15 @@ export const HOOK_EVENT_KEEP_LIST: KeepList = {
     'git_branch',
   ]),
 };
+
+/**
+ * Reduce one hook-shaped event: cut `git_branch` first (the keep-list keeps that field on the promise that it
+ * was already cut), then apply the keep-list. Every producer of a reduced hook event goes through this, so a
+ * caller that only learned "reduced" from a session binding still never sends the full branch. Cutting twice
+ * is harmless.
+ */
+export function reduceHookEvent<T extends Record<string, unknown>>(event: T): T {
+  const branch = event['git_branch'];
+  const cut = typeof branch === 'string' ? { ...event, git_branch: reduceBranch(branch) } : event;
+  return reduceRecord(cut, HOOK_EVENT_KEEP_LIST);
+}

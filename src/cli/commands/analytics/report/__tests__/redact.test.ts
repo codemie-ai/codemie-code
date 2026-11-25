@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { REPORT_SESSION_KEEP_LIST, redactPayload } from '../redact.js';
+import { REPORT_SESSION_KEEP_LIST, redactPayloadPerSession, reduceSession } from '../redact.js';
 import type { ReportPayload, ReportSessionRecord } from '../types.js';
 
 function payload(): ReportPayload {
@@ -12,9 +12,9 @@ function payload(): ReportPayload {
   return { meta: { projectFilter: '/home/dev/acme-repo' } as ReportPayload['meta'], sessions: [session] };
 }
 
-describe('redactPayload', () => {
+describe('reduceSession and the --redact mode', () => {
   it('reduce mode reduces title and branch and keeps metrics', () => {
-    const out = redactPayload(payload(), 'reduce').sessions[0] as unknown as Record<string, unknown>;
+    const out = reduceSession(payload().sessions[0]) as unknown as Record<string, unknown>;
     expect(out.title).toBe('/review-pr !456');
     expect(out.branch).toBe('EPMCDME-123');
     expect(out.turns).toBe(3);
@@ -28,13 +28,13 @@ describe('redactPayload', () => {
     const p = payload();
     p.sessions[0].branch = 'feature/acme-bank-migration';
     p.sessions[0].title = '';
-    const out = redactPayload(p, 'reduce').sessions[0];
+    const out = reduceSession(p.sessions[0]);
     expect(out.branch).toBe('REDACTED:BRANCH');
     expect(out.title).toBe('');
   });
 
-  it('redact mode keeps today\'s output', () => {
-    const out = redactPayload(payload(), 'redact');
+  it('redact mode keeps today\'s output', async () => {
+    const out = await redactPayloadPerSession(payload(), { redact: true, unreduced: true });
     expect(out.sessions[0].title).toBe('');
     expect(out.sessions[0].branch).toBe('feature/EPMCDME-123-secret');
     expect(out.sessions[0].project).toBe('acme-repo');
@@ -71,5 +71,54 @@ describe('redactPayloadPerSession (CR-003)', () => {
       if (previousHome === undefined) delete process.env.CODEMIE_HOME;
       else process.env.CODEMIE_HOME = previousHome;
     }
+  });
+});
+
+describe('report privacy decisions across projects (CR-012, CR-014)', () => {
+  async function withHome<T>(optedIn: string[] | undefined, body: () => Promise<T>): Promise<T> {
+    const { mkdtemp, writeFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const home = await mkdtemp(join(tmpdir(), 'reduce-home-'));
+    if (optedIn) await writeFile(join(home, 'analytics-reduction-projects.json'), JSON.stringify(optedIn));
+    const previousHome = process.env.CODEMIE_HOME;
+    process.env.CODEMIE_HOME = home;
+    try {
+      return await body();
+    } finally {
+      if (previousHome === undefined) delete process.env.CODEMIE_HOME;
+      else process.env.CODEMIE_HOME = previousHome;
+    }
+  }
+
+  it('reduces the console report from a plain directory when another project opted in', async () => {
+    const { mkdtemp } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const plain = await mkdtemp(`${tmpdir()}/reduce-plain-`);
+    await withHome(['/work/other-project'], async () => {
+      const { resolveReportPrivacyMode } = await import('../redact.js');
+      expect(await resolveReportPrivacyMode({}, plain)).toBe('reduce');
+      expect(await resolveReportPrivacyMode({ unreduced: true }, plain)).toBeUndefined();
+    });
+  });
+
+  it('leaves the console report unreduced when nothing opted in', async () => {
+    const { mkdtemp } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const plain = await mkdtemp(`${tmpdir()}/reduce-plain-`);
+    await withHome(undefined, async () => {
+      const { resolveReportPrivacyMode } = await import('../redact.js');
+      expect(await resolveReportPrivacyMode({}, plain)).toBeUndefined();
+    });
+  });
+
+  it('reduces a session whose project directory no longer exists when a project opted in', async () => {
+    await withHome(['/work/other-project'], async () => {
+      const { redactPayloadPerSession } = await import('../redact.js');
+      const p = payload();
+      const moved = { ...p.sessions[0], project: '/gone/moved-away-project', branch: 'feature/acme-bank-migration' };
+      const out = await redactPayloadPerSession({ meta: p.meta, sessions: [moved] }, {});
+      expect(out.sessions[0].branch).toBe('REDACTED:BRANCH');
+    });
   });
 });

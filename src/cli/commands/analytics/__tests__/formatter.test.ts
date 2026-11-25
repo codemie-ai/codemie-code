@@ -101,3 +101,42 @@ describe('AnalyticsFormatter.displayCost', () => {
     expect(out).toContain('claude-opus-4-7');
   });
 });
+
+describe('AnalyticsFormatter console privacy in reduce mode (CR-011, CR-041)', () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => { logSpy = vi.spyOn(console, 'log').mockImplementation(() => {}); });
+  afterEach(() => { logSpy.mockRestore(); });
+
+  const stats = {
+    totalSessions: 1, totalDuration: 0, totalTurns: 1, totalFileOperations: 0, totalLinesAdded: 0, totalLinesRemoved: 0,
+    totalLinesModified: 0, netLinesChanged: 0, totalToolCalls: 0, successfulToolCalls: 0, failedToolCalls: 0, toolSuccessRate: 0,
+    models: [], tools: [], languages: [], formats: [],
+  };
+  const branch = (branchName: string) => ({ ...stats, branchName, sessions: [] });
+  const project = {
+    ...stats,
+    projectPath: '/Users/dev/acme-bank-migration',
+    branches: [branch('feature/acme-bank-EPMCDME-5'), branch('feature/acme-secret'), branch('main')],
+  };
+  const printed = (reduced: boolean): string => {
+    logSpy.mockClear();
+    new AnalyticsFormatter(true, reduced).displayProjects([project] as never);
+    return stripAnsi(logSpy.mock.calls.map((args) => args.join(' ')).join('\n'));
+  };
+
+  it('prints only the project folder name and reduced branches when reducing', () => {
+    const out = printed(true);
+    expect(out).toContain('PROJECT: acme-bank-migration');
+    expect(out).not.toContain('/Users/dev');
+    expect(out).toContain('BRANCH: EPMCDME-5');
+    expect(out).toContain('BRANCH: REDACTED:BRANCH');
+    expect(out).toContain('BRANCH: main');
+    expect(out).not.toContain('acme-secret');
+  });
+
+  it('prints the full project path and branches when not reducing', () => {
+    const out = printed(false);
+    expect(out).toContain('PROJECT: /Users/dev/acme-bank-migration');
+    expect(out).toContain('BRANCH: feature/acme-secret');
+  });
+});

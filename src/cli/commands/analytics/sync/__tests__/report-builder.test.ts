@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const reductionOnMock = vi.fn();
-vi.mock('@/utils/analytics-reduction-setting.js', () => ({ isReductionOn: (...a: unknown[]) => reductionOnMock(...a) }));
+vi.mock('@/utils/analytics-reduction-setting.js', () => ({ isReductionOn: (...a: unknown[]) => reductionOnMock(...a), readOptedInProjects: async () => [] }));
 
 import type { MetricDelta } from '../../../../../agents/core/metrics/types.js';
 import type { RawSessionData } from '../../data-loader.js';

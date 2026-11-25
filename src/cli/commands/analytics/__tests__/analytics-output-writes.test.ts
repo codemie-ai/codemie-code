@@ -30,7 +30,7 @@ vi.mock('../formatter.js', () => ({
 }));
 
 const reductionOnMock = vi.fn();
-vi.mock('@/utils/analytics-reduction-setting.js', () => ({ isReductionOn: (...a: unknown[]) => reductionOnMock(...a) }));
+vi.mock('@/utils/analytics-reduction-setting.js', () => ({ isReductionOn: (...a: unknown[]) => reductionOnMock(...a), readOptedInProjects: async () => [] }));
 
 const enrichCostsMock = vi.fn();
 vi.mock('../cost/cost-enricher.js', () => ({ enrichCosts: (...a: unknown[]) => enrichCostsMock(...a), realDeps: {} }));

@@ -3,6 +3,7 @@
  */
 
 import { reduceBranch } from '@/agents/core/analytics-reduction.js';
+import { projectBasename } from './report/redact.js';
 import chalk from 'chalk';
 import { agentLabel } from './agent-labels.js';
 import type {
@@ -106,7 +107,7 @@ export class AnalyticsFormatter {
    */
   private displayProject(project: ProjectAnalytics): void {
     console.log(chalk.bold.green(`\n${'='.repeat(60)}`));
-    console.log(chalk.bold.green(`PROJECT: ${project.projectPath}`));
+    console.log(chalk.bold.green(`PROJECT: ${this.reduced ? projectBasename(project.projectPath) : project.projectPath}`));
     console.log(chalk.bold.green(`${'='.repeat(60)}`));
 
     this.displayStats(project, '  ');
