@@ -115,6 +115,56 @@ describe('runAnalyticsReductionStep', () => {
     expect(out).toContain('Already off');
   });
 
+  it('offers no project choice when the project config is the global config (setup run from home)', async () => {
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const home = mkdtempSync(join(tmpdir(), 'setup-home-'));
+    const previous = process.env.CODEMIE_HOME;
+    process.env.CODEMIE_HOME = join(home, '.codemie');
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(home);
+    try {
+      prompt.mockResolvedValueOnce({ reduction: 'off' });
+      await runAnalyticsReductionStep();
+      const q = prompt.mock.calls[0][0][0];
+      expect(q.choices.map((c: { value: string }) => c.value)).toEqual(['off', 'global']);
+      expect(out).toContain('no project setting of its own');
+    } finally {
+      cwd.mockRestore();
+      if (previous === undefined) delete process.env.CODEMIE_HOME;
+      else process.env.CODEMIE_HOME = previous;
+    }
+  });
+
+  it('this project only writes the project before turning global off, and lists the projects that stay on', async () => {
+    readReductionFlag.mockResolvedValue('on');
+    readOptedInProjects.mockResolvedValue(['/work/billing-api']);
+    const order: string[] = [];
+    writeProjectReductionFlag.mockImplementation(async () => { order.push('project'); });
+    writeGlobalReductionFlag.mockImplementation(async () => { order.push('global'); });
+    prompt.mockResolvedValueOnce({ reduction: 'projectOnly' });
+    await runAnalyticsReductionStep();
+    expect(order).toEqual(['project', 'global']);
+    expect(out).toContain('Still on for: billing-api');
+  });
+
+  it('a failed project write leaves global as it was when choosing this project only', async () => {
+    readReductionFlag.mockResolvedValue('on');
+    writeProjectReductionFlag.mockRejectedValueOnce(new Error('disk full'));
+    prompt.mockResolvedValueOnce({ reduction: 'projectOnly' });
+    await runAnalyticsReductionStep();
+    expect(writeGlobalReductionFlag).not.toHaveBeenCalled();
+    expect(out).toContain('disk full');
+  });
+
+  it('a cancelled reconnect prompt does not abort setup', async () => {
+    isProtobuf.mockResolvedValue(true);
+    prompt.mockResolvedValueOnce({ reduction: 'global' }).mockRejectedValueOnce(new Error('User force closed the prompt'));
+    await expect(runAnalyticsReductionStep()).resolves.toBeUndefined();
+    expect(connectTargets).not.toHaveBeenCalled();
+    expect(out).toContain('Reconnect skipped');
+  });
+
   it('shows a write failure and does not throw', async () => {
     writeProjectReductionFlag.mockRejectedValueOnce(new Error('unreadable config'));
     prompt.mockResolvedValueOnce({ reduction: 'project' });

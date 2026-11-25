@@ -17,7 +17,7 @@ import { AgentRegistry } from '../../agents/registry.js';
 import type { VersionCompatibilityResult } from '../../agents/core/types.js';
 import { createAssistantsSetupCommand } from './assistants/setup/index.js';
 import { createSkillsSetupCommand } from './skills/setup/index.js';
-import { basename, join } from 'path';
+import { basename, join, resolve as resolvePath } from 'path';
 import { ConfigurationError } from '../../utils/errors.js';
 import { getCodemiePath } from '../../utils/paths.js';
 import { resolveProjectRoot } from '../../utils/project-root.js';
@@ -460,126 +460,188 @@ async function reconnectClaudeOtlp(): Promise<void> {
  * "off" with nothing on leaves every file untouched. Write failures are shown and setup continues.
  */
 export async function runAnalyticsReductionStep(): Promise<void> {
-  console.log(chalk.cyan('\nAnalytics privacy'));
-  console.log(chalk.dim('Hide prompts and project details in the analytics CodeMie collects.'));
-  console.log(chalk.dim('  Sent:   commands (/commit), skill and agent names, ticket and MR numbers, metrics'));
-  console.log(chalk.dim('  Hidden: prompt text, file paths, tool input/output, branch names (ticket keys kept)'));
-  console.log(chalk.dim('  Note:   conversation history in CodeMie chat is not affected.'));
+  printAnalyticsPrivacyIntro();
+  const ctx = await readReductionContext();
+  printCurrentReduction(ctx);
 
-  const projectDir = resolveProjectRoot(process.cwd());
-  const projectName = basename(projectDir);
-  const projectConfig = join(projectDir, '.codemie', 'codemie-cli.config.json');
-  const globalState = await readReductionFlag(getCodemiePath('codemie-cli.config.json'));
-  const projectState = await readReductionFlag(projectConfig);
-  const globalOn = globalState !== 'off';
-
-  console.log(
-    chalk.white(
-      globalOn
-        ? '\nCurrent: on for all projects'
-        : `\nCurrent: global off · this project (${projectName}) ${projectState === 'off' ? 'off' : 'on'}`
-    )
-  );
-
-  const projectOnlyLabel = `On for this project only (${projectName})`;
-  let choices: Array<{ name: string; value: ReductionChoice }>;
-  let defaultChoice: ReductionChoice;
-  if (globalOn) {
-    choices = [
-      { name: 'Keep on for all projects', value: 'keep' },
-      { name: 'Off', value: 'off' },
-      { name: projectOnlyLabel, value: 'projectOnly' }
-    ];
-    defaultChoice = 'keep';
-  } else {
-    choices = [
-      { name: 'Off', value: 'off' },
-      { name: 'On for all projects', value: 'global' },
-      { name: projectOnlyLabel, value: 'project' }
-    ];
-    defaultChoice = projectState === 'off' ? 'off' : 'project';
-  }
-
-  let reduction: ReductionChoice;
-  try {
-    ({ reduction } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'reduction',
-        message: 'Hide prompts in analytics?',
-        choices,
-        default: defaultChoice
-      }
-    ]));
-  } catch (error) {
-    console.log(chalk.yellow(`Analytics privacy step skipped: ${error instanceof Error ? error.message : String(error)}`));
+  const reduction = await promptReductionChoice(ctx);
+  if (!reduction) {
     return;
   }
 
-  let flagWritten = false;
-  let flagTurnedOff = false;
+  const progress: ReductionProgress = { flagWritten: false, flagTurnedOff: false };
   try {
-    if (reduction === 'off') {
-      if (globalOn) {
-        await writeGlobalReductionFlag(false);
-        console.log(chalk.green('✓ Turned off for all projects'));
-      }
-      if (projectState === 'on') {
-        await writeProjectReductionFlag(projectDir, false);
-        flagWritten = true;
-        flagTurnedOff = true;
-        await removeOptedInProject(projectDir);
-        console.log(chalk.green(`✓ Turned off for ${projectName}`));
-        console.log(chalk.dim('  Saved in .codemie/codemie-cli.config.json'));
-      } else if (!globalOn) {
-        console.log(chalk.dim('Already off, nothing to change.'));
-      }
-      if (globalOn) {
-        await printProjectsStillOn();
-      }
-      return;
-    }
-    if (reduction === 'global') {
-      await writeGlobalReductionFlag(true);
-      console.log(chalk.green('✓ Prompts hidden in analytics for all projects'));
-    } else if (reduction === 'project' || reduction === 'projectOnly') {
-      if (reduction === 'projectOnly') {
-        await writeGlobalReductionFlag(false);
-        console.log(chalk.green('✓ Turned off for all projects'));
-      }
-      await writeProjectReductionFlag(projectDir);
-      flagWritten = true;
-      await addOptedInProject(projectDir);
-      console.log(chalk.green(`✓ Prompts hidden in analytics for ${projectName}`));
-      console.log(chalk.dim('  Saved in .codemie/codemie-cli.config.json (commit it to apply for your team)'));
+    if (!(await applyReductionChoice(reduction, ctx, progress))) {
+      return; // turned off: nothing more to offer
     }
   } catch (error) {
     const message = error instanceof ConfigurationError || error instanceof Error ? error.message : String(error);
-    if (flagWritten) {
-      console.log(chalk.yellow(`Prompts are ${flagTurnedOff ? 'no longer hidden' : 'hidden'} for ${projectName}, but the list of projects with this setting could not be updated: ${message}`));
+    if (progress.flagWritten) {
+      console.log(chalk.yellow(`Prompts are ${progress.flagTurnedOff ? 'no longer hidden' : 'hidden'} for ${ctx.projectName}, but the list of projects with this setting could not be updated: ${message}`));
     } else {
       console.log(chalk.red(`Could not save the analytics privacy setting: ${message}`));
     }
     return;
   }
 
-  if (await isClaudeCodeOtlpOnProtobuf()) {
-    console.log(chalk.yellow("! Claude Code sends native analytics in a format CodeMie can't filter (http/protobuf),"));
-    console.log(chalk.yellow('  so those records are skipped while prompts are hidden.'));
-    const { reconnect } = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'reconnect',
-        message: 'Switch to http/json?',
-        default: true
-      }
+  await offerProtobufReconnect();
+}
+
+interface ReductionContext {
+  projectDir: string;
+  projectName: string;
+  projectConfig: string;
+  globalOn: boolean;
+  projectState: Awaited<ReturnType<typeof readReductionFlag>>;
+  /** The project root resolves to a directory whose config file is the global one (e.g. running setup from home). */
+  projectIsGlobal: boolean;
+}
+
+interface ReductionProgress {
+  flagWritten: boolean;
+  flagTurnedOff: boolean;
+}
+
+function printAnalyticsPrivacyIntro(): void {
+  console.log(chalk.cyan('\nAnalytics privacy'));
+  console.log(chalk.dim('Hide prompts and project details in the analytics CodeMie collects.'));
+  console.log(chalk.dim('  Sent:   commands (/commit), skill and agent names, ticket and MR numbers, metrics'));
+  console.log(chalk.dim('  Hidden: prompt text, file paths, tool input/output, branch names (ticket keys kept)'));
+  console.log(chalk.dim('  Note:   conversation history in CodeMie chat is not affected.'));
+}
+
+async function readReductionContext(): Promise<ReductionContext> {
+  const projectDir = resolveProjectRoot(process.cwd());
+  const projectConfig = join(projectDir, '.codemie', 'codemie-cli.config.json');
+  const globalConfig = getCodemiePath('codemie-cli.config.json');
+  return {
+    projectDir,
+    projectName: basename(projectDir),
+    projectConfig,
+    globalOn: (await readReductionFlag(globalConfig)) !== 'off',
+    projectState: await readReductionFlag(projectConfig),
+    projectIsGlobal: resolvePath(projectConfig) === resolvePath(globalConfig)
+  };
+}
+
+function printCurrentReduction(ctx: ReductionContext): void {
+  if (ctx.globalOn) {
+    console.log(chalk.white('\nCurrent: on for all projects'));
+  } else if (ctx.projectIsGlobal) {
+    console.log(chalk.white('\nCurrent: global off'));
+  } else {
+    console.log(chalk.white(`\nCurrent: global off · this project (${ctx.projectName}) ${ctx.projectState === 'off' ? 'off' : 'on'}`));
+  }
+  if (ctx.projectIsGlobal) {
+    console.log(chalk.dim('  This directory has no project setting of its own (its config is the global one).'));
+  }
+}
+
+function reductionChoices(ctx: ReductionContext): { choices: Array<{ name: string; value: ReductionChoice }>; defaultChoice: ReductionChoice } {
+  const projectOnly = { name: `On for this project only (${ctx.projectName})`, value: 'projectOnly' as const };
+  if (ctx.globalOn) {
+    return {
+      choices: [
+        { name: 'Keep on for all projects', value: 'keep' },
+        { name: 'Off', value: 'off' },
+        ...(ctx.projectIsGlobal ? [] : [projectOnly])
+      ],
+      defaultChoice: 'keep'
+    };
+  }
+  return {
+    choices: [
+      { name: 'Off', value: 'off' },
+      { name: 'On for all projects', value: 'global' },
+      ...(ctx.projectIsGlobal ? [] : [{ name: projectOnly.name, value: 'project' as const }])
+    ],
+    defaultChoice: ctx.projectState === 'off' || ctx.projectIsGlobal ? 'off' : 'project'
+  };
+}
+
+async function promptReductionChoice(ctx: ReductionContext): Promise<ReductionChoice | undefined> {
+  const { choices, defaultChoice } = reductionChoices(ctx);
+  try {
+    const { reduction } = await inquirer.prompt([
+      { type: 'list', name: 'reduction', message: 'Hide prompts in analytics?', choices, default: defaultChoice }
     ]);
-    if (reconnect) {
-      try {
-        await reconnectClaudeOtlp();
-      } catch (error) {
-        console.log(chalk.red(`Reconnect failed: ${error instanceof Error ? error.message : String(error)}`));
-      }
+    return reduction as ReductionChoice;
+  } catch (error) {
+    console.log(chalk.yellow(`Analytics privacy step skipped: ${error instanceof Error ? error.message : String(error)}`));
+    return undefined;
+  }
+}
+
+/** Writes the chosen setting. Resolves false for Off (nothing further to offer), true when reduction is on. */
+async function applyReductionChoice(reduction: ReductionChoice, ctx: ReductionContext, progress: ReductionProgress): Promise<boolean> {
+  if (reduction === 'keep') {
+    return true;
+  }
+  if (reduction === 'off') {
+    await turnOffReduction(ctx, progress);
+    return false;
+  }
+  if (reduction === 'global') {
+    await writeGlobalReductionFlag(true);
+    console.log(chalk.green('✓ Prompts hidden in analytics for all projects'));
+    return true;
+  }
+  // The project is written first: if that fails nothing has changed, instead of global being off with no project on.
+  await writeProjectReductionFlag(ctx.projectDir);
+  progress.flagWritten = true;
+  await addOptedInProject(ctx.projectDir);
+  if (reduction === 'projectOnly') {
+    await writeGlobalReductionFlag(false);
+    console.log(chalk.green('✓ Turned off for all projects'));
+  }
+  console.log(chalk.green(`✓ Prompts hidden in analytics for ${ctx.projectName}`));
+  console.log(chalk.dim('  Saved in .codemie/codemie-cli.config.json (commit it to apply for your team)'));
+  if (reduction === 'projectOnly') {
+    await printProjectsStillOn();
+  }
+  return true;
+}
+
+async function turnOffReduction(ctx: ReductionContext, progress: ReductionProgress): Promise<void> {
+  if (ctx.globalOn) {
+    await writeGlobalReductionFlag(false);
+    console.log(chalk.green('✓ Turned off for all projects'));
+  }
+  if (ctx.projectState === 'on' && !ctx.projectIsGlobal) {
+    await writeProjectReductionFlag(ctx.projectDir, false);
+    progress.flagWritten = true;
+    progress.flagTurnedOff = true;
+    await removeOptedInProject(ctx.projectDir);
+    console.log(chalk.green(`✓ Turned off for ${ctx.projectName}`));
+    console.log(chalk.dim('  Saved in .codemie/codemie-cli.config.json'));
+  } else if (!ctx.globalOn) {
+    console.log(chalk.dim('Already off, nothing to change.'));
+  }
+  if (ctx.globalOn) {
+    await printProjectsStillOn();
+  }
+}
+
+async function offerProtobufReconnect(): Promise<void> {
+  if (!(await isClaudeCodeOtlpOnProtobuf())) {
+    return;
+  }
+  console.log(chalk.yellow("! Claude Code sends native analytics in a format CodeMie can't filter (http/protobuf),"));
+  console.log(chalk.yellow('  so those records are skipped while prompts are hidden.'));
+  let reconnect: boolean;
+  try {
+    ({ reconnect } = await inquirer.prompt([
+      { type: 'confirm', name: 'reconnect', message: 'Switch to http/json?', default: true }
+    ]));
+  } catch (error) {
+    console.log(chalk.yellow(`Reconnect skipped: ${error instanceof Error ? error.message : String(error)}`));
+    return;
+  }
+  if (reconnect) {
+    try {
+      await reconnectClaudeOtlp();
+    } catch (error) {
+      console.log(chalk.red(`Reconnect failed: ${error instanceof Error ? error.message : String(error)}`));
     }
   }
 }
