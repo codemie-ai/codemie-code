@@ -30,3 +30,12 @@ No finding requires a substantive implementation change; no fresh approval cycle
 
 - No exactly-once guarantee after a daemon crash between the replay's append and the queue-entry removal (out of scope by decision; identical event ids, backend dedups).
 - Only Windows exercised; full suites and CI not run; local-only artifacts (`*.local.*`) are not committed.
+
+## PR #897 review follow-up
+
+Reviewed implementation: 98677230a0bc7890410ff96b5785109a10a73088. Base: f6af774c. Combined implementation and test diff: 15 files, +478/-33. The machine verdict above records the original review; it was not rerun. Its retry-flag and aggregate-refusal findings are addressed by the follow-up.
+
+- Windows CLI and local daemon at 585df4ab: the 8 s cold start without a connection record delivered both original records and accepted the next hook without resume_unknown. With the backend unreachable and a live hook already spooled, replay appended both startup records once.
+- At 98677230, 135 targeted tests passed, including fresh-start attribution and unchanged sibling lookup. The real CLI scenarios were not rerun after that narrow change.
+- The broader run at 585df4ab had 4300 passing tests and one Windows symlink EPERM. That failure was not reproduced on the current exact base.
+- GitHub CR-002 security sign-off remains pending. CR-007/009/010/013 retain the existing timeout, fingerprint, scope and destination boundaries. The agreed crash-mid-write limitation remains.
