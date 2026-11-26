@@ -47,6 +47,23 @@ codemie profile refresh
 codemie profile logout
 ```
 
+### Signing In over SSH or from a Container
+
+After you sign in, the browser returns to a callback server that the CLI runs on a random
+`localhost` port. When the CLI runs on another machine (over SSH) or inside a Docker container,
+the browser cannot reach that server and shows a connection error instead. You can finish the
+sign-in without forwarding any port:
+
+1. Run `codemie profile login` (or `codemie setup`) in a terminal.
+2. Open the URL the CLI prints in your local browser and sign in.
+3. When the browser shows the connection error, copy the full URL from its address bar.
+4. Paste it into the terminal where the CLI is waiting and press Enter.
+
+The CLI accepts the pasted URL until the sign-in times out, and asks again if what you paste is not
+a valid callback URL. The URL carries your session, so do not share it or paste it anywhere else.
+Pasting needs an interactive terminal; see
+[Non-Interactive Environments](#non-interactive-environments-ciautomation) otherwise.
+
 ## Token Management
 
 SSO tokens are automatically managed, but you can control them manually:
@@ -321,6 +338,24 @@ When the remote MCP server requires authentication, the proxy handles it automat
 When several MCP servers start together, their proxies take turns: a lock file (`~/.codemie/mcp-auth.lock`) lets only one browser login be in flight at a time, because concurrent logins in one browser can invalidate each other. After the initial login, an expired or rejected access token is renewed in place — silently with the refresh token when one is held in memory, otherwise through the browser — without dropping the server from the session.
 
 The login (access token, refresh token and the client registration the refresh token belongs to) is stored per MCP server under `~/.codemie/mcp-auth` (directory `0700`, files `0600`). Restarting the CLI then reuses it, or renews it silently with the refresh token, and only opens the browser when that is no longer possible. The files (`<hash>.enc`) hold a long-lived credential, so their content is encrypted with the same machine-bound key as the stored SSO and JWT credentials: a copy taken by a backup, a sync tool or a support bundle cannot be read on another machine. The key is derived from the machine rather than from a secret, so another process running as your user can still decrypt them; keep treating the directory like your SSH keys. Delete the directory to log out of every server. Set `MCP_PROXY_PERSIST_TOKENS=off` to keep everything in memory only, in which case re-authorization is required each session.
+
+### Authorizing over SSH or from a Container
+
+The proxy runs over stdio, so it cannot ask you to paste anything. When the browser cannot reach
+its callback server (the CLI runs over SSH or inside a Docker container), finish the login from a
+second terminal on the same machine:
+
+1. Start the client with a longer MCP startup timeout, since Claude Code gives up on a server after
+   30 seconds by default: `MCP_TIMEOUT=180000 claude`.
+2. Use the MCP server so that it asks for a login.
+3. In another terminal, run `codemie mcp-auth`. It prints the authorization URL of each login that
+   is waiting.
+4. Open that URL in your local browser and sign in. When the browser shows a connection error,
+   copy the full URL from its address bar, paste it and press Enter.
+
+You can also pass the URL as an argument (`codemie mcp-auth '<callback-url>'`), for example from a
+non-interactive shell. The command only sends the URL to a callback server that a running proxy is
+waiting on, and the login must finish before the callback server's 2-minute timeout.
 
 ### SSO Integration
 

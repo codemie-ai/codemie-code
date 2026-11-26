@@ -6,6 +6,7 @@
  */
 
 import { createServer, Server } from 'http';
+import { createInterface, type Interface } from 'readline';
 import { spawn } from 'child_process';
 import { URL } from 'url';
 import open from 'open';
@@ -73,6 +74,7 @@ export { effectiveExpiresAt };
  */
 export class CodeMieSSO {
   private server?: Server;
+  private pasteReader?: Interface;
   private callbackResult?: SSOAuthResult;
   private codeMieUrl!: string;
   private abortController?: AbortController;
@@ -129,6 +131,11 @@ export class CodeMieSSO {
         spawn('explorer.exe', [ssoUrl], { detached: true, stdio: 'ignore' }).unref();
       } else {
         await open(ssoUrl);
+      }
+
+      // The browser cannot reach this machine over SSH or from a container, so also accept a pasted callback URL
+      if (process.stdin.isTTY && !config.quiet) {
+        this.readPastedCallback(sigintHandler);
       }
 
       // 4. Wait for callback with timeout and abort signal
@@ -342,6 +349,38 @@ export class CodeMieSSO {
   }
 
   /**
+   * Read a callback URL pasted into the terminal and handle it as if the browser had delivered it
+   */
+  private readPastedCallback(onInterrupt: () => void): void {
+    const reader = createInterface({ input: process.stdin, output: process.stdout });
+    this.pasteReader = reader;
+    // Raw-mode readline turns Ctrl-C into this event instead of a process signal
+    reader.on('SIGINT', onInterrupt);
+    console.log(chalk.dim('  If the browser cannot reach this machine, paste the URL it was redirected to and press Enter:'));
+
+    reader.on('line', (line) => {
+      const pasted = line.trim();
+      if (!pasted || this.callbackResult) return;
+
+      let url: URL;
+      try {
+        url = new URL(pasted);
+      } catch {
+        console.log(chalk.yellow('  That is not a URL. Paste the full address from the browser and press Enter:'));
+        return;
+      }
+
+      void this.handleCallback(url).then((result) => {
+        if (result.success) {
+          this.callbackResult = result;
+        } else {
+          console.log(chalk.yellow(`  ${result.error}. Paste the URL again and press Enter:`));
+        }
+      });
+    });
+  }
+
+  /**
    * Handle OAuth callback from browser
    */
   private async handleCallback(url: URL): Promise<SSOAuthResult> {
@@ -463,6 +502,9 @@ export class CodeMieSSO {
 
       delete this.server;
     }
+
+    this.pasteReader?.close();
+    this.pasteReader = undefined;
 
     // Reset state
     this.callbackResult = undefined;

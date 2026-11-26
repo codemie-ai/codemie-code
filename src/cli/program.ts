@@ -32,6 +32,7 @@ import { createAssistantsCommand } from './commands/assistants/index.js';
 import { createSdkCommand } from './commands/sdk/index.js';
 import { createMcpCommand } from './commands/mcp/index.js';
 import { createMcpProxyCommand } from './commands/mcp-proxy.js';
+import { createMcpAuthCommand } from './commands/mcp-auth.js';
 import { createProxyCommand } from './commands/proxy/index.js';
 import { createCodebaseCommand } from './commands/codebase/index.js';
 import { createDocsCommand } from './commands/docs.js';
@@ -113,6 +114,7 @@ Profile selection:
   program.addCommand(createSdkCommand());
   program.addCommand(createMcpCommand());
   program.addCommand(createMcpProxyCommand());
+  program.addCommand(createMcpAuthCommand());
   program.addCommand(createProxyCommand());
   program.addCommand(createCodebaseCommand());
   program.addCommand(createDocsCommand());

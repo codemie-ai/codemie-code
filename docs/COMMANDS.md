@@ -23,6 +23,7 @@ codemie doctor [options]         # Health check and diagnostics
 codemie plugin <command>         # Manage native plugins
 codemie mcp <command>            # Manage MCP servers registered with Claude Code
 codemie mcp-proxy <url>          # Stdio-to-HTTP MCP proxy with OAuth support
+codemie mcp-auth [callback-url]  # Finish an MCP login by pasting the browser's callback URL
 codemie codebase <command>       # Manage Codebase Memory graph UI
 codemie docs <command>           # Manage documentation & knowledge tools
 codemie version                  # Show version information
@@ -1350,6 +1351,7 @@ Proxy logs are written to `~/.codemie/logs/mcp-proxy.log`. Enable verbose loggin
 |-------|-------|----------|
 | `Invalid MCP server URL` | URL argument is malformed | Verify the URL is a valid HTTP/HTTPS URL |
 | Browser doesn't open | System `open`/`xdg-open` not available | Open the URL printed in logs manually |
+| Browser shows a connection error after sign-in | The CLI runs over SSH or in a container | Run `codemie mcp-auth` and paste the URL; see [Authorizing over SSH or from a Container](./AUTHENTICATION.md#authorizing-over-ssh-or-from-a-container) |
 | OAuth timeout | User didn't complete browser auth in 2 minutes | Re-run the command and complete auth faster |
 | `ECONNREFUSED` | Remote MCP server is unreachable | Check the URL and network connectivity |
 | No tools appearing | OAuth flow not completed | Check `~/.codemie/logs/mcp-proxy.log` for errors |

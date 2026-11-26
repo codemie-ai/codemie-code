@@ -16,6 +16,17 @@ vi.mock('@/utils/security.js', () => ({
   },
 }));
 vi.mock('open', () => ({ default: vi.fn() }));
+const pasteReaders = vi.hoisted((): Array<import('events').EventEmitter & { close: () => void }> => []);
+vi.mock('readline', async () => {
+  const { EventEmitter } = await import('events');
+  return {
+    createInterface: vi.fn(() => {
+      const reader = Object.assign(new EventEmitter(), { close: vi.fn() });
+      pasteReaders.push(reader);
+      return reader;
+    }),
+  };
+});
 vi.mock('@/utils/analytics-auth-status.js', () => ({ clearAnalyticsAuthStatus: vi.fn() }));
 vi.mock('@/providers/core/credential-owner.js', () => ({ withVerifiedOwner: vi.fn() }));
 
@@ -134,5 +145,32 @@ describe('CodeMieSSO.authenticate storage', () => {
     expect(storeSSOCredentials).toHaveBeenCalledTimes(1);
     const stored = storeSSOCredentials.mock.calls[0][0];
     expect(stored).not.toHaveProperty('expiresAt');
+  });
+});
+
+describe('CodeMieSSO.authenticate — pasted callback URL', () => {
+  it('signs in with the callback URL pasted into the terminal, re-prompting on input that is not a URL', async () => {
+    const cookies = { codemie_access_token: 'abc' };
+    const token = Buffer.from(JSON.stringify({ cookies })).toString('base64');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 404 }));
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const wasTTY = process.stdin.isTTY;
+    process.stdin.isTTY = true;
+    pasteReaders.length = 0;
+
+    try {
+      const login = new CodeMieSSO().authenticate({ codeMieUrl: 'https://codemie.example.com', timeout: 5000 });
+      await vi.waitFor(() => expect(pasteReaders).toHaveLength(1));
+      const [reader] = pasteReaders;
+
+      reader.emit('line', 'not a url');
+      reader.emit('line', `http://localhost:1/?token=${token}`);
+
+      await expect(login).resolves.toMatchObject({ success: true, cookies });
+      expect(reader.close).toHaveBeenCalled();
+    } finally {
+      process.stdin.isTTY = wasTTY;
+      vi.restoreAllMocks();
+    }
   });
 });
