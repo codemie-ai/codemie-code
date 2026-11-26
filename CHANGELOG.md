@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+### Changed
+
+- `codemie-code` runs, `--task` and interactive, now use a CodeMie-owned OpenCode config location under the CodeMie home, so the user's global OpenCode config (`~/.config/opencode`: settings, agents, commands, tools, MCP) no longer applies; a broken global tool file no longer crashes runs; project-level `.opencode` is still loaded. Known gaps: a `~/.opencode` directory is still loaded, and tools that read their config from the XDG config home (for example `gh`) no longer see the user's settings when run from inside a `codemie-code` session
+
 ## [0.17.3] - 2026-11-25
 
 ### Added
