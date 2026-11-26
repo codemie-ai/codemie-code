@@ -570,6 +570,8 @@ The `[⏺ CodeMie]` segment appears only in sessions launched through CodeMie.
 
 The script is deployed to `~/.claude/codemie-budget-status.js` and registered as a `statusLine` command in `~/.claude/settings.json`. Budget values are cached for 60 seconds to avoid redundant API calls.
 
+**Updating an installed statusline.** The deployed script is a copy, so it does not change by itself when the CLI is upgraded. Every time you launch Claude Code through CodeMie (for example `codemie-claude`), the CLI compares `~/.claude/codemie-budget-status.js` with the bundle shipped in the installed CLI version and rewrites it when they differ, so the next managed launch after an upgrade picks up the new segment automatically. This refresh only rewrites the script: it never installs a statusline that is not there and never edits `~/.claude/settings.json`. A plain `claude` launch does not trigger it, and you can force an update at any time with `codemie install statusline`.
+
 ## Commands
 
 The CodeMie CLI has a rich set of commands for managing agents, configuration, and more.
