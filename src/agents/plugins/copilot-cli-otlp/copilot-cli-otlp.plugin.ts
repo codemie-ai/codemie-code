@@ -19,7 +19,8 @@ import { readRecord, recordKey } from '@/agents/core/evidence/record-store.js';
 import { isStopped, writeStop } from '@/agents/core/evidence/stop-marker.js';
 import { currentGeneration, scopeViolation } from '@/agents/core/evidence/session-scope.js';
 import { hasPendingOwnerSession } from '@/agents/core/evidence/owner-pending.js';
-import { readState } from '@/cli/commands/proxy/daemon-manager.js';
+import { isDaemonAlive, readState } from '@/cli/commands/proxy/daemon-manager.js';
+import { isRestartableState } from '@/cli/commands/proxy/otlp-cold-start.js';
 import { resolveProjectAtCwd } from '@/agents/core/event-fields/identity-fields.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from './copilot-cli-otlp.constants.js';
 import { copilotEvidenceInputs, copilotRouteProof, isFreshStart, isKnownSession } from './copilot-cli-otlp.evidence.js';
@@ -136,7 +137,10 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
         if (!proven) return 'stop';
         if (await hasPendingOwnerSession(input.sessionId)) return 'continue';
         // Credentials are resolved from daemon state. Start the proxy, then recheck the session before it can spool.
-        return (await readState()) === null ? 'retry-after-proxy-start' : 'stop';
+        const state = await readState();
+        return !state || (!isRestartableState(state) && !(await isDaemonAlive(state)))
+          ? 'retry-after-proxy-start'
+          : 'stop';
       }
       const key = recordKey(id.api_identity, id.owner_hash, input.sessionId);
       const found = await readRecord(key);

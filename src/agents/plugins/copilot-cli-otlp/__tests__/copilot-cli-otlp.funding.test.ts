@@ -47,6 +47,13 @@ import { isStopped } from '@/agents/core/evidence/stop-marker.js';
 import { classify } from '@/agents/core/evidence/classify.js';
 import { evidenceHeaders } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/evidence-send.js';
 import { PINNED_NATIVE_SESSION_ENV } from '@/agents/plugins/copilot-cli/copilot-cli.constants.js';
+import { isDaemonAlive, readState, type DaemonState } from '@/cli/commands/proxy/daemon-manager.js';
+
+vi.mock('@/cli/commands/proxy/daemon-manager.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/cli/commands/proxy/daemon-manager.js')>()),
+  readState: vi.fn(async () => null),
+  isDaemonAlive: vi.fn(async () => false),
+}));
 
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
@@ -80,6 +87,8 @@ const recordOf = async () => {
 const start = (source = 'new') => hook('sessionStart', { source });
 
 beforeEach(() => {
+  vi.mocked(readState).mockReset().mockResolvedValue(null);
+  vi.mocked(isDaemonAlive).mockReset().mockResolvedValue(false);
   for (const k of ENV_KEYS) delete process.env[k];
   Object.assign(process.env, MANAGED_ENV);
   sid = `00000000-0000-4000-8000-${String(++n).padStart(12, '0')}`;
@@ -88,6 +97,12 @@ beforeEach(() => {
 });
 
 describe('CodeMie-proven managed Copilot session', () => {
+  it('records a launcher-pinned sessionStart when source is omitted', async () => {
+    await hook('sessionStart');
+    expect(await recordOf()).toMatchObject({ funding_route: 'api_based' });
+    expect(spooled[0]?.options).toEqual({ evidenceV: 1 });
+  });
+
   it('is recorded with funding api_based, the launch profile project and its origin, and publishes codemie headers', async () => {
     await start();
     const record = await recordOf();
@@ -202,10 +217,14 @@ describe('sticky attribution boundary', () => {
     const other = { ...creds, email: 'other@example.com' };
     const otherKey = (): string => recordKey(apiIdentity(creds.apiUrl), ownerHash(other.email), sid);
 
-    it('cold-starts the daemon before resuming an already recorded session', async () => {
+    it.each([
+      { state: null, label: 'missing daemon state' },
+      { state: { pid: 123, port: 5555, startedAt: '2020-01-01T00:00:00Z' } as DaemonState, label: 'dead daemon without upstream' },
+    ])('cold-starts before resuming an already recorded session with $label', async ({ state }) => {
       const { resolveHookCredentials } = await import('@/agents/core/hook-credentials.js');
       await start();
       delete process.env[PINNED_NATIVE_SESSION_ENV];
+      vi.mocked(readState).mockResolvedValue(state);
       vi.mocked(resolveHookCredentials).mockResolvedValue(undefined as never);
       deps.ensureOtlpProxy.mockImplementationOnce(async () => {
         vi.mocked(resolveHookCredentials).mockResolvedValue(creds as never);

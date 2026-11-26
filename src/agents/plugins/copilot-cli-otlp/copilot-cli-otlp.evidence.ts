@@ -6,7 +6,7 @@ import { hasPendingOwnerSession } from '@/agents/core/evidence/owner-pending.js'
 import { fundingRoute, routedViaCodemie, type RoutingInput } from '@/agents/core/evidence/routing.js';
 import type { EvidenceInputs } from '@/agents/core/evidence/stamp.js';
 
-/** Copilot `sessionStart` sources that begin a session; anything else (`resume`, unknown) continues one. */
+/** Explicit Copilot `sessionStart` sources that begin a session. */
 const FRESH_SOURCES = new Set(['new', 'startup']);
 
 interface LaunchProfile {
@@ -92,5 +92,6 @@ export async function copilotEvidenceInputs(args: {
   return { ...proof, collection_generation: 0, agent: 'copilot-cli-otlp' };
 }
 
+// A missing source is safe only with the launcher pin required by copilotEvidenceInputs.
 export const isFreshStart = (eventName: string, source: string | undefined): boolean =>
-  eventName === 'sessionStart' && !!source && FRESH_SOURCES.has(source);
+  eventName === 'sessionStart' && (source === undefined || FRESH_SOURCES.has(source));
