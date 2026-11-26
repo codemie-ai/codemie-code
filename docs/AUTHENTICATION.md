@@ -47,6 +47,23 @@ codemie profile refresh
 codemie profile logout
 ```
 
+### Signing In over SSH or from a Container
+
+After you sign in, the browser returns to a callback server that the CLI runs on a random
+`localhost` port. When the CLI runs on another machine (over SSH) or inside a Docker container,
+the browser cannot reach that server and shows a connection error instead. You can finish the
+sign-in without forwarding any port:
+
+1. Run `codemie profile login` (or `codemie setup`) in a terminal.
+2. Open the URL the CLI prints in your local browser and sign in.
+3. When the browser shows the connection error, copy the full URL from its address bar.
+4. Paste it into the terminal where the CLI is waiting and press Enter.
+
+The CLI accepts the pasted URL until the sign-in times out, and asks again if what you paste is not
+a valid callback URL. The URL carries your session, so do not share it or paste it anywhere else.
+Pasting needs an interactive terminal; see
+[Non-Interactive Environments](#non-interactive-environments-ciautomation) otherwise.
+
 ## Token Management
 
 SSO tokens are automatically managed, but you can control them manually:
