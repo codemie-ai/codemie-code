@@ -525,6 +525,10 @@ access to that same folder with a small placeholder file before anything is regi
 | Linux | `~/.config/systemd/user/codemie-analytics-sync.{service,timer}` — a systemd user timer (`Type=oneshot`, `OnCalendar=*-*-* HH:MM:00`, `Persistent=true`, `RandomizedDelaySec=300`) | `Persistent=true` fires the missed run once the user session is next active; install also runs `loginctl enable-linger $USER` so the timer fires even while the user is logged out |
 | Windows | Task Scheduler task `CodeMie Analytics Sync` (UTF-16LE+BOM XML, `StartWhenAvailable`, `IgnoreNew`, runs as the logged-in user at `InteractiveToken`/`LeastPrivilege`, runs on battery, `ExecutionTimeLimit PT30M`) | `StartWhenAvailable` fires the missed run once the machine is next on |
 
+The names above are the defaults. `--task-name <name>` (or the interactive prompt) replaces
+them with a full name used as-is on every platform; it is saved as `taskName`, and `status`
+prints the resolved `OS job name`. Manual `launchctl`/`systemctl`/`schtasks` calls must use it.
+
 Installing replaces an existing job with the same identity: macOS `launchctl bootout` then
 `bootstrap gui/<uid>`; Linux `systemctl --user daemon-reload` then `enable --now`; Windows
 `schtasks /Delete /F` then `/Create /XML`. A Linux machine without a reachable

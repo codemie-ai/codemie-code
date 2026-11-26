@@ -1,0 +1,86 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.final",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "User approved; 0 findings"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "User approved; 0 findings"
+    }
+  ],
+  "reviewed_head": "802c90893cfb81d79f8be7b98bef7fc94a8bec9c",
+  "rounds": [
+    "final"
+  ],
+  "rationale": "Compact profile: edge-case returned no findings and acceptance passed all criteria (generated-JS validity pending stage 7). Source confirms windowsHide: true on both execSync and spawn in shell-hooks-source.ts. 0 findings, 0 deferred, 0 dismissed; brief written.",
+  "confidence": "high",
+  "check_confidence": null,
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 0,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "1. spawn(sh) passes windowsHide: true",
+      "status": "pass",
+      "notes": "diff line 17"
+    },
+    {
+      "kind": "spec",
+      "item": "2. execSync passes windowsHide: true",
+      "status": "pass",
+      "notes": "diff line 9"
+    },
+    {
+      "kind": "spec",
+      "item": "3. Existing options unchanged",
+      "status": "pass",
+      "notes": "Only additions"
+    },
+    {
+      "kind": "spec",
+      "item": "4. Generated hook source remains valid JS",
+      "status": "pending-stage-7",
+      "notes": "Build check pending"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "na",
+      "notes": "standards not expected for this profile"
+    },
+    {
+      "kind": "code-quality",
+      "status": "na",
+      "notes": "standards not expected for this profile"
+    },
+    {
+      "kind": "security",
+      "status": "na",
+      "notes": "standards not expected for this profile"
+    }
+  ],
+  "final_round": {
+    "decision": "approve",
+    "rationale": "Compact profile: edge-case returned no findings and acceptance passed all criteria (generated-JS validity pending stage 7). Source confirms windowsHide: true on both execSync and spawn in shell-hooks-source.ts. 0 findings, 0 deferred, 0 dismissed; brief written.",
+    "confidence": "high",
+    "risk_flags": []
+  }
+}

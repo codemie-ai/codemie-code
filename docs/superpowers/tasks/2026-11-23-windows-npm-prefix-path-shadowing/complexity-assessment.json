@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "task": "Fix Windows PATH precedence so a stale global npm shim no longer shadows CodeMie's npm-prefix (installer Add-UserPath and/or shadow detection in commandExists/getCommandPath), EPMCDME-16969.",
+  "generated": "2026-11-23T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 18,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "requirements_clarity", "reason": "Fix site is undecided (installer Add-UserPath vs processes.ts detection vs both). The ticket's 'not installed' symptom does not match first-match shadowing, which would make commandExists true, so reproduction is needed before design." },
+    { "dimension": "technical_risk", "reason": "The closest pattern is isShadowedCodemieShim, which matches one package path and does not cover PATH order. Reordering User PATH has no precedent in the append-only Add-UserPath. A rewrite would hit the deferred %VAR% flattening issue, and Machine PATH precedes User PATH. The installer has no test harness. No existing test template covers PATH-order or multi-match shadow detection." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk held at L: no exact precedent for PATH reordering, registry rewrite caveats, and installer untestable by automation"
+  ],
+  "split_recommendation": null
+}

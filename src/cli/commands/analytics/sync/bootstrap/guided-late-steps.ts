@@ -13,8 +13,9 @@
 import { SyncConfigError } from '@/utils/errors.js';
 
 import { DEFAULT_LOOKBACK_DAYS, validateIncludeExternal, validateLookbackDays } from '../config-store.js';
-import { buildInstallCommand } from '../install-command.js';
+import { assertPrintableValue, buildInstallCommand } from '../install-command.js';
 import { errorMessage } from '../redact.js';
+import { validateSchedulerName } from '../scheduler/generators.js';
 import { validateTriggerUrl } from '../trigger-url.js';
 import type { IncludeExternalPolicy } from '../types.js';
 import { askGitDetails, testGitCheck } from './git-step.js';
@@ -244,6 +245,37 @@ async function step7Lookback(deps: BootstrapDeps, state: BootstrapState, save: S
 }
 
 /**
+ * The "Scheduler task name" step: an optional full name for the scheduler job each developer's
+ * `sync install` registers. Empty means each platform's default name (saved as `''`, the flag
+ * omitted). Bootstrap installs nothing and prints no platform-specific text: the printed
+ * command may run on any OS, where the name is used as-is.
+ */
+async function stepTaskName(deps: BootstrapDeps, state: BootstrapState, save: SaveBootstrapState): Promise<BootstrapState> {
+  deps.err('');
+  deps.err(stepHeading(stepsFor(state.targets), 'task-name'));
+
+  deps.err('Developers can give their scheduler job a custom name; it is used as-is on every platform.');
+  deps.err('Leave it empty to keep each platform\'s default name.');
+
+  const taskName = await askValidated(
+    deps,
+    'Scheduler task name (Enter for the default)',
+    (raw) => {
+      const trimmed = raw.trim();
+      if (trimmed === '') {
+        return '';
+      }
+      validateSchedulerName(trimmed);
+      assertPrintableValue('--task-name', trimmed);
+      return trimmed;
+    },
+    state.taskName !== undefined && state.taskName !== '' ? state.taskName : undefined
+  );
+  await save({ taskName });
+  return { ...state, taskName };
+}
+
+/**
  * The "Developers" step: the one line that goes to `deps.out` in the whole guided wizard —
  * the install command built from `state` via {@link toInstallCommandOptions} (which already
  * carries `--git-repo`/`--git-branch`/`--git-path` when the git target is included) —
@@ -294,6 +326,10 @@ export async function runStepsFiveThroughEight(
   }
   if (runs('lookback')) {
     current = await step7Lookback(deps, current, save);
+  }
+
+  if (runs('task-name')) {
+    current = await stepTaskName(deps, current, save);
   }
 
   await step8Developers(deps, current);

@@ -654,6 +654,7 @@ The authorization for personal Claude subscriptions can also be managed on its o
 codemie proxy analytics consent grant [--all]   # authorize this repository, or any repository with --all
 codemie proxy analytics consent revoke [--all]  # withdraw it
 codemie proxy analytics consent list            # show what is authorized
+codemie proxy analytics resend                  # send what was held before the consent was granted
 ```
 
 Disconnect a project or remove the integration entirely:

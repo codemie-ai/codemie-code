@@ -3,6 +3,36 @@ import { AgentRegistry } from '../../agents/registry.js';
 import { getUserFacingAgentName } from '../../agents/core/agent-aliases.js';
 import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';
+import { formatNotOnPathShort, type ShadowVerdict } from '../../utils/path-shadow.js';
+
+const SHADOW_DEADLINE_MS = 5000;
+const UNKNOWN_VERDICT: ShadowVerdict = { status: 'unknown' };
+
+/** Start all verdict lookups at once under one shared deadline; unfinished ones are `unknown`. */
+async function collectShadowVerdicts(
+  agents: Array<{ name: string; checkPathShadow?: (opts?: { resolvePrefix?: boolean }) => Promise<ShadowVerdict> }>
+): Promise<Map<string, ShadowVerdict>> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<ShadowVerdict>((resolve) => {
+    timer = setTimeout(() => resolve(UNKNOWN_VERDICT), SHADOW_DEADLINE_MS);
+  });
+  try {
+    const entries = await Promise.all(
+      agents.map(async (agent): Promise<[string, ShadowVerdict]> => {
+        if (!agent.checkPathShadow) return [agent.name, UNKNOWN_VERDICT];
+        try {
+          return [agent.name, await Promise.race([agent.checkPathShadow(), deadline])];
+        } catch (error: unknown) {
+          logger.debug('PATH shadow check failed', error);
+          return [agent.name, UNKNOWN_VERDICT];
+        }
+      })
+    );
+    return new Map(entries);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export function createListCommand(): Command {
   const command = new Command('list');
@@ -22,16 +52,32 @@ export function createListCommand(): Command {
         } else {
           console.log(chalk.bold('\n📦 Available Agents:\n'));
 
+          const verdicts = await collectShadowVerdicts(agents);
+
           for (const agent of agents) {
             const userFacingName = getUserFacingAgentName(agent.name);
             const installed = await agent.isInstalled();
-            const status = installed ? chalk.green('✓ installed') : chalk.white('not installed');
+            const verdict = verdicts.get(agent.name) ?? UNKNOWN_VERDICT;
+            const extraLines: string[] = [];
+            let status: string;
+            if (verdict.status === 'shadowed') {
+              status = chalk.yellow('shadowed');
+              extraLines.push(
+                chalk.yellow(`      Active:   ${verdict.active}`),
+                chalk.yellow(`      Expected: ${verdict.managedDir}`)
+              );
+            } else if (!installed && verdict.status === 'missing-on-path') {
+              status = chalk.yellow(formatNotOnPathShort(verdict));
+            } else {
+              status = installed ? chalk.green('✓ installed') : chalk.white('not installed');
+            }
             const version = installed ? await agent.getVersion() : null;
             const versionStr = version ? chalk.white(` (${version})`) : '';
 
             console.log(chalk.bold(`  ${agent.displayName}`) + versionStr);
             console.log(`    Command: ${chalk.cyan(userFacingName)}`);
             console.log(`    Status: ${status}`);
+            for (const line of extraLines) console.log(line);
             console.log(`    ${chalk.white(agent.description)}`);
             console.log();
           }
