@@ -38,19 +38,26 @@ describe('installNetworkErrorCapture', () => {
     const real = vi.fn().mockRejectedValue(networkError('ERR_FR_TOO_MANY_REDIRECTS'));
     vi.spyOn(axios, 'getAdapter').mockReturnValue(real as unknown as AxiosAdapter);
 
-    expect(installNetworkErrorCapture()).toBe(true);
+    installNetworkErrorCapture();
     const adapter = axios.defaults.adapter as AxiosAdapter;
     expect(typeof adapter).toBe('function');
+    expect(adapter).not.toBe(originalAdapter);
     await expect(adapter(cfg)).rejects.toThrow('boom');
     expect(real).toHaveBeenCalledWith(cfg);
     expect(takeNetworkError()?.code).toBe('ERR_FR_TOO_MANY_REDIRECTS');
   });
 
   it('wraps only once when installed twice', () => {
-    expect(installNetworkErrorCapture()).toBe(true);
+    const getAdapter = vi.spyOn(axios, 'getAdapter');
+
+    installNetworkErrorCapture();
     const first = axios.defaults.adapter;
-    expect(installNetworkErrorCapture()).toBe(true);
+    expect(first).not.toBe(originalAdapter);
+    expect(getAdapter).toHaveBeenCalledTimes(1);
+
+    installNetworkErrorCapture();
     expect(axios.defaults.adapter).toBe(first);
+    expect(getAdapter).toHaveBeenCalledTimes(1);
   });
 
   it('applies to instances created after install and not before', () => {
@@ -67,12 +74,16 @@ describe('installNetworkErrorCapture', () => {
     expect(createRequire(sdkDir).resolve('axios')).toBe(fromRepo);
   });
 
-  it('returns false, logs and leaves output unchanged when it cannot install', () => {
+  it('logs at debug level and leaves the adapter untouched when it cannot install', () => {
     vi.spyOn(axios, 'getAdapter').mockImplementation(() => {
       throw new Error('no adapter');
     });
-    expect(installNetworkErrorCapture()).toBe(false);
-    expect(logger.debug).toHaveBeenCalled();
+    expect(() => installNetworkErrorCapture()).not.toThrow();
+    expect(axios.defaults.adapter).toBe(originalAdapter);
+    expect(logger.debug).toHaveBeenCalledWith(
+      'Network error capture not installed',
+      expect.anything(),
+    );
     expect(takeNetworkError()).toBeUndefined();
   });
 });

@@ -67,13 +67,13 @@ const WRAPPED = Symbol.for('codemie.networkErrorCapture');
  *   before the assignment keeps the old adapter, one made after uses the new
  *   one. Call this before `new CodeMieClient`.
  *
- * Idempotent. Returns whether the wrapper is active.
+ * Idempotent. Failures are logged at debug level and leave axios untouched.
  */
-export function installNetworkErrorCapture(): boolean {
+export function installNetworkErrorCapture(): void {
   try {
     const current = axios.defaults.adapter;
     if (typeof current === 'function' && (current as unknown as Record<symbol, boolean>)[WRAPPED]) {
-      return true;
+      return;
     }
     const resolved = axios.getAdapter(current);
     const wrapped = (async (config: InternalAxiosRequestConfig) => {
@@ -87,9 +87,7 @@ export function installNetworkErrorCapture(): boolean {
     }) as AxiosAdapter;
     (wrapped as unknown as Record<symbol, boolean>)[WRAPPED] = true;
     axios.defaults.adapter = wrapped;
-    return true;
   } catch (err) {
     logger.debug('Network error capture not installed', ...sanitizeLogArgs({ error: String(err) }));
-    return false;
   }
 }
