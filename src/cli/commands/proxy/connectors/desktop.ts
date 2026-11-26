@@ -766,11 +766,14 @@ interface ManagedMcpConfigRecord {
 }
 
 /**
- * The marker file: one record per config UUID. An earlier CLI wrote one slot, `{ configId, managedNames,
- * fingerprints }`, or, older still, the same without `configId`; both are read ({@link parseManagedMcpStore}).
+ * The marker file: one record per config UUID. An earlier CLI wrote `{ managedNames }` alone, with no config
+ * id; it is still read ({@link parseManagedMcpStore}). The top-level `managedNames` is also written, as the names
+ * of the config written last, so an earlier CLI run after this one (a rollback) still knows which servers it may
+ * revoke; this CLI never reads it while `configs` is there.
  */
 interface ManagedMcpState {
   configs: Record<string, ManagedMcpConfigRecord>;
+  managedNames?: string[];
 }
 
 /** The marker as read: the records by config, and the record of a state no config is recorded for. */
@@ -822,9 +825,8 @@ function parseManagedMcpRecord(value: unknown): ManagedMcpConfigRecord {
 }
 
 /**
- * Read a marker of any generation: per-config records; a single slot tied to `configId`, which becomes that
- * config's record; a slot without one, kept as the untied record. Anything unreadable is an empty untied record,
- * which disconnect may clean.
+ * Read a marker of either generation: per-config records, or an earlier CLI's `{ managedNames }`, kept as the
+ * untied record. Anything unreadable is an empty untied record, which disconnect may clean.
  */
 function parseManagedMcpStore(raw: unknown): ManagedMcpStore {
   const configs = new Map<string, ManagedMcpConfigRecord>();
@@ -833,10 +835,6 @@ function parseManagedMcpStore(raw: unknown): ManagedMcpStore {
     for (const [configId, record] of Object.entries(raw.configs)) {
       if (isRecord(record)) configs.set(configId, parseManagedMcpRecord(record));
     }
-    return { configs };
-  }
-  if (typeof raw.configId === 'string') {
-    configs.set(raw.configId, parseManagedMcpRecord(raw));
     return { configs };
   }
   return { configs, untied: parseManagedMcpRecord(raw) };
@@ -876,7 +874,8 @@ async function readManagedMcpState(
 /**
  * Set (or, with `null`, drop) the record of `configId`. The records of the other configs are kept as they
  * are, and an untied state is gone: this is the first write of a CLI that ties every record to a config. The
- * file is removed when no record is left.
+ * file is removed when no record is left. The top-level `managedNames` an earlier CLI reads
+ * ({@link ManagedMcpState}) is the names of the record set here, and is left out when the record is dropped.
  */
 async function writeManagedMcpRecord(
   statePath: string,
@@ -891,6 +890,7 @@ async function writeManagedMcpRecord(
     return;
   }
   const state: ManagedMcpState = { configs: Object.fromEntries(configs) };
+  if (record) state.managedNames = record.managedNames;
   const dir = join(statePath, '..');
   if (!existsSync(dir)) {
     await mkdir(dir, { recursive: true });
@@ -1025,6 +1025,25 @@ export function isCodeMieOwnedDesktopEntry(entry: unknown, localKey: string): bo
   );
 }
 
+/** True when `_meta.json` lists `configId` under the name `connect` gives its entry ({@link CODEMIE_DESKTOP_CONFIG_NAME}). */
+function isNamedCodeMieConfig(meta: ConfigMeta, configId: string): boolean {
+  const entries = Array.isArray(meta.entries) ? meta.entries : [];
+  return entries.some((entry) => entry?.id === configId && entry.name === CODEMIE_DESKTOP_CONFIG_NAME);
+}
+
+/**
+ * True when config `configId` holds CodeMie's entry. The entry named {@link CODEMIE_DESKTOP_CONFIG_NAME} only has
+ * to point at the local proxy ({@link isDesktopPointedAtLocalProxy}, a sealed key included): an earlier CLI wrote it
+ * without the shape this one adds, and the user may have changed that shape in Desktop since. Any other entry has
+ * to be positively CodeMie's ({@link isCodeMieOwnedDesktopEntry}), since another local gateway can look like it.
+ * Never throws.
+ */
+function isCodeMieDesktopConfig(meta: ConfigMeta, configId: string, entry: unknown, localKey: string): boolean {
+  if (!isNamedCodeMieConfig(meta, configId)) return isCodeMieOwnedDesktopEntry(entry, localKey);
+  const gateway = desktopGatewayOfEntry(entry);
+  return gateway !== null && isDesktopPointedAtLocalProxy(gateway, localKey);
+}
+
 async function readConfigEntry(configPath: string): Promise<unknown> {
   try {
     return JSON.parse(await readFile(configPath, 'utf-8'));
@@ -1075,7 +1094,7 @@ export async function resolveCodeMieDesktopConfig(
 
 /**
  * The id of the CodeMie entry ({@link resolveCodeMieDesktopConfig}) when its file exists and is CodeMie's
- * ({@link isCodeMieOwnedDesktopEntry}). A named entry whose file is missing or not CodeMie's (a stale key) gives
+ * ({@link isCodeMieDesktopConfig}). A named entry whose file is missing or not CodeMie's (a stale key) gives
  * way to the applied entry when that one is CodeMie's. With neither validated, the named entry's file is still
  * returned when it exists, so the caller can say why it was left. Read-only.
  */
@@ -1084,7 +1103,9 @@ async function findCodeMieConfigOnDisk(libDir: string, meta: ConfigMeta, localKe
   if (target.isNew) return undefined;
   const namedPath = join(libDir, `${target.configId}.json`);
   const namedExists = existsSync(namedPath);
-  if (namedExists && isCodeMieOwnedDesktopEntry(await readConfigEntry(namedPath), localKey)) return target.configId;
+  if (namedExists && isCodeMieDesktopConfig(meta, target.configId, await readConfigEntry(namedPath), localKey)) {
+    return target.configId;
+  }
   const { appliedId } = target;
   if (appliedId && appliedId !== target.configId) {
     const applied = await readConfigEntry(join(libDir, `${appliedId}.json`));
@@ -1223,7 +1244,7 @@ async function writeDesktopConfigLocked(
       existing = {};
     }
   }
-  const targetOwned = isCodeMieOwnedDesktopEntry(existing, gatewayKey);
+  const targetOwned = isCodeMieDesktopConfig(meta, configId, existing, gatewayKey);
 
   // `orgMcpServers === null` means the catalog fetch FAILED (or was skipped for a
   // missing CodeMie URL) — distinct from a successful fetch that returned []. On
@@ -1453,7 +1474,7 @@ export async function readCodeMieDesktopGateway(baseDir?: string, stateFile?: st
     if (!configId) return null;
     const entry = await readConfigEntry(join(libDir, `${configId}.json`));
     const gateway = desktopGatewayOfEntry(entry);
-    return gateway && isCodeMieOwnedDesktopEntry(entry, localKey) ? { port: gateway.port } : null;
+    return gateway && isCodeMieDesktopConfig(meta, configId, entry, localKey) ? { port: gateway.port } : null;
   } catch (error) {
     logger.debug('[proxy] Claude Desktop CodeMie config not readable', ...sanitizeLogArgs(error));
     return null;
@@ -1521,7 +1542,7 @@ async function removeDesktopConfigLocked(baseDir: string, managedStatePath: stri
   if (!isCodeMieGatewayConfig(existing)) {
     return { removed: false, configPath, deletedConfigFile: false, reason: 'no CodeMie gateway configured' };
   }
-  if (!isCodeMieOwnedDesktopEntry(existing, localKey)) {
+  if (!isCodeMieDesktopConfig(meta, configId, existing, localKey)) {
     return { removed: false, configPath, deletedConfigFile: false, reason: 'its local gateway is not CodeMie\'s' };
   }
 

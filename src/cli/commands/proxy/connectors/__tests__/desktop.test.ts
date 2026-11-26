@@ -2676,19 +2676,18 @@ describe('CodeMie ownership of the applied Desktop entry', () => {
     await expect(readCodeMieDesktopGateway(baseDir, join(baseDir, 'no-state.json'))).resolves.toBeNull();
   });
 
-  it('disconnect refuses a CodeMie Proxy entry holding a sealed key without the connect shape', async () => {
-    await lib.seed({ appliedId: 'c', entries: [{ id: 'c', name: 'CodeMie Proxy' }] }, { c: FOREIGN_SEALED });
-    const { baseDir, libDir, statePath } = lib.paths();
+  it.each([
+    ['an earlier CLI wrote (no connect shape)', loopbackEntry(SEALED_KEY)],
+    ['with Cowork hosts edited in Desktop', loopbackEntry(SEALED_KEY, { ...CODEMIE_SHAPE, coworkEgressAllowedHosts: JSON.stringify(['example.com']) })],
+    ['with model discovery turned off', loopbackEntry(SEALED_KEY, { ...CODEMIE_SHAPE, modelDiscoveryEnabled: false })],
+  ])('disconnect cleans a sealed CodeMie Proxy entry %s', async (_label, entry) => {
+    await lib.seed({ appliedId: 'c', entries: [{ id: 'c', name: 'CodeMie Proxy' }] }, { c: entry });
+    const { baseDir, statePath } = lib.paths();
+    await expect(readCodeMieDesktopGateway(baseDir, join(baseDir, 'no-state.json'))).resolves.toEqual({ port: 4001 });
 
     const result = await removeDesktopConfig(baseDir, statePath);
 
-    expect(result).toEqual({
-      removed: false,
-      configPath: join(libDir, 'c.json'),
-      deletedConfigFile: false,
-      reason: 'its local gateway is not CodeMie\'s',
-    });
-    expect(JSON.parse(await readFile(join(libDir, 'c.json'), 'utf-8'))).toEqual(FOREIGN_SEALED);
+    expect(result).toMatchObject({ removed: true, deletedConfigFile: true });
   });
 
   it('disconnect cleans a CodeMie Proxy entry whose sealed key came with the connect shape', async () => {
@@ -2764,13 +2763,24 @@ describe('managed MCP state tied to a config', () => {
     expect(records[configId].pendingFingerprints).toBeUndefined();
   });
 
+  it('also writes the managed names at the top level, so an earlier CLI run after a rollback can revoke them', async () => {
+    const { baseDir, statePath } = lib.paths();
+
+    await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
+
+    const state = JSON.parse(await readFile(statePath, 'utf-8'));
+    const [record] = Object.values(state.configs) as ManagedRecordOnDisk[];
+    expect(state.managedNames).toEqual(record.managedNames);
+    expect(state.managedNames).toContain('Notion');
+  });
+
   it('keeps a user server named like a server managed in another config', async () => {
     await lib.seed(
       { appliedId: 'b', entries: [{ id: 'a', name: 'Old Profile' }, { id: 'b', name: 'CodeMie Proxy' }] },
       { b: { ...loopbackEntry('codemie-proxy'), managedMcpServers: JSON.stringify([USER_OLD_NAME]) } },
     );
     const { baseDir, statePath } = lib.paths();
-    await writeFile(statePath, JSON.stringify({ configId: 'a', managedNames: ['oldserver'] }), 'utf-8');
+    await writeFile(statePath, JSON.stringify({ configs: { a: { managedNames: ['oldserver'], fingerprints: {} } } }), 'utf-8');
 
     const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
 
@@ -2788,7 +2798,7 @@ describe('managed MCP state tied to a config', () => {
       { b: { ...loopbackEntry('codemie-proxy'), managedMcpServers: JSON.stringify([USER_OLD_NAME]) } },
     );
     const { baseDir, statePath } = lib.paths();
-    await writeFile(statePath, JSON.stringify({ configId: 'b', managedNames: ['oldserver'] }), 'utf-8');
+    await writeFile(statePath, JSON.stringify({ configs: { b: { managedNames: ['oldserver'], fingerprints: {} } } }), 'utf-8');
 
     const { configPath } = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
 
@@ -2830,7 +2840,7 @@ describe('managed MCP state tied to a config', () => {
       { b: { ...loopbackEntry('codemie-proxy'), managedMcpServers: JSON.stringify([USER_OLD_NAME]) } },
     );
     const { baseDir, statePath } = lib.paths();
-    const foreignState = JSON.stringify({ configId: 'a', managedNames: ['oldserver'] });
+    const foreignState = JSON.stringify({ configs: { a: { managedNames: ['oldserver'], fingerprints: {} } } });
     await writeFile(statePath, foreignState, 'utf-8');
 
     const first = await removeDesktopConfig(baseDir, statePath);
@@ -2840,7 +2850,7 @@ describe('managed MCP state tied to a config', () => {
     // the user server was not treated as managed, so it is kept
     expect(JSON.parse(JSON.parse(await readFile(first.configPath as string, 'utf-8')).managedMcpServers)).toEqual([USER_OLD_NAME]);
 
-    await writeFile(statePath, JSON.stringify({ configId: 'b', managedNames: [] }), 'utf-8');
+    await writeFile(statePath, JSON.stringify({ configs: { b: { managedNames: [], fingerprints: {} } } }), 'utf-8');
     await lib.seed({ appliedId: 'b', entries: [{ id: 'b', name: 'CodeMie Proxy' }] }, { b: loopbackEntry('codemie-proxy') });
     await removeDesktopConfig(baseDir, statePath);
     expect(existsSync(statePath)).toBe(false);
@@ -3276,9 +3286,8 @@ describe('user-edited managed MCP servers', () => {
       it('refreshes a managed server once on the first reconnect, then keeps the edits made after that', async () => {
         const { configPath } = await connect([SAMPLE]);
         const { statePath } = lib.paths();
-        const [configId] = Object.keys(await readManagedRecords(statePath));
-        // the earlier CLI recorded no fingerprints
-        await writeFile(statePath, JSON.stringify({ configId, managedNames: ['sample', 'Notion'] }), 'utf-8');
+        // the earlier CLI recorded the names alone, with no config id and no fingerprints
+        await writeFile(statePath, JSON.stringify({ managedNames: ['sample', 'Notion'] }), 'utf-8');
         await editServer(configPath, 'sample', { url: EDITED_URL });
 
         await connect([SAMPLE]);
@@ -3287,20 +3296,6 @@ describe('user-edited managed MCP servers', () => {
         await connect([SAMPLE]);
 
         expect(await sampleOf(configPath)).toEqual([{ ...SAMPLE, url: EDITED_URL }]);
-      });
-
-      it('reads the single-slot state of the config and keeps its recorded baselines', async () => {
-        const { configPath } = await connect([SAMPLE]);
-        const { statePath } = lib.paths();
-        const [configId] = Object.keys(await readManagedRecords(statePath));
-        const record = await readOnlyManagedRecord(statePath);
-        await writeFile(statePath, JSON.stringify({ configId, ...record }), 'utf-8');
-        await editServer(configPath, 'sample', { url: EDITED_URL });
-
-        await connect([SAMPLE]);
-
-        expect(await sampleOf(configPath)).toEqual([{ ...SAMPLE, url: EDITED_URL }]);
-        expect(await readManagedRecords(statePath)).toEqual({ [configId]: record });
       });
     });
 
