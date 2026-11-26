@@ -415,6 +415,8 @@ describe('handleRun hands the launch\'s resume id to the plugin', () => {
     ['copilot --session-id=<id>', ['--session-id=copilot-native-2'], {}, copilotExtract, 'copilot-native-2'],
     ['opencode --session <ses_>', ['--session', 'ses_abc123'], {}, opencodeExtract, 'ses_abc123'],
     ['opencode --session=<ses_>', ['--session=ses_def456'], {}, opencodeExtract, 'ses_def456'],
+    ['opencode -s <ses_> (codex/gemini have no -s resume helper)', ['-s', 'ses_short1'], {}, opencodeExtract, 'ses_short1'],
+    ['opencode --resume <ses_> unchanged', [], { resume: 'ses_wrapper1' }, opencodeExtract, 'ses_wrapper1'],
     ['codemie-code --session <ses_>', ['--session', 'ses_ghi789'], {}, codemieCodeExtract, 'ses_ghi789'],
   ])('%s → the id', async (_form, args, options, extract, expected) => {
     expect(await resumeEnvOf(args as string[], options, extract)).toBe(expected);
