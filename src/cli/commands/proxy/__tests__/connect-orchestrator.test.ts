@@ -69,6 +69,7 @@ vi.mock('../connectors/desktop.js', async (importOriginal) => ({
   writeDesktopConfig: vi.fn(),
   getDesktopBaseDir: vi.fn().mockReturnValue('/mock/desktop/base'),
   getDesktopConfigPath: vi.fn(async () => '/mock/desktop/base/configLibrary/applied.json'),
+  getCodeMieDesktopConfigPath: vi.fn(async () => '/mock/desktop/base/configLibrary/codemie.json'),
   mapCanonicalToDesktop: vi.fn().mockReturnValue([]),
   summarizeManagedOauthShapes: vi.fn().mockReturnValue({ oauthConfigured: 0, oauthFlagged: 0, noAuth: 0 }),
   describeManagedSettingsOverride: vi.fn().mockReturnValue(null),
@@ -841,7 +842,7 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     vi.mocked(readConnectionRecord).mockResolvedValue({ version: 1, profile: 'p', updatedAt: '', port: 52311 });
     vi.mocked(checkStatus).mockResolvedValue({ running: true, state: onFallback as Awaited<ReturnType<typeof checkStatus>>['state'] });
     vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'deep', code: 'ok' });
-    vi.mocked(writeDesktopConfig).mockResolvedValue('/desktop/config.json');
+    vi.mocked(writeDesktopConfig).mockResolvedValue({ configPath: '/desktop/config.json', activated: false });
     const { connectTargets } = await import('../connect-orchestrator.js');
 
     try {
@@ -1170,7 +1171,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
     const { stopDaemon } = await import('../daemon-manager.js');
     const { writeDesktopConfig } = await import('../connectors/desktop.js');
     const { writeVsCodeLanguageModelsConfig } = await import('../connectors/vscode.js');
-    vi.mocked(writeDesktopConfig).mockResolvedValue('/desktop/config.json');
+    vi.mocked(writeDesktopConfig).mockResolvedValue({ configPath: '/desktop/config.json', activated: false });
     vi.mocked(writeVsCodeLanguageModelsConfig).mockResolvedValue({ configPath: '/vscode/models.json', requiresSecretConfiguration: false, modelCount: 5 });
     const { connectTargets } = await import('../connect-orchestrator.js');
 
@@ -1181,6 +1182,49 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
     expect(console_.log()).not.toHaveBeenCalledWith(expect.stringContaining('Targets configured'));
   });
 
+  it('writes the Claude Desktop config the provider-settings gate inspected', async () => {
+    await withFreshDaemon();
+    const { writeDesktopConfig, getCodeMieDesktopConfigPath } = await import('../connectors/desktop.js');
+    vi.mocked(getCodeMieDesktopConfigPath).mockClear();
+    vi.mocked(writeDesktopConfig).mockResolvedValue({ configPath: '/desktop/config.json', activated: false });
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { claudeDesktop: true } });
+
+    expect(getCodeMieDesktopConfigPath).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(writeDesktopConfig).mock.calls[0][6]).toBe('/mock/desktop/base/configLibrary/codemie.json');
+  });
+
+  it('says when it switched Claude Desktop to the CodeMie configuration, before the restart line', async () => {
+    await withFreshDaemon();
+    const { writeDesktopConfig } = await import('../connectors/desktop.js');
+    vi.mocked(writeDesktopConfig).mockResolvedValue({
+      configPath: '/desktop/config.json', activated: true, switchedFrom: 'QA Other Gateway',
+    });
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { claudeDesktop: true } });
+
+    const lines = vi.mocked(console_.log()).mock.calls.map((call) => String(call[0]));
+    const switched = lines.findIndex((line) => line.includes(
+      '  Switched Claude Desktop\'s active configuration from "QA Other Gateway" to "CodeMie Proxy".'
+    ));
+    const restart = lines.findIndex((line) => line.includes('Restart Claude Desktop to apply changes.'));
+    expect(switched).toBeGreaterThanOrEqual(0);
+    expect(switched).toBeLessThan(restart);
+  });
+
+  it('prints no switch line when the CodeMie configuration was already active', async () => {
+    await withFreshDaemon();
+    const { writeDesktopConfig } = await import('../connectors/desktop.js');
+    vi.mocked(writeDesktopConfig).mockResolvedValue({ configPath: '/desktop/config.json', activated: false });
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { claudeDesktop: true } });
+
+    expect(console_.log()).not.toHaveBeenCalledWith(expect.stringContaining('Switched Claude Desktop'));
+  });
+
   it('logs the named key it wrote into the Desktop config, not the shared one', async () => {
     await withFreshDaemon();
     const { readState } = await import('../daemon-manager.js');
@@ -1189,7 +1233,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
     vi.mocked(spawnDaemon).mockResolvedValue(spawned);
     vi.mocked(readState).mockResolvedValue(spawned);
     const { writeDesktopConfig } = await import('../connectors/desktop.js');
-    vi.mocked(writeDesktopConfig).mockResolvedValue('/desktop/config.json');
+    vi.mocked(writeDesktopConfig).mockResolvedValue({ configPath: '/desktop/config.json', activated: false });
     const { logger } = await import('../../../../utils/logger.js');
     const info = vi.spyOn(logger, 'info').mockImplementation(() => {});
     const { connectTargets } = await import('../connect-orchestrator.js');
@@ -1303,7 +1347,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       const matching = matchingDesktopState();
       vi.mocked(checkStatus).mockResolvedValue({ running: true, state: matching as Awaited<ReturnType<typeof checkStatus>>['state'] });
       vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'deep', code: 'ok' });
-      vi.mocked(writeDesktopConfig).mockResolvedValue('/desktop/config.json');
+      vi.mocked(writeDesktopConfig).mockResolvedValue({ configPath: '/desktop/config.json', activated: false });
       const { connectTargets } = await import('../connect-orchestrator.js');
 
       await connectTargets({ targets: { claudeDesktop: true } });
@@ -1318,7 +1362,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       const { writeConnectionRecord } = await import('../daemon-manager.js');
       const { spawnDaemon } = await import('../daemon-spawn.js');
       const { writeDesktopConfig } = await import('../connectors/desktop.js');
-      vi.mocked(writeDesktopConfig).mockResolvedValue('/desktop/config.json');
+      vi.mocked(writeDesktopConfig).mockResolvedValue({ configPath: '/desktop/config.json', activated: false });
       const { connectTargets } = await import('../connect-orchestrator.js');
 
       await connectTargets({ targets: { claudeDesktop: true } });
@@ -1383,7 +1427,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       await withFreshDaemon();
       const { stopDaemon, writeConnectionRecord } = await import('../daemon-manager.js');
       const { writeDesktopConfig } = await import('../connectors/desktop.js');
-      vi.mocked(writeDesktopConfig).mockResolvedValue('/desktop/config.json');
+      vi.mocked(writeDesktopConfig).mockResolvedValue({ configPath: '/desktop/config.json', activated: false });
       vi.mocked(writeConnectionRecord).mockResolvedValue(false);
       const { connectTargets } = await import('../connect-orchestrator.js');
 
@@ -1806,7 +1850,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       const { writeClaudeCodeOtlpConfig } = await import('../connectors/claude-code-otlp.js');
       const { writeCopilotChatOtlpConfig } = await import('../connectors/copilot-chat-otlp.js');
       const { writeCopilotCliOtlpConfig } = await import('../connectors/copilot-cli-otlp.js');
-      vi.mocked(writeDesktopConfig).mockResolvedValue('/desktop/config.json');
+      vi.mocked(writeDesktopConfig).mockResolvedValue({ configPath: '/desktop/config.json', activated: false });
       vi.mocked(writeVsCodeClaudeCodeConfig).mockResolvedValue({ written: true, path: '/vscode/settings.json' });
       return { writeDesktopConfig, writeVsCodeClaudeCodeConfig, writeClaudeCodeOtlpConfig, writeCopilotChatOtlpConfig, writeCopilotCliOtlpConfig };
     }
@@ -2697,7 +2741,7 @@ describe('connectTargets — the other clients moved off the shared key', () => 
     vi.mocked(daemon.clearLegacyClientIdentity).mockImplementation(() => actual.clearLegacyClientIdentity(recordPath()));
     vi.mocked(daemon.hasLegacyClientIdentity).mockImplementation(() => actual.hasLegacyClientIdentity(recordPath()));
     const { writeDesktopConfig } = await import('../connectors/desktop.js');
-    vi.mocked(writeDesktopConfig).mockResolvedValue('/desktop/config.json');
+    vi.mocked(writeDesktopConfig).mockResolvedValue({ configPath: '/desktop/config.json', activated: false });
     const { writeOmpExtension } = await import('../connectors/omp.js');
     vi.mocked(writeOmpExtension).mockResolvedValue({ path: '/omp/codemie-models.js', changed: true });
     // The Codex connect lists its models through the proxy.
@@ -4176,7 +4220,7 @@ describe('targets that once needed another identity, over one daemon', () => {
       writeCodexDesktopConfig: vi.fn().mockResolvedValue(undefined),
     }));
     const { writeDesktopConfig } = await import('../connectors/desktop.js');
-    vi.mocked(writeDesktopConfig).mockResolvedValue('/desktop/config.json');
+    vi.mocked(writeDesktopConfig).mockResolvedValue({ configPath: '/desktop/config.json', activated: false });
     const { connectTargets } = await import('../connect-orchestrator.js');
 
     try {
@@ -4388,7 +4432,7 @@ describe('connect while Claude Desktop is connected: no identity is passed', () 
   it('a connect naming Claude Desktop spawns with no identity on the port Desktop is configured with', async () => {
     const s = await arrange(4005, null);
     const { writeDesktopConfig } = await import('../connectors/desktop.js');
-    vi.mocked(writeDesktopConfig).mockResolvedValue('/desktop/config.json');
+    vi.mocked(writeDesktopConfig).mockResolvedValue({ configPath: '/desktop/config.json', activated: false });
     vi.mocked(s.spawner.spawnDaemon).mockResolvedValue(
       matchingDesktopState({ port: 4005, url: 'http://127.0.0.1:4005' }) as Awaited<ReturnType<typeof s.spawner.spawnDaemon>>
     );
