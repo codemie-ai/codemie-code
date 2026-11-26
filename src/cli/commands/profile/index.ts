@@ -81,7 +81,8 @@ export function createProfileCommand(): Command {
  */
 async function listProfiles(): Promise<void> {
   try {
-    const workingDir = process.cwd();
+    const { findNearestConfigDir } = await import('@/agents/core/event-fields/identity-fields.js');
+    const workingDir = await findNearestConfigDir(process.cwd());
     const profiles = await ConfigLoader.listProfiles(workingDir);
     const hasLocal = await ConfigLoader.hasLocalConfig(workingDir);
     // Each profile resolves its own identity by name: two global profiles can use

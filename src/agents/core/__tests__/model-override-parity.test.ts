@@ -205,6 +205,15 @@ describe('CODEMIE_MODEL override at launch', () => {
       expect(lines.find((line) => line.includes('codeMieProject:'))).toContain('p-project');
       expect(lines.join('\n')).not.toContain('x-project');
     });
+
+    it('the profile list marks the nearest .codemie active profile, as the launcher uses it', async () => {
+      const lines = await runProfile(sub, []);
+      const active = lines.filter((line) => line.includes('(Active)'));
+
+      expect(active).toHaveLength(1);
+      expect(active[0]).toMatch(/│\s*p\s*\(Active\)/);
+      expect(lines.join('\n')).toContain('Showing profiles from both local');
+    });
   });
 
   it('counts an env model equal to the profile model as env, without a marker', async () => {
