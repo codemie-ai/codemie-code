@@ -1,6 +1,40 @@
 import type { AgentMetadata } from '../../core/types.js';
 import type { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import { CodexPlugin, CodexPluginMetadata } from './codex.plugin.js';
+import { readFile, writeFile } from 'fs/promises';
+import { join } from 'path';
+import { logger } from '../../../utils/logger.js';
+
+/**
+ * Point CODEX_HOME's config.toml at the generated model catalog (or drop a stale pointer).
+ *
+ * codex-acp builds its model list from Codex's app-server, which only honors
+ * `model_catalog_json` from the config.toml layer — the same key passed through
+ * CODEX_CONFIG is ignored, so the picker would show Codex's full bundled catalog
+ * instead of the profile's narrowed one. The key must sit above any `[table]`
+ * header to be top-level; the rest of the file (e.g. trusted-project tables Codex
+ * writes itself) is left untouched.
+ */
+export async function syncModelCatalogToConfigToml(codexHome: string, catalogPath: string | undefined): Promise<void> {
+  const configPath = join(codexHome, 'config.toml');
+  let current = '';
+  try {
+    current = await readFile(configPath, 'utf-8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+
+  const firstTable = current.search(/^\s*\[/m);
+  const preamble = firstTable === -1 ? current : current.slice(0, firstTable);
+  const rest = firstTable === -1 ? '' : current.slice(firstTable);
+  const cleaned = preamble.replace(/^model_catalog_json\s*=.*\r?\n?/m, '');
+  const line = catalogPath ? `model_catalog_json = ${JSON.stringify(catalogPath)}\n` : '';
+  const next = line + cleaned + rest;
+
+  if (next !== current) {
+    await writeFile(configPath, next, 'utf-8');
+  }
+}
 
 /**
  * Codex ACP Plugin Metadata
@@ -81,6 +115,9 @@ export const CodexAcpPluginMetadata: AgentMetadata = {
     // CODEX_CONFIG — codex-acp's only configuration surface — mirroring the
     // same provider/tuning values codex.plugin.ts injects via --config flags.
     async beforeRun(this: BaseAgentAdapter, env: NodeJS.ProcessEnv) {
+      // Codex's beforeRun only assigns CODEX_HOME when the user has none; a user-set home is the
+      // user's own Codex config and must not be rewritten.
+      const ownsCodexHome = !env.CODEX_HOME;
       env = await (CodexPluginMetadata.lifecycle!.beforeRun as (this: BaseAgentAdapter, env: NodeJS.ProcessEnv) => Promise<NodeJS.ProcessEnv>).call(this, env);
 
       const isOllama = env.CODEMIE_PROVIDER === 'ollama';
@@ -123,6 +160,19 @@ export const CodexAcpPluginMetadata: AgentMetadata = {
           }
         }
         env.CODEX_CONFIG = JSON.stringify(merged);
+      }
+
+      if (env.CODEX_HOME && ownsCodexHome) {
+        try {
+          await syncModelCatalogToConfigToml(env.CODEX_HOME, env.CODEMIE_CODEX_MODEL_CATALOG_JSON);
+        } catch (error) {
+          logger.warn('[codex-acp] Could not sync model catalog into CODEX_HOME/config.toml', { error });
+        }
+      } else if (env.CODEMIE_PROFILE_MODELS) {
+        // AC22: the picker cannot be limited without writing config.toml, so say so.
+        logger.notice(
+          '[codex-acp] CODEX_HOME is your own Codex home, so the model menu is not limited to this agent\'s profile models'
+        );
       }
 
       return env;
