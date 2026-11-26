@@ -601,6 +601,22 @@ describe('BaseAgentAdapter', () => {
         await bannerModel({ CODEMIE_MODEL: 'claude-opus-4-8[1m]', CODEMIE_MODEL_ENV_ORIGIN: '', CODEMIE_PROFILE_MODEL: '' })
       ).toBe('claude-opus-4-8[1m]');
     });
+
+    it('drops the override marker when the agent replaces the env model before the banner', async () => {
+      class SwappingAdapter extends BaseAgentAdapter {
+        protected override async setupProxy(env: NodeJS.ProcessEnv): Promise<void> {
+          env.CODEMIE_MODEL = 'gpt-5.5';
+        }
+      }
+      const { renderProfileInfo } = await import('../../../utils/profile.js');
+      await new SwappingAdapter(bannerMetadata).run([], {
+        CODEMIE_MODEL: 'claude-opus-4-8[1m]',
+        CODEMIE_MODEL_ENV_ORIGIN: 'shell',
+        CODEMIE_PROFILE_MODEL: 'gpt-4.1',
+      });
+      expect((vi.mocked(renderProfileInfo).mock.calls.at(-1)?.[0] as { model?: string } | undefined)?.model)
+        .toBe('gpt-5.5');
+    });
   });
 
   describe('run() — Windows command path quoting', () => {

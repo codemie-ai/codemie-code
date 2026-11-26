@@ -637,9 +637,12 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       const profileName = env.CODEMIE_PROFILE_NAME || 'default';
       const provider = env.CODEMIE_PROVIDER || 'unknown';
       const cliVersion = env.CODEMIE_CLI_VERSION || 'unknown';
+      // The origin describes the launcher's model; an agent that picked another one in setupProxy
+      // (Codex, Kimi catalog resolution) must not credit CODEMIE_MODEL for its own choice.
+      const launcherModelKept = env.CODEMIE_MODEL === envOverrides?.CODEMIE_MODEL;
       const model = describeModel(
         env.CODEMIE_MODEL || 'unknown',
-        parseModelEnvOrigin(env[MODEL_ENV_ORIGIN_ENV]),
+        launcherModelKept ? parseModelEnvOrigin(env[MODEL_ENV_ORIGIN_ENV]) : undefined,
         env[PROFILE_MODEL_ENV] || undefined
       );
       const codeMieUrl = env.CODEMIE_URL;
