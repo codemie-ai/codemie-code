@@ -19,6 +19,7 @@ import { readRecord, recordKey } from '@/agents/core/evidence/record-store.js';
 import { isStopped, writeStop } from '@/agents/core/evidence/stop-marker.js';
 import { currentGeneration, scopeViolation } from '@/agents/core/evidence/session-scope.js';
 import { hasPendingOwnerSession } from '@/agents/core/evidence/owner-pending.js';
+import { readState } from '@/cli/commands/proxy/daemon-manager.js';
 import { resolveProjectAtCwd } from '@/agents/core/event-fields/identity-fields.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from './copilot-cli-otlp.constants.js';
 import { copilotEvidenceInputs, copilotRouteProof, isFreshStart, isKnownSession } from './copilot-cli-otlp.evidence.js';
@@ -124,16 +125,18 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
    * A recorded session stops spooling when its stop marker exists or its project/generation no longer matches
    * the record (same rule as Claude's gate). Unrecorded sessions are untouched; anything unreadable fails closed.
    */
-  protected override async transitionGate(input: CopilotCliHookInput): Promise<'continue' | 'stop'> {
+  protected override async transitionGate(input: CopilotCliHookInput): Promise<'continue' | 'stop' | 'retry-after-proxy-start'> {
     try {
       const proven = copilotRouteProof(isManagedSession(input.sessionId)) !== undefined;
       // Sticky attribution: a session the evidence store knows keeps its claim only while the route is still proven.
       const id = await currentEvidenceIdentity();
       // A session-wide existence check is only a stop signal: it never authorizes anything.
       if (!id) {
-        // No identity to read a record with: a known session continues only as proven, owner-held recovery (it is stamped and held for its owner).
         if (!(await isKnownSession(input.sessionId))) return 'continue';
-        return proven && (await hasPendingOwnerSession(input.sessionId)) ? 'continue' : 'stop';
+        if (!proven) return 'stop';
+        if (await hasPendingOwnerSession(input.sessionId)) return 'continue';
+        // Credentials are resolved from daemon state. Start the proxy, then recheck the session before it can spool.
+        return (await readState()) === null ? 'retry-after-proxy-start' : 'stop';
       }
       const key = recordKey(id.api_identity, id.owner_hash, input.sessionId);
       const found = await readRecord(key);

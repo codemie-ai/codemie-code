@@ -202,6 +202,24 @@ describe('sticky attribution boundary', () => {
     const other = { ...creds, email: 'other@example.com' };
     const otherKey = (): string => recordKey(apiIdentity(creds.apiUrl), ownerHash(other.email), sid);
 
+    it('cold-starts the daemon before resuming an already recorded session', async () => {
+      const { resolveHookCredentials } = await import('@/agents/core/hook-credentials.js');
+      await start();
+      delete process.env[PINNED_NATIVE_SESSION_ENV];
+      vi.mocked(resolveHookCredentials).mockResolvedValue(undefined as never);
+      deps.ensureOtlpProxy.mockImplementationOnce(async () => {
+        vi.mocked(resolveHookCredentials).mockResolvedValue(creds as never);
+      });
+      try {
+        await start('resume');
+        expect(spooled).toHaveLength(2);
+        expect(spooled[1]?.options).toEqual({ evidenceV: 1 });
+      } finally {
+        deps.ensureOtlpProxy.mockReset();
+        vi.mocked(resolveHookCredentials).mockResolvedValue(creds as never);
+      }
+    });
+
     it('lost proof under another login (record sits under the previous owner): no unstamped bytes, stopped', async () => {
       const { resolveHookCredentials } = await import('@/agents/core/hook-credentials.js');
       await start();
