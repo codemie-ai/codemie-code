@@ -1,0 +1,383 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "Check round approved; fix-set resolved; CR-003 accepted by user"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "User chose fix-now for CR-001,002,003,004,005,008; rest fix-later"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "Check round approved; fix-set resolved; CR-003 accepted by user"
+    }
+  ],
+  "reviewed_head": "18d1be7707e7c7a42b88878e5539234299670fcb",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "Both fix-set blocking findings (CR-001 shim probe now precedes the PATH lookup; CR-002 curly quotes U+2018-U+201F now rejected) are resolved from current source. CR-003 was accepted by the user and is not in the fix set. Advisory ids graded in advisory_status.",
+  "confidence": "medium",
+  "check_confidence": "high",
+  "risk_flags": [
+    "security"
+  ],
+  "open": 0,
+  "closed": {
+    "fixed": 2,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 1
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/agents/core/BaseAgentAdapter.ts",
+      "line": 341,
+      "title": "Shadow lookup runs before managed-shim check",
+      "problem": "checkPathShadow awaits getPathMatches() (a where.exe spawn) at line 341 before probing for the managed shim (lines 344-354). AC11 requires list and doctor to skip agents with no managed shim, because those can only be 'missing'. Every manageable agent without a managed shim still spawns a lookup. Reading the code confirmed the order and that list.ts and AgentsCheck.buildNotOnPathDetails both call checkPathShadow for every agent.",
+      "impact": "A required criterion (AC11) is only partially met. list and doctor spawn one where.exe per not-installed agent, which costs time on Windows and risks the 5000 ms deadline.",
+      "recommendation": "Probe for the managed shim first. Return {status:'missing'} (or the existing verdict for that case) without a lookup when no shim exists, and call getPathMatches() only when a shim exists. Keep the memoized lookup for launch.",
+      "status": "resolved",
+      "check_notes": "BaseAgentAdapter.checkPathShadow probes the managed .cmd shim first and returns missing before getPathMatches().",
+      "fix": {
+        "change": "checkPathShadow probes the managed .cmd shim first and returns missing without a where.exe lookup",
+        "test": "BaseAgentAdapter.path-shadow.test.ts: skips the PATH lookup when no managed shim exists"
+      },
+      "disposition": {
+        "rationale": "user chose fix-now",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/utils/path-shadow.ts",
+      "line": 57,
+      "title": "PowerShell safety check misses curly quotes",
+      "problem": "isSafeForPowerShell rejects only ASCII ' \" ; % and control characters. PowerShell treats U+2018 to U+201B as single quotes and U+201C to U+201E as double quotes. A managed dir containing one (for example a profile named O’Brien) passes the check and breaks out of the single-quoted string in the copy-paste command.",
+      "impact": "The suggested command can break or run unintended text when pasted into PowerShell. The trigger is narrow: a user profile or prefix path with a typographic quote. Reachability from the diff is confirmed because userPathCommand embeds the dir unchanged.",
+      "recommendation": "Extend the pattern to include \\u2018-\\u201f, e.g. return !/['\"\\u2018-\\u201f;%\\u0000-\\u001f\\u007f]/.test(dir); the command is then omitted for such dirs.",
+      "status": "resolved",
+      "check_notes": "isSafeForPowerShell regex now includes the U+2018-U+201F range, so the command is omitted for such dirs.",
+      "fix": {
+        "change": "isSafeForPowerShell also rejects U+2018-U+201F quotes",
+        "test": "path-shadow.test.ts: omits the copy-paste command for unsafe directories"
+      },
+      "disposition": {
+        "rationale": "user chose fix-now",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "evidence",
+      "severity": "major",
+      "triage": "patch",
+      "file": "unknown",
+      "title": "Commit subjects embed ticket key",
+      "problem": "All 8 commit subjects in the range embed EPMCDME-16969, for example 'fix(cli): EPMCDME-16969 warn about PATH shadow on agent launch (T8)'. git-workflow.md lists a ticket key in the subject as an anti-pattern and says it belongs in the body footer. The standards review marked this blocking.",
+      "impact": "A documented commit-format convention is broken across the whole review range.",
+      "recommendation": "Reword subjects without the ticket key and reference EPMCDME-16969 in the commit body footer, or follow that form in the squash-merge title.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "User accepted: commits are local and unpushed; squash-and-merge PR title carries the ticket per git guide",
+        "source": "hitl",
+        "action": "accept"
+      }
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/agents/core/AgentCLI.ts",
+      "line": 199,
+      "title": "Launch awaits PATH lookup before start",
+      "problem": "handleRun awaits resolvePathShadow() (a where.exe lookup, up to 5000 ms) on every Windows launch. The shadow warning is printed to stderr even in non-interactive or silent mode.",
+      "impact": "Typical where.exe calls are fast; the 5 s wait needs a slow antivirus or network PATH entry. The warning only appears when the agent is shadowed, and the existing code also writes to stderr. Programmatic consumers that capture stderr see the extra lines.",
+      "recommendation": "Optionally run the check concurrently with isInstalled and suppress the warning when stdout is not a TTY or silent mode applies.",
+      "status": "resolved",
+      "check_notes": "Shadow lookup now runs concurrently with isInstalled via Promise.all; stderr suppression was optional and not done.",
+      "fix": {
+        "change": "handleRun runs isInstalled and the shadow lookup concurrently",
+        "test": "n/a"
+      },
+      "disposition": {
+        "rationale": "user chose fix-now",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/agents/core/BaseAgentAdapter.ts",
+      "line": 345,
+      "title": "Extensionless shim counts as managed install",
+      "problem": "The managed shim probe accepts the extensionless file as well as .cmd. An npm install writes both, so an extensionless leftover alone is unlikely, but it would count as a managed install.",
+      "impact": "A spurious shadowed or missing-on-path verdict only appears when the .cmd shim is absent and an extensionless file remains. This is uncommon.",
+      "recommendation": "Probe .cmd (and .exe if applicable) only, or document why the extensionless name is included.",
+      "status": "resolved",
+      "check_notes": "Managed shim probe now checks only the .cmd path.",
+      "fix": {
+        "change": "managed shim probe checks .cmd only",
+        "test": "BaseAgentAdapter.path-shadow.test.ts: ignores an extensionless leftover"
+      },
+      "disposition": {
+        "rationale": "user chose fix-now",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/commands/doctor/checks/AgentsCheck.ts",
+      "title": "Shadowed agent runs getVersion twice",
+      "problem": "buildDetail calls agent.getVersion() in buildVersionDetail and again in the shadow branch. safeShadowVerdict has no shared deadline, unlike buildNotOnPathDetails.",
+      "impact": "One redundant subprocess per shadowed agent in doctor; no behavior consequence.",
+      "recommendation": "Reuse the first version result and apply the shared deadline to safeShadowVerdict.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/commands/install.ts",
+      "line": 150,
+      "title": "Version-matched install branch untested",
+      "problem": "printPathShadowAdvice was added after the 'v<version> is already installed' message in the version-matched branch. install.path-shadow.test.ts always calls parseAsync with only the agent name, so that branch has no test.",
+      "impact": "Removing or misplacing the call would ship silently; the behavior itself is correct today.",
+      "recommendation": "Add a test that runs `install pi <version>` with getVersion returning that version and a shadowed verdict, and assert the shadow warning follows the already-installed line.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-008",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/commands/list.ts",
+      "title": "List drops shadow info when isInstalled false",
+      "problem": "When isInstalled() is false but the verdict is 'shadowed' (the two lookups disagree), the row shows plain 'not installed' and the shadow information is lost.",
+      "impact": "The lookups disagree only on an unusual PATH state; the row still reports 'not installed'.",
+      "recommendation": "Add a shadowed branch to the not-installed path, or document why it is excluded.",
+      "status": "resolved",
+      "check_notes": "list.ts shadowed branch no longer depends on isInstalled().",
+      "fix": {
+        "change": "list shows the shadowed row whenever the verdict is shadowed",
+        "test": "list.path-shadow.test.ts: keeps shadow info when isInstalled disagrees"
+      },
+      "disposition": {
+        "rationale": "user chose fix-now",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-009",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/utils/__tests__/paths.test.ts",
+      "title": "Symlink test passes vacuously without privileges",
+      "problem": "The isSamePathResolved test returns early when symlink creation is not permitted, which is common for unprivileged Windows users. The resolution assertions sit after the return, so nothing runs and nothing is reported as skipped.",
+      "impact": "A regression in realpath resolution would pass CI wherever symlinks fail, and BaseAgentAdapter tests use raw strings so they do not cover it.",
+      "recommendation": "Use it.skipIf or a visible skip, and assert the non-symlink cases outside the try block.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-010",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/utils/path-shadow.ts",
+      "line": 61,
+      "title": "User PATH prepend may not beat machine PATH",
+      "problem": "userPathCommand prepends the dir to the User PATH. Windows builds the effective PATH as Machine entries then User entries, so this cannot beat a shadowing copy in a machine-wide dir. The command also reads the value through GetEnvironmentVariable, which expands %VAR% references and flattens REG_EXPAND_SZ values, and leaves a leading ';' when the current value is empty.",
+      "impact": "The primary suggested fix may not take effect when the shadowing copy lives in a machine PATH dir; the other remedies are listed as trailing bullets. Users can follow those instead.",
+      "recommendation": "State in the warning that machine-wide copies need a different fix, and warn about %VAR% expansion or read the registry value with DoNotExpandEnvironmentNames.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-011",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/utils/processes.ts",
+      "line": 109,
+      "title": "Any non-zero where.exe exit means no matches",
+      "problem": "getCommandMatches returns status 'answered' with no matches for any non-zero exit. where.exe exits 1 for 'not found', but other failures (access error, bad argument) are also mapped to 'answered' with an empty list.",
+      "impact": "A where.exe failure other than 'not found' could give a false missing-on-path hint; it needs an unusual environment failure. The hint is advice only.",
+      "recommendation": "Treat only exit code 1 as 'answered' with no matches and return 'unanswered' for other non-zero codes.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "AC1: install warns on shadowed, names both locations, put-ahead command",
+      "status": "pass",
+      "notes": "formatShadowWarning + printPathShadowAdvice"
+    },
+    {
+      "kind": "spec",
+      "item": "AC1a: repeat install of a shadowed agent shows the same warning",
+      "status": "pass",
+      "notes": "advice called after both already-installed messages"
+    },
+    {
+      "kind": "spec",
+      "item": "AC2: list marks shadowed with active and expected location",
+      "status": "pass",
+      "notes": "list.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "AC3: doctor reports shadowed and missing-on-path via shared entry point",
+      "status": "pass",
+      "notes": "AgentsCheck.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "AC4: launching a shadowed agent warns before start",
+      "status": "pass",
+      "notes": "AgentCLI.handleRun"
+    },
+    {
+      "kind": "spec",
+      "item": "AC5: clear verdict prints nothing",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC6: missing verdict keeps 'not installed' with no hint",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC7: warnings change nothing (report-only)",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC8: unknown verdict leaves behavior as today",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC9: missing-on-path hint after install, on list, on launch",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC10: no false shadow warnings (case, separators, shims, 8.3, symlinks)",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC11: list computes verdicts once, concurrently, skipping agents with no managed shim",
+      "status": "partial",
+      "notes": "lookup spawned before managed-shim check; see CR-001"
+    },
+    {
+      "kind": "spec",
+      "item": "AC11: launch reuses a single lookup, no npm spawn",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "AC11: lookup killed on timeout; 5000 ms deadline",
+      "status": "pass",
+      "notes": ""
+    },
+    {
+      "kind": "spec",
+      "item": "NG1/NG7/NG8/NG9: no PATH edits, native agents excluded, signatures unchanged, Windows only",
+      "status": "pass",
+      "notes": ""
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "partial",
+      "notes": "All 8 subjects embed EPMCDME-16969; git-workflow.md says to put the ticket key in the body footer."
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "No documented violation found."
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "No credential logging; exec() with argument array; directories checked by isSafeForPowerShell."
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "AC11 is only partially met (the where.exe lookup runs before the managed-shim check), the suggested PowerShell command is unsafe for curly-quote dirs, and all 8 commit subjects embed the ticket key. 8 advisory findings (inside the total), 0 deferred, 7 dismissed. All four lenses and standards ran.",
+    "confidence": "medium",
+    "risk_flags": [
+      "security"
+    ]
+  }
+}

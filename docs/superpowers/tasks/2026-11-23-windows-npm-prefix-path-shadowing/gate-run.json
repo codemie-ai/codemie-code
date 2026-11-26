@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-16969_npm-prefix",
+  "head": "1623fb80b1f80efcbc29c43850f9987a41492a13",
+  "runner": "npm",
+  "started_at": "2026-11-23T14:25:03.880Z",
+  "completed_at": "2026-11-23T14:25:03.880Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2650,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 18007,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5548,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 10309,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 270777,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "Raw exit 1: 4 failed | 12228 passed. All 4 are Windows symlink EPERM (need elevated shell) and ignored per user ruling: generators.test.ts (resolves a symlinked entry to its realpath), connect-orchestrator.test.ts (Codex config symlink), codex-desktop-roundtrip.test.ts (symlink config), vscode-claude-code.test.ts (symlink settings). sso.detached-login flake did not occur this run."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 67296,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0
+    },
+    {
+      "id": "secrets",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 2472,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Output: \"No staged changes to scan\". Needs staged changes (and Docker/Gitleaks) to actually scan; CI re-runs it."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3000,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    }
+  ],
+  "failures": {}
+}
