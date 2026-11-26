@@ -10,12 +10,17 @@ import type { ProxyHTTPClient } from '../../proxy-http-client.js';
 
 const recordStampLossMock = vi.fn().mockResolvedValue(undefined);
 const appendSpoolMock = vi.fn(
-  async (_sessionId: string, _stream: string, _data: string, _projectNames?: string[]) => {}
+  async (_sessionId: string, _stream: string, _data: string, _projectNames?: string[], _options?: { skipIf?: () => Promise<boolean> }) => {}
 );
 vi.mock('../otlp-spool/spool-io.js', () => ({ appendSpool: appendSpoolMock, recordStampLoss: recordStampLossMock }));
 
 const scheduleMock = vi.fn();
-vi.mock('../otlp-spool/copilot-usage-enrichment.js', () => ({ scheduleCopilotUsageEnrichment: scheduleMock }));
+const lateSkipMock = vi.fn((_agent: string, _sid: string, _events: unknown[]): (() => Promise<boolean>) | undefined => undefined);
+const hookLifecycle = {
+  beforeSessionTicks: vi.fn(),
+  skipAppend: lateSkipMock,
+  afterBatchAccepted: scheduleMock,
+};
 
 const getAnalyticsAgentMock = vi.fn((name: string) =>
   name === 'claude-code-otlp' || name === 'copilot-cli-otlp' ? { name } : undefined
@@ -55,7 +60,7 @@ function hooksContext(body: unknown, overrides: Partial<ProxyContext> = {}): Pro
 }
 
 async function postHooks(body: unknown, overrides: Partial<ProxyContext> = {}) {
-  const plugin = new OtlpPlugin();
+  const plugin = new OtlpPlugin(hookLifecycle);
   const interceptor = plugin.createInterceptor({} as never);
   const res = fakeResponse();
   await interceptor.handleRequest(hooksContext(body, overrides), {} as IncomingMessage, res, {} as ProxyHTTPClient);
@@ -241,6 +246,15 @@ describe('OtlpPlugin — deferred Copilot usage scheduling', () => {
     const res = await postHooks({ agentName: 'copilot-cli-otlp', hookEvents: events });
     expect(res.statusCode).toBe(202);
     expect(scheduleMock).toHaveBeenCalledWith('copilot-cli-otlp', events);
+  });
+
+  it('appends a Copilot end batch under the late-end skip guard of its session and events', async () => {
+    const guard = async (): Promise<boolean> => false;
+    lateSkipMock.mockReturnValueOnce(guard);
+    const events = [hookEvent('s1', { type: 'agent.session.end' })];
+    await postHooks({ agentName: 'copilot-cli-otlp', hookEvents: events });
+    expect(lateSkipMock).toHaveBeenCalledWith('copilot-cli-otlp', 's1', events);
+    expect(appendSpoolMock.mock.calls[0][4]?.skipIf).toBe(guard);
   });
 
   it('does not schedule anything when the batch could not be persisted', async () => {

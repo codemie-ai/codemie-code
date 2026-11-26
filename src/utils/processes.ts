@@ -84,6 +84,42 @@ export async function getCommandPath(
   }
 }
 
+/**
+ * Get every PATH match for a command, in PATH order.
+ *
+ * @param command - Command name to locate
+ * @param timeoutMs - Kill the `which`/`where.exe` child if it hasn't exited by this deadline
+ * @returns `answered` with the ordered matches (empty on a non-zero exit), or `unanswered`
+ *   when the lookup threw or timed out
+ */
+export async function getCommandMatches(
+  command: string,
+  timeoutMs?: number
+): Promise<{ status: 'answered'; matches: string[] } | { status: 'unanswered' }> {
+  try {
+    const isWindows = os.platform() === 'win32';
+    const whichCommand = isWindows ? 'C:\\Windows\\System32\\where.exe' : 'which';
+
+    // `$PATH:` stops where.exe from searching the cwd first (a repo-local shim would win).
+    const whichArgs = [isWindows ? `$PATH:${command}` : command];
+    const result = timeoutMs
+      ? await exec(whichCommand, whichArgs, { timeout: timeoutMs })
+      : await exec(whichCommand, whichArgs);
+
+    if (result.code !== 0) {
+      return { status: 'answered', matches: [] };
+    }
+
+    const matches = result.stdout
+      .split(/\r?\n|\r/)
+      .map(p => p.trim())
+      .filter(p => p);
+    return { status: 'answered', matches };
+  } catch {
+    return { status: 'unanswered' };
+  }
+}
+
 // ============================================================================
 // npm Package Management
 // ============================================================================
