@@ -1,7 +1,8 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
-import { ConfigLoader } from '../../../utils/config.js';
+import { ConfigLoader, type CodeMieConfigOptions } from '../../../utils/config.js';
+import { describeModel, resolveModelEnvOrigin } from '@/utils/model-origin.js';
 import { logger } from '../../../utils/logger.js';
 import { ProfileDisplay } from './display.js';
 import { ProviderRegistry } from '../../../providers/core/registry.js';
@@ -20,6 +21,25 @@ async function resolveIdentityDisplay(workingDir: string, profileName?: string):
     codeMieUrl: resolution.identity.codeMieUrl,
     project: describeProjectBinding(resolution.state, resolution.identity.codeMieProject)
   };
+}
+
+/**
+ * The config `codemie profile status` reports, loaded as the launcher loads it: from the
+ * nearest `.codemie` up from `cwd`, with `.env` from `cwd`. `modelText` is the banner's model text.
+ */
+export async function loadStatusConfig(
+  cwd: string
+): Promise<{ configDir: string; config: CodeMieConfigOptions; modelText: string }> {
+  const { findNearestConfigDir } = await import('@/agents/core/event-fields/identity-fields.js');
+  const configDir = await findNearestConfigDir(cwd);
+  const config = await ConfigLoader.load(configDir, undefined, cwd);
+  const resolution = ConfigLoader.modelResolutionOf(config);
+  const modelText = describeModel(
+    config.model || 'N/A',
+    resolution?.envModelUsed ? resolveModelEnvOrigin() : undefined,
+    resolution?.profileModel
+  );
+  return { configDir, config, modelText };
 }
 
 export interface ProfileSelectionChoiceNameOptions {
@@ -61,7 +81,8 @@ export function createProfileCommand(): Command {
  */
 async function listProfiles(): Promise<void> {
   try {
-    const workingDir = process.cwd();
+    const { findNearestConfigDir } = await import('@/agents/core/event-fields/identity-fields.js');
+    const workingDir = await findNearestConfigDir(process.cwd());
     const profiles = await ConfigLoader.listProfiles(workingDir);
     const hasLocal = await ConfigLoader.hasLocalConfig(workingDir);
     // Each profile resolves its own identity by name: two global profiles can use
@@ -114,11 +135,10 @@ function createStatusCommand(): Command {
  * Display profile info + auth status, prompt for re-auth if invalid
  */
 async function handleStatus(): Promise<void> {
-  const workingDir = process.cwd();
-  const config = await ConfigLoader.load(workingDir);
-  const profiles = await ConfigLoader.listProfiles(workingDir);
-  const activeProfileName = await ConfigLoader.getActiveProfileName(workingDir);
-  const hasLocalConfig = await ConfigLoader.hasLocalConfig(workingDir);
+  const { configDir, config, modelText } = await loadStatusConfig(process.cwd());
+  const profiles = await ConfigLoader.listProfiles(configDir);
+  const activeProfileName = await ConfigLoader.getActiveProfileName(configDir);
+  const hasLocalConfig = await ConfigLoader.hasLocalConfig(configDir);
 
   // Find active profile
   const activeProfileInfo = profiles.find(p => p.name === activeProfileName);
@@ -166,7 +186,10 @@ async function handleStatus(): Promise<void> {
     : chalk.cyan('(source: global ~/.codemie/)');
 
   // Display profile + auth status
-  ProfileDisplay.formatStatus(activeProfileInfo, authStatus, await resolveIdentityDisplay(workingDir));
+  ProfileDisplay.formatStatus(activeProfileInfo, authStatus, {
+    ...(await resolveIdentityDisplay(configDir)),
+    model: modelText
+  });
   console.log(chalk.dim(`\n  Configuration ${sourceIndicator}`));
   console.log(chalk.dim(`  Use --show-sources to see detailed source attribution\n`));
 }
@@ -176,7 +199,9 @@ async function handleStatus(): Promise<void> {
  * Shows where each configuration value comes from
  */
 async function handleStatusWithSources(): Promise<void> {
-  await ConfigLoader.showWithSources();
+  const { findNearestConfigDir } = await import('@/agents/core/event-fields/identity-fields.js');
+  const cwd = process.cwd();
+  await ConfigLoader.showWithSources(await findNearestConfigDir(cwd), cwd);
 }
 
 export function buildProfileSelectionChoiceName({

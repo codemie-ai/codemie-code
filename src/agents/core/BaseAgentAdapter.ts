@@ -23,6 +23,7 @@ import { formatTipLine, getSessionTip } from '../../utils/tips.js';
 import { syncRegisteredSkills } from '../../cli/commands/skills/setup/sync.js';
 import { describeProjectBinding, parseProjectBinding, PROJECT_BINDING_ENV } from '../../utils/project-binding.js';
 import { renderProfileInfo } from '../../utils/profile.js';
+import { describeModel, MODEL_ENV_ORIGIN_ENV, parseModelEnvOrigin, PROFILE_MODEL_ENV } from '../../utils/model-origin.js';
 import chalk from 'chalk';
 import { existsSync } from 'fs';
 import { access, mkdir, writeFile } from 'fs/promises';
@@ -760,7 +761,14 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       const profileName = env.CODEMIE_PROFILE_NAME || 'default';
       const provider = env.CODEMIE_PROVIDER || 'unknown';
       const cliVersion = env.CODEMIE_CLI_VERSION || 'unknown';
-      const model = env.CODEMIE_MODEL || 'unknown';
+      // The origin describes the launcher's model; an agent that picked another one in setupProxy
+      // (Codex, Kimi catalog resolution) must not credit CODEMIE_MODEL for its own choice.
+      const launcherModelKept = env.CODEMIE_MODEL === envOverrides?.CODEMIE_MODEL;
+      const model = describeModel(
+        env.CODEMIE_MODEL || 'unknown',
+        launcherModelKept ? parseModelEnvOrigin(env[MODEL_ENV_ORIGIN_ENV]) : undefined,
+        env[PROFILE_MODEL_ENV] || undefined
+      );
       const codeMieUrl = env.CODEMIE_URL;
       // The launcher's binding and project; never re-resolved here (EPMCDME-15411).
       const project = describeProjectBinding(
