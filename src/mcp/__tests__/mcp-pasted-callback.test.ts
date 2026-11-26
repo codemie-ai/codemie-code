@@ -5,10 +5,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { createServer, type Server } from 'http';
+import type { AddressInfo } from 'net';
 import { tmpdir } from 'os';
 import { startCallbackServer } from '../auth/callback-server.js';
 import { clearPendingLogin, listPendingLogins, writePendingLogin } from '../auth/pending-login.js';
-import { deliverCallback } from '../../cli/commands/mcp-auth.js';
+import { deliverCallback, LoginGoneError } from '../../cli/commands/mcp-auth.js';
 
 let home: string;
 
@@ -65,5 +67,38 @@ describe('deliverCallback', () => {
     await expect(deliverCallback('http://localhost:1/callback?code=abc', pending)).rejects.toThrow('No MCP server is waiting');
     close();
     await expect(waitForCallback).rejects.toThrow('Callback server closed');
+  });
+});
+
+describe('deliverCallback — loopback address families', () => {
+  // "localhost" resolves to ::1 first in most Linux containers, and the callback server listens there
+  async function listenOn(address: string): Promise<{ server: Server; port: number; paths: string[] }> {
+    const paths: string[] = [];
+    const server = createServer((req, res) => {
+      paths.push(req.url ?? '');
+      res.end('ok');
+    });
+    await new Promise<void>((resolve) => server.listen(0, address, resolve));
+    return { server, port: (server.address() as AddressInfo).port, paths };
+  }
+
+  it.each(['::1', '127.0.0.1'])('reaches a callback server listening only on %s', async (address) => {
+    const { server, port, paths } = await listenOn(address);
+    try {
+      const redirectUrl = `http://localhost:${port}/callback`;
+      await deliverCallback(`'${redirectUrl}?code=abc'`, [{ pid: process.pid, ...login(redirectUrl) }]);
+      expect(paths).toEqual(['/callback?code=abc']);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('says the login is gone when nothing listens on the callback port any more', async () => {
+    const { server, port } = await listenOn('127.0.0.1');
+    await new Promise((resolve) => server.close(resolve));
+    const redirectUrl = `http://localhost:${port}/callback`;
+
+    await expect(deliverCallback(`${redirectUrl}?code=abc`, [{ pid: process.pid, ...login(redirectUrl) }]))
+      .rejects.toBeInstanceOf(LoginGoneError);
   });
 });

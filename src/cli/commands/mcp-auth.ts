@@ -7,9 +7,25 @@
  */
 
 import { Command } from 'commander';
+import { request } from 'http';
 import { createInterface } from 'readline/promises';
 import chalk from 'chalk';
 import { listPendingLogins, type PendingLogin } from '../../mcp/auth/pending-login.js';
+
+/** The proxy that started the login is gone, so pasting again cannot help. */
+export class LoginGoneError extends Error {}
+
+/** GET the callback URL from the given address, keeping the URL's own Host header. */
+function sendCallback(url: URL, address: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    request({ host: address, port: url.port, path: url.pathname + url.search, headers: { host: url.host } }, (response) => {
+      response.resume();
+      resolve(response.statusCode ?? 0);
+    })
+      .on('error', reject)
+      .end();
+  });
+}
 
 /**
  * Send a pasted callback URL to the proxy waiting for it and return that proxy's MCP server URL.
@@ -17,7 +33,8 @@ import { listPendingLogins, type PendingLogin } from '../../mcp/auth/pending-log
 export async function deliverCallback(pasted: string, logins: PendingLogin[]): Promise<string> {
   let url: URL;
   try {
-    url = new URL(pasted.trim());
+    // Shells and chat tools often add quotes around a copied URL
+    url = new URL(pasted.trim().replace(/^(['"])(.*)\1$/, '$2'));
   } catch {
     throw new Error('That is not a URL');
   }
@@ -31,11 +48,22 @@ export async function deliverCallback(pasted: string, logins: PendingLogin[]): P
     throw new Error('No MCP server is waiting for this callback URL');
   }
 
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`The MCP proxy rejected the callback (HTTP ${response.status})`);
+  // The callback server listens on whichever address "localhost" resolved to first (::1 in most
+  // Linux containers), while Node's clients connect over IPv4 only, so try both loopback addresses
+  const addresses = url.hostname === 'localhost' ? ['::1', '127.0.0.1'] : [url.hostname];
+  for (const address of addresses) {
+    let status: number;
+    try {
+      status = await sendCallback(url, address);
+    } catch {
+      continue;
+    }
+    if (status >= 400) {
+      throw new Error(`The MCP proxy rejected the callback (HTTP ${status})`);
+    }
+    return login.serverUrl;
   }
-  return login.serverUrl;
+  throw new LoginGoneError('The MCP proxy is no longer waiting for this login (it was closed or timed out). Start the login again');
 }
 
 export function createMcpAuthCommand(): Command {
@@ -81,6 +109,11 @@ export function createMcpAuthCommand(): Command {
               console.log(chalk.green('  Authorized'));
               break;
             } catch (error) {
+              if (error instanceof LoginGoneError) {
+                console.error(chalk.red(`  ${error.message}.`));
+                process.exitCode = 1;
+                return;
+              }
               console.log(chalk.yellow(`  ${(error as Error).message}. Paste it again:`));
             }
           }
