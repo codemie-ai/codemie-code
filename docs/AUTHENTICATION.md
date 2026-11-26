@@ -339,6 +339,24 @@ When several MCP servers start together, their proxies take turns: a lock file (
 
 The login (access token, refresh token and the client registration the refresh token belongs to) is stored per MCP server under `~/.codemie/mcp-auth` (directory `0700`, files `0600`). Restarting the CLI then reuses it, or renews it silently with the refresh token, and only opens the browser when that is no longer possible. The files (`<hash>.enc`) hold a long-lived credential, so their content is encrypted with the same machine-bound key as the stored SSO and JWT credentials: a copy taken by a backup, a sync tool or a support bundle cannot be read on another machine. The key is derived from the machine rather than from a secret, so another process running as your user can still decrypt them; keep treating the directory like your SSH keys. Delete the directory to log out of every server. Set `MCP_PROXY_PERSIST_TOKENS=off` to keep everything in memory only, in which case re-authorization is required each session.
 
+### Authorizing over SSH or from a Container
+
+The proxy runs over stdio, so it cannot ask you to paste anything. When the browser cannot reach
+its callback server (the CLI runs over SSH or inside a Docker container), finish the login from a
+second terminal on the same machine:
+
+1. Start the client with a longer MCP startup timeout, since Claude Code gives up on a server after
+   30 seconds by default: `MCP_TIMEOUT=180000 claude`.
+2. Use the MCP server so that it asks for a login.
+3. In another terminal, run `codemie mcp-auth`. It prints the authorization URL of each login that
+   is waiting.
+4. Open that URL in your local browser and sign in. When the browser shows a connection error,
+   copy the full URL from its address bar, paste it and press Enter.
+
+You can also pass the URL as an argument (`codemie mcp-auth '<callback-url>'`), for example from a
+non-interactive shell. The command only sends the URL to a callback server that a running proxy is
+waiting on, and the login must finish before the callback server's 2-minute timeout.
+
 ### SSO Integration
 
 When running through the CodeMie SSO proxy, the MCP Auth Plugin provides additional capabilities:
