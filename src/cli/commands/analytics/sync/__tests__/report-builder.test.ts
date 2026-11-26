@@ -102,6 +102,7 @@ describe('buildSyncReport', () => {
     // emailSlug is applied to the lowercased email, so sync filenames never carry mixed case
     // even though the shared `emailSlug` helper itself is unchanged.
     expect(report!.fileName).toBe('codemie-analytics-dev-user-tag-example-com-2026-10-29.report.json');
+    expect(report!.contentType).toBe('application/json');
 
     const payload = JSON.parse(report!.bytes.toString('utf-8'));
     expect(payload.meta.userEmail).toBe(EMAIL);

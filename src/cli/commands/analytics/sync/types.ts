@@ -2,9 +2,18 @@
  * Shared types for `codemie analytics sync`.
  */
 
+import type { SyncWindow } from './window.js';
+
 export interface SyncReport {
   fileName: string;
   bytes: Buffer;
+  /** Media type of `bytes`, as a target labels the delivered file. */
+  contentType: string;
+}
+
+/** What one `sync` run delivers for one window: the file, or `null` when there is nothing to send. */
+export interface ExportSource {
+  build(input: { window: SyncWindow; email: string; includeExternal: boolean; now: Date }): Promise<SyncReport | null>;
 }
 
 export type IncludeExternalPolicy = 'windows' | 'always' | 'never';
@@ -34,6 +43,10 @@ export interface SyncSettings {
   lookbackDays?: number;
   /** Full scheduler task name, stored only when it differs from the platform default. */
   taskName?: string;
+  /** The machine collects its analytics locally, with no CodeMie backend. */
+  local?: true;
+  /** The node binary and CLI entry the local mode's job was installed with. */
+  localJob?: { node: string; entry: string };
 }
 
 /** Raw flags accepted by `codemie analytics sync install`. */

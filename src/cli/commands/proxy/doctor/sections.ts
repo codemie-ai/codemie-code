@@ -16,11 +16,9 @@ import { checkClaudeCodeOtlpEndpoint } from '../connectors/claude-code-otlp-endp
 import { ANALYTICS_CONNECTORS, type AnalyticsConnectorStatus, type ConnectorScopeRead } from '../analytics-connectors.js';
 import type { ProxyDoctorSection, ProxyDoctorSectionId } from './compose.js';
 import { CLAUDE_OTLP_FLAG, vendorFlag } from '../flag-list.js';
+import type { DoctorRemedies } from './plan.js';
 
-export const CONNECT_COMMAND = 'codemie proxy connect';
 export const LOGIN_COMMAND = 'codemie profile login';
-export const RESTART_COMMAND = 'codemie proxy restart';
-export const START_COMMAND = 'codemie proxy start';
 export const DOCTOR_COMMAND = 'codemie proxy doctor';
 /** Re-runs the diagnosis with the debug log on, which records why a check could not run. */
 export const DEBUG_COMMAND = `CODEMIE_DEBUG=true ${DOCTOR_COMMAND}`;
@@ -99,11 +97,16 @@ export function scopeFlags(scope: ConnectorScopeRead | undefined): string {
 }
 
 /** The `connect` command that repairs a target; an analytics connector's repeats its current scope. */
-function repairCommand(flag: string, id: string, connectors: ConnectorEntry[]): string {
-  return `${CONNECT_COMMAND} ${vendorFlag(flag)}${scopeFlags(connectors.find((entry) => entry.id === id)?.scope)}`;
+function repairCommand(flag: string, id: string, connectors: ConnectorEntry[], remedies: DoctorRemedies): string {
+  return remedies.connect(`${vendorFlag(flag)}${scopeFlags(connectors.find((entry) => entry.id === id)?.scope)}`);
 }
 
-export function connectorSections(entries: ConnectorEntry[]): Sections {
+/**
+ * The doctor sections of the analytics connectors: per connector, a failed read, unreadable or invalid settings, its
+ * scope when connected, unreadable preferences or paused collection; then, when any is connected, where the project
+ * lists are shown.
+ */
+export function connectorSections(entries: ConnectorEntry[], remedies: DoctorRemedies): Sections {
   const sections: Sections = [];
   let anyConnected = false;
   for (const entry of entries) {
@@ -131,7 +134,7 @@ export function connectorSections(entries: ConnectorEntry[]): Sections {
         message: `${label} analytics: the connector settings cannot be read, so nothing is collected`,
         hint: renderHint({
           reason: 'unreadable connector settings',
-          action: `fix or delete ${getCopilotConnectorsConfigPath()}, then run: ${CONNECT_COMMAND} ${connectFlag}`,
+          action: `fix or delete ${getCopilotConnectorsConfigPath()}, then run: ${remedies.connect(connectFlag)}`,
         }),
       });
       continue;
@@ -143,7 +146,7 @@ export function connectorSections(entries: ConnectorEntry[]): Sections {
         id: 'connectors',
         status: 'warn',
         message: `${label} analytics: the tracked-project list in ${getClaudeSettingsPath()} is invalid`,
-        hint: renderHint({ reason: 'invalid tracked-project list', command: `${CONNECT_COMMAND} ${connectFlag} --overwrite` }),
+        hint: renderHint({ reason: 'invalid tracked-project list', command: remedies.connect(`${connectFlag} --overwrite`) }),
       });
     } else {
       const scopeText = scope.scope === 'project'
@@ -197,16 +200,17 @@ export async function clientSections(
   state: DaemonState,
   targets: ClientTargetState[] | null,
   connectors: ConnectorEntry[],
-  nothingConnected: boolean
+  nothingConnected: boolean,
+  remedies: DoctorRemedies
 ): Promise<Sections> {
-  const notices = await collectClientNotices(state);
+  const notices = await collectClientNotices(state, remedies);
   const sections: Sections = [];
   for (const failed of (targets ?? []).filter((entry) => entry.error !== undefined)) {
     sections.push({
       id: 'clients',
       status: 'warn',
       message: `${failed.target.label} check failed: ${failed.error}`,
-      hint: renderHint({ reason: 'its config could not be read', command: repairCommand(failed.target.flag, failed.target.id, connectors) }),
+      hint: renderHint({ reason: 'its config could not be read', command: repairCommand(failed.target.flag, failed.target.id, connectors, remedies) }),
     });
   }
   for (const mismatch of notices.clientPortMismatch) {
@@ -214,7 +218,7 @@ export async function clientSections(
       id: 'clients',
       status: 'warn',
       message: `${labelOfFlag(mismatch.flag)} points at port ${mismatch.configuredPort}, the proxy listens on ${state.port}`,
-      hint: renderHint({ reason: 'client points at another port', command: `${CONNECT_COMMAND} ${mismatch.flag}` }),
+      hint: renderHint({ reason: 'client points at another port', command: remedies.connect(mismatch.flag) }),
     });
   }
   for (const shared of notices.clientSharedKey) {
@@ -223,13 +227,13 @@ export async function clientSections(
         id: 'clients',
         status: 'warn',
         message: `${labelOfFlag(shared.flag)} points at a local gateway with a key this proxy does not accept`,
-        hint: renderHint({ reason: 'key not accepted', action: `if it should use CodeMie, run: ${CONNECT_COMMAND} ${shared.flag}` }),
+        hint: renderHint({ reason: 'key not accepted', action: `if it should use CodeMie, run: ${remedies.connect(shared.flag)}` }),
       }
       : {
         id: 'clients',
         status: 'warn',
         message: `${labelOfFlag(shared.flag)} uses the shared key`,
-        hint: renderHint({ reason: 'shared key in use', command: `${CONNECT_COMMAND} ${shared.flag}` }),
+        hint: renderHint({ reason: 'shared key in use', command: remedies.connect(shared.flag) }),
       });
   }
   for (const hooks of notices.hooksOfAnotherInstall) {
@@ -237,7 +241,7 @@ export async function clientSections(
       id: 'clients',
       status: 'warn',
       message: `${CONNECTOR_LABELS[hooks.connector] ?? hooks.connector} hooks run another install (${hooks.path})`,
-      hint: renderHint({ reason: 'hooks of another install', command: repairCommand(hooks.flag, hooks.connector, connectors) }),
+      hint: renderHint({ reason: 'hooks of another install', command: repairCommand(hooks.flag, hooks.connector, connectors, remedies) }),
     });
   }
   if (sections.length > 0) return sections;
@@ -249,12 +253,13 @@ export async function clientSections(
     id: 'clients',
     status: 'info',
     message: 'No clients connected',
-    ...(nothingConnected && { hint: renderHint({ reason: 'nothing is connected to the proxy', command: CONNECT_COMMAND }) }),
+    ...(nothingConnected && { hint: renderHint({ reason: 'nothing is connected to the proxy', command: remedies.connect() }) }),
   }];
 }
 
-export async function desktopSections(state: DaemonState): Promise<Sections> {
-  const desktop = await collectDesktopCollection(state);
+/** The doctor section of Claude Desktop: collecting, or not with the reason and the repair; none when Desktop is not checked. */
+export async function desktopSections(state: DaemonState, remedies: DoctorRemedies): Promise<Sections> {
+  const desktop = await collectDesktopCollection(state, remedies);
   if (!desktop) return [];
   if (desktop.collecting) {
     return [{ id: 'desktop', status: 'ok', message: 'Claude Desktop: collecting' }];
@@ -268,7 +273,15 @@ export async function desktopSections(state: DaemonState): Promise<Sections> {
   }];
 }
 
-export async function claudeOtlpSections(state: DaemonState, claudeScope: ConnectorScopeRead | undefined): Promise<Sections> {
+/**
+ * The doctor section of Claude Code's OTLP endpoint: it points at this proxy, or it names another endpoint or another
+ * gateway key, with the `connect` that repairs it; none when the endpoint is not checked.
+ */
+export async function claudeOtlpSections(
+  state: DaemonState,
+  claudeScope: ConnectorScopeRead | undefined,
+  remedies: DoctorRemedies
+): Promise<Sections> {
   const check = await checkClaudeCodeOtlpEndpoint(state);
   if (!check) return [];
   if (check.matches) {
@@ -284,7 +297,7 @@ export async function claudeOtlpSections(state: DaemonState, claudeScope: Connec
       '. After repairing, start a new Claude Code session.',
     hint: renderHint({
       reason: 'Claude Code exports to another proxy',
-      command: `${CONNECT_COMMAND} ${CLAUDE_OTLP_FLAG}${scopeFlags(claudeScope)}`,
+      command: remedies.connect(`${CLAUDE_OTLP_FLAG}${scopeFlags(claudeScope)}`),
     }),
   }];
 }

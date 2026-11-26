@@ -146,7 +146,7 @@ describe('claude-code-otlp connector', () => {
       it('writes codemie hooks with the resolved absolute path, not a bare codemie (EPMCDME-15907)', async () => {
         resolveCodemieBinaryMock.mockResolvedValueOnce('C:/bin/codemie.cmd');
 
-        await writeClaudeCodeOtlpConfig();
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         const settings = await readJson(join(homeDir, '.claude', 'settings.json'));
         const commands = Object.values(settings.hooks as Record<string, Array<{ hooks: Array<{ command: string }> }>>)
@@ -156,7 +156,7 @@ describe('claude-code-otlp connector', () => {
       });
 
       it('creates settings.json and defaults a fresh connection to Global', async () => {
-        const result = await writeClaudeCodeOtlpConfig();
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         const expectedPath = join(homeDir, '.claude', 'settings.json');
         expect(result).toEqual({
@@ -198,7 +198,7 @@ describe('claude-code-otlp connector', () => {
           })
         );
 
-        const result = await writeClaudeCodeOtlpConfig({ scope: 'project' });
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, scope: 'project' });
         const canonicalRoot = await realpath(projectDir);
 
         expect(result.allowlist).toEqual([...canonicalPriorProjects, canonicalRoot]);
@@ -219,14 +219,14 @@ describe('claude-code-otlp connector', () => {
           })
         );
 
-        const result = await writeClaudeCodeOtlpConfig();
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         expect(result.allowlist).toEqual([]);
         expect((await readJson(settingsPath)).env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]).toBe('[]');
       });
 
       it('writes a Global allowlist when scope is omitted on a fresh install', async () => {
-        const result = await writeClaudeCodeOtlpConfig();
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         expect(result.allowlist).toEqual([]);
         expect(
@@ -242,7 +242,7 @@ describe('claude-code-otlp connector', () => {
           JSON.stringify({ env: { [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: '[]' } })
         );
 
-        const result = await writeClaudeCodeOtlpConfig({ scope: 'project' });
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, scope: 'project' });
 
         expect(result.allowlist).toEqual([await realpath(projectDir)]);
         expect((await readJson(settingsPath)).env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]).toBe(
@@ -251,7 +251,7 @@ describe('claude-code-otlp connector', () => {
       });
 
       it('writes every hook entry without an async field, except PostCompact, so Claude Code runs the rest synchronously', async () => {
-        await writeClaudeCodeOtlpConfig();
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         const settings = await readJson(join(homeDir, '.claude', 'settings.json'));
         for (const event of HOOK_EVENTS) {
@@ -264,15 +264,25 @@ describe('claude-code-otlp connector', () => {
       });
 
       it('gives UserPromptSubmit a 180s timeout so the SSO sign-in wait finishes first', async () => {
-        await writeClaudeCodeOtlpConfig();
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         const settings = await readJson(join(homeDir, '.claude', 'settings.json'));
         expect(settings.hooks.UserPromptSubmit[0].hooks[0].timeout).toBe(180);
         expect(settings.hooks.UserPromptSubmit[0].hooks[0].statusMessage).toContain('continue automatically');
       });
 
+      it('writes the given promptStatus as the UserPromptSubmit status text, and none for null', async () => {
+        await writeClaudeCodeOtlpConfig({ promptStatus: 'Collecting analytics locally' });
+        let settings = await readJson(join(homeDir, '.claude', 'settings.json'));
+        expect(settings.hooks.UserPromptSubmit[0].hooks[0].statusMessage).toBe('Collecting analytics locally');
+
+        await writeClaudeCodeOtlpConfig({ promptStatus: null });
+        settings = await readJson(join(homeDir, '.claude', 'settings.json'));
+        expect(settings.hooks.UserPromptSubmit[0].hooks[0]).not.toHaveProperty('statusMessage');
+      });
+
       it('writes PostCompact as async with the longer timeout, so it never blocks Claude Code or the user\'s turn', async () => {
-        await writeClaudeCodeOtlpConfig();
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         const settings = await readJson(join(homeDir, '.claude', 'settings.json'));
         expect(settings.hooks.PostCompact[0].hooks[0].async).toBe(true);
@@ -280,7 +290,7 @@ describe('claude-code-otlp connector', () => {
       });
 
       it('writes to the user-level settings and tracks the project root when scope is "project"', async () => {
-        const result = await writeClaudeCodeOtlpConfig({ scope: 'project' });
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, scope: 'project' });
 
         const expectedPath = join(homeDir, '.claude', 'settings.json');
         expect(result.path).toBe(expectedPath);
@@ -290,13 +300,13 @@ describe('claude-code-otlp connector', () => {
         expect(result.allowlist).toEqual([canonicalRoot]);
         expect((await readJson(expectedPath)).env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]).toBe(JSON.stringify([canonicalRoot]));
 
-        const again = await writeClaudeCodeOtlpConfig({ scope: 'project' });
+        const again = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, scope: 'project' });
         expect(again.allowlist).toEqual([canonicalRoot]);
       });
 
       it('resets the allowlist to [] on a user-scope rerun', async () => {
-        await writeClaudeCodeOtlpConfig({ scope: 'project' });
-        const result = await writeClaudeCodeOtlpConfig({ scope: 'user' });
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, scope: 'project' });
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, scope: 'user' });
         expect(result.allowlist).toEqual([]);
       });
 
@@ -306,19 +316,19 @@ describe('claude-code-otlp connector', () => {
         const original = JSON.stringify({ env: { [CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]: 'not-json' } });
         await writeFile(settingsPath, original);
 
-        await expect(writeClaudeCodeOtlpConfig()).rejects.toBeInstanceOf(ConfigurationError);
-        await expect(writeClaudeCodeOtlpConfig()).rejects.toThrow(/--overwrite/);
+        await expect(writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE })).rejects.toBeInstanceOf(ConfigurationError);
+        await expect(writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE })).rejects.toThrow(/--overwrite/);
         expect(await readRaw(settingsPath)).toBe(original);
 
-        const forced = await writeClaudeCodeOtlpConfig({ overwrite: true });
+        const forced = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, overwrite: true });
         expect(forced.allowlist).toEqual([]);
 
-        const forcedProject = await writeClaudeCodeOtlpConfig({ overwrite: true, scope: 'project' });
+        const forcedProject = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, overwrite: true, scope: 'project' });
         expect(forcedProject.allowlist).toEqual([await realpath(projectDir)]);
       });
 
       it('writes to home dir when scope is "user"', async () => {
-        const result = await writeClaudeCodeOtlpConfig({ scope: 'user' });
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, scope: 'user' });
 
         expect(result.path).toBe(join(homeDir, '.claude', 'settings.json'));
       });
@@ -338,7 +348,7 @@ describe('claude-code-otlp connector', () => {
         };
         await writeFile(settingsPath, JSON.stringify(original, null, 2));
 
-        const result = await writeClaudeCodeOtlpConfig();
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         expect(result.backupPath).toBe(settingsPath + SETTINGS_BACKUP_SUFFIX);
         expect(existsSync(result.backupPath!)).toBe(true);
@@ -357,12 +367,12 @@ describe('claude-code-otlp connector', () => {
       it('is idempotent for a fresh install: rerunning does not create a backup or duplicate hooks', async () => {
         const settingsPath = join(homeDir, '.claude', 'settings.json');
 
-        const first = await writeClaudeCodeOtlpConfig();
+        const first = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
         expect(first.backupPath).toBeNull();
 
         const afterFirst = await readJson(settingsPath);
 
-        const second = await writeClaudeCodeOtlpConfig();
+        const second = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
         const afterSecond = await readJson(settingsPath);
 
         expect(second.backupPath).toBeNull();
@@ -385,10 +395,10 @@ describe('claude-code-otlp connector', () => {
         };
         await writeFile(settingsPath, JSON.stringify(original, null, 2));
 
-        const first = await writeClaudeCodeOtlpConfig();
+        const first = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
         expect(first.backupPath).toBe(settingsPath + SETTINGS_BACKUP_SUFFIX);
 
-        const second = await writeClaudeCodeOtlpConfig();
+        const second = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
         expect(second.backupPath).toBe(settingsPath + SETTINGS_BACKUP_SUFFIX);
 
         expect(await readJson(second.backupPath!)).toEqual(original);
@@ -421,7 +431,7 @@ describe('claude-code-otlp connector', () => {
           )
         );
 
-        const result = await writeClaudeCodeOtlpConfig();
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         expect(result.backupPath).toBe(settingsPath + SETTINGS_BACKUP_SUFFIX);
         const backup = await readJson(result.backupPath!);
@@ -440,7 +450,7 @@ describe('claude-code-otlp connector', () => {
         const original = { env: { OTEL_LOGS_EXPORTER: 'jaeger' } };
         await writeFile(settingsPath, JSON.stringify(original, null, 2));
 
-        const result = await writeClaudeCodeOtlpConfig({ overwrite: true });
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, overwrite: true });
 
         expect(result.backupPath).toBe(settingsPath + SETTINGS_BACKUP_SUFFIX);
         // A value mismatch must NOT be treated as "already managed" — the
@@ -471,7 +481,7 @@ describe('claude-code-otlp connector', () => {
           )
         );
 
-        const result = await writeClaudeCodeOtlpConfig();
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         expect(result.backupPath).toBe(settingsPath + SETTINGS_BACKUP_SUFFIX);
         const backup = await readJson(result.backupPath!);
@@ -483,11 +493,11 @@ describe('claude-code-otlp connector', () => {
         await mkdir(join(homeDir, '.claude'), { recursive: true });
         await writeFile(settingsPath, JSON.stringify({ env: { STEP: 'A' } }, null, 2));
 
-        await writeClaudeCodeOtlpConfig();     // connect #1: backup snapshots STEP: A
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });     // connect #1: backup snapshots STEP: A
         await removeClaudeCodeOtlpConfig();    // disconnect: leaves { env: { STEP: 'A' } }, backup removed
         await writeFile(settingsPath, JSON.stringify({ env: { STEP: 'B' } }, null, 2)); // manual edit
 
-        const result = await writeClaudeCodeOtlpConfig(); // connect #2
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE }); // connect #2
 
         expect(result.backupPath).toBe(settingsPath + SETTINGS_BACKUP_SUFFIX);
         expect(await readJson(result.backupPath!)).toEqual({ env: { STEP: 'B' } });
@@ -501,7 +511,7 @@ describe('claude-code-otlp connector', () => {
           JSON.stringify({ env: { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://conflicting.example.com' } }, null, 2)
         );
 
-        const result = await writeClaudeCodeOtlpConfig({ overwrite: true });
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, overwrite: true });
 
         expect(result.written).toBe(true);
         const merged = await readJson(settingsPath);
@@ -521,7 +531,7 @@ describe('claude-code-otlp connector', () => {
           JSON.stringify({ env: { ...conflictingEnv, KEEP_ME: 'yes' } }, null, 2)
         );
 
-        const result = await writeClaudeCodeOtlpConfig({ overwrite: true });
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, overwrite: true });
 
         expect(result.written).toBe(true);
         const merged = await readJson(settingsPath);
@@ -537,7 +547,7 @@ describe('claude-code-otlp connector', () => {
         await mkdir(join(homeDir, '.claude'), { recursive: true });
         await writeFile(settingsPath, JSON.stringify({ env: { OTEL_LOGS_EXPORTER: 'otlp' } }, null, 2));
 
-        const result = await writeClaudeCodeOtlpConfig();
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         expect(result.written).toBe(true);
       });
@@ -550,7 +560,7 @@ describe('claude-code-otlp connector', () => {
           JSON.stringify({ env: { OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf' } }, null, 2)
         );
 
-        const result = await writeClaudeCodeOtlpConfig();
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         expect(result.written).toBe(true);
         const merged = await readJson(settingsPath);
@@ -562,7 +572,7 @@ describe('claude-code-otlp connector', () => {
         await mkdir(join(homeDir, '.claude'), { recursive: true });
         await writeFile(settingsPath, JSON.stringify({ hooks: { PreToolUse: 'not-an-array' } }, null, 2));
 
-        const result = await writeClaudeCodeOtlpConfig({ overwrite: true });
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, overwrite: true });
 
         expect(result.written).toBe(true);
         const merged = await readJson(settingsPath);
@@ -592,7 +602,7 @@ describe('claude-code-otlp connector', () => {
           )
         );
 
-        await writeClaudeCodeOtlpConfig();
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         const merged = await readJson(settingsPath);
         expect(merged.hooks.SessionStart).toEqual([foreignEntry, codemieHookGroup()]);
@@ -603,7 +613,7 @@ describe('claude-code-otlp connector', () => {
         await mkdir(join(homeDir, '.claude'), { recursive: true });
         await writeFile(settingsPath, '{}');
 
-        const result = await writeClaudeCodeOtlpConfig();
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         expect(result.backupPath).toBe(settingsPath + SETTINGS_BACKUP_SUFFIX);
         expect(await readRaw(result.backupPath!)).toBe('{}');
@@ -614,7 +624,7 @@ describe('claude-code-otlp connector', () => {
         await mkdir(join(homeDir, '.claude'), { recursive: true });
         await writeFile(settingsPath, '');
 
-        const result = await writeClaudeCodeOtlpConfig();
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         expect(result.backupPath).toBe(settingsPath + SETTINGS_BACKUP_SUFFIX);
         expect(await readRaw(result.backupPath!)).toBe('');
@@ -630,7 +640,7 @@ describe('claude-code-otlp connector', () => {
       });
 
       it('logs a sanitized info message describing the write', async () => {
-        const result = await writeClaudeCodeOtlpConfig();
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         expect(sanitizeLogArgs).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -661,13 +671,13 @@ describe('claude-code-otlp connector', () => {
       it('writes a stored list of two projects back as it is with no scope', async () => {
         const stored = await storeTwoProjects();
 
-        await writeClaudeCodeOtlpConfig({ keepProjectList: true });
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, keepProjectList: true });
 
         expect((await readJson(settingsPath())).env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]).toBe(stored);
       });
 
       it('tracks all projects when nothing is stored', async () => {
-        const result = await writeClaudeCodeOtlpConfig({ keepProjectList: true });
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, keepProjectList: true });
 
         expect(result.allowlist).toEqual([]);
         expect((await readJson(settingsPath())).env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]).toBe('[]');
@@ -676,7 +686,7 @@ describe('claude-code-otlp connector', () => {
       it('resets a stored list with scope user, as without the option', async () => {
         await storeTwoProjects();
 
-        await writeClaudeCodeOtlpConfig({ keepProjectList: true, scope: 'user' });
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, keepProjectList: true, scope: 'user' });
 
         expect((await readJson(settingsPath())).env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]).toBe('[]');
       });
@@ -684,13 +694,13 @@ describe('claude-code-otlp connector', () => {
       it('throws on an invalid stored list without --force', async () => {
         await storeFilter('not-json');
 
-        await expect(writeClaudeCodeOtlpConfig({ keepProjectList: true })).rejects.toBeInstanceOf(ConfigurationError);
+        await expect(writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, keepProjectList: true })).rejects.toBeInstanceOf(ConfigurationError);
       });
 
       it('tracks all projects over an invalid stored list with --overwrite', async () => {
         await storeFilter('not-json');
 
-        await writeClaudeCodeOtlpConfig({ keepProjectList: true, overwrite: true });
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, keepProjectList: true, overwrite: true });
 
         expect((await readJson(settingsPath())).env[CODEMIE_ANALYTICS_PROJECT_FILTER_ENV]).toBe('[]');
       });
@@ -710,7 +720,7 @@ describe('claude-code-otlp connector', () => {
         };
         await writeFile(settingsPath, JSON.stringify({ hooks: { PreToolUse: [mixedGroup] } }, null, 2));
 
-        await writeClaudeCodeOtlpConfig();
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         const merged = await readJson(settingsPath);
         expect(merged.hooks.PreToolUse).toEqual([
@@ -732,7 +742,7 @@ describe('claude-code-otlp connector', () => {
         };
         await writeFile(settingsPath, JSON.stringify({ hooks: { PreToolUse: [mixedGroup] } }, null, 2));
 
-        await writeClaudeCodeOtlpConfig();
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         const merged = await readJson(settingsPath);
         expect(merged.hooks.PreToolUse).toEqual([
@@ -755,7 +765,7 @@ describe('claude-code-otlp connector', () => {
         };
         await writeFile(settingsPath, JSON.stringify({ hooks: { PreToolUse: [mixedGroup] } }, null, 2));
 
-        await writeClaudeCodeOtlpConfig();
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         const merged = await readJson(settingsPath);
         expect(merged.hooks.PreToolUse).toEqual([
@@ -783,7 +793,7 @@ describe('claude-code-otlp connector', () => {
         };
         await writeFile(settingsPath, JSON.stringify({ hooks: { PreToolUse: [mixedGroup] } }, null, 2));
 
-        await writeClaudeCodeOtlpConfig();
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         const merged = await readJson(settingsPath);
         expect(merged.hooks.PreToolUse).toEqual([
@@ -805,8 +815,8 @@ describe('claude-code-otlp connector', () => {
         };
         await writeFile(settingsPath, JSON.stringify({ hooks: { PreToolUse: [mixedGroup] } }, null, 2));
 
-        await writeClaudeCodeOtlpConfig();
-        await writeClaudeCodeOtlpConfig();
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         const merged = await readJson(settingsPath);
         expect(merged.hooks.PreToolUse).toEqual([
@@ -820,7 +830,7 @@ describe('claude-code-otlp connector', () => {
       it('throws ConfigurationError when there is no live proxy daemon, and touches nothing on disk', async () => {
         vi.mocked(readState).mockResolvedValueOnce(null as any);
 
-        await expect(writeClaudeCodeOtlpConfig()).rejects.toThrow(ConfigurationError);
+        await expect(writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE })).rejects.toThrow(ConfigurationError);
         expect(existsSync(join(homeDir, '.claude'))).toBe(false);
       });
 
@@ -830,7 +840,7 @@ describe('claude-code-otlp connector', () => {
         const invalidContent = '{ not valid json';
         await writeFile(settingsPath, invalidContent);
 
-        await expect(writeClaudeCodeOtlpConfig()).rejects.toThrow(ConfigurationError);
+        await expect(writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE })).rejects.toThrow(ConfigurationError);
 
         expect(await readRaw(settingsPath)).toBe(invalidContent);
         expect(existsSync(settingsPath + SETTINGS_BACKUP_SUFFIX)).toBe(false);
@@ -842,7 +852,7 @@ describe('claude-code-otlp connector', () => {
         const arrayContent = '[1, 2, 3]';
         await writeFile(settingsPath, arrayContent);
 
-        await expect(writeClaudeCodeOtlpConfig()).rejects.toThrow(ConfigurationError);
+        await expect(writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE })).rejects.toThrow(ConfigurationError);
 
         expect(await readRaw(settingsPath)).toBe(arrayContent);
         expect(existsSync(settingsPath + SETTINGS_BACKUP_SUFFIX)).toBe(false);
@@ -855,8 +865,8 @@ describe('claude-code-otlp connector', () => {
         const originalRaw = JSON.stringify(original, null, 2);
         await writeFile(settingsPath, originalRaw);
 
-        await expect(writeClaudeCodeOtlpConfig()).rejects.toThrow(ConfigurationError);
-        await expect(writeClaudeCodeOtlpConfig()).rejects.toThrow(/--overwrite/);
+        await expect(writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE })).rejects.toThrow(ConfigurationError);
+        await expect(writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE })).rejects.toThrow(/--overwrite/);
 
         expect(await readRaw(settingsPath)).toBe(originalRaw);
         expect(existsSync(settingsPath + SETTINGS_BACKUP_SUFFIX)).toBe(false);
@@ -873,7 +883,7 @@ describe('claude-code-otlp connector', () => {
         await mkdir(join(homeDir, '.claude'), { recursive: true });
         await writeFile(settingsPath, JSON.stringify({ theme: 'dark', env: buildExpectedEnv(earlier) }, null, 2));
 
-        const result = await writeClaudeCodeOtlpConfig();
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         const after = await readJson(settingsPath);
         expect(after.env).toMatchObject(buildExpectedEnv(mockState));
@@ -893,7 +903,7 @@ describe('claude-code-otlp connector', () => {
         );
         await writeFile(settingsPath, originalRaw);
 
-        await expect(writeClaudeCodeOtlpConfig()).rejects.toThrow(/--overwrite/);
+        await expect(writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE })).rejects.toThrow(/--overwrite/);
 
         expect(await readRaw(settingsPath)).toBe(originalRaw);
         expect(existsSync(settingsPath + SETTINGS_BACKUP_SUFFIX)).toBe(false);
@@ -908,7 +918,7 @@ describe('claude-code-otlp connector', () => {
         );
         await writeFile(settingsPath, originalRaw);
 
-        await expect(writeClaudeCodeOtlpConfig()).rejects.toThrow(/--overwrite/);
+        await expect(writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE })).rejects.toThrow(/--overwrite/);
 
         expect(await readRaw(settingsPath)).toBe(originalRaw);
       });
@@ -921,7 +931,7 @@ describe('claude-code-otlp connector', () => {
       const originalRaw = JSON.stringify(original, null, 2);
       await writeFile(settingsPath, originalRaw);
 
-      await expect(writeClaudeCodeOtlpConfig()).rejects.toThrow(ConfigurationError);
+      await expect(writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE })).rejects.toThrow(ConfigurationError);
 
       expect(await readRaw(settingsPath)).toBe(originalRaw);
       expect(existsSync(settingsPath + SETTINGS_BACKUP_SUFFIX)).toBe(false);
@@ -934,7 +944,7 @@ describe('claude-code-otlp connector', () => {
       const originalRaw = JSON.stringify(original, null, 2);
       await writeFile(settingsPath, originalRaw);
 
-      await expect(writeClaudeCodeOtlpConfig()).rejects.toThrow(ConfigurationError);
+      await expect(writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE })).rejects.toThrow(ConfigurationError);
       expect(await readRaw(settingsPath)).toBe(originalRaw);
     });
   });
@@ -1216,7 +1226,7 @@ describe('claude-code-otlp connector', () => {
             2
           )
         );
-        await writeClaudeCodeOtlpConfig({ overwrite: true });
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, overwrite: true });
         await rename(backupPath, target);
         await symlink(target, backupPath);
 
@@ -1238,10 +1248,10 @@ describe('claude-code-otlp connector', () => {
         await mkdir(join(homeDir, '.claude'), { recursive: true });
 
         await writeFile(settingsPath, JSON.stringify({ env: { STEP: 'A' } }, null, 2));
-        await writeClaudeCodeOtlpConfig();                                               // connect #1
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });                                               // connect #1
         await removeClaudeCodeOtlpConfig();                                              // disconnect: leaves STEP:A, backup gone
         await writeFile(settingsPath, JSON.stringify({ env: { STEP: 'B' } }, null, 2));   // manual edit
-        await writeClaudeCodeOtlpConfig();                                               // connect #2: backup now snapshots STEP:B
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });                                               // connect #2: backup now snapshots STEP:B
 
         // User deletes STEP themselves, leaving only codemie's own keys.
         const beforeFinalDisconnect = await readJson(settingsPath);
@@ -1280,7 +1290,7 @@ describe('claude-code-otlp connector', () => {
           )
         );
 
-        await writeClaudeCodeOtlpConfig({ overwrite: true });
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, overwrite: true });
         expect(existsSync(backupPath)).toBe(true);
         const backupAfterConnect = await readJson(backupPath);
         expect(backupAfterConnect.env.OTEL_EXPORTER_OTLP_ENDPOINT).toBe('https://collector.corp.example');
@@ -1300,7 +1310,7 @@ describe('claude-code-otlp connector', () => {
         await mkdir(join(homeDir, '.claude'), { recursive: true });
 
         await writeFile(settingsPath, JSON.stringify({ theme: 'dark' }, null, 2));
-        await writeClaudeCodeOtlpConfig();
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         // User points OTEL_LOGS_EXPORTER at their own collector after connecting.
         const afterConnect = await readJson(settingsPath);
@@ -1319,7 +1329,7 @@ describe('claude-code-otlp connector', () => {
         await mkdir(join(homeDir, '.claude'), { recursive: true });
 
         await writeFile(settingsPath, JSON.stringify({ theme: 'dark' }, null, 2));
-        await writeClaudeCodeOtlpConfig();
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
         const afterConnect = await readJson(settingsPath);
         afterConnect.env.OTEL_EXPORTER_OTLP_ENDPOINT = null;
@@ -1334,7 +1344,7 @@ describe('claude-code-otlp connector', () => {
         await mkdir(join(homeDir, '.claude'), { recursive: true });
 
         await writeFile(settingsPath, JSON.stringify({ theme: 'dark' }, null, 2));
-        await writeClaudeCodeOtlpConfig({ overwrite: true }); // displaces nothing here, just establishes a connected file
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, overwrite: true }); // displaces nothing here, just establishes a connected file
 
         // User repoints BOTH endpoint and header at their own unrelated collector.
         // 'Authorization=Bearer ...' alone is the generic HTTP auth scheme, not
@@ -1375,7 +1385,7 @@ describe('claude-code-otlp connector', () => {
           )
         );
 
-        const result = await writeClaudeCodeOtlpConfig({ overwrite: true }); // conflicting HEADERS value requires --overwrite regardless
+        const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, overwrite: true }); // conflicting HEADERS value requires --overwrite regardless
 
         const backup = await readJson(result.backupPath!);
         expect(backup).toEqual({ theme: 'dark', env: { FOO: 'bar', OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer codemie-proxy' } });
@@ -1392,7 +1402,7 @@ describe('claude-code-otlp connector', () => {
           JSON.stringify({ hooks: { Stop: { command: 'my-own-stop.sh' } }, env: { KEEP: '1' } }, null, 2)
         );
 
-        await writeClaudeCodeOtlpConfig({ overwrite: true });
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, overwrite: true });
         const afterConnect = await readJson(settingsPath);
         expect(Array.isArray(afterConnect.hooks.Stop)).toBe(true); // malformed value was replaced with our array
 
@@ -1411,7 +1421,7 @@ describe('claude-code-otlp connector', () => {
           settingsPath,
           JSON.stringify({ hooks: { Stop: { command: 'my-own-stop.sh' } } }, null, 2)
         );
-        await writeClaudeCodeOtlpConfig({ overwrite: true });
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, overwrite: true });
 
         // User replaces the Stop hook with their own valid entry after connecting.
         const afterConnect = await readJson(settingsPath);
@@ -1433,10 +1443,10 @@ describe('claude-code-otlp connector', () => {
           settingsPath,
           JSON.stringify({ hooks: { Stop: { command: 'my-own-stop.sh' } } }, null, 2)
         );
-        await writeClaudeCodeOtlpConfig({ overwrite: true }); // connect #1: displaces the malformed hook into the backup
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, overwrite: true }); // connect #1: displaces the malformed hook into the backup
 
         // Reconnect (e.g. --scope project), no disconnect in between.
-        await writeClaudeCodeOtlpConfig({ scope: 'project' });
+        await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, scope: 'project' });
 
         const backup = await readJson(backupPath);
         expect(backup.hooks?.Stop).toEqual({ command: 'my-own-stop.sh' });
@@ -1566,7 +1576,7 @@ describe('claude-code-otlp connector', () => {
       };
       await writeFile(settingsPath, JSON.stringify(original, null, 2));
 
-      await writeClaudeCodeOtlpConfig();
+      await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
       await removeClaudeCodeOtlpConfig();
 
       const final = await readJson(settingsPath);
@@ -1577,7 +1587,7 @@ describe('claude-code-otlp connector', () => {
       const settingsPath = join(homeDir, '.claude', 'settings.json');
 
       // Step 1: `codemie proxy connect --claude-code-otlp` (fresh install)
-      await writeClaudeCodeOtlpConfig();
+      await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
       // Step 2: user manually adds their own command into the SAME PreToolUse
       // group as codemie's command (exact snippet from the bug report).
@@ -1586,7 +1596,7 @@ describe('claude-code-otlp connector', () => {
       await writeFile(settingsPath, JSON.stringify(afterConnect, null, 2));
 
       // Step 3: reconnect
-      await writeClaudeCodeOtlpConfig();
+      await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
       const afterReconnect = await readJson(settingsPath);
       const reconnectCommands = afterReconnect.hooks.PreToolUse.flatMap((g: any) =>
         g.hooks.map((h: any) => h.command)
@@ -1627,7 +1637,7 @@ describe('claude-code-otlp connector', () => {
         )
       );
 
-      await writeClaudeCodeOtlpConfig();
+      await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
       const merged = await readJson(settingsPath);
       expect(merged.hooks.SomeRetiredEvent).toBeUndefined();
@@ -1661,7 +1671,7 @@ describe('claude-code-otlp connector', () => {
         )
       );
 
-      await writeClaudeCodeOtlpConfig();
+      await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
       const merged = await readJson(settingsPath);
       expect(merged.hooks.SomeRetiredEvent).toEqual([
@@ -1711,7 +1721,7 @@ describe('claude-code-otlp connector', () => {
       await mkdir(join(homeDir, '.claude'), { recursive: true });
       await writeFile(settingsPath, JSON.stringify({ env: { FOO: 'bar' } }, null, 2));
 
-      await writeClaudeCodeOtlpConfig();
+      await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
       expect(existsSync(backupPath)).toBe(true);
 
       vi.mocked(fsPromises.unlink).mockRejectedValueOnce(
@@ -1747,7 +1757,7 @@ describe('claude-code-otlp connector', () => {
         )
       );
 
-      const result = await writeClaudeCodeOtlpConfig({ overwrite: true });
+      const result = await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, overwrite: true });
 
       const backup = await readJson(result.backupPath!);
       expect(backup.env).toEqual({
@@ -1783,14 +1793,14 @@ describe('claude-code-otlp connector', () => {
       return readFile(join(homeDir, '.codemie', 'claude-analytics.json'), 'utf-8');
     }
 
-    it('writeClaudeCodeOtlpConfig({ scope: "user" }) leaves claude-analytics.json byte-identical', async () => {
+    it('writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, scope: "user" }) leaves claude-analytics.json byte-identical', async () => {
       const { updateClaudeAnalyticsPreferences } = await import(
         '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js'
       );
       await updateClaudeAnalyticsPreferences((current) => ({ ...current, excludedProjects: ['/work/a'] }));
       const before = await readPreferencesBytes();
 
-      await writeClaudeCodeOtlpConfig({ scope: 'user' });
+      await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, scope: 'user' });
 
       expect(await readPreferencesBytes()).toBe(before);
     });
@@ -1799,7 +1809,7 @@ describe('claude-code-otlp connector', () => {
       const { updateClaudeAnalyticsPreferences } = await import(
         '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js'
       );
-      await writeClaudeCodeOtlpConfig();
+      await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
       await updateClaudeAnalyticsPreferences((current) => ({ ...current, enabled: false }));
       const before = await readPreferencesBytes();
 
@@ -1815,7 +1825,7 @@ describe('claude-code-otlp connector', () => {
     });
 
     it('resolves true once CodeMie owns the OTLP endpoint/headers pair', async () => {
-      await writeClaudeCodeOtlpConfig();
+      await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
       expect(await isClaudeCodeOtlpConnected()).toBe(true);
     });
@@ -1826,7 +1836,7 @@ describe('claude-code-otlp connector', () => {
     const settingsPath = () => join(homeDir, '.claude', 'settings.json');
 
     it('merges a user edit made after the mismatch check into the fresh settings', async () => {
-      await writeClaudeCodeOtlpConfig();
+      await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
       const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
       vi.mocked(readFile).mockImplementationOnce(async (path) => {
         const snapshot = await actual.readFile(path, 'utf-8');
@@ -1843,7 +1853,7 @@ describe('claude-code-otlp connector', () => {
     });
 
     it('re-points only the CodeMie endpoint/header at the live daemon and keeps everything else', async () => {
-      await writeClaudeCodeOtlpConfig({ scope: 'project' });
+      await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, scope: 'project' });
       const before = await readJson(settingsPath());
       before.env.USER_VAR = 'keep';
       before.theme = 'dark';
@@ -1892,14 +1902,14 @@ describe('claude-code-otlp connector', () => {
     });
 
     it('reports a header-only mismatch', async () => {
-      await writeClaudeCodeOtlpConfig(); // :41999, key test-gateway-key-123
+      await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE }); // :41999, key test-gateway-key-123
 
       expect(await checkClaudeCodeOtlpEndpoint({ url: mockState.url, gatewayKey: 'rotated' }))
         .toMatchObject({ matches: false, configured: 'http://127.0.0.1:41999/v1/analytics/otlp', expected: 'http://127.0.0.1:41999/v1/analytics/otlp' });
     });
 
     it('reports the port Claude Code is told to export to, and a mismatch against the live daemon', async () => {
-      await writeClaudeCodeOtlpConfig(); // mockState: :41999
+      await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE }); // mockState: :41999
 
       expect(await readConfiguredOtlpPort()).toBe(41999);
       expect(await checkClaudeCodeOtlpEndpoint(live)).toEqual({

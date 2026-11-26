@@ -7,6 +7,7 @@
 
 import type { HealthCheck, HealthCheckDetail, HealthCheckResult } from '../types.js';
 import { composeProxyDoctor } from '../../proxy/doctor/compose.js';
+import { resolveCollection } from '../../shared/analytics-collection/resolve.js';
 import { logger } from '../../../../utils/logger.js';
 
 /** The condensed section always ends by naming the full report. */
@@ -17,7 +18,7 @@ export class ProxyCheck implements HealthCheck {
 
   async run(): Promise<HealthCheckResult> {
     try {
-      const report = await composeProxyDoctor({ authProbe: false, verbose: false });
+      const report = await composeProxyDoctor({ authProbe: false, verbose: false, plan: (await resolveCollection()).doctor });
       const details: HealthCheckDetail[] = report.sections.map(({ status, message, hint }) => ({
         status: report.nothingConnected && status === 'warn' ? 'info' : status,
         message,

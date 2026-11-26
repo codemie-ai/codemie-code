@@ -4,6 +4,7 @@
  * settings/login files are replaced; the config resolver is real (EPMCDME-16440 review findings 1-3).
  * @group unit
  */
+import { BackendPolicy } from '@/agents/core/collection-policy.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -75,6 +76,8 @@ const profile = (name: string, baseUrl: string, codeMieProject?: string) => ({
 /** One hook: the plugin's real context extraction, the real stamp, then the analytics headers. */
 async function frozen(sessionId: string) {
   const plugin = new ClaudeCodeOtlpPlugin();
+  // The context is built inside `processOtlpEvent`, under the policy of its call.
+  Object.assign(plugin, { activePolicy: new BackendPolicy() });
   const context = await (plugin as unknown as {
     extractHookContext: (i: { cwd: string; session_id: string; hook_event_name: string }) => Promise<Parameters<typeof stampEvidence>[0]>;
   }).extractHookContext({ cwd: repo, session_id: sessionId, hook_event_name: 'Stop' });

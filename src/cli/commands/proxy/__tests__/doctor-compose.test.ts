@@ -133,7 +133,8 @@ function installFetch(): void {
 
 async function compose(opts = { authProbe: true, verbose: false }) {
   const { composeProxyDoctor } = await import('../doctor/compose.js');
-  return composeProxyDoctor(opts);
+  const { backendDoctorPlan } = await import('../doctor/backend-plan.js');
+  return composeProxyDoctor({ ...opts, plan: backendDoctorPlan });
 }
 
 describe('composeProxyDoctor', () => {
@@ -291,7 +292,8 @@ describe('composeProxyDoctor', () => {
       expect(missing(report)).toEqual([]);
       const connectors = report.sections.find((s) => s.id === 'connectors');
       expect(connectors?.status).toBe('info');
-      expect(connectors?.hint).toContain('codemie proxy connect --claude-otlp');
+      expect(connectors?.message).toBe('None connected');
+      expect(connectors?.hint).toBe('no analytics collected — run: codemie proxy connect --claude-otlp (or --copilot-otlp)');
       const delivery = report.sections.find((s) => s.id === 'delivery');
       expect(delivery?.status).toBe('info');
       expect(delivery?.message).toMatch(/no analytics connector/i);
@@ -604,5 +606,249 @@ describe('composeProxyDoctor', () => {
     const recorded = report.sections.find((s) => s.id === 'daemon' && s.message.includes('upstream refused 3 times'));
     expect(recorded?.status).toBe('warn');
     expect(recorded?.hint).toContain('— run: codemie proxy restart');
+  });
+  describe('local plan', () => {
+    const JOB = 'CodeMieLocalTestJob';
+    const NEWEST = new Date('2026-11-20T10:00:00.000Z');
+    let home: string;
+    let settings: Record<string, unknown>;
+    let jobState: 'enabled' | 'disabled';
+    let marker: Date | null;
+    let unreadableMarker: string | undefined;
+    let runLog: string;
+    let loadError: Error | undefined;
+
+    beforeEach(async () => {
+      const { mkdtemp, writeFile } = await import('node:fs/promises');
+      const { join } = await import('node:path');
+      const { tmpdir } = await import('node:os');
+      home = await mkdtemp(join(tmpdir(), 'doctor-local-'));
+      vi.stubEnv('CODEMIE_HOME', home);
+      await writeFile(join(home, 'node'), '');
+      await writeFile(join(home, 'codemie.js'), '');
+      settings = {
+        webhookUrl: 'https://hooks.example.invalid/x?sig=FAKE',
+        format: 'json',
+        includeExternal: 'never',
+        at: '03:00',
+        taskName: JOB,
+        local: true,
+        localJob: { node: join(home, 'node'), entry: join(home, 'codemie.js') },
+      };
+      jobState = 'enabled';
+      marker = new Date('2026-11-21T03:00:05.000Z');
+      unreadableMarker = undefined;
+      runLog = '2026-11-21T03:00:05.000Z ok sent codemie-analytics-a-2026-11-21.otlp.jsonl.gz 512 target=webhook';
+      loadError = undefined;
+    });
+
+    afterEach(async () => {
+      vi.unstubAllEnvs();
+      const { rm } = await import('node:fs/promises');
+      await rm(home, { recursive: true, force: true });
+    });
+
+    async function sessionsFolder(names: string[]): Promise<void> {
+      const { mkdir, writeFile, utimes } = await import('node:fs/promises');
+      const { join } = await import('node:path');
+      const folder = join(home, 'analytics', 'sessions');
+      await mkdir(folder, { recursive: true });
+      for (const [index, name] of names.entries()) {
+        await writeFile(join(folder, name), '{}\n');
+        const at = new Date(NEWEST.getTime() - index * 60_000);
+        await utimes(join(folder, name), at, at);
+      }
+    }
+
+    async function localPlan() {
+      const { localDoctorPlan } = await import('../../shared/analytics-collection/local-doctor.js');
+      return localDoctorPlan({
+        loadSettings: async () => {
+          if (loadError) throw loadError;
+          return settings as never;
+        },
+        schedulerFor: (name: string) => ({
+          preflight: async () => undefined,
+          register: async () => ({}),
+          unregister: async () => false,
+          query: async () => (name === JOB ? jobState : 'disabled'),
+          exists: async () => 'present' as const,
+        }),
+        readLog: async () => runLog,
+        readMarker: async (target: string) => {
+          if (target === unreadableMarker) throw new Error('EACCES: permission denied, open \'last-push\'');
+          return marker;
+        },
+        now: () => new Date('2026-11-22T00:00:00.000Z'),
+        print: () => undefined,
+        modeLines: () => [],
+      });
+    }
+
+    async function composeLocal(authProbe = true) {
+      const { composeProxyDoctor } = await import('../doctor/compose.js');
+      return composeProxyDoctor({ authProbe, verbose: false, plan: await localPlan() });
+    }
+
+    const localRows = (report: { sections: Array<{ id: string; status: string; message: string; hint?: string }> }) =>
+      report.sections.filter((s) => s.id === 'local').map(({ status, message, hint }) => ({ status, message, ...(hint && { hint }) }));
+
+    it('shows no sign-in, upstream or delivery section, runs no keyed request, and names the daemon by the mode', async () => {
+      hookConnected.mockResolvedValue(true);
+      await sessionsFolder(['s1.hooks.jsonl']);
+
+      const report = await composeLocal();
+
+      expect(report.sections.filter((s) => ['auth', 'upstream', 'delivery'].includes(s.id))).toEqual([]);
+      expect(signIn).not.toHaveBeenCalled();
+      expect(collectDeliveryHealth).not.toHaveBeenCalled();
+      expect(report.sections.find((s) => s.id === 'daemon')?.message)
+        .toBe('Running at http://127.0.0.1:4001 (pid 4242, local analytics mode, version 1.0.0)');
+      expect((await localPlan()).groups.map((group) => group.title)).toEqual([
+        'Daemon', 'Clients', 'Analytics connectors', 'Local analytics', 'Claude Desktop collection', 'Environment', 'Details',
+      ]);
+    });
+
+    it('a present folder, an enabled job and a delivered target are ok', async () => {
+      await sessionsFolder(['s1.hooks.jsonl', 's1.otel_logs.jsonl', 's2.hooks.jsonl', 's3.moving']);
+
+      expect(localRows(await composeLocal())).toEqual([
+        { status: 'ok', message: 'Local analytics folder: 2 sessions, newest 2026-11-20T10:00:00.000Z' },
+        { status: 'ok', message: `Scheduled job ${JOB}: enabled` },
+        { status: 'info', message: 'Last run (webhook): 2026-11-21T03:00:05.000Z — sent (codemie-analytics-a-2026-11-21.otlp.jsonl.gz 512)' },
+        { status: 'ok', message: 'Last delivery to webhook: 2026-11-21T03:00:05.000Z' },
+      ]);
+    });
+
+    it('a missing folder, a disabled job and a missing Node are problems with the install hint; a never-sent target is none', async () => {
+      const { join } = await import('node:path');
+      jobState = 'disabled';
+      marker = null;
+      settings = { ...settings, localJob: { node: join(home, 'gone', 'node'), entry: join(home, 'codemie.js') } };
+      const hint = 'Run `codemie analytics sync install` again.';
+
+      expect(localRows(await composeLocal())).toEqual([
+        { status: 'warn', message: `Local analytics folder is missing (${join(home, 'analytics', 'sessions')})`, hint },
+        { status: 'error', message: `Scheduled job ${JOB}: not registered or disabled`, hint },
+        { status: 'error', message: `The scheduled job points at a missing Node or CLI (${join(home, 'gone', 'node')})`, hint },
+        { status: 'info', message: 'Last run (webhook): 2026-11-21T03:00:05.000Z — sent (codemie-analytics-a-2026-11-21.otlp.jsonl.gz 512)' },
+        { status: 'info', message: 'Nothing delivered yet to webhook' },
+      ]);
+    });
+
+    it('a last run that failed warns with the run hint', async () => {
+      runLog = '2026-11-22T03:00:05.000Z fail delivery webhook answered 500 target=webhook\n';
+      await sessionsFolder(['s1.hooks.jsonl']);
+
+      expect(localRows(await composeLocal())).toEqual([
+        { status: 'ok', message: 'Local analytics folder: 1 session, newest 2026-11-20T10:00:00.000Z' },
+        { status: 'ok', message: `Scheduled job ${JOB}: enabled` },
+        {
+          status: 'warn',
+          message: 'Last run (webhook): 2026-11-22T03:00:05.000Z — failed (delivery webhook answered 500)',
+          hint: 'Run `codemie analytics sync run` to deliver now.',
+        },
+        { status: 'ok', message: 'Last delivery to webhook: 2026-11-21T03:00:05.000Z' },
+      ]);
+    });
+
+    it('a last run that skipped for no sessions in its window is no problem', async () => {
+      runLog = '2026-11-22T03:00:05.000Z skip no sessions in window 2026-11-15-to-2026-11-22 target=webhook\n';
+      await sessionsFolder(['s1.hooks.jsonl']);
+
+      expect(localRows(await composeLocal())).toContainEqual({
+        status: 'info',
+        message: 'Last run (webhook): 2026-11-22T03:00:05.000Z — skipped (no sessions in window 2026-11-15-to-2026-11-22)',
+      });
+    });
+
+    it('a stopped daemon warns with the start remedy, and the local rows are still produced', async () => {
+      readDaemonStatus.mockResolvedValue({ running: false, state: null });
+      clientConnected.mockResolvedValue(false);
+      hookConnected.mockResolvedValue(true);
+      await sessionsFolder(['s1.hooks.jsonl']);
+
+      const report = await composeLocal();
+
+      expect(report.sections.find((s) => s.id === 'daemon')).toEqual({
+        id: 'daemon',
+        status: 'warn',
+        message: 'Proxy is not running; analytics hooks start it on their next event',
+        hint: 'the proxy is stopped — run: codemie proxy start, or the next Claude Code or Copilot event starts it',
+      });
+      expect(localRows(report).map((row) => row.message)).toContain(`Scheduled job ${JOB}: enabled`);
+    });
+
+    it('an unreadable marker of one target of two warns on that target alone, and every other row stays', async () => {
+      settings = { ...settings, git: { repoUrl: 'https://git.example.invalid/analytics.git' } };
+      await sessionsFolder(['s1.hooks.jsonl']);
+      const readable = localRows(await composeLocal());
+      unreadableMarker = 'git';
+
+      const rows = localRows(await composeLocal());
+
+      expect(rows).toEqual([
+        { status: 'ok', message: 'Local analytics folder: 1 session, newest 2026-11-20T10:00:00.000Z' },
+        { status: 'ok', message: `Scheduled job ${JOB}: enabled` },
+        { status: 'info', message: 'Last run (webhook): 2026-11-21T03:00:05.000Z — sent (codemie-analytics-a-2026-11-21.otlp.jsonl.gz 512)' },
+        { status: 'ok', message: 'Last delivery to webhook: 2026-11-21T03:00:05.000Z' },
+        { status: 'info', message: 'Last run (git): never' },
+        { status: 'warn', message: "Last delivery to git: unknown (EACCES: permission denied, open 'last-push')", hint: 'Remove the delivery marker (`analytics-last-sent*` in the CodeMie home); the next delivery writes it again.' },
+      ]);
+      expect(rows.slice(0, 5)).toEqual(readable.slice(0, 5));
+    });
+
+    it('a local section builder that throws is one local error row, and the composition resolves', async () => {
+      loadError = new Error('Sync settings at /x is not valid JSON.');
+      await sessionsFolder(['s1.hooks.jsonl']);
+
+      const rows = localRows(await composeLocal());
+
+      expect(rows).toEqual([{
+        status: 'error',
+        message: 'Local analytics check failed: Sync settings at /x is not valid JSON.',
+        hint: 'the check could not run — run: CODEMIE_DEBUG=true codemie proxy doctor',
+      }]);
+    });
+
+    it('no hint of any row names proxy connect or proxy disconnect', async () => {
+      const reports: Array<Awaited<ReturnType<typeof composeLocal>>> = [];
+      // Running, with every client and connector problem the kept sections report.
+      collectClientNotices.mockResolvedValue({
+        clientPortMismatch: [{ flag: '--vscode-claude-code', configuredPort: 4999 }],
+        clientSharedKey: [{ flag: '--vscode-claude-code', refused: false }, { flag: '--vscode-claude-code', refused: true }],
+        hooksOfAnotherInstall: [{ connector: 'claude-code-otlp', flag: '--claude-code-otlp', path: '/other/codemie' }],
+        lines: [],
+      });
+      checkClaudeCodeOtlpEndpoint.mockResolvedValue({ matches: false, configured: 'http://127.0.0.1:4999/v1/analytics/otlp', expected: 'http://127.0.0.1:4001/v1/analytics/otlp' });
+      claudeReadScope.mockResolvedValue({ invalid: 'not an array' });
+      copilotReadScope.mockResolvedValue({ invalid: 'corrupt' });
+      collectDesktopCollection.mockResolvedValue({ connected: true, collecting: false, reason: 'not connected', remedy: 'run: codemie analytics sync install' });
+      reports.push(await composeLocal());
+      // Running with nothing connected, then stopped with a gateway client and with nothing.
+      clientConnected.mockResolvedValue(false);
+      claudeCollect.mockResolvedValue(claudeStatus());
+      collectClientNotices.mockResolvedValue({ clientPortMismatch: [], clientSharedKey: [], hooksOfAnotherInstall: [], lines: [] });
+      reports.push(await composeLocal());
+      readDaemonStatus.mockResolvedValue({ running: false, state: null });
+      reports.push(await composeLocal());
+      clientConnected.mockResolvedValue(true);
+      reports.push(await composeLocal());
+
+      const hints = reports.flatMap((report) => report.sections.map((s) => s.hint ?? ''));
+      expect(hints.filter((hint) => hint.includes('codemie analytics sync install')).length).toBeGreaterThan(0);
+      expect(hints.filter((hint) => /proxy (connect|disconnect)/.test(hint))).toEqual([]);
+    });
+
+    it('a gateway client connected and no connector: the None connected hint names the install command and no connect flag', async () => {
+      claudeCollect.mockResolvedValue(claudeStatus());
+      await sessionsFolder(['s1.hooks.jsonl']);
+
+      const connectors = (await composeLocal()).sections.find((s) => s.id === 'connectors');
+
+      expect(connectors?.message).toBe('None connected');
+      expect(connectors?.hint).toContain('codemie analytics sync install');
+      expect(connectors?.hint).not.toMatch(/--copilot-otlp|--claude-otlp/);
+    });
   });
 });

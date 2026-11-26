@@ -2,6 +2,7 @@
  * Proxy command tests
  * @group unit
  */
+import { BACKEND_REMEDIES } from '../doctor/backend-plan.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import chalk from 'chalk';
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
@@ -10,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NPM_WIN32_SHIMS } from '../../../../../tests/helpers/npm-shims.js';
+import { logger as fileGraphLogger } from '@/utils/logger.js';
 
 vi.mock('../../../../utils/config.js', () => ({
   ConfigLoader: {
@@ -37,7 +39,6 @@ vi.mock('../daemon-manager.js', async (importOriginal) => {
     readDaemonStatus: vi.fn((...args: Parameters<typeof actual.readDaemonStatus>) => checkStatus(...args)),
     readState: vi.fn(),
     writeState: vi.fn(),
-    spawnDaemon: vi.fn(),
     stopDaemon: vi.fn(),
     readConnectionRecord: vi.fn(),
     writeConnectionRecord: vi.fn(),
@@ -45,6 +46,18 @@ vi.mock('../daemon-manager.js', async (importOriginal) => {
     clearLegacyClientIdentity: vi.fn(),
     hasLegacyClientIdentity: vi.fn(),
     seedConnectionRecord: vi.fn(),
+    isDaemonAlive: vi.fn(),
+    DEFAULT_GATEWAY_KEY: actual.DEFAULT_GATEWAY_KEY,
+    DEFAULT_STATE_FILE: actual.DEFAULT_STATE_FILE,
+  };
+});
+vi.mock('../daemon-spawn.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../daemon-spawn.js')>();
+  return {
+    spawnDaemon: vi.fn(),
+    // The local mode's spawn: its arguments, never a process.
+    spawnDaemonProcess: vi.fn(),
+    daemonEntry: actual.daemonEntry,
   };
 });
 // The CLI's own version is read from its package.json: every test pins it.
@@ -140,10 +153,11 @@ vi.mock('@/agents/plugins/claude/cloud-provider-conflict/gate.js', () => ({
 
 /**
  * Every logger instance this file's module graphs wrote with: each vi.resetModules gives a graph its own, and code
- * of an earlier graph still writes with that graph's instance. Each is closed before a temporary CODEMIE_HOME is
+ * of an earlier graph still writes with that graph's instance — the graph of this file's own imports included: a
+ * mocked module first loaded there survives every reset. Each is closed before a temporary CODEMIE_HOME is
  * removed — Windows does not remove a directory that holds an open log file.
  */
-const loggers = new Set<(typeof import('@/utils/logger.js'))['logger']>();
+const loggers = new Set<typeof fileGraphLogger>([fileGraphLogger]);
 async function closeLoggers(): Promise<void> {
   loggers.add((await import('@/utils/logger.js')).logger);
   await Promise.all([...loggers].map((instance) => instance.close()));
@@ -325,7 +339,8 @@ describe('proxy connect --claude-desktop', () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { ProviderRegistry } = await import('../../../../providers/index.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { createProxyCommand } = await import('../index.js');
 
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
@@ -363,7 +378,8 @@ describe('proxy connect --claude-desktop', () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { ProviderRegistry } = await import('../../../../providers/index.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { createProxyCommand } = await import('../index.js');
 
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
@@ -399,7 +415,8 @@ describe('proxy connect --claude-desktop', () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { ProviderRegistry } = await import('../../../../providers/index.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { createProxyCommand } = await import('../index.js');
 
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
@@ -438,7 +455,8 @@ describe('proxy connect --claude-desktop', () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { ProviderRegistry } = await import('../../../../providers/index.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { createProxyCommand } = await import('../index.js');
 
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
@@ -470,7 +488,8 @@ describe('proxy connect --claude-desktop', () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { ProviderRegistry } = await import('../../../../providers/index.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { createProxyCommand } = await import('../index.js');
 
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
@@ -506,7 +525,8 @@ describe('proxy connect --claude-desktop', () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { ProviderRegistry } = await import('../../../../providers/index.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { syncRegisteredSkills } = await import('../../../../cli/commands/skills/setup/sync.js');
     const { syncPluginSkills } = await import('../../../../cli/commands/skills/setup/sync-plugin.js');
     const { writeDesktopConfig } = await import('../connectors/desktop.js');
@@ -547,7 +567,8 @@ describe('proxy connect --claude-desktop', () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { ProviderRegistry } = await import('../../../../providers/index.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { writeDesktopConfig, describeManagedSettingsOverride } = await import('../connectors/desktop.js');
     const { createProxyCommand } = await import('../index.js');
 
@@ -591,7 +612,8 @@ describe('proxy connect --claude-desktop', () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { ProviderRegistry } = await import('../../../../providers/index.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { writeDesktopConfig, describeManagedSettingsOverride } = await import('../connectors/desktop.js');
     const { createProxyCommand } = await import('../index.js');
 
@@ -631,7 +653,8 @@ describe('proxy connect --claude-desktop', () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { ProviderRegistry } = await import('../../../../providers/index.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { writeDesktopConfig } = await import('../connectors/desktop.js');
     const { createProxyCommand } = await import('../index.js');
 
@@ -708,7 +731,8 @@ describe('proxy start', () => {
   ])('starts a daemon with the profile\'s model, given a config with %s', async (_label, configModel, expectedModel) => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { createProxyCommand } = await import('../index.js');
 
     vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValueOnce(null);
@@ -750,7 +774,8 @@ describe('proxy start', () => {
   it('loads the config by the active profile\'s name when no --profile is given', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { createProxyCommand } = await import('../index.js');
 
     vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValueOnce('work');
@@ -779,7 +804,8 @@ describe('proxy start', () => {
   it('starts a daemon a later connect of the same profile reuses', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { buildRequestedConfig, daemonMatchesRequest } = await import('../connect-orchestrator.js');
     const { createProxyCommand } = await import('../index.js');
 
@@ -813,7 +839,8 @@ describe('proxy start', () => {
   it('keeps explicit profile selection', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { createProxyCommand } = await import('../index.js');
 
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
@@ -842,7 +869,8 @@ describe('proxy start', () => {
   it('starts with no identity on Desktop\'s gateway port while Claude Desktop is connected and nothing else names a port', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { readDesktopGateway } = await import('../connectors/desktop.js');
     const { createProxyCommand } = await import('../index.js');
 
@@ -876,7 +904,8 @@ describe('proxy start', () => {
   it('names a running daemon of another profile as a conflict without its client, and stops or spawns nothing', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-    const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+    const { checkStatus, stopDaemon } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { readDesktopGateway } = await import('../connectors/desktop.js');
     const { createProxyCommand } = await import('../index.js');
 
@@ -922,7 +951,8 @@ describe('proxy start', () => {
   it('names a running daemon of the same settings on another port than the record\'s as a conflict, and stops or spawns nothing', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-    const { checkStatus, readConnectionRecord, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+    const { checkStatus, readConnectionRecord, stopDaemon } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { createProxyCommand } = await import('../index.js');
 
     vi.mocked(readConnectionRecord).mockResolvedValue({ version: 1, profile: 'default', port: 4001, updatedAt: '' });
@@ -973,7 +1003,8 @@ describe('proxy start', () => {
   ])('suggests explicit login for proxy start with %s', async (_description, codeMieUrl) => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { createProxyCommand } = await import('../index.js');
     const getStoredCredentials = vi.fn().mockResolvedValue(null);
 
@@ -1017,7 +1048,8 @@ describe('proxy start', () => {
 
   it('spawns the loaded config\'s values with its model when no daemon runs', async () => {
     const ConfigLoader = await arrangeProfileP();
-    const { checkStatus, readConnectionRecord, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus, readConnectionRecord } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { createProxyCommand } = await import('../index.js');
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
     vi.mocked(readConnectionRecord).mockResolvedValue(null);
@@ -1044,7 +1076,8 @@ describe('proxy start', () => {
   ])('replaces a matching daemon of an older CLI from its own state on its port, with %s', async (_label, extra, args) => {
     // The command's config matches the daemon (a conflict otherwise) and names its own model and project.
     const ConfigLoader = await arrangeProfileP({ baseUrl: 'https://t2', provider: 'x', codeMieProject: extra.project, model: 'm-dir' });
-    const { checkStatus, seedConnectionRecord, spawnDaemon, stopDaemon, writeConnectionRecord, writeState } = await import('../daemon-manager.js');
+    const { checkStatus, seedConnectionRecord, stopDaemon, writeConnectionRecord, writeState } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { createProxyCommand } = await import('../index.js');
     const older = {
       pid: 4242, port: 52311, url: 'http://127.0.0.1:52311', profile: 'p', targetUrl: 'https://t2', provider: 'x',
@@ -1077,7 +1110,8 @@ describe('proxy start', () => {
 
   it('--profile p --port 4100 over a matching older daemon on 4100 records the profile, then the port', async () => {
     const ConfigLoader = await arrangeProfileP({ baseUrl: 'https://t2', provider: 'x', codeMieProject: undefined, model: 'm-dir' });
-    const { checkStatus, readState, spawnDaemon, writeConnectionPort, writeConnectionRecord } = await import('../daemon-manager.js');
+    const { checkStatus, readState, writeConnectionPort, writeConnectionRecord } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { createProxyCommand } = await import('../index.js');
     const older = {
       pid: 4242, port: 4100, url: 'http://127.0.0.1:4100', profile: 'p', targetUrl: 'https://t2', provider: 'x',
@@ -1103,7 +1137,8 @@ describe('proxy start', () => {
 
   it('writes no record when the replacement of an older daemon fails to spawn', async () => {
     const ConfigLoader = await arrangeProfileP({ baseUrl: 'https://t2', provider: 'x', codeMieProject: undefined, model: 'm-dir' });
-    const { checkStatus, readState, seedConnectionRecord, spawnDaemon, writeConnectionPort, writeConnectionRecord } = await import('../daemon-manager.js');
+    const { checkStatus, readState, seedConnectionRecord, writeConnectionPort, writeConnectionRecord } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { createProxyCommand } = await import('../index.js');
     const older = {
       pid: 4242, port: 52311, url: 'http://127.0.0.1:52311', profile: 'p', targetUrl: 'https://t2', provider: 'x',
@@ -1134,7 +1169,8 @@ describe('proxy start', () => {
     ['records nothing when the daemon fell back to another port', 60122, false],
   ])('--port 4100 over a record of 52311 asks for 4100 and %s', async (_label, upOn, recorded) => {
     await arrangeProfileP();
-    const { checkStatus, readConnectionRecord, spawnDaemon, writeConnectionPort } = await import('../daemon-manager.js');
+    const { checkStatus, readConnectionRecord, writeConnectionPort } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { createProxyCommand } = await import('../index.js');
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
     vi.mocked(readConnectionRecord).mockResolvedValue({ version: 1, profile: 'p', updatedAt: '', port: 52311 });
@@ -1153,7 +1189,8 @@ describe('proxy start', () => {
 
   it('asks for the port recorded with the clients', async () => {
     await arrangeProfileP();
-    const { checkStatus, readConnectionRecord, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus, readConnectionRecord } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { createProxyCommand } = await import('../index.js');
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
     vi.mocked(readConnectionRecord).mockResolvedValue({ version: 1, profile: 'p', updatedAt: '', port: 52311 });
@@ -1175,6 +1212,7 @@ describe('proxy start', () => {
       const { ConfigLoader } = await import('../../../../utils/config.js');
       const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
       const daemon = await import('../daemon-manager.js');
+      const spawner = await import('../daemon-spawn.js');
       const { createProxyCommand } = await import('../index.js');
 
       vi.mocked(daemon.checkStatus).mockResolvedValue({ running: false, state: null });
@@ -1187,7 +1225,7 @@ describe('proxy start', () => {
       vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
         return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
       } as unknown as typeof CodeMieSSO);
-      vi.mocked(daemon.spawnDaemon).mockImplementation(async opts => ({
+      vi.mocked(spawner.spawnDaemon).mockImplementation(async opts => ({
         url: 'http://127.0.0.1:4001',
         profile: opts.profile,
         port: 4001,
@@ -1195,31 +1233,31 @@ describe('proxy start', () => {
         startedAt: new Date().toISOString(),
       }));
 
-      return { daemon, command: createProxyCommand() };
+      return { daemon, spawner, command: createProxyCommand() };
     };
 
     it('writes the record when --profile is given, even if a valid record exists', async () => {
-      const { daemon, command } = await setupStart(validRecord);
+      const { spawner, command } = await setupStart(validRecord);
 
       await command.parseAsync(['start', '--profile', 'custom'], { from: 'user' });
 
-      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ writeRecord: true });
+      expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0]).toMatchObject({ writeRecord: true });
     });
 
     it('writes the record when there is no --profile and no valid record', async () => {
-      const { daemon, command } = await setupStart(null);
+      const { spawner, command } = await setupStart(null);
 
       await command.parseAsync(['start'], { from: 'user' });
 
-      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ writeRecord: true });
+      expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0]).toMatchObject({ writeRecord: true });
     });
 
     it('leaves the record alone when there is no --profile and a valid record exists', async () => {
-      const { daemon, command } = await setupStart(validRecord);
+      const { spawner, command } = await setupStart(validRecord);
 
       await command.parseAsync(['start'], { from: 'user' });
 
-      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ writeRecord: false });
+      expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0]).toMatchObject({ writeRecord: false });
     });
 
     const printedLines = (): string[] => consoleLogSpy.mock.calls.map((call: unknown[]) => String(call[0]));
@@ -1238,23 +1276,23 @@ describe('proxy start', () => {
     });
 
     it('start --profile moves Codex, the VS Code Claude Code extension and Desktop off the shared key and drops the record\'s older identity', async () => {
-      const { daemon, command } = await setupStart(validRecord);
+      const { spawner, command } = await setupStart(validRecord);
       const files = await arrangeClientFiles(clientHome, OLDER_RECORD, 'local-key');
 
       await command.parseAsync(['start', '--profile', 'custom'], { from: 'user' });
 
-      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ profile: 'custom', writeRecord: true });
+      expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0]).toMatchObject({ profile: 'custom', writeRecord: true });
       await expectMovedToNamedKeys(files, 'local-key', printedLines());
     });
 
     it('start over a matching daemon already running moves the clients off the shared key', async () => {
-      const { daemon, command } = await setupStart(validRecord);
+      const { daemon, spawner, command } = await setupStart(validRecord);
       vi.mocked(daemon.checkStatus).mockResolvedValue({ running: true, state: runningDefault() });
       const files = await arrangeClientFiles(clientHome, OLDER_RECORD, 'local-key');
 
       await command.parseAsync(['start'], { from: 'user' });
 
-      expect(daemon.spawnDaemon).not.toHaveBeenCalled();
+      expect(spawner.spawnDaemon).not.toHaveBeenCalled();
       await expectMovedToNamedKeys(files, 'local-key', printedLines());
     });
 
@@ -1263,7 +1301,7 @@ describe('proxy start', () => {
       ['an older version', '0.16.0'],
       ['no version', undefined],
     ])('start over a daemon of another profile with %s ends in the conflict, stops or spawns nothing and leaves every client config and the record byte for byte', async (_case, version) => {
-      const { daemon, command } = await setupStart(validRecord);
+      const { daemon, spawner, command } = await setupStart(validRecord);
       const { version: _version, ...state } = runningDefault('other');
       vi.mocked(daemon.checkStatus).mockResolvedValue({
         running: true,
@@ -1283,12 +1321,12 @@ describe('proxy start', () => {
         '  codemie proxy stop',
       ].join('\n')));
       expect(daemon.stopDaemon).not.toHaveBeenCalled();
-      expect(daemon.spawnDaemon).not.toHaveBeenCalled();
+      expect(spawner.spawnDaemon).not.toHaveBeenCalled();
       expect(await Promise.all(Object.values(files).map((path) => readFile(path, 'utf-8')))).toEqual(before);
     });
 
     it('start over a daemon whose state holds no version replaces it and moves the clients with the replacement\'s key and port', async () => {
-      const { daemon, command } = await setupStart(validRecord);
+      const { daemon, spawner, command } = await setupStart(validRecord);
       // The replaced daemon holds a key of its own: only a move made with the replacement's state finds the configs.
       const { version: _version, ...older } = { ...runningDefault(), gatewayKey: 'old-key' };
       vi.mocked(daemon.checkStatus).mockResolvedValue({ running: true, state: older });
@@ -1297,12 +1335,12 @@ describe('proxy start', () => {
       await command.parseAsync(['start'], { from: 'user' });
 
       expect(daemon.stopDaemon).toHaveBeenCalled();
-      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ port: 4001, gatewayKey: 'old-key' });
+      expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0]).toMatchObject({ port: 4001, gatewayKey: 'old-key' });
       await expectMovedToNamedKeys(files, 'local-key', printedLines());
     });
 
     it('start that finds no daemon at the first read and the matching one under the lock moves the clients', async () => {
-      const { daemon, command } = await setupStart(validRecord);
+      const { daemon, spawner, command } = await setupStart(validRecord);
       vi.mocked(daemon.readDaemonStatus).mockResolvedValueOnce({ running: false, state: null });
       vi.mocked(daemon.checkStatus).mockResolvedValue({ running: true, state: runningDefault() });
       const files = await arrangeClientFiles(clientHome, OLDER_RECORD, 'local-key');
@@ -1310,7 +1348,7 @@ describe('proxy start', () => {
       await command.parseAsync(['start'], { from: 'user' });
 
       expect(daemon.stopDaemon).not.toHaveBeenCalled();
-      expect(daemon.spawnDaemon).not.toHaveBeenCalled();
+      expect(spawner.spawnDaemon).not.toHaveBeenCalled();
       expect(printedLines()).toContain(chalk.green('✓ Proxy already running at http://127.0.0.1:4001  (profile: default)'));
       await expectMovedToNamedKeys(files, 'local-key', printedLines());
     });
@@ -1356,7 +1394,7 @@ describe('proxy start', () => {
     });
 
     it('seeds the record from the daemon already running and spawns nothing', async () => {
-      const { daemon, command } = await setupStart(validRecord);
+      const { daemon, spawner, command } = await setupStart(validRecord);
       const running = {
         pid: process.pid,
         port: 4001,
@@ -1375,13 +1413,13 @@ describe('proxy start', () => {
       await withHeldLock(() => command.parseAsync(['start'], { from: 'user' }));
 
       expect(daemon.seedConnectionRecord).toHaveBeenCalledWith(running);
-      expect(daemon.spawnDaemon).not.toHaveBeenCalled();
+      expect(spawner.spawnDaemon).not.toHaveBeenCalled();
       // A matching current daemon ends the command before the preparation and the lock.
       expect(syncRegisteredSkills).not.toHaveBeenCalled();
     });
 
     it('rewrites the record for the running daemon when --profile is given, even if a valid record exists', async () => {
-      const { daemon, command } = await setupStart(validRecord);
+      const { daemon, spawner, command } = await setupStart(validRecord);
       const running = {
         pid: process.pid,
         port: 4001,
@@ -1400,7 +1438,7 @@ describe('proxy start', () => {
 
       expect(daemon.writeConnectionRecord).toHaveBeenCalledWith(running, 'custom');
       expect(daemon.seedConnectionRecord).not.toHaveBeenCalled();
-      expect(daemon.spawnDaemon).not.toHaveBeenCalled();
+      expect(spawner.spawnDaemon).not.toHaveBeenCalled();
     });
   });
 });
@@ -1534,7 +1572,8 @@ describe('proxy connect --vscode', () => {
 
   it('uses an explicit profile without requiring its model for VS Code', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { writeVsCodeLanguageModelsConfig } = await import('../connectors/vscode.js');
     const { createProxyCommand } = await import('../index.js');
     vi.mocked(ConfigLoader.load).mockResolvedValue({
@@ -1581,7 +1620,8 @@ describe('proxy connect --vscode', () => {
 
   it('reuses a matching daemon when the profile model is unchanged', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
-    const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+    const { checkStatus, stopDaemon } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { checkProxyHealth } = await import('../health-check.js');
     const { writeVsCodeLanguageModelsConfig } = await import('../connectors/vscode.js');
     const { createProxyCommand } = await import('../index.js');
@@ -1626,7 +1666,8 @@ describe('proxy connect --vscode', () => {
 
   it('restarts a matching daemon when the profile model changed', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
-    const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+    const { checkStatus, stopDaemon } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { checkProxyHealth } = await import('../health-check.js');
     const { createProxyCommand } = await import('../index.js');
     vi.mocked(ConfigLoader.load).mockResolvedValue({
@@ -1788,7 +1829,8 @@ describe('proxy status', () => {
     expect(lines.filter((line) => line.includes('Issues found'))).toHaveLength(1);
     expect(lines.some((line) => line.includes('Codex desktop') || line.includes('older CodeMie CLI'))).toBe(false);
     const { composeProxyDoctor } = await import('../doctor/compose.js');
-    expect(composeProxyDoctor).toHaveBeenCalledWith({ authProbe: false, verbose: false });
+    const { backendDoctorPlan } = await import('../doctor/backend-plan.js');
+    expect(composeProxyDoctor).toHaveBeenCalledWith({ authProbe: false, verbose: false, plan: backendDoctorPlan });
   });
 
   it('prints the Issues found line for an error, and none for info sections', async () => {
@@ -1890,7 +1932,8 @@ describe('proxy status', () => {
 
       expect(lines[0]).toBe(`Status:  ${chalk.green('running, healthy (upstream OK)')}`);
       expect(lines.some((line) => line.includes('timed out once'))).toBe(false);
-      expect(composeProxyDoctor).toHaveBeenCalledWith({ authProbe: true, verbose: false });
+      const { backendDoctorPlan } = await import('../doctor/backend-plan.js');
+      expect(composeProxyDoctor).toHaveBeenCalledWith({ authProbe: true, verbose: false, plan: backendDoctorPlan });
       expect(writeState).not.toHaveBeenCalled();
       const notices = stderrText().split('\n').filter(Boolean);
       expect(notices).toHaveLength(1);
@@ -1936,8 +1979,8 @@ describe('proxy status', () => {
     const { findOlderCliOnPath, formatOlderCliWarning } = await import('../connect-orchestrator.js');
     const state = (await checkStatus()).state!;
     const [desktop, clients, olderCli] = await Promise.all([
-      delivery.collectDesktopCollection(state),
-      delivery.collectClientNotices(state),
+      delivery.collectDesktopCollection(state, BACKEND_REMEDIES),
+      delivery.collectClientNotices(state, BACKEND_REMEDIES),
       findOlderCliOnPath(),
     ]);
     const lines: string[] = [];
@@ -2584,6 +2627,7 @@ describe('proxy restart', () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const daemon = await import('../daemon-manager.js');
+    const spawner = await import('../daemon-spawn.js');
     const { createProxyCommand } = await import('../index.js');
 
     // The read before the preparation and the first read under the lock: the daemon being restarted.
@@ -2609,7 +2653,7 @@ describe('proxy restart', () => {
     vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
       return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
     } as unknown as typeof CodeMieSSO);
-    vi.mocked(daemon.spawnDaemon).mockImplementation(async opts => ({
+    vi.mocked(spawner.spawnDaemon).mockImplementation(async opts => ({
       pid: 5151,
       url: `http://127.0.0.1:${spawnedPort}`,
       profile: opts.profile,
@@ -2618,7 +2662,7 @@ describe('proxy restart', () => {
       startedAt: new Date().toISOString(),
     }));
 
-    return { ConfigLoader, daemon, command: createProxyCommand() };
+    return { ConfigLoader, daemon, spawner, command: createProxyCommand() };
   };
 
   const loggedOutput = (): string =>
@@ -2643,17 +2687,17 @@ describe('proxy restart', () => {
   });
 
   it('re-spawns a running daemon with its port, key and model, no identity, and the profile\'s current project (AC12)', async () => {
-    const { ConfigLoader, daemon, command } = await setup({ running: true, state: runningState });
+    const { ConfigLoader, daemon, spawner, command } = await setup({ running: true, state: runningState });
 
     await command.parseAsync(['restart'], { from: 'user' });
 
     expect(daemon.stopDaemon).toHaveBeenCalledTimes(1);
     expect(vi.mocked(daemon.stopDaemon).mock.invocationCallOrder[0])
-      .toBeLessThan(vi.mocked(daemon.spawnDaemon).mock.invocationCallOrder[0]);
+      .toBeLessThan(vi.mocked(spawner.spawnDaemon).mock.invocationCallOrder[0]);
     expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), { name: 'work' });
-    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).not.toHaveProperty('clientType');
-    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).not.toHaveProperty('telemetryMode');
-    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({
+    expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0]).not.toHaveProperty('clientType');
+    expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0]).not.toHaveProperty('telemetryMode');
+    expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0]).toMatchObject({
       profile: 'work',
       port: 4001,
       gatewayKey: 'k',
@@ -2669,49 +2713,49 @@ describe('proxy restart', () => {
 
   describe('a restart from another directory keeps the project (PR #758 review, finding 6)', () => {
     it('a project recorded from a repo config (local) is kept, though the profile resolves elsewhere', async () => {
-      const { daemon, command } = await setup({ running: true, state: { ...runningState, projectBinding: 'local' } }, 4001, 'work', 'own');
+      const { spawner, command } = await setup({ running: true, state: { ...runningState, projectBinding: 'local' } }, 4001, 'work', 'own');
 
       await command.parseAsync(['restart'], { from: 'user' });
 
-      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ project: 'recorded-project', projectBinding: 'local', gatewayKey: 'k' });
+      expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0]).toMatchObject({ project: 'recorded-project', projectBinding: 'local', gatewayKey: 'k' });
     });
 
     it('an unowned profile keeps the recorded project (state file from an older CLI, no binding)', async () => {
-      const { daemon, command } = await setup({ running: true, state: runningState }, 4001, 'work', 'unowned');
+      const { spawner, command } = await setup({ running: true, state: runningState }, 4001, 'work', 'unowned');
 
       await command.parseAsync(['restart'], { from: 'user' });
 
-      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ project: 'recorded-project' });
+      expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0]).toMatchObject({ project: 'recorded-project' });
     });
 
     it('a profile that is now off CodeMie drops the recorded project', async () => {
-      const { ConfigLoader, daemon, command } = await setup({ running: true, state: runningState }, 4001, 'work', 'none');
+      const { ConfigLoader, spawner, command } = await setup({ running: true, state: runningState }, 4001, 'work', 'none');
       vi.mocked(ConfigLoader.load).mockResolvedValue({ name: 'work', provider: 'ai-run-sso', baseUrl: 'https://example.com/api' } as Awaited<ReturnType<typeof ConfigLoader.load>>);
 
       await command.parseAsync(['restart'], { from: 'user' });
 
-      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0].project).toBeUndefined();
-      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0].projectBinding).toBe('none');
+      expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0].project).toBeUndefined();
+      expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0].projectBinding).toBe('none');
     });
   });
 
   it('switches only the profile when --profile is given', async () => {
-    const { ConfigLoader, daemon, command } = await setup({ running: true, state: runningState });
+    const { ConfigLoader, spawner, command } = await setup({ running: true, state: runningState });
 
     await command.parseAsync(['restart', '--profile', 'other'], { from: 'user' });
 
     expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), { name: 'other' });
-    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({
+    expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0]).toMatchObject({
       profile: 'other',
       port: 4001,
       project: 'config-project',
     });
     // The old profile's model may not exist on the new profile's tenant.
-    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0].model).toBeUndefined();
+    expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0].model).toBeUndefined();
   });
 
   it('starts with the new profile\'s own model when --profile is given', async () => {
-    const { ConfigLoader, daemon, command } = await setup({ running: true, state: runningState });
+    const { ConfigLoader, spawner, command } = await setup({ running: true, state: runningState });
     vi.mocked(ConfigLoader.load).mockImplementation(async (_cwd, options) => ({
       name: (options as { name?: string } | undefined)?.name ?? 'work',
       provider: 'ai-run-sso',
@@ -2723,11 +2767,11 @@ describe('proxy restart', () => {
     await command.parseAsync(['restart', '--profile', 'other'], { from: 'user' });
 
     expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), { name: 'other' });
-    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ profile: 'other', model: 'm1' });
+    expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0]).toMatchObject({ profile: 'other', model: 'm1' });
   });
 
   it('leaves the running daemon untouched when SSO credentials are missing', async () => {
-    const { daemon, command } = await setup({ running: true, state: runningState });
+    const { daemon, spawner, command } = await setup({ running: true, state: runningState });
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
       return { getStoredCredentials: vi.fn().mockResolvedValue(null) };
@@ -2736,7 +2780,7 @@ describe('proxy restart', () => {
     await expect(command.parseAsync(['restart'], { from: 'user' })).rejects.toThrow('process.exit:1');
 
     expect(daemon.stopDaemon).not.toHaveBeenCalled();
-    expect(daemon.spawnDaemon).not.toHaveBeenCalled();
+    expect(spawner.spawnDaemon).not.toHaveBeenCalled();
   });
 
   it('leaves the running daemon untouched when the profile has no base URL', async () => {
@@ -2773,7 +2817,7 @@ describe('proxy restart', () => {
   });
 
   it('stops a daemon that started during the restart window before re-spawning', async () => {
-    const { daemon, command } = await setup({ running: true, state: runningState });
+    const { daemon, spawner, command } = await setup({ running: true, state: runningState });
     vi.mocked(daemon.checkStatus)
       .mockReset()
       .mockResolvedValueOnce({ running: true, state: runningState })
@@ -2784,18 +2828,18 @@ describe('proxy restart', () => {
 
     expect(daemon.stopDaemon).toHaveBeenCalledTimes(2);
     expect(vi.mocked(daemon.stopDaemon).mock.invocationCallOrder[1])
-      .toBeLessThan(vi.mocked(daemon.spawnDaemon).mock.invocationCallOrder[0]);
-    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ port: 4001, gatewayKey: 'k' });
+      .toBeLessThan(vi.mocked(spawner.spawnDaemon).mock.invocationCallOrder[0]);
+    expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0]).toMatchObject({ port: 4001, gatewayKey: 'k' });
   });
 
   it('behaves like start when the recorded daemon is not running', async () => {
     const { DEFAULT_DAEMON_PORT } = await import('../connect-orchestrator.js');
-    const { daemon, command } = await setup({ running: false, state: runningState }, DEFAULT_DAEMON_PORT, 'default');
+    const { daemon, spawner, command } = await setup({ running: false, state: runningState }, DEFAULT_DAEMON_PORT, 'default');
 
     await command.parseAsync(['restart'], { from: 'user' });
 
     expect(daemon.stopDaemon).not.toHaveBeenCalled();
-    const options = vi.mocked(daemon.spawnDaemon).mock.calls[0][0];
+    const options = vi.mocked(spawner.spawnDaemon).mock.calls[0][0];
     expect(options).toMatchObject({
       profile: 'default',
       port: DEFAULT_DAEMON_PORT,
@@ -2822,8 +2866,8 @@ describe('proxy restart', () => {
   });
 
   it('names the lost identity and the restore command when the re-spawn fails', async () => {
-    const { daemon, command } = await setup({ running: true, state: runningState });
-    vi.mocked(daemon.spawnDaemon).mockRejectedValue(new Error('Daemon failed to start within 5 seconds'));
+    const { spawner, command } = await setup({ running: true, state: runningState });
+    vi.mocked(spawner.spawnDaemon).mockRejectedValue(new Error('Daemon failed to start within 5 seconds'));
 
     await expect(command.parseAsync(['restart'], { from: 'user' })).rejects.toThrow('process.exit:1');
 
@@ -2836,26 +2880,26 @@ describe('proxy restart', () => {
   });
 
   it.each(['claude-code-otlp', 'vscode-byok'])('spawns with no identity when the state names %s', async (clientType) => {
-    const { daemon, command } = await setup({ running: true, state: { ...runningState, clientType } });
+    const { spawner, command } = await setup({ running: true, state: { ...runningState, clientType } });
 
     await command.parseAsync(['restart'], { from: 'user' });
 
-    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).not.toHaveProperty('clientType');
-    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).not.toHaveProperty('telemetryMode');
+    expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0]).not.toHaveProperty('clientType');
+    expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0]).not.toHaveProperty('telemetryMode');
   });
 
   it('re-spawns a running daemon of an older CLI whose state has no model with the global profile\'s model', async () => {
-    const { ConfigLoader, daemon, command } = await setup({ running: true, state: { ...runningState, model: undefined } as typeof runningState });
+    const { ConfigLoader, spawner, command } = await setup({ running: true, state: { ...runningState, model: undefined } as typeof runningState });
     vi.mocked(ConfigLoader.loadGlobalConfigProfile).mockResolvedValueOnce({ name: 'work', model: 'global-model' });
 
     await command.parseAsync(['restart'], { from: 'user' });
 
     expect(ConfigLoader.loadGlobalConfigProfile).toHaveBeenCalledWith('work');
-    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0].model).toBe('global-model');
+    expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0].model).toBe('global-model');
   });
 
   it('re-spawns a running daemon whose state has no model with the loaded config\'s when the global profile has none', async () => {
-    const { ConfigLoader, daemon, command } = await setup({ running: true, state: { ...runningState, model: undefined } as typeof runningState });
+    const { ConfigLoader, spawner, command } = await setup({ running: true, state: { ...runningState, model: undefined } as typeof runningState });
     vi.mocked(ConfigLoader.loadGlobalConfigProfile).mockResolvedValueOnce({});
     vi.mocked(ConfigLoader.load).mockResolvedValue({
       name: 'work', provider: 'ai-run-sso', baseUrl: 'https://example.com/api', codeMieProject: 'config-project', model: 'm1',
@@ -2863,18 +2907,18 @@ describe('proxy restart', () => {
 
     await command.parseAsync(['restart'], { from: 'user' });
 
-    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0].model).toBe('m1');
+    expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0].model).toBe('m1');
   });
 
   it('keeps the state\'s model over the loaded config\'s when no --profile is given', async () => {
-    const { ConfigLoader, daemon, command } = await setup({ running: true, state: runningState });
+    const { ConfigLoader, spawner, command } = await setup({ running: true, state: runningState });
     vi.mocked(ConfigLoader.load).mockResolvedValue({
       name: 'work', provider: 'ai-run-sso', baseUrl: 'https://example.com/api', codeMieProject: 'config-project', model: 'm1',
     } as Awaited<ReturnType<typeof ConfigLoader.load>>);
 
     await command.parseAsync(['restart'], { from: 'user' });
 
-    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0].model).toBe('m');
+    expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0].model).toBe('m');
   });
 
   it.each([
@@ -2882,7 +2926,7 @@ describe('proxy restart', () => {
     ['was replaced by another run', { running: true, state: { ...runningState, pid: 9191 } }],
     ['was restarted with another start time', { running: true, state: { ...runningState, startedAt: '2026-01-01T00:00:00.000Z' } }],
   ])('fails, touching nothing, when the daemon %s during the preparation', async (_label, underLock) => {
-    const { daemon, command } = await setup({ running: true, state: runningState });
+    const { daemon, spawner, command } = await setup({ running: true, state: runningState });
     vi.mocked(daemon.checkStatus).mockReset().mockResolvedValue(underLock as Awaited<ReturnType<typeof daemon.checkStatus>>);
     const files = await arrangeClientFiles(clientHome, OLDER_RECORD, 'k');
     const before = await Promise.all(Object.values(files).map((path) => readFile(path, 'utf-8')));
@@ -2891,7 +2935,7 @@ describe('proxy restart', () => {
 
     expect(errorOutput()).toContain('The proxy changed while restarting; run the command again.');
     expect(daemon.stopDaemon).not.toHaveBeenCalled();
-    expect(daemon.spawnDaemon).not.toHaveBeenCalled();
+    expect(spawner.spawnDaemon).not.toHaveBeenCalled();
     expect(await Promise.all(Object.values(files).map((path) => readFile(path, 'utf-8')))).toEqual(before);
   });
 
@@ -2899,28 +2943,28 @@ describe('proxy restart', () => {
     ['the record\'s profile and port', ['restart'], 'recorded'],
     ['--profile p2 and the record\'s port', ['restart', '--profile', 'p2'], 'p2'],
   ])('starts a stopped daemon with %s', async (_label, argv, profile) => {
-    const { ConfigLoader, daemon, command } = await setup({ running: false, state: null }, 52311, 'default');
+    const { ConfigLoader, daemon, spawner, command } = await setup({ running: false, state: null }, 52311, 'default');
     vi.mocked(daemon.readConnectionRecord).mockResolvedValue({ version: 1, profile: 'recorded', updatedAt: '', port: 52311 });
 
     await command.parseAsync(argv, { from: 'user' });
 
     expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), { name: profile });
-    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ profile, port: 52311 });
+    expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0]).toMatchObject({ profile, port: 52311 });
   });
 
   it('starts a stopped daemon with no record on the active profile\'s name', async () => {
-    const { ConfigLoader, daemon, command } = await setup({ running: false, state: null }, 4001, 'work');
+    const { ConfigLoader, daemon, spawner, command } = await setup({ running: false, state: null }, 4001, 'work');
     vi.mocked(daemon.readConnectionRecord).mockResolvedValue(null);
     vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValueOnce('work');
 
     await command.parseAsync(['restart'], { from: 'user' });
 
     expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), { name: 'work' });
-    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ profile: 'work', port: 4001 });
+    expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0]).toMatchObject({ profile: 'work', port: 4001 });
   });
 
   it('starts a stopped daemon with the loaded config\'s values and its model', async () => {
-    const { ConfigLoader, daemon, command } = await setup({ running: false, state: null }, 4001, 'p');
+    const { ConfigLoader, daemon, spawner, command } = await setup({ running: false, state: null }, 4001, 'p');
     vi.mocked(daemon.readConnectionRecord).mockResolvedValue(null);
     vi.mocked(ConfigLoader.load).mockResolvedValue({
       name: 'p', provider: 'ai-run-sso', baseUrl: 'https://t', codeMieProject: 'A', model: 'm1',
@@ -2929,14 +2973,14 @@ describe('proxy restart', () => {
 
     await command.parseAsync(['restart'], { from: 'user' });
 
-    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toEqual({
+    expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0]).toEqual({
       targetUrl: 'https://t', provider: 'ai-run-sso', profile: 'p', project: 'A', projectBinding: 'own',
       syncApiUrl: 'https://s', syncCodeMieUrl: 'https://c', port: 4001, writeRecord: true, model: 'm1',
     });
   });
 
   it('starts a stopped daemon without a model when the profile\'s model is blank', async () => {
-    const { ConfigLoader, daemon, command } = await setup({ running: false, state: null }, 4001, 'p');
+    const { ConfigLoader, daemon, spawner, command } = await setup({ running: false, state: null }, 4001, 'p');
     vi.mocked(daemon.readConnectionRecord).mockResolvedValue(null);
     vi.mocked(ConfigLoader.load).mockResolvedValue({
       name: 'p', provider: 'ai-run-sso', baseUrl: 'https://t', codeMieProject: 'A', model: '  ',
@@ -2944,18 +2988,18 @@ describe('proxy restart', () => {
 
     await command.parseAsync(['restart'], { from: 'user' });
 
-    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).not.toHaveProperty('model');
+    expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0]).not.toHaveProperty('model');
   });
 
   it('starts without a model when --profile names a profile whose model is blank', async () => {
-    const { ConfigLoader, daemon, command } = await setup({ running: true, state: runningState });
+    const { ConfigLoader, spawner, command } = await setup({ running: true, state: runningState });
     vi.mocked(ConfigLoader.load).mockResolvedValue({
       name: 'other', provider: 'ai-run-sso', baseUrl: 'https://example.com/api', codeMieProject: 'config-project', model: '  ',
     } as Awaited<ReturnType<typeof ConfigLoader.load>>);
 
     await command.parseAsync(['restart', '--profile', 'other'], { from: 'user' });
 
-    expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0].model).toBeUndefined();
+    expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0].model).toBeUndefined();
   });
 
   describe('while Claude Desktop is connected', () => {
@@ -2969,13 +3013,13 @@ describe('proxy restart', () => {
       ['on its own port, not the gateway port', 4002],
     ])('re-spawns a running daemon with no identity %s and records it', async (_label, port) => {
       const onPort = { ...runningState, clientType: 'claude-code-otlp', port, url: `http://127.0.0.1:${port}` };
-      const { daemon, command } = await setup({ running: true, state: onPort }, port);
+      const { daemon, spawner, command } = await setup({ running: true, state: onPort }, port);
       await connectDesktop(4001);
       vi.mocked(daemon.readConnectionRecord).mockResolvedValue(null);
 
       await command.parseAsync(['restart'], { from: 'user' });
 
-      const [spawned] = vi.mocked(daemon.spawnDaemon).mock.calls[0];
+      const [spawned] = vi.mocked(spawner.spawnDaemon).mock.calls[0];
       expect(spawned.port).toBe(port);
       expect(spawned).not.toHaveProperty('clientType');
       expect(spawned).not.toHaveProperty('telemetryMode');
@@ -2999,13 +3043,13 @@ describe('proxy restart', () => {
       ['comes up there', 4005],
       ['comes up off that port', 62000],
     ])('starts a stopped daemon with no identity on Desktop\'s gateway port when nothing else names one, and %s', async (_label, upOn) => {
-      const { daemon, command } = await setup({ running: false, state: null }, upOn, 'default');
+      const { daemon, spawner, command } = await setup({ running: false, state: null }, upOn, 'default');
       await connectDesktop(4005);
 
       await command.parseAsync(['restart'], { from: 'user' });
 
       expect(daemon.stopDaemon).not.toHaveBeenCalled();
-      const [spawned] = vi.mocked(daemon.spawnDaemon).mock.calls[0];
+      const [spawned] = vi.mocked(spawner.spawnDaemon).mock.calls[0];
       expect(spawned).toMatchObject({ port: 4005, writeRecord: true });
       expect(spawned).not.toHaveProperty('clientType');
       expect(spawned).not.toHaveProperty('telemetryMode');
@@ -3017,11 +3061,11 @@ describe('proxy restart', () => {
     const validRecord = { version: 1 as const, profile: 'recorded', updatedAt: new Date().toISOString() };
 
     it('defers the write of a running restart to after the port check', async () => {
-      const { daemon, command } = await setup({ running: true, state: runningState });
+      const { spawner, command } = await setup({ running: true, state: runningState });
 
       await command.parseAsync(['restart'], { from: 'user' });
 
-      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ writeRecord: false });
+      expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0]).toMatchObject({ writeRecord: false });
     });
 
     it('writes the restarted daemon\'s profile when there is no valid record', async () => {
@@ -3070,13 +3114,13 @@ describe('proxy restart', () => {
     });
 
     it('a restart with no daemon running starts one and moves the clients off the shared key', async () => {
-      const { daemon, command } = await setup({ running: false, state: null }, 4001, 'default');
+      const { daemon, spawner, command } = await setup({ running: false, state: null }, 4001, 'default');
       const files = await arrangeClientFiles(clientHome, OLDER_RECORD, 'codemie-proxy');
 
       await command.parseAsync(['restart'], { from: 'user' });
 
       expect(daemon.stopDaemon).not.toHaveBeenCalled();
-      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ profile: 'default', port: 4001 });
+      expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0]).toMatchObject({ profile: 'default', port: 4001 });
       await expectMovedToNamedKeys(
         files, 'codemie-proxy', consoleLogSpy.mock.calls.map((call: unknown[]) => String(call[0]))
       );
@@ -3097,12 +3141,12 @@ describe('proxy restart', () => {
       ['a valid record exists and there is no --profile', ['restart'], validRecord, false],
     ])('decides the stopped-restart write when %s', async (_description, argv, record, expected) => {
       const { DEFAULT_DAEMON_PORT } = await import('../connect-orchestrator.js');
-      const { daemon, command } = await setup({ running: false, state: null }, DEFAULT_DAEMON_PORT, 'default');
+      const { daemon, spawner, command } = await setup({ running: false, state: null }, DEFAULT_DAEMON_PORT, 'default');
       vi.mocked(daemon.readConnectionRecord).mockResolvedValue(record);
 
       await command.parseAsync(argv, { from: 'user' });
 
-      expect(vi.mocked(daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ writeRecord: expected });
+      expect(vi.mocked(spawner.spawnDaemon).mock.calls[0][0]).toMatchObject({ writeRecord: expected });
       expect(daemon.writeConnectionRecord).not.toHaveBeenCalled();
     });
   });
@@ -3181,5 +3225,164 @@ describe('proxy connect help of the routing flags', () => {
 
   it('--vscode-claude-code says it routes the extension through the proxy', async () => {
     expect(await description('--vscode-claude-code')).toContain('through the proxy');
+  });
+});
+
+describe('the proxy commands in the local mode', () => {
+  const REFUSAL =
+    'This machine runs the local analytics mode of `codemie analytics sync`. Run `codemie analytics sync uninstall` first.';
+  const LOCAL_STATE = {
+    pid: process.pid,
+    port: 4555,
+    url: 'http://127.0.0.1:4555',
+    profile: '',
+    gatewayKey: 'codemie-proxy',
+    mode: 'local' as const,
+    version: '0.17.0',
+    startedAt: new Date().toISOString(),
+  };
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await writeFile(join(clientHome, 'analytics-sync.json'), JSON.stringify({
+      webhookUrl: 'https://hooks.example.invalid/x?sig=FAKE', format: 'json', includeExternal: 'never', at: '03:00', local: true,
+    }));
+  });
+
+  afterEach(() => {
+    consoleLogSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
+  });
+
+  const printed = (): string[] => consoleLogSpy.mock.calls.map((call) => String(call[0]));
+
+  it('connect refuses, naming sync uninstall, and starts, writes or records nothing', async () => {
+    const daemon = await import('../daemon-manager.js');
+    const spawner = await import('../daemon-spawn.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await expect(createProxyCommand().parseAsync(['connect', '--claude-otlp', '--yes'], { from: 'user' })).rejects.toThrow(REFUSAL);
+
+    expect(spawner.spawnDaemon).not.toHaveBeenCalled();
+    expect(spawner.spawnDaemonProcess).not.toHaveBeenCalled();
+    expect(daemon.writeConnectionRecord).not.toHaveBeenCalled();
+    expect(existsSync(join(clientHome, '.claude', 'settings.json'))).toBe(false);
+  });
+
+  it.each([['--all'], ['--copilot-cli-otlp']])('disconnect %s refuses and removes nothing', async (flag) => {
+    const hookFile = join(clientHome, '.copilot', 'hooks', 'codemie-copilot-cli-hooks.json');
+    await mkdir(dirname(hookFile), { recursive: true });
+    await writeFile(hookFile, '{}');
+    const daemon = await import('../daemon-manager.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await expect(createProxyCommand().parseAsync(['disconnect', flag], { from: 'user' })).rejects.toThrow(REFUSAL);
+
+    expect(existsSync(hookFile)).toBe(true);
+    expect(daemon.stopDaemon).not.toHaveBeenCalled();
+  });
+
+  it('start spawns the local daemon on the given port, with no backend launch', async () => {
+    const daemon = await import('../daemon-manager.js');
+    const spawner = await import('../daemon-spawn.js');
+    vi.mocked(spawner.spawnDaemonProcess).mockResolvedValue(LOCAL_STATE);
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(['start', '--port', '4555'], { from: 'user' });
+
+    const args = vi.mocked(spawner.spawnDaemonProcess).mock.calls[0][0];
+    expect(args.slice(1)).toEqual(['--mode', 'local', '--gateway-key', 'codemie-proxy', '--state-file', daemon.DEFAULT_STATE_FILE, '--port', '4555']);
+    expect(spawner.spawnDaemon).not.toHaveBeenCalled();
+    expect(printed()).toContain('The local analytics proxy is running on http://127.0.0.1:4555.');
+  });
+
+  it('start with a --profile refuses and starts nothing', async () => {
+    const spawner = await import('../daemon-spawn.js');
+    const { createProxyCommand } = await import('../index.js');
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((code?: string | number | null | undefined) => {
+      throw new Error(`process.exit:${code}`);
+    });
+
+    await expect(createProxyCommand().parseAsync(['start', '--profile', 'work'], { from: 'user' })).rejects.toThrow('process.exit:1');
+    exitSpy.mockRestore();
+
+    expect(consoleErrorSpy.mock.calls.map((call) => String(call.join(' '))).join('\n')).toContain('codemie analytics sync uninstall');
+    expect(spawner.spawnDaemonProcess).not.toHaveBeenCalled();
+    expect(spawner.spawnDaemon).not.toHaveBeenCalled();
+  });
+
+  it('restart stops the daemon and spawns the local one on its port, with no backend launch', async () => {
+    const daemon = await import('../daemon-manager.js');
+    const spawner = await import('../daemon-spawn.js');
+    vi.mocked(daemon.readState).mockResolvedValue(LOCAL_STATE);
+    vi.mocked(spawner.spawnDaemonProcess).mockResolvedValue(LOCAL_STATE);
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(['restart'], { from: 'user' });
+
+    expect(daemon.stopDaemon).toHaveBeenCalled();
+    expect(vi.mocked(spawner.spawnDaemonProcess).mock.calls[0][0]).toContain('--mode');
+    expect(vi.mocked(spawner.spawnDaemonProcess).mock.calls[0][0].slice(-2)).toEqual(['--port', '4555']);
+    expect(spawner.spawnDaemon).not.toHaveBeenCalled();
+    expect(printed()).toContain('The local analytics proxy is running on http://127.0.0.1:4555.');
+  });
+
+  it('stop stops the daemon', async () => {
+    const daemon = await import('../daemon-manager.js');
+    vi.mocked(daemon.checkStatus).mockResolvedValue({ running: true, state: LOCAL_STATE });
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(['stop'], { from: 'user' });
+
+    expect(daemon.stopDaemon).toHaveBeenCalled();
+    expect(printed()).toContain(chalk.green('✓ Proxy stopped'));
+  });
+
+  it('stop on a terminal prints the local next steps alone', async () => {
+    const original = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+    const written: string[] = [];
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+      written.push(String(chunk));
+      return true;
+    });
+    try {
+      const daemon = await import('../daemon-manager.js');
+      vi.mocked(daemon.checkStatus).mockResolvedValue({ running: true, state: LOCAL_STATE });
+      const { createProxyCommand } = await import('../index.js');
+
+      await createProxyCommand().parseAsync(['stop'], { from: 'user' });
+    } finally {
+      writeSpy.mockRestore();
+      if (original) Object.defineProperty(process.stdout, 'isTTY', original);
+      else delete (process.stdout as { isTTY?: boolean }).isTTY;
+    }
+
+    expect(written.filter((chunk) => chunk.startsWith('Next: '))).toEqual([
+      'Next: codemie proxy start\n',
+      'Next: codemie analytics sync status\n',
+      'Next: codemie proxy doctor\n',
+    ]);
+  });
+
+  it('status of the running local daemon passes the local plan and prints no Profile or Client keys line', async () => {
+    const daemon = await import('../daemon-manager.js');
+    const { composeProxyDoctor } = await import('../doctor/compose.js');
+    vi.mocked(daemon.readDaemonStatus).mockResolvedValue({ running: true, state: LOCAL_STATE });
+    vi.mocked(composeProxyDoctor).mockReset().mockResolvedValue({ sections: [{ id: 'daemon', status: 'ok', message: 'Running' }], nothingConnected: false });
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(['status', '--deep'], { from: 'user' });
+
+    const { plan, authProbe } = vi.mocked(composeProxyDoctor).mock.calls[0][0];
+    expect(authProbe).toBe(true);
+    expect(plan.authProbe(authProbe)).toBe(false);
+    expect(plan.daemonLabel(LOCAL_STATE)).toBe('local analytics mode');
+    expect(printed().filter((line) => /Profile:|Client keys:/.test(line))).toEqual([]);
   });
 });

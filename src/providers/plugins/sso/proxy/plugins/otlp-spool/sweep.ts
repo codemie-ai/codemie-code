@@ -10,7 +10,7 @@ import {
 } from './spool-paths.js';
 import { withSessionLock } from './session-lock.js';
 import { repairDestinationIntent } from './destination-intent.js';
-import { createStatus, readStatus } from './session-status.js';
+import { createStatus, readStatus, type SessionStatus } from './session-status.js';
 import { isSessionDrained, lastActivityMs, readSpoolState } from './spool-state.js';
 import { abandonedSessionGraceMs, endedSessionGraceMs } from './spool-config.js';
 
@@ -94,6 +94,14 @@ async function isDeletable(sessionId: string): Promise<boolean> {
   const lossAt = Math.max(status.lastLoss?.at ?? 0, status.stampLoss?.at ?? 0);
   if (activityMs === null) return lossAt > 0 ? Date.now() - lossAt >= abandonedSessionGraceMs() : false;
 
+  return isPastGrace(status, activityMs);
+}
+
+/**
+ * Whether a session's grace has passed: the end grace after the later of `endedAt` and the last activity for an
+ * ended session, the abandonment grace after the last activity otherwise.
+ */
+export function isPastGrace(status: Pick<SessionStatus, 'endedAt'>, activityMs: number): boolean {
   const idleSince =
     status.endedAt !== undefined ? Math.max(status.endedAt, activityMs) : activityMs;
   const timeoutMs =
@@ -102,7 +110,8 @@ async function isDeletable(sessionId: string): Promise<boolean> {
   return Date.now() - idleSince >= timeoutMs;
 }
 
-async function deleteSession(sessionId: string): Promise<void> {
+/** Removes every stream file and the status of a session. Called under the session lock. */
+export async function deleteSession(sessionId: string): Promise<void> {
   const paths = [...SPOOL_STREAMS.map((s) => streamFile(sessionId, s)), statusFile(sessionId)];
   for (const path of paths) {
     try {

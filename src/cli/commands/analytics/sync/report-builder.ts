@@ -8,10 +8,11 @@
  */
 import { loadAnalytics } from '../analytics-core.js';
 import type { AnalyticsSource } from '../sources/types.js';
+import { SessionsSource } from '../sources/sessions-source.js';
 import { buildPayload } from '../report/payload-builder.js';
 import { emailSlug } from '../report/report-generator.js';
-import type { SyncReport } from './types.js';
-import type { SyncWindow } from './window.js';
+import type { ExportSource, SyncReport } from './types.js';
+import { formatUtcDate, type SyncWindow } from './window.js';
 
 export interface BuildSyncReportOptions {
   source: AnalyticsSource;
@@ -19,13 +20,6 @@ export interface BuildSyncReportOptions {
   email: string;
   includeExternal: boolean;
   now: Date;
-}
-
-function formatUtcDate(date: Date): string {
-  const year = date.getUTCFullYear();
-  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(date.getUTCDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
 }
 
 /**
@@ -68,5 +62,15 @@ export async function buildSyncReport(opts: BuildSyncReportOptions): Promise<Syn
   return {
     fileName,
     bytes: Buffer.from(JSON.stringify(payload, null, 2), 'utf-8'),
+    contentType: 'application/json',
   };
+}
+
+/** The JSON report of a machine with a CodeMie backend, built from the analytics `source`. */
+export class ReportSource implements ExportSource {
+  constructor(private readonly source: AnalyticsSource = new SessionsSource()) {}
+
+  build(input: Parameters<ExportSource['build']>[0]): Promise<SyncReport | null> {
+    return buildSyncReport({ source: this.source, ...input });
+  }
 }

@@ -24,6 +24,7 @@ import {
 import { readCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
 import { renderHint } from '@/utils/hint.js';
 import { vendorFlag } from './flag-list.js';
+import type { DoctorRemedies } from './doctor/plan.js';
 
 interface ConnectorSection {
   connectorId: string;
@@ -63,11 +64,11 @@ async function projectListRow(label: string, paths: string[]): Promise<ReportRow
  * One layout for every connector: a headline, scope, tracked and excluded projects, the collection flag,
  * at most one run hint (connecting), then the channels these settings do not control.
  */
-async function renderConnectorSection(section: ConnectorSection): Promise<string> {
+async function renderConnectorSection(section: ConnectorSection, remedies: DoctorRemedies): Promise<string> {
   const rows: ReportRow[] = [
     {
       message: `${section.headline.label}: ${section.headline.value}`,
-      ...(section.needsConnect ? { hint: renderHint({ reason: 'Not connected', command: `codemie proxy connect ${vendorFlag(`--${section.connectorId}`)}` }) } : {}),
+      ...(section.needsConnect ? { hint: renderHint({ reason: 'Not connected', command: remedies.connect(vendorFlag(`--${section.connectorId}`)) }) } : {}),
     },
     { message: `Scope: ${SCOPE_TEXT[section.scope]}` },
   ];
@@ -123,7 +124,8 @@ export async function collectClaudeAnalyticsStatus(): Promise<ClaudeAnalyticsSta
   };
 }
 
-export function formatClaudeAnalyticsStatus(status: ClaudeAnalyticsStatus): Promise<string> {
+/** The Claude section of the analytics status: hooks installed or not, then the common connector layout. */
+export function formatClaudeAnalyticsStatus(status: ClaudeAnalyticsStatus, remedies: DoctorRemedies): Promise<string> {
   return renderConnectorSection({
     connectorId: CLAUDE_CODE_OTLP_AGENT_NAME,
     title: 'Claude',
@@ -135,7 +137,7 @@ export function formatClaudeAnalyticsStatus(status: ClaudeAnalyticsStatus): Prom
     excludedProjects: status.excludedProjects,
     preferencesCorrupt: status.preferencesCorrupt,
     preferencesPath: status.preferencesPath,
-  });
+  }, remedies);
 }
 
 export interface CopilotAnalyticsStatus {
@@ -176,7 +178,8 @@ export async function collectCopilotAnalyticsStatus(connectorId: string): Promis
   };
 }
 
-export function formatCopilotAnalyticsStatus(status: CopilotAnalyticsStatus): Promise<string> {
+/** The Copilot CLI or Copilot Chat section of the analytics status: connected or not, then the common connector layout. */
+export function formatCopilotAnalyticsStatus(status: CopilotAnalyticsStatus, remedies: DoctorRemedies): Promise<string> {
   return renderConnectorSection({
     connectorId: status.connector,
     title: status.connector === COPILOT_CHAT_OTLP_AGENT_NAME ? 'Copilot Chat' : 'Copilot CLI',
@@ -188,5 +191,5 @@ export function formatCopilotAnalyticsStatus(status: CopilotAnalyticsStatus): Pr
     excludedProjects: status.excludedProjects,
     preferencesCorrupt: status.preferencesCorrupt,
     preferencesPath: status.preferencesPath,
-  });
+  }, remedies);
 }

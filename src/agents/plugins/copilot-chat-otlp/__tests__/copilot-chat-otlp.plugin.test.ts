@@ -1,4 +1,6 @@
+import { BackendPolicy } from '@/agents/core/collection-policy.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+const backendPolicy = new BackendPolicy();
 
 vi.mock('@/providers/plugins/sso/sso.auth-gate.js', () => ({ ensureCodeMieSsoAuth: vi.fn() }));
 vi.mock('@/agents/core/hook-auth-profile.js', () => ({ resolveHookAuthProfile: vi.fn(async () => ({})) }));
@@ -70,7 +72,7 @@ describe('CopilotChatOtlpPlugin', () => {
     vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: false, reason: 'expired' } as never);
     const { captured } = log();
 
-    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { policy: backendPolicy, ensureOtlpProxy, forwardOtlpEventsToSpool });
 
     expect(captured()).toEqual({
       permissionDecision: 'deny',
@@ -84,6 +86,7 @@ describe('CopilotChatOtlpPlugin', () => {
     const { captured } = log();
 
     await plugin.processOtlpEvent(hookInput({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }), {
+      policy: backendPolicy,
       ensureOtlpProxy,
       forwardOtlpEventsToSpool,
     });
@@ -103,6 +106,7 @@ describe('CopilotChatOtlpPlugin', () => {
     const { captured } = log();
 
     await plugin.processOtlpEvent(hookInput({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }), {
+      policy: backendPolicy,
       ensureOtlpProxy,
       forwardOtlpEventsToSpool,
     });
@@ -116,7 +120,7 @@ describe('CopilotChatOtlpPlugin', () => {
     vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: false, reason: 'expired' } as never);
     const { captured } = log();
 
-    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'SessionStart' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'SessionStart' }), { policy: backendPolicy, ensureOtlpProxy, forwardOtlpEventsToSpool });
 
     expect(captured()).toEqual({
       continue: false,
@@ -130,6 +134,7 @@ describe('CopilotChatOtlpPlugin', () => {
     const { captured } = log();
 
     await plugin.processOtlpEvent(hookInput({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }), {
+      policy: backendPolicy,
       ensureOtlpProxy,
       forwardOtlpEventsToSpool,
     });
@@ -150,7 +155,7 @@ describe('CopilotChatOtlpPlugin', () => {
     vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: true } as never);
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { policy: backendPolicy, ensureOtlpProxy, forwardOtlpEventsToSpool });
 
     expect(ensureCodeMieSsoAuth).toHaveBeenCalledWith(sessionProfile);
     // The hook must resolve the profile itself, with no cwd/env arguments that could bypass the launch profile.
@@ -162,7 +167,7 @@ describe('CopilotChatOtlpPlugin', () => {
     vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: true } as never);
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { policy: backendPolicy, ensureOtlpProxy, forwardOtlpEventsToSpool });
 
     expect(logSpy).not.toHaveBeenCalled();
     expect(forwardOtlpEventsToSpool).toHaveBeenCalledTimes(1);
@@ -172,7 +177,7 @@ describe('CopilotChatOtlpPlugin', () => {
     vi.mocked(resolveHookAuthProfile).mockRejectedValueOnce(new Error('disk full'));
     const { captured } = log();
 
-    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { policy: backendPolicy, ensureOtlpProxy, forwardOtlpEventsToSpool });
 
     const output = captured();
     expect(output).toEqual({
@@ -186,7 +191,7 @@ describe('CopilotChatOtlpPlugin', () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     ensureOtlpProxy.mockRejectedValueOnce(new Error('daemon start failed'));
 
-    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'Stop' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'Stop' }), { policy: backendPolicy, ensureOtlpProxy, forwardOtlpEventsToSpool });
 
     expect(logSpy).not.toHaveBeenCalled();
   });
@@ -195,7 +200,7 @@ describe('CopilotChatOtlpPlugin', () => {
     vi.mocked(readCopilotConnectorScope).mockResolvedValue({ kind: 'corrupt' } as never);
     const { captured } = log();
 
-    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'SessionStart' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'SessionStart' }), { policy: backendPolicy, ensureOtlpProxy, forwardOtlpEventsToSpool });
 
     expect(captured()).toEqual({
       continue: false,
@@ -208,7 +213,7 @@ describe('CopilotChatOtlpPlugin', () => {
     vi.mocked(readCopilotConnectorScope).mockResolvedValue({ kind: 'corrupt' } as never);
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'Stop' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'Stop' }), { policy: backendPolicy, ensureOtlpProxy, forwardOtlpEventsToSpool });
 
     expect(logSpy).not.toHaveBeenCalled();
     expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
@@ -218,7 +223,7 @@ describe('CopilotChatOtlpPlugin', () => {
     vi.mocked(readCopilotConnectorScope).mockResolvedValue({ kind: 'ok', value: { enabled: false } } as never);
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { policy: backendPolicy, ensureOtlpProxy, forwardOtlpEventsToSpool });
 
     expect(logSpy).not.toHaveBeenCalled();
     expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
@@ -228,6 +233,7 @@ describe('CopilotChatOtlpPlugin', () => {
     const { captured } = log();
 
     await plugin.processOtlpEvent(hookInput({ hook_event_name: 'UserPromptSubmit', session_id: undefined, prompt: 'hi' }), {
+      policy: backendPolicy,
       ensureOtlpProxy,
       forwardOtlpEventsToSpool,
     });
@@ -243,6 +249,7 @@ describe('CopilotChatOtlpPlugin', () => {
     const { captured } = log();
 
     await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse', session_id: '../escape' }), {
+      policy: backendPolicy,
       ensureOtlpProxy,
       forwardOtlpEventsToSpool,
     });
@@ -260,7 +267,7 @@ describe('CopilotChatOtlpPlugin', () => {
       .mockResolvedValueOnce({ kind: 'ok', value: { enabled: false } } as never);
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { policy: backendPolicy, ensureOtlpProxy, forwardOtlpEventsToSpool });
 
     expect(logSpy).not.toHaveBeenCalled();
     expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
@@ -293,6 +300,7 @@ describe('CopilotChatOtlpPlugin', () => {
           const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
           await plugin.processOtlpEvent(hookInput({ hook_event_name: eventName, prompt: 'hi' }), {
+            policy: backendPolicy,
             ensureOtlpProxy,
             forwardOtlpEventsToSpool,
           });
@@ -309,7 +317,7 @@ describe('CopilotChatOtlpPlugin', () => {
       vi.mocked(readCopilotConnectorScope).mockResolvedValue({ kind: 'corrupt' } as never);
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-      await plugin.processOtlpEvent(hookInput({ hook_event_name: 'SessionStart' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+      await plugin.processOtlpEvent(hookInput({ hook_event_name: 'SessionStart' }), { policy: backendPolicy, ensureOtlpProxy, forwardOtlpEventsToSpool });
 
       expect(logSpy).not.toHaveBeenCalled();
     });
@@ -319,6 +327,7 @@ describe('CopilotChatOtlpPlugin', () => {
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       await plugin.processOtlpEvent(hookInput({ hook_event_name: 'UserPromptSubmit', session_id: undefined, prompt: 'hi' }), {
+        policy: backendPolicy,
         ensureOtlpProxy,
         forwardOtlpEventsToSpool,
       });
@@ -331,7 +340,7 @@ describe('CopilotChatOtlpPlugin', () => {
       vi.mocked(readCopilotConnectorScope).mockResolvedValue({ kind: 'ok', value: { enabled: false } } as never);
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-      await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+      await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { policy: backendPolicy, ensureOtlpProxy, forwardOtlpEventsToSpool });
 
       expect(logSpy).not.toHaveBeenCalled();
     });
@@ -340,7 +349,7 @@ describe('CopilotChatOtlpPlugin', () => {
       vi.mocked(ensureCodeMieSsoAuth).mockResolvedValue({ ok: true } as never);
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-      await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+      await plugin.processOtlpEvent(hookInput({ hook_event_name: 'PreToolUse' }), { policy: backendPolicy, ensureOtlpProxy, forwardOtlpEventsToSpool });
 
       expect(logSpy).not.toHaveBeenCalled();
       expect(forwardOtlpEventsToSpool).toHaveBeenCalledTimes(1);
@@ -350,6 +359,7 @@ describe('CopilotChatOtlpPlugin', () => {
       const { captured } = log();
 
       await plugin.processOtlpEvent(hookInput({ hook_event_name: 'UserPromptSubmit', session_id: undefined, prompt: 'hi' }), {
+        policy: backendPolicy,
         ensureOtlpProxy,
         forwardOtlpEventsToSpool,
       });
@@ -359,5 +369,75 @@ describe('CopilotChatOtlpPlugin', () => {
         stopReason: expect.stringContaining('identity or working directory is missing'),
       });
     });
+  });
+
+  describe('byFilter of an untracked hook', () => {
+    async function untracked(raw: string): Promise<{ sessionId: string | undefined; byFilter: boolean } | undefined> {
+      let seen: { sessionId: string | undefined; byFilter: boolean } | undefined;
+      class RecordingPolicy extends BackendPolicy {
+        override async onUntracked(sessionId: string | undefined, byFilter: boolean): Promise<void> {
+          seen = { sessionId, byFilter };
+        }
+      }
+      await plugin.processOtlpEvent(raw, { policy: new RecordingPolicy(), ensureOtlpProxy, forwardOtlpEventsToSpool });
+      return seen;
+    }
+
+    it('a folder outside a project scope is the filter, under the hook\'s session id', async () => {
+      vi.mocked(readCopilotConnectorScope).mockResolvedValue({ kind: 'ok', value: { enabled: true, scope: 'project' } } as never);
+      vi.mocked(isCopilotProjectTracked).mockResolvedValue(false);
+
+      await expect(untracked(hookInput({ hook_event_name: 'Stop', session_id: 'sid-7' }))).resolves.toEqual({
+        sessionId: 'sid-7',
+        byFilter: true,
+      });
+    });
+
+    it('analytics disabled is the filter', async () => {
+      vi.mocked(readCopilotAnalyticsPreferences).mockResolvedValue({ kind: 'ok', value: { enabled: false, excludedProjects: [] } });
+
+      await expect(untracked(hookInput({ hook_event_name: 'Stop' }))).resolves.toMatchObject({ byFilter: true });
+    });
+
+    it('a hook with no cwd under a project scope is not the filter', async () => {
+      vi.mocked(readCopilotConnectorScope).mockResolvedValue({ kind: 'ok', value: { enabled: true, scope: 'project' } } as never);
+      vi.mocked(isCopilotProjectTracked).mockResolvedValue(false);
+
+      await expect(untracked(hookInput({ hook_event_name: 'Stop', cwd: undefined }))).resolves.toMatchObject({ byFilter: false });
+    });
+
+    it('a hook with no session_id in an excluded project is not the filter', async () => {
+      vi.mocked(isCopilotAnalyticsProjectExcluded).mockResolvedValue(true);
+
+      await expect(untracked(hookInput({ hook_event_name: 'Stop', session_id: undefined }))).resolves.toEqual({
+        sessionId: undefined,
+        byFilter: false,
+      });
+    });
+
+    it('a corrupt preferences file is not the filter', async () => {
+      vi.mocked(readCopilotAnalyticsPreferences).mockResolvedValue({ kind: 'corrupt' });
+
+      await expect(untracked(hookInput({ hook_event_name: 'Stop' }))).resolves.toMatchObject({ byFilter: false });
+    });
+  });
+
+  it('launchedByCodemie is false, CODEMIE_SESSION_ID set or not', async () => {
+    const seen: boolean[] = [];
+    class RecordingPolicy extends BackendPolicy {
+      override async admit(_sessionId: string | undefined, _gate: () => Promise<'continue' | 'stop'>, isLaunched?: () => boolean): Promise<'stop'> {
+        seen.push(isLaunched?.() ?? true);
+        return 'stop';
+      }
+    }
+    const deps = { policy: new RecordingPolicy(), ensureOtlpProxy, forwardOtlpEventsToSpool };
+
+    vi.stubEnv('CODEMIE_SESSION_ID', 'managed-1');
+    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'Stop' }), deps);
+    vi.stubEnv('CODEMIE_SESSION_ID', '');
+    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'Stop' }), deps);
+    vi.unstubAllEnvs();
+
+    expect(seen).toEqual([false, false]);
   });
 });

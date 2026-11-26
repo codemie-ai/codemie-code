@@ -52,7 +52,7 @@ export class WebhookTarget {
       type: 'message',
       attachments: [
         {
-          contentType: 'application/json',
+          contentType: report.contentType,
           name: report.fileName,
           contentBytes: report.bytes.toString('base64'),
         },

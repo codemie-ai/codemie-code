@@ -18,6 +18,7 @@ import { sanitizeLogArgs } from '@/utils/security.js';
 import { renderHint } from '@/utils/hint.js';
 import { ANALYTICS_CONNECTORS, type AnalyticsConnectorId } from './analytics-connectors.js';
 import { CLAUDE_CODE_OTLP_LABEL } from './claude-code-otlp-flow.js';
+import type { DoctorRemedies } from './doctor/plan.js';
 import { CLAUDE_OTLP_FLAG, COPILOT_OTLP_FLAG, vendorFlag, type FlagRow } from './flag-list.js';
 import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
 import { readDesktopGateway } from './connectors/desktop.js';
@@ -398,10 +399,10 @@ export const ANALYTICS_CLIENT_TARGET_IDS: Record<AnalyticsClientRow['client'], s
 export const EXTENSION_ANALYTICS_ON = 'analytics on (uses your Claude login; model routing unchanged)';
 
 /** The note of an extension routed through CodeMie, with the command that gives it back its Claude login. */
-export function routedExtensionNote(flag: string): string {
+export function routedExtensionNote(flag: string, remedies: DoctorRemedies): string {
   const insiders = flag.endsWith('--insiders') ? ' --insiders' : '';
   return 'routed through the proxy — ' +
-    `to use your Claude login: codemie proxy disconnect --vscode-claude-code${insiders}`;
+    `to use your Claude login: ${remedies.disconnect(`--vscode-claude-code${insiders}`)}`;
 }
 
 /**
@@ -410,13 +411,13 @@ export function routedExtensionNote(flag: string): string {
  * comes first) names no command for a found client. Undefined for a connected client, except the extension, whose
  * analytics-on state says whether its model route is CodeMie's (and how to give it back).
  */
-export function analyticsClientHint(row: AnalyticsClientRow, commands: boolean): string | undefined {
+export function analyticsClientHint(row: AnalyticsClientRow, commands: boolean, remedies: DoctorRemedies): string | undefined {
   if (row.client === 'vscode-claude-code' && row.connected) {
-    return row.routed ? routedExtensionNote(row.flag) : EXTENSION_ANALYTICS_ON;
+    return row.routed ? routedExtensionNote(row.flag, remedies) : EXTENSION_ANALYTICS_ON;
   }
   if (row.connected) return undefined;
   if (row.found && !commands) return 'not connected';
-  const command = `codemie proxy connect ${row.flag}`;
+  const command = remedies.connect(row.flag);
   if (row.otherGateway && commands) {
     return renderHint({
       reason: 'points at a local gateway with a key this proxy does not accept',

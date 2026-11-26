@@ -23,10 +23,9 @@ import { listConsents } from '@/agents/core/evidence/consent-store.js';
 import { coverageNote, resumeNote } from './analytics-hints.js';
 import { ANALYTICS_CONNECTORS, hasActiveAnalyticsConnector, listActiveAnalyticsConnectors, type AnalyticsConnector } from './analytics-connectors.js';
 import { printNext } from '../../related-commands.js';
-import { readDaemonStatus } from './daemon-manager.js';
-import { checkProxyHealth } from './health-check.js';
-import { collectDeliveryHealth, type DeliveryHealth } from './delivery-health.js';
 import { renderHint } from '@/utils/hint.js';
+import type { DoctorRemedies } from './doctor/plan.js';
+import { resolveCollection } from '../shared/analytics-collection/resolve.js';
 import { formatReportRows, type ReportRow } from './analytics-report.js';
 import {
   errorMessage,
@@ -48,7 +47,7 @@ import { vendorFlag } from './flag-list.js';
 
 export { resolveAnalyticsConnector, selectTargetConnectors, type TargetSelection } from './analytics-targets.js';
 
-async function setEnabledFor(connectorId: AnalyticsConnectorId, enabled: boolean): Promise<boolean> {
+async function setEnabledFor(connectorId: AnalyticsConnectorId, enabled: boolean, remedies: DoctorRemedies): Promise<boolean> {
   const store = storeForConnector(connectorId);
   let changed = true;
   await store.update((current) => {
@@ -68,13 +67,14 @@ async function setEnabledFor(connectorId: AnalyticsConnectorId, enabled: boolean
   if (resume) {
     console.log(chalk.dim(resume));
   }
-  await reportEffectiveState(connectorId, process.cwd());
+  await reportEffectiveState(connectorId, process.cwd(), remedies);
   return true;
 }
 
 async function setEnabled(enabled: boolean, opts: ConnectorOptions): Promise<void> {
   const verb = enabled ? 'enable' : 'disable';
-  const succeeded = await forEachTarget(verb, opts, (connector) => setEnabledFor(connector.id, enabled));
+  const { remedies } = (await resolveCollection()).doctor;
+  const succeeded = await forEachTarget(verb, opts, (connector) => setEnabledFor(connector.id, enabled, remedies), remedies);
   if (succeeded) printNext(`proxy analytics ${verb}`);
 }
 
@@ -124,7 +124,8 @@ async function excludeFor(connectorId: AnalyticsConnectorId, path: string | unde
 }
 
 async function excludeProject(path: string | undefined, opts: ConnectorOptions): Promise<void> {
-  await forEachTarget('exclude', opts, (connector) => excludeFor(connector.id, path));
+  const { remedies } = (await resolveCollection()).doctor;
+  await forEachTarget('exclude', opts, (connector) => excludeFor(connector.id, path), remedies);
 }
 
 /** An excluded entry other than `target` itself that still covers it, or undefined. */
@@ -149,7 +150,7 @@ async function isListed(paths: string[], canonical: string): Promise<boolean> {
  * first and the exclusion removed second, so a failure between them leaves the project still excluded
  * (never tracked by half a change) and a re-run finishes the job.
  */
-async function includeFor(connector: AnalyticsConnector, path: string | undefined): Promise<boolean> {
+async function includeFor(connector: AnalyticsConnector, path: string | undefined, remedies: DoctorRemedies): Promise<boolean> {
   const connectorId = connector.id;
   const store = storeForConnector(connectorId);
   const target = path ?? resolveProjectRoot();
@@ -207,22 +208,13 @@ async function includeFor(connector: AnalyticsConnector, path: string | undefine
   } else if (!added) {
     console.log(chalk.dim('Nothing to change.'));
   }
-  await reportEffectiveState(connectorId, canonical, store.label);
+  await reportEffectiveState(connectorId, canonical, remedies, store.label);
   return true;
 }
 
 async function includeProject(path: string | undefined, opts: ConnectorOptions): Promise<void> {
-  await forEachTarget('include', opts, (connector) => includeFor(connector, path));
-}
-
-/** Delivery health of the running daemon, or `null` when it is stopped. */
-async function collectStatusDelivery(): Promise<DeliveryHealth | null> {
-  const { running, state } = await readDaemonStatus();
-  if (!running || !state) {
-    return null;
-  }
-  const health = await checkProxyHealth({ port: state.port, gatewayKey: state.gatewayKey, expectedPid: state.pid });
-  return collectDeliveryHealth(state, health.analytics);
+  const { remedies } = (await resolveCollection()).doctor;
+  await forEachTarget('include', opts, (connector) => includeFor(connector, path, remedies), remedies);
 }
 
 /**
@@ -260,24 +252,25 @@ async function showStatus(opts: ConnectorOptions & { json?: boolean }): Promise<
     }
     const shown = await selectStatusConnectors(opts, connector);
     const statuses = await Promise.all(shown.map(async (entry) => ({ entry, status: await entry.collect() })));
+    const plan = (await resolveCollection()).doctor;
     const consentedFolders = await readConsentedFolders();
     if (opts.json) {
       // Delivery stays in the JSON for scripts (null unless a connector is connected and the daemon runs);
       // the text report leaves it to `proxy doctor`.
-      const delivery = (await hasActiveAnalyticsConnector()) ? await collectStatusDelivery() : null;
+      const delivery = (await hasActiveAnalyticsConnector()) ? (await plan.deliveryHealth({ json: true })).json : null;
       const connectors = statuses.map(({ entry, status }) => ({ ...status, connector: entry.id }));
       console.log(JSON.stringify({ delivery, connectors, consentedFolders }, null, 2));
       return;
     }
-    const sections = await Promise.all(statuses.map(({ entry, status }) => entry.format(status)));
+    const sections = await Promise.all(statuses.map(({ entry, status }) => entry.format(status, plan.remedies)));
     const consentRow: ReportRow =
       consentedFolders === null
         ? { message: 'Consented folders: unknown (the work-consent store cannot be read)' }
         : consentedFolders.length === 0
           ? { message: 'Consented folders: none' }
           : { message: 'Consented folders:', items: consentedFolders.map((c) => (c.allFolders ? 'any repository' : `${c.folder} (${c.project})`)) };
-    const hint = renderHint({ reason: 'Delivery health', command: 'codemie proxy doctor' });
-    console.log([...sections, [...formatReportRows([consentRow]), hint].join('\n')].join('\n\n'));
+    const { lines } = await plan.deliveryHealth({ json: false });
+    console.log([...sections, [...formatReportRows([consentRow]), ...lines].join('\n')].join('\n\n'));
     printNext('proxy analytics status');
   });
 }

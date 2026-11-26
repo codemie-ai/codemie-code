@@ -34,6 +34,7 @@ import {
   getCopilotChatHookFileLocationKey,
   getCopilotChatHookFilePath,
   getVsCodeChatSettingsPath,
+  hasCopilotChatOtlpHooks,
   readCopilotChatHookInstall,
   removeCopilotChatOtlpConfig,
   writeCopilotChatOtlpConfig,
@@ -296,6 +297,50 @@ describe('copilot-chat-otlp connector', () => {
       const result = await removeCopilotChatOtlpConfig({ scope: 'project' });
 
       expect(result).toMatchObject({ removed: false, mode: 'noop' });
+    });
+  });
+
+  describe('hasCopilotChatOtlpHooks', () => {
+    it('answers true for the current CodeMie key in chat.hookFilesLocations alone', async () => {
+      await writeSettingsRaw(JSON.stringify({ [HOOK_LOCATIONS_KEY]: { [getCopilotChatHookFileLocationKey()]: true } }));
+
+      await expect(hasCopilotChatOtlpHooks()).resolves.toBe(true);
+    });
+
+    it('answers true for a legacy CodeMie key in chat.hookFilesLocations alone', async () => {
+      mocks.home = join(testDir, 'home');
+      process.env.CODEMIE_HOME = join(mocks.home, '.codemie');
+      try {
+        await writeSettingsRaw(JSON.stringify({ [HOOK_LOCATIONS_KEY]: { '/.codemie/hooks/copilot-chat-hooks.json': true } }));
+
+        await expect(hasCopilotChatOtlpHooks()).resolves.toBe(true);
+      } finally {
+        mocks.home = '';
+      }
+    });
+
+    it('answers true for the hook file alone', async () => {
+      await writeHookCommand('codemie hook --agent copilot-chat-otlp');
+
+      await expect(hasCopilotChatOtlpHooks()).resolves.toBe(true);
+    });
+
+    it('answers true for an enabled scope record alone', async () => {
+      await writeCopilotConnectorScope('copilot-chat-otlp', { enabled: true, scope: 'user' });
+
+      await expect(hasCopilotChatOtlpHooks()).resolves.toBe(true);
+    });
+
+    it('answers false with none of them, and for settings or a scope record that do not parse', async () => {
+      await expect(hasCopilotChatOtlpHooks()).resolves.toBe(false);
+
+      await writeSettingsRaw(JSON.stringify({ [HOOK_LOCATIONS_KEY]: { '/other/hooks.json': true } }));
+      await writeCopilotConnectorScope('copilot-chat-otlp', { enabled: false });
+      await expect(hasCopilotChatOtlpHooks()).resolves.toBe(false);
+
+      await writeSettingsRaw('{ not json');
+      await writeFile(getCopilotConnectorsConfigPath(), '{ not json', 'utf-8');
+      await expect(hasCopilotChatOtlpHooks()).resolves.toBe(false);
     });
   });
 

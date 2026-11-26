@@ -8,7 +8,7 @@
  *
  * `runSync` resolves identity once, then loops over the targets configured in `settings`
  * (webhook, then git, in that order — whichever of `webhookUrl`/`git` is present). Each
- * target gets its own marker-derived window, its own `buildReport` call, its own delivery
+ * target gets its own marker-derived window, its own `exportSource.build` call, its own delivery
  * attempt and its own marker move, so one target's failure never blocks or rolls back
  * another's delivery (AC7/AC8).
  *
@@ -41,14 +41,12 @@ import { realIdentityDeps, resolveSyncIdentity } from './identity.js';
 import { readMarker, writeMarker } from './marker.js';
 import { includeExternalFor } from './policy.js';
 import { errorMessage, redactSecrets } from './redact.js';
-import { buildSyncReport } from './report-builder.js';
 import { createGitRunner, gitHint } from './targets/git-client.js';
 import { GitTarget, gitMarkerPath } from './targets/git-target.js';
 import { sendWebhook } from './targets/webhook-target.js';
-import type { SyncReport, SyncSettings } from './types.js';
+import type { ExportSource, SyncReport, SyncSettings } from './types.js';
+import type { AnalyticsCollection } from '../../shared/analytics-collection/types.js';
 import { dailyWindow } from './window.js';
-import { SessionsSource } from '../sources/sessions-source.js';
-import type { AnalyticsSource } from '../sources/types.js';
 
 /** A `codemie analytics sync` delivery target. */
 export type TargetId = 'webhook' | 'git';
@@ -58,15 +56,14 @@ export interface SyncDeps {
   now(): Date;
   loadSettings(): Promise<SyncSettings | null>;
   resolveIdentity(): Promise<string>;
-  buildReport: typeof buildSyncReport;
+  /** Builds the file one target gets for its window. */
+  exportSource: ExportSource;
   deliver(target: TargetId, settings: SyncSettings, email: string, report: SyncReport): Promise<void>;
   readMarker(target: TargetId, now: Date): Promise<Date | null>;
   writeMarker(target: TargetId, at: Date): Promise<void>;
   appendLog(line: string): Promise<void>;
   print(line: string): void;
   platform: NodeJS.Platform;
-  /** The analytics data source `buildReport` loads sessions from. */
-  source: AnalyticsSource;
 }
 
 type Outcome = 'ok' | 'skip' | 'fail';
@@ -144,7 +141,7 @@ async function runTarget(
 
   let report: SyncReport | null;
   try {
-    report = await deps.buildReport({ source: deps.source, window, email, includeExternal, now });
+    report = await deps.exportSource.build({ window, email, includeExternal, now });
   } catch (err) {
     await emit(deps, now, 'fail', `export ${errorMessage(err)}`, target);
     return true;
@@ -258,13 +255,14 @@ async function deliverToTarget(
   await new GitTarget(settings.git, email, createGitRunner()).deliver(report);
 }
 
-/** Real dependencies for `runSync`: real clock, settings, identity, markers, fs and network. */
-export function realSyncDeps(): SyncDeps {
+/** Real dependencies for `runSync`: real clock, settings, identity, markers, fs and network; the file comes from
+ * `collection`'s export source. */
+export function realSyncDeps(collection: Pick<AnalyticsCollection, 'exportSource'>): SyncDeps {
   return {
     now: () => new Date(),
     loadSettings: () => loadSyncSettings(),
     resolveIdentity: () => resolveSyncIdentity(realIdentityDeps),
-    buildReport: buildSyncReport,
+    exportSource: collection.exportSource(),
     deliver: deliverToTarget,
     readMarker: (target: TargetId, now: Date) =>
       target === 'git' ? readMarker(now, gitMarkerPath()) : readMarker(now),
@@ -275,6 +273,5 @@ export function realSyncDeps(): SyncDeps {
       console.log(line);
     },
     platform: process.platform,
-    source: new SessionsSource(),
   };
 }

@@ -6,7 +6,9 @@
  * Native consumer: resolveSessionProject(), which stamps the session record and events.
  */
 
+import { BackendPolicy } from '@/agents/core/collection-policy.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+const backendPolicy = new BackendPolicy();
 import { promises as fs } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -271,7 +273,7 @@ describe('managed and native Claude pick the same CodeMie project (EPMCDME-16908
   describe('native Copilot CLI hook event (real plugin, real config)', () => {
     async function forwardedProject(cwd: string): Promise<unknown> {
       const sent: Record<string, unknown>[] = [];
-      const deps = { ensureOtlpProxy: async () => {}, forwardOtlpEventsToSpool: async (events: Record<string, unknown>[]) => { sent.push(...events); return true; } };
+      const deps = { policy: backendPolicy, ensureOtlpProxy: async () => {}, forwardOtlpEventsToSpool: async (events: Record<string, unknown>[]) => { sent.push(...events); return true; } };
       const raw = JSON.stringify({ sessionId: 'cp-sid', cwd, timestamp: 1700000000000, codemieEventName: 'sessionStart' });
       await new CopilotCliOtlpPlugin().processOtlpEvent(raw, deps as never);
       return sent[0]?.codemie_project_name;

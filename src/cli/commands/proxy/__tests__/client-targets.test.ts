@@ -3,8 +3,12 @@
  * read it, so they agree on what is connected.
  * @group unit
  */
+import { backendDoctorPlan } from '../doctor/backend-plan.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stripVTControlCharacters } from 'node:util';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 vi.mock('@/utils/logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), success: vi.fn() },
@@ -212,7 +216,7 @@ describe('client-target table', () => {
     expect((await listConnectedClientTargets()).map((target) => target.id)).toEqual(connected.map((row) => row.id));
 
     const { composeProxyDoctor } = await import('../doctor/compose.js');
-    const report = await composeProxyDoctor({ authProbe: false, verbose: false });
+    const report = await composeProxyDoctor({ authProbe: false, verbose: false, plan: backendDoctorPlan });
     const clients = report.sections.filter((section) => section.id === 'clients');
     expect(clients).toEqual([
       { id: 'clients', status: 'ok', message: `Clients connected: ${connected.map((row) => row.label).join(', ')}` },
@@ -325,5 +329,31 @@ describe('client-target table', () => {
     readDaemonStatus.mockResolvedValue({ running: true, state: { ...STATE, version: undefined } });
     const rows = (JSON.parse(await runClients(['--json'])) as { clients: ClientRow[] }).clients;
     expect(rows.find((row) => row.id === 'copilot-chat-otlp')?.hint).toBe('not connected');
+  });
+
+  it('in the local mode a hint names `codemie analytics sync install`, and no line names proxy connect or disconnect', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'proxy-clients-local-'));
+    vi.stubEnv('CODEMIE_HOME', home);
+    try {
+      writeFileSync(join(home, 'analytics-sync.json'), JSON.stringify({
+        webhookUrl: 'https://hooks.example.invalid/x?sig=FAKE',
+        format: 'json',
+        includeExternal: 'never',
+        at: '03:00',
+        local: true,
+        localJob: { node: '/usr/bin/node', entry: '/opt/codemie/bin/codemie.js' },
+      }));
+
+      const out = stripVTControlCharacters(await runClients([]));
+
+      expect(out).toMatch(/Copilot Chat\s+not connected — run: codemie analytics sync install/);
+      for (const line of out.split('\n')) {
+        expect(line).not.toContain('proxy connect');
+        expect(line).not.toContain('proxy disconnect');
+      }
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

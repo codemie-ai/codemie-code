@@ -1,11 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 
 import { ExportTooLargeError, SyncGitError, SyncIdentityMissingError } from '@/utils/errors.js';
 
 import { runSync } from '../run-sync.js';
+import { OtlpFolderSource } from '../otlp-file-builder.js';
+import { WebhookTarget } from '../targets/webhook-target.js';
 import type { SyncDeps, TargetId } from '../run-sync.js';
 import type { GitSettings, SyncReport, SyncSettings } from '../types.js';
-import type { AnalyticsSource } from '../../sources/types.js';
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -14,6 +19,7 @@ const NOW = new Date('2026-10-29T00:00:00.000Z');
 const REPORT: SyncReport = {
   fileName: 'codemie-analytics-jane.doe-2026-10-29.report.json',
   bytes: Buffer.from('{"a":1}'),
+  contentType: 'application/json',
 };
 
 const GIT_SETTINGS: GitSettings = { repoUrl: 'https://git.example.invalid/team/analytics.git' };
@@ -50,7 +56,7 @@ function makeDeps(overrides: Partial<SyncDeps> = {}): Harness {
     now: () => NOW,
     loadSettings: async () => BASE_SETTINGS,
     resolveIdentity: async () => 'Jane.Doe@x.com',
-    buildReport: async () => REPORT,
+    exportSource: { build: async () => REPORT },
     deliver: async () => {},
     readMarker: async () => null,
     writeMarker: async () => {},
@@ -61,7 +67,6 @@ function makeDeps(overrides: Partial<SyncDeps> = {}): Harness {
       printed.push(line);
     },
     platform: 'linux',
-    source: {} as AnalyticsSource,
     ...overrides,
   };
 
@@ -111,7 +116,7 @@ describe('runSync', () => {
     const deliver = vi.fn(async () => {});
     const buildReport = vi.fn(async () => null);
 
-    const { deps, printed, logged } = makeDeps({ buildReport, writeMarker, deliver });
+    const { deps, printed, logged } = makeDeps({ exportSource: { build: buildReport }, writeMarker, deliver });
 
     const code = await runSync(deps);
 
@@ -167,7 +172,7 @@ describe('runSync', () => {
     });
     const deliver = vi.fn(async () => {});
 
-    const { deps, printed, logged } = makeDeps({ buildReport, deliver });
+    const { deps, printed, logged } = makeDeps({ exportSource: { build: buildReport }, deliver });
 
     const code = await runSync(deps);
 
@@ -184,7 +189,7 @@ describe('runSync', () => {
       resolveIdentity: async () => {
         throw new SyncIdentityMissingError();
       },
-      buildReport,
+      exportSource: { build: buildReport },
     });
 
     const code = await runSync(deps);
@@ -201,7 +206,7 @@ describe('runSync', () => {
     const readMarker = vi.fn(async () => lastSent);
     const buildReport = vi.fn(async () => REPORT);
 
-    const { deps } = makeDeps({ readMarker, buildReport });
+    const { deps } = makeDeps({ readMarker, exportSource: { build: buildReport } });
 
     const code = await runSync(deps);
 
@@ -217,7 +222,7 @@ describe('runSync', () => {
     const buildReport = vi.fn(async () => REPORT);
     const { deps } = makeDeps({
       loadSettings: async () => ({ ...BASE_SETTINGS, lookbackDays: 14 }),
-      buildReport,
+      exportSource: { build: buildReport },
     });
 
     await runSync(deps);
@@ -236,7 +241,7 @@ describe('runSync', () => {
     const { deps } = makeDeps({
       loadSettings: async () => ({ ...BASE_SETTINGS, includeExternal: policy }),
       platform,
-      buildReport,
+      exportSource: { build: buildReport },
     });
 
     await runSync(deps);
@@ -342,7 +347,7 @@ describe('runSync', () => {
       const { deps, printed, logged } = makeDeps({
         loadSettings: async () => GIT_ONLY_SETTINGS,
         deliver,
-        buildReport,
+        exportSource: { build: buildReport },
       });
 
       const code = await runSync(deps);
@@ -445,7 +450,7 @@ describe('runSync', () => {
       const { deps } = makeDeps({
         loadSettings: async () => BOTH_SETTINGS,
         readMarker,
-        buildReport,
+        exportSource: { build: buildReport },
       });
 
       await runSync(deps);
@@ -457,6 +462,75 @@ describe('runSync', () => {
       const gitWindow = buildReport.mock.calls[1]?.[0]?.window;
       expect(webhookWindow.from).toEqual(new Date(NOW.getTime() - 7 * DAY_MS));
       expect(gitWindow.from).toEqual(new Date(gitMarker.getTime() - HOUR_MS));
+    });
+  });
+  describe('the export source', () => {
+    it('is built once per target with that target\'s window, and each marker moves after its delivery', async () => {
+      const writeMarker = vi.fn(async () => {});
+      const windows: Array<{ from: Date; to: Date }> = [];
+      const exportSource = {
+        build: async (input: { window: { from: Date; to: Date } }) => {
+          windows.push(input.window);
+          return REPORT;
+        },
+      };
+
+      const { deps } = makeDeps({ loadSettings: async () => BOTH_SETTINGS, exportSource, writeMarker });
+
+      expect(await runSync(deps)).toBe(0);
+      expect(windows).toEqual([
+        { from: new Date(NOW.getTime() - 7 * DAY_MS), to: NOW, label: expect.any(String) },
+        { from: new Date(NOW.getTime() - 7 * DAY_MS), to: NOW, label: expect.any(String) },
+      ]);
+      expect(writeMarker).toHaveBeenCalledWith('webhook', NOW);
+      expect(writeMarker).toHaveBeenCalledWith('git', NOW);
+    });
+
+    it('with OtlpFolderSource, a second run over the same window delivers the same line ids', async () => {
+      const home = mkdtempSync(join(tmpdir(), 'run-sync-otlp-'));
+      vi.stubEnv('CODEMIE_HOME', home);
+      try {
+        const folder = join(home, 'analytics', 'sessions');
+        mkdirSync(folder, { recursive: true });
+        const line = (id: string) => JSON.stringify({ resourceLogs: [{ resource: { attributes: [{ key: 'codemie.line_id', value: { stringValue: id } }] } }] });
+        writeFileSync(join(folder, 's1.hooks.jsonl'), `${line('s1.hooks.jsonl:0')}\n${line('s1.hooks.jsonl:111')}\n`);
+        const inWindow = new Date(NOW.getTime() - DAY_MS);
+        utimesSync(join(folder, 's1.hooks.jsonl'), inWindow, inWindow);
+        const delivered: SyncReport[] = [];
+        const { deps } = makeDeps({
+          exportSource: new OtlpFolderSource(),
+          deliver: async (_target, _settings, _email, report) => {
+            delivered.push(report);
+          },
+        });
+
+        await runSync(deps);
+        await runSync(deps);
+
+        const ids = delivered.map((report) =>
+          gunzipSync(report.bytes).toString('utf-8').split('\n').filter(Boolean).map((text) => JSON.parse(text).resourceLogs[0].resource.attributes[0].value.stringValue)
+        );
+        expect(ids).toEqual([['s1.hooks.jsonl:0', 's1.hooks.jsonl:111'], ['s1.hooks.jsonl:0', 's1.hooks.jsonl:111']]);
+      } finally {
+        vi.unstubAllEnvs();
+        rmSync(home, { recursive: true, force: true });
+      }
+    });
+
+    it('edge: a gzip above 70,000,000 bytes fails export naming its size and the cap, and the marker stays', async () => {
+      const writeMarker = vi.fn(async () => {});
+      const fetchImpl = vi.fn();
+      const big: SyncReport = { fileName: 'codemie-analytics-jane-2026-10-29.otlp.jsonl.gz', bytes: Buffer.alloc(70_000_001), contentType: 'application/gzip' };
+      const { deps, printed } = makeDeps({
+        exportSource: { build: async () => big },
+        deliver: (_target, _settings, _email, report) => new WebhookTarget('https://example.invalid/hook', fetchImpl as never).deliver(report),
+        writeMarker,
+      });
+
+      expect(await runSync(deps)).toBe(1);
+      expect(printed.some((text) => /fail export/.test(text) && text.includes('70000001') && text.includes('70000000'))).toBe(true);
+      expect(writeMarker).not.toHaveBeenCalled();
+      expect(fetchImpl).not.toHaveBeenCalled();
     });
   });
 });

@@ -583,7 +583,7 @@ codemie profile          # Manage provider profiles
 codemie models list      # List models available for the current provider
 codemie analytics        # View usage analytics (sessions, tokens, costs, tools)
 codemie analytics --open   # Self-contained HTML dashboard (7 views, cost, date range, light/dark, no server)
-codemie analytics --export json  # Same priced report data as JSON (--export html | json | both)
+codemie analytics --export json  # Same priced report data as JSON (--export html | json | both); the JSON export is deprecated
 codemie workflow <cmd>   # Manage CI/CD workflows
 codemie sdk <resource>   # Manage CodeMie platform assets (assistants, workflows, datasources, integrations, skills, users)
 codemie skill <cmd>      # Manage skills for CodeMie agents (list, validate, reload)
@@ -682,6 +682,8 @@ codemie proxy analytics status
 # Show delivery health: unsent data, the next retry and the last dropped reason
 codemie proxy doctor
 ```
+
+On a machine in the local analytics mode of `codemie analytics sync` (no CLI profile; see [docs/ANALYTICS-SYNC.md](docs/ANALYTICS-SYNC.md#local-analytics-mode)), `codemie proxy doctor` shows a `Local analytics` group in place of the sign-in and delivery ones: the analytics folder, the scheduled job and the last delivery per target.
 
 `disconnect` uninstalls the hooks and allowlist entirely; `analytics disable`/`exclude` turn collection off while keeping the hooks installed, so `analytics enable`/`include` turns it back on instantly.
 
@@ -812,6 +814,8 @@ codemie proxy doctor --verbose
 codemie proxy restart [--profile <name>]   # restart, keeping port and key
 codemie proxy stop
 ```
+
+In the local analytics mode `codemie proxy doctor` reports the local proxy, the analytics folder and the scheduled job; `proxy start` / `restart` act on the local proxy and refuse `--profile`.
 
 `codemie proxy status` prints facts only: state, URL, port, profile, project, the CLI version the daemon was started by and uptime, with the gateway key masked (`--show-key` shows it). When anything is wrong it adds one line, `Issues found — run: codemie proxy doctor`. `codemie proxy clients` lists every client and analytics connector; Claude Code, the VS Code Claude Code extension, Claude Desktop, Copilot Chat and Copilot CLI read `connected`, `not connected` with the command that connects them (`--claude-otlp` / `--copilot-otlp`), or `not found`. `codemie proxy doctor` names what is wrong — a client that points at another port or still holds the shared key, Claude Desktop not collecting, analytics data that was not stored — with the command that fixes it; `--verbose` adds Claude Desktop's directories and recent sessions. Cowork sessions need a CodeMie project for their folder (`no_project` otherwise) and follow `codemie proxy analytics disable` and `codemie proxy analytics exclude`; a session that ran while the proxy was stopped is sent once it runs again, up to 7 days back. Details: [docs/COMMANDS.md](docs/COMMANDS.md#claude-desktop-3p).
 

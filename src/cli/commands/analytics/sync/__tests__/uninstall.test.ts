@@ -46,6 +46,7 @@ function makeDeps(overrides: Partial<UninstallDeps> = {}): Harness {
     print: (line: string): void => {
       printed.push(line);
     },
+    teardown: (removeInstall) => removeInstall(),
     ...overrides,
   };
 
@@ -144,7 +145,7 @@ describe('runUninstall', () => {
 
     // UninstallDeps has no marker/log fields at all — this is a type-level guarantee as
     // much as a runtime one, asserted here by exhaustively listing the deps surface.
-    expect(Object.keys(deps).sort()).toEqual(['deleteSettings', 'loadSettings', 'print', 'removeWorkingCopy', 'schedulerFor']);
+    expect(Object.keys(deps).sort()).toEqual(['deleteSettings', 'loadSettings', 'print', 'removeWorkingCopy', 'schedulerFor', 'teardown']);
 
     await runUninstall(deps);
 
@@ -163,5 +164,49 @@ describe('runUninstall', () => {
 
     expect(code).toBe(1);
     expect(printed.join('\n')).not.toContain('SUPERSECRET123');
+  });
+});
+
+describe('runUninstall — the mode\'s teardown', () => {
+  it('hands its removal to the teardown and removes nothing by itself', async () => {
+    const events: string[] = [];
+    const { deps, unregister, deleteSettings } = makeDeps({
+      teardown: async (removeInstall) => {
+        events.push('teardown: before');
+        expect(unregister).not.toHaveBeenCalled();
+        expect(deleteSettings).not.toHaveBeenCalled();
+        await removeInstall();
+        events.push('teardown: after');
+      },
+    });
+    unregister.mockImplementation(async () => {
+      events.push('unregister');
+      return true;
+    });
+    deleteSettings.mockImplementation(async () => {
+      events.push('delete settings');
+      return true;
+    });
+
+    const code = await runUninstall(deps);
+
+    expect(code).toBe(0);
+    expect(events).toEqual(['teardown: before', 'unregister', 'delete settings', 'teardown: after']);
+  });
+
+  it('a teardown that throws before the removal exits 1 and leaves the job and the settings', async () => {
+    const { deps, printed, unregister, deleteSettings, removeWorkingCopy } = makeDeps({
+      teardown: async () => {
+        throw new Error('Another codemie process is starting or stopping the proxy; try again.');
+      },
+    });
+
+    const code = await runUninstall(deps);
+
+    expect(code).toBe(1);
+    expect(printed).toContain('Uninstall failed: Another codemie process is starting or stopping the proxy; try again.');
+    expect(unregister).not.toHaveBeenCalled();
+    expect(deleteSettings).not.toHaveBeenCalled();
+    expect(removeWorkingCopy).not.toHaveBeenCalled();
   });
 });

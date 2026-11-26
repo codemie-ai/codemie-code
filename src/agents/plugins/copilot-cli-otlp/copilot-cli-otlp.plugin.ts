@@ -3,13 +3,13 @@ import { closeSync, existsSync, openSync, readSync } from 'node:fs';
 import { join } from 'node:path';
 import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
 import { isSafeSessionId } from '@/agents/core/session-id.js';
-import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
+import { ensureCodeMieSsoAuth, type AuthGateResult } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { describeLogin, type DetachedLoginOutcome } from '@/providers/plugins/sso/sso.detached-login.js';
 import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
 import { maskSecretsInText } from '@/utils/security.js';
 import { logger } from '@/utils/logger.js';
 import { detectGitBranch } from '@/utils/processes.js';
-import { evaluateCopilotAnalyticsGate } from '@/agents/core/copilot-analytics-gate.js';
+import { COPILOT_FILTER_REASONS, evaluateCopilotAnalyticsGate, type CopilotAnalyticsGateReason } from '@/agents/core/copilot-analytics-gate.js';
 import { getCopilotSessionStateRoot } from '@/agents/plugins/copilot-cli/copilot-cli.paths.js';
 import type { CopilotSessionStartData } from '@/agents/plugins/copilot-cli/copilot-cli-event-types.js';
 import { extractSlashCommand, normalizeUserPrompt, PINNED_NATIVE_SESSION_ENV, resolveCopilotAgentKey } from '@/agents/plugins/copilot-cli/copilot-cli.constants.js';
@@ -111,7 +111,25 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
   protected async isTracked(input: CopilotCliHookInput): Promise<boolean> {
     // The connector scope applies to managed and native sessions alike; both are labelled
     // through `entrypoint` and counted once, by Copilot's own session id.
-    return (await evaluateCopilotAnalyticsGate(this.name, input.cwd)).tracked;
+    const decision = await evaluateCopilotAnalyticsGate(this.name, input.cwd);
+    this.gateReason = decision.tracked ? undefined : decision.reason;
+    return decision.tracked;
+  }
+
+  /** The reason of the last `isTracked` refusal. */
+  private gateReason?: CopilotAnalyticsGateReason;
+
+  protected override async untrackedByFilter(): Promise<boolean> {
+    return this.gateReason !== undefined && COPILOT_FILTER_REASONS.has(this.gateReason);
+  }
+
+  /** The root session's id: `parseHookInput` re-keys a sub-agent's hooks to it. */
+  protected override sessionIdOf(input: CopilotCliHookInput): string | undefined {
+    return input.sessionId;
+  }
+
+  protected override launchedByCodemie(input: CopilotCliHookInput): boolean {
+    return isManagedSession(input.sessionId);
   }
 
   protected async resolveAgentFields(input: CopilotCliHookInput): Promise<Record<string, unknown>> {
@@ -193,7 +211,7 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
   };
 
   private async onPrompt(input: CopilotCliHookInput): Promise<CliForwardDecision> {
-    const authResult = await this.ensureProxyAuth();
+    const authResult = await this.policy.authorize<AuthGateResult>(() => this.ensureProxyAuth(), { ok: true });
     if (!authResult.ok) {
       return this.buildBlock('userPromptTransformed', authResult.reason, true, authResult.loginOutcome);
     }
@@ -207,7 +225,7 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
 
   /** Auth once for the whole batch; a denial denies every call and records nothing. */
   private async onToolStart(input: CopilotCliHookInput): Promise<CliForwardDecision> {
-    const authResult = await this.ensureProxyAuth();
+    const authResult = await this.policy.authorize<AuthGateResult>(() => this.ensureProxyAuth(), { ok: true });
     if (!authResult.ok) {
       return this.buildBlock('preToolUse', authResult.reason, true, authResult.loginOutcome);
     }

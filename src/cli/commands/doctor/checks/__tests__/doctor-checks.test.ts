@@ -7,6 +7,7 @@
  * is mocked so results are deterministic and no real process/network/fs probing occurs.
  */
 
+import { backendDoctorPlan } from '../../../proxy/doctor/backend-plan.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AuthMethod } from '@/providers/core/types.js';
 
@@ -598,13 +599,38 @@ describe('ProxyCheck', () => {
   it('composes without the auth probe', async () => {
     h.composeMock.mockResolvedValue({ sections: [{ id: 'daemon', status: 'ok', message: 'running' }], nothingConnected: false });
     const result = await new ProxyCheck().run();
-    expect(h.composeMock).toHaveBeenCalledWith({ authProbe: false, verbose: false });
+    expect(h.composeMock).toHaveBeenCalledWith({ authProbe: false, verbose: false, plan: backendDoctorPlan });
     expect(result.name).toBe('Proxy');
     expect(result.success).toBe(true);
     expect(result.details).toEqual([
       { status: 'ok', message: 'running' },
       { status: 'info', message: expect.stringContaining('codemie proxy doctor') },
     ]);
+  });
+
+  it('in the local mode composes with the local plan', async () => {
+    const { mkdtemp, writeFile, rm } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const home = await mkdtemp(join(tmpdir(), 'proxy-check-local-'));
+    vi.stubEnv('CODEMIE_HOME', home);
+    try {
+      await writeFile(join(home, 'analytics-sync.json'), JSON.stringify({
+        webhookUrl: 'https://hooks.example.invalid/x?sig=FAKE', format: 'json', includeExternal: 'never', at: '03:00', local: true,
+      }));
+      h.composeMock.mockResolvedValue({ sections: [{ id: 'local', status: 'ok', message: 'Local analytics folder: 0 sessions' }], nothingConnected: false });
+
+      const result = await new ProxyCheck().run();
+
+      const { plan, authProbe } = h.composeMock.mock.calls.at(-1)?.[0] as { plan: { daemonLabel: () => string }; authProbe: boolean };
+      expect(authProbe).toBe(false);
+      expect(plan.daemonLabel()).toBe('local analytics mode');
+      expect(result.details[0]).toEqual({ status: 'ok', message: 'Local analytics folder: 0 sessions' });
+    } finally {
+      vi.unstubAllEnvs();
+      await (await import('@/utils/logger.js')).logger.close();
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   it('ends with a pointer to codemie proxy doctor for the full report', async () => {

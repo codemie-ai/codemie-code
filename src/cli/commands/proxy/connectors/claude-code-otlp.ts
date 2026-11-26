@@ -34,6 +34,8 @@ import {
 import { renderHint } from '@/utils/hint.js';
 
 interface WriteClaudeCodeOtlpOptions {
+  /** The status text of the `UserPromptSubmit` hook; `null` writes none. */
+  promptStatus: string | null;
   /** Replace conflicting settings and an invalid project list (`--overwrite`). */
   overwrite?: boolean;
   scope?: AllowlistScope;
@@ -501,7 +503,7 @@ async function readBackupSettings(backupPath: string): Promise<ClaudeSettings | 
 }
 
 export async function writeClaudeCodeOtlpConfig(
-  opts: WriteClaudeCodeOtlpOptions = {}
+  opts: WriteClaudeCodeOtlpOptions
 ): Promise<WriteClaudeCodeOtlpResult> {
   const state = await readState();
   if (!state) {
@@ -669,7 +671,7 @@ export async function writeClaudeCodeOtlpConfig(
           ? CODEMIE_USER_PROMPT_HOOK_TIMEOUT_SECONDS
           : CODEMIE_HOOK_TIMEOUT_SECONDS,
       ...(isPostCompact ? { async: true } : {}),
-      ...(eventName === 'UserPromptSubmit' ? { statusMessage: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE } : {}),
+      ...(eventName === 'UserPromptSubmit' && opts.promptStatus !== null ? { statusMessage: opts.promptStatus } : {}),
     };
     return { matcher: '', hooks: [hook] };
   };

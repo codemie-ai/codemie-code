@@ -44,7 +44,7 @@ The dashboard reads every AI session CodeMie has tracked — Claude Code, Codex,
 
 Discovered sessions that CodeMie did not launch are **excluded by default**; see [Session provenance](#session-provenance).
 
-**Which CodeMie sessions the report and the export include.** Every tracked session record under `~/.codemie/sessions/` is read: a live `<id>.json`, a delivered `completed_<id>.json`, and each `/clear` [generation](#terms) `completed_<id>-<gen>.json` as its own session. A session is counted once it has recorded at least one metric delta (a turn, a tool call or a file change) — still running, completed, or completed but not yet delivered to CodeMie alike; a session with no delta yet is left out unless its transcript carries token cost. `--export json` writes the same sessions as the HTML report. A [stranded session](#terms) shows as running until the next CodeMie start finalizes it.
+**Which CodeMie sessions the report and the export include.** Every tracked session record under `~/.codemie/sessions/` is read: a live `<id>.json`, a delivered `completed_<id>.json`, and each `/clear` [generation](#terms) `completed_<id>-<gen>.json` as its own session. A session is counted once it has recorded at least one metric delta (a turn, a tool call or a file change) — still running, completed, or completed but not yet delivered to CodeMie alike; a session with no delta yet is left out unless its transcript carries token cost. `--export json` writes the same sessions as the HTML report; the JSON export is deprecated (a notice on stderr, none in a hook or a scheduled run). A [stranded session](#terms) shows as running until the next CodeMie start finalizes it.
 
 ---
 
@@ -252,7 +252,7 @@ One flag, `--export [format]`, covers every output. It is optional-valued: bare 
 | Format | Flag | Output |
 |---|---|---|
 | HTML dashboard | `--export` or `--export html` | Self-contained `.html` with all charts and data embedded |
-| JSON data | `--export json` | The costed `ReportPayload` — the same session/meta schema as the dashboard's embedded data and the per-session exit report, useful for further analysis in notebooks or BI tools |
+| JSON data | `--export json` (deprecated: prints `Deprecated: the JSON analytics export (\`--export json\`).` on stderr) | The costed `ReportPayload` — the same session/meta schema as the dashboard's embedded data and the per-session exit report, useful for further analysis in notebooks or BI tools |
 | Both | `--export both` | Writes the `.html` and the `.report.json` side by side with a shared base name |
 
 `ReportPayload` (`{ meta, sessions }`) is the **only** JSON schema `codemie analytics` writes — there is no separate cost-less export format. `html`, `json`, and `both` are the only accepted `--export` values; anything else is rejected with an invalid-format error.
@@ -418,6 +418,13 @@ the only source of configuration.
 For team leads setting up the Power Automate flow for the first time, see `codemie analytics
 sync bootstrap` in [COMMANDS.md](COMMANDS.md#team-lead-setup-analytics-sync-bootstrap).
 
+On a machine whose CodeMie CLI config holds no profile, `install` turns on the local analytics
+mode ([ANALYTICS-SYNC.md](ANALYTICS-SYNC.md#local-analytics-mode)): a local proxy gathers Claude
+Code, Copilot CLI and Copilot Chat, and the job delivers one OTLP file,
+`codemie-analytics-<email slug>-<UTC date>.otlp.jsonl.gz` (`application/gzip`), built from
+`~/.codemie/analytics/sessions/` instead of the JSON report. A machine in the local mode no longer
+delivers the Codex, Gemini and Pi sessions the JSON report held.
+
 ### Commands
 
 ```bash
@@ -547,7 +554,9 @@ unchanged. The marker moves to the run's start time only after the webhook retur
 No sessions in the window sends nothing and leaves the marker untouched. The export has the
 same 70 MB ceiling as `--export json`; an export larger than that, a failed/unreachable
 webhook, or missing settings/identity are all logged and failed without moving the marker,
-so the next run covers the same sessions. There is no retry — the rolling window self-heals
+so the next run covers the same sessions. In the local mode the file is the
+`.otlp.jsonl.gz` of the sessions written to the analytics folder inside the window, under the same
+ceiling and the same marker rules. There is no retry — the rolling window self-heals
 on the next scheduled run. `run` with nothing installed fails with the install command and
 sends nothing.
 
@@ -572,14 +581,18 @@ masked), the last run's time and outcome parsed from the log (`sent`/`skipped`/`
 with its reason, or "never"), and the time of the last successful send (the marker, or
 "never"). Nothing installed reports "not installed" with the install command and exits 0.
 Settings present but the job missing or disabled outside the CLI reports "disabled" and
-tells the developer to run install again.
+tells the developer to run install again. In the local mode it adds the line
+`Mode: local — delivers the OTLP file of ~/.codemie/analytics/sessions` after the first line.
 
 ### `uninstall`
 
 Removes the OS job and the settings file holding the webhook. The last-sent marker and the
 run log are kept, so a later re-install does not re-send or duplicate what was already
 delivered. Running `uninstall` again (or on a machine where nothing is installed) reports
-"nothing to remove" and exits 0.
+"nothing to remove" and exits 0. In the local mode it first removes the clients' hooks, then,
+under the daemon lock, stops the local proxy, removes `~/.codemie/analytics/spool/` and
+`~/.codemie/analytics/excluded/`, and removes the job and the settings last; a step that fails
+keeps the settings and exits 1. The analytics folder stays.
 
 ### Taking over the standalone collector
 
@@ -598,7 +611,9 @@ All paths resolve via `getCodemiePath()` under `~/.codemie`:
 
 | What | Path |
 |---|---|
-| Settings (webhook, git target, run time, lookback, policy) | `analytics-sync.json` (mode `600`, re-applied on every write) |
+| Settings (webhook, git target, run time, lookback, policy; `local` and `localJob` in the local mode) | `analytics-sync.json` (mode `600`, re-applied on every write; written to a temporary file and renamed over it) |
+| Local mode: the analytics folder | `analytics/sessions/` (one `.jsonl` per session and stream, never cleaned) |
+| Local mode: the local proxy's spool and the exclusion marks | `analytics/spool/`, `analytics/excluded/` (removed by `uninstall`) |
 | Last-sent marker (webhook) | `analytics-last-sent` (ISO timestamp; a collector-written marker is honoured as-is) |
 | Last-sent marker (git) | `analytics-last-sent-git` (ISO timestamp; tracked independently of the webhook marker) |
 | Git working copy | `analytics-sync-repo` (one shared shallow clone of the configured `--git-repo`, refreshed/re-cloned each run; removed and re-cloned if its remote no longer matches the settings, or by install when a test push fails) |

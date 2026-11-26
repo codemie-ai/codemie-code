@@ -1,4 +1,6 @@
+import { BackendPolicy } from '@/agents/core/collection-policy.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+const backendPolicy = new BackendPolicy();
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -162,7 +164,7 @@ describe('hook-side transitions', () => {
 
   it('a stop is surfaced once as a user systemMessage, no project or path text; Claude is not blocked', async () => {
     const t = await setup();
-    const deps = { ensureOtlpProxy: vi.fn(), forwardOtlpEventsToSpool: vi.fn() };
+    const deps = { policy: backendPolicy, ensureOtlpProxy: vi.fn(), forwardOtlpEventsToSpool: vi.fn() };
     const raw = JSON.stringify(hook({ hook_event_name: 'SessionStart', source: 'resume' }));
     await t.plugin.processOtlpEvent(raw, deps as never);
     await t.plugin.processOtlpEvent(raw, deps as never);

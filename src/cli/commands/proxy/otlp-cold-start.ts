@@ -13,11 +13,11 @@ import {
   readConnectionRecord,
   readState,
   seedConnectionRecord,
-  spawnDaemon,
   stopDaemon,
   writeState,
   type DaemonState,
 } from './daemon-manager.js';
+import { spawnDaemon } from './daemon-spawn.js';
 import { DAEMON_LOCK_HOOK_BUDGET_MS, withDaemonLock } from './daemon-lock.js';
 import {
   assertSsoCredentials,
@@ -36,6 +36,11 @@ import { CLAUDE_CODE_OTLP_AGENT_NAME } from '../../../agents/plugins/claude-code
  * Another client's hook of the same event name replaces it.
  */
 const ADOPT_OLDER_DAEMON_EVENTS: ReadonlySet<string> = new Set(['UserPromptSubmit', 'PostCompact']);
+
+/** Whether a hook of `agentName` on `event` adopts a live daemon of an older CLI as it is. */
+export function adoptsOlderDaemon(agentName: string, event?: string): boolean {
+  return agentName === CLAUDE_CODE_OTLP_AGENT_NAME && event !== undefined && ADOPT_OLDER_DAEMON_EVENTS.has(event);
+}
 
 /** A daemon state a start can rebuild the daemon from: one that names its upstream. */
 export type RestartableState = DaemonState & { targetUrl: string; provider: string };
@@ -209,8 +214,7 @@ async function coldStartOnWorkingDirectoryProfile(port: number, stopOlder: boole
  * on without the daemon.
  */
 export async function ensureOtlpProxy(agentName: string, event?: string): Promise<void> {
-  const acceptOlder =
-    agentName === CLAUDE_CODE_OTLP_AGENT_NAME && event !== undefined && ADOPT_OLDER_DAEMON_EVENTS.has(event);
+  const acceptOlder = adoptsOlderDaemon(agentName, event);
   if (await adoptLiveDaemon(await readState(), acceptOlder)) return;
 
   await withDaemonLock(DAEMON_LOCK_HOOK_BUDGET_MS, async () => {

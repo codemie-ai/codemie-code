@@ -11,7 +11,9 @@
  *
  * Scope: http/json only. Protobuf OTLP is byte-blind and unmasked by design, so it is not covered.
  */
+import { BackendPolicy } from '@/agents/core/collection-policy.js';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+const backendPolicy = new BackendPolicy();
 import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -325,7 +327,7 @@ describe('analytics pipeline: secrets in JSON OTLP and hook events', () => {
     };
     await new TestHookAdapter().processOtlpEvent(
       JSON.stringify({ cwd: repo.path, payload: [hookEvent] }),
-      { ensureOtlpProxy: async () => {}, forwardOtlpEventsToSpool }
+      { policy: backendPolicy, ensureOtlpProxy: async () => {}, forwardOtlpEventsToSpool }
     );
 
     // 2. JSON OTLP path for every signal, through the real ingest.

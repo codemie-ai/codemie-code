@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
-import { ensureCodeMieSsoAuth } from '@/providers/plugins/sso/sso.auth-gate.js';
+import { ensureCodeMieSsoAuth, type AuthGateResult } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { describeLogin, type DetachedLoginOutcome } from '@/providers/plugins/sso/sso.detached-login.js';
 import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
 import { logger } from '@/utils/logger.js';
 import {
+  COPILOT_FILTER_REASONS,
   evaluateCopilotAnalyticsGate,
   type CopilotAnalyticsGateReason,
 } from '@/agents/core/copilot-analytics-gate.js';
@@ -55,7 +56,26 @@ export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput
 
   protected async isTracked(hookInput: CopilotChatHookInput): Promise<boolean> {
     const decision = await evaluateCopilotAnalyticsGate(this.name, this.cwdOrUndefined(hookInput));
+    this.gateReason = decision.tracked ? undefined : decision.reason;
     return decision.tracked && this.hasRequiredIdentity(hookInput);
+  }
+
+  /** The reason of the last `isTracked` gate refusal; none when the gate passed and the hook lacked its identity. */
+  private gateReason?: CopilotAnalyticsGateReason;
+
+  /** A hook with no folder or no session id is never the developer's filter, whatever the gate answered without a folder. */
+  protected override async untrackedByFilter(hookInput: CopilotChatHookInput): Promise<boolean> {
+    if (!this.hasRequiredIdentity(hookInput)) return false;
+    return this.gateReason !== undefined && COPILOT_FILTER_REASONS.has(this.gateReason);
+  }
+
+  protected override sessionIdOf(hookInput: CopilotChatHookInput): string | undefined {
+    return typeof hookInput.session_id === 'string' ? hookInput.session_id : undefined;
+  }
+
+  /** VS Code starts Copilot Chat itself: CodeMie never launches its session. */
+  protected override launchedByCodemie(): boolean {
+    return false;
   }
 
   protected async onUntrackedHook(hookInput: CopilotChatHookInput): Promise<void> {
@@ -143,7 +163,7 @@ export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput
       );
     }
 
-    const authResult = await this.ensureProxyAuth();
+    const authResult = await this.policy.authorize<AuthGateResult>(() => this.ensureProxyAuth(), { ok: true });
     if (authResult.ok) {
       return { decision: 'forward', payload: [hookInput] };
     }

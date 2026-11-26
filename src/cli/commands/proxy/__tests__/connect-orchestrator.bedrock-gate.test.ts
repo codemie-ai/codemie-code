@@ -22,13 +22,13 @@ vi.mock('../daemon-manager.js', async (importOriginal) => ({
   isDaemonAlive: (await importOriginal<typeof import('../daemon-manager.js')>()).isDaemonAlive,
   checkStatus: vi.fn(),
   readState: vi.fn(),
-  spawnDaemon: vi.fn(),
   stopDaemon: vi.fn(),
   readConnectionRecord: vi.fn(),
   writeConnectionRecord: vi.fn(),
   seedConnectionRecord: vi.fn(),
   hasLegacyClientIdentity: vi.fn(() => false),
 }));
+vi.mock('../daemon-spawn.js', () => ({ spawnDaemon: vi.fn() }));
 vi.mock('@/utils/processes.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/utils/processes.js')>()),
   spawnDetached: vi.fn(),
@@ -118,7 +118,8 @@ async function setupHappyMocks(provider = 'ai-run-sso'): Promise<void> {
   const { ConfigLoader } = await import('../../../../utils/config.js');
   const { ProviderRegistry } = await import('../../../../providers/index.js');
   const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-  const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+  const { checkStatus } = await import('../daemon-manager.js');
+  const { spawnDaemon } = await import('../daemon-spawn.js');
   const { detectAndAsk, applyConsented } = await import('@/agents/plugins/claude/cloud-provider-conflict/gate.js');
   vi.mocked(ConfigLoader.load).mockResolvedValue({
     name: 'p',
@@ -339,7 +340,8 @@ describe('connectTargets: Bedrock settings conflict gate', () => {
       await setupHappyMocks();
       const { detectAndAsk, applyConsented } = await import('@/agents/plugins/claude/cloud-provider-conflict/gate.js');
       vi.mocked(detectAndAsk).mockResolvedValue({ kind: 'stop', reason, guidance: `GUIDANCE for ${reason}` });
-      const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+      const { checkStatus } = await import('../daemon-manager.js');
+      const { spawnDaemon } = await import('../daemon-spawn.js');
       const { writeDesktopConfig } = await import('../connectors/desktop.js');
       const { syncRegisteredSkills } = await import('../../../../cli/commands/skills/setup/sync.js');
       const { connectTargets } = await import('../connect-orchestrator.js');
@@ -375,7 +377,7 @@ describe('connectTargets: Bedrock settings conflict gate', () => {
     await setupHappyMocks();
     const { detectAndAsk, applyConsented } = await import('@/agents/plugins/claude/cloud-provider-conflict/gate.js');
     vi.mocked(detectAndAsk).mockResolvedValueOnce({ kind: 'stop', reason: 'cancel', guidance: 'BOTH CANCELLED' });
-    const { spawnDaemon } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { connectTargets } = await import('../connect-orchestrator.js');
 
     await expect(
@@ -393,7 +395,7 @@ describe('connectTargets: Bedrock settings conflict gate', () => {
     const { applyConsented } = await import('@/agents/plugins/claude/cloud-provider-conflict/gate.js');
     const { syncRegisteredSkills } = await import('../../../../cli/commands/skills/setup/sync.js');
     const { syncPluginSkills } = await import('../../../../cli/commands/skills/setup/sync-plugin.js');
-    const { spawnDaemon } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { connectTargets } = await import('../connect-orchestrator.js');
 
     await connectTargets({ targets: { claudeDesktop: true } });
@@ -421,7 +423,7 @@ describe('connectTargets: Bedrock settings conflict gate', () => {
     await setupHappyMocks();
     const { applyConsented } = await import('@/agents/plugins/claude/cloud-provider-conflict/gate.js');
     vi.mocked(applyConsented).mockResolvedValue(emptyResult('/backups/claude-1'));
-    const { spawnDaemon } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     vi.mocked(spawnDaemon).mockRejectedValue(new Error('daemon did not start'));
     const { connectTargets } = await import('../connect-orchestrator.js');
 
