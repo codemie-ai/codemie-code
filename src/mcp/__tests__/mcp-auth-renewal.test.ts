@@ -151,7 +151,7 @@ describe('adoption of a newer persisted grant', () => {
     expect(sdk.refreshAuthorization).toHaveBeenCalledTimes(1);
     expect(provider.tokens()?.access_token).toBe('at-b');
     expect(provider.tokenNeedsRenewal()).toBe(false);
-    expect(provider.clientInformation()).toMatchObject({ client_id: 'client-b' });
+    expect(provider.clientInformation()).toBeUndefined();
     expect(peekPersistedLogin(SERVER)?.grant?.refreshToken).toBe('rt-b');
   });
 

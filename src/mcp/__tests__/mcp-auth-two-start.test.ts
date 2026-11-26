@@ -69,7 +69,7 @@ describe('two-start regression (characterization, passes on first run)', () => {
 
     expect(second.tokens()?.access_token).toBe('at-first');
     expect(second.tokenNeedsRenewal()).toBe(false);
-    expect(second.clientInformation()).toMatchObject({ client_id: 'client-a' });
+    expect(second.clientInformation()).toBeUndefined();
     expect(execFileMock).not.toHaveBeenCalled();
     expect(sdk.refreshAuthorization).not.toHaveBeenCalled();
   });

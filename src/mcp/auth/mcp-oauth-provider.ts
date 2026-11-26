@@ -152,7 +152,6 @@ export class McpOAuthProvider implements OAuthClientProvider {
     this._tokens = login.tokens;
     this._expiresAt = login.expiresAt ?? 0; // unknown lifetime: renew before first use
     this._grant = login.grant;
-    if (login.grant) this._clientInfo = login.grant.clientInfo;
   }
 
   /** True when the current access token is known to be expired (or about to be). */
