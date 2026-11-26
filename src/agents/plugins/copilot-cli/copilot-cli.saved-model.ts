@@ -1,4 +1,4 @@
-import { recordSavedModelPick } from '../../../utils/model-origin.js';
+import { recordSavedModelPick } from '@/utils/model-origin.js';
 
 /** The `codemie-copilot` launch options that decide whether its saved model applies. */
 export interface CopilotModelOptions {

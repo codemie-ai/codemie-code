@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { ConfigLoader, type CodeMieConfigOptions } from '../../../utils/config.js';
-import { describeModel, resolveModelEnvOrigin } from '../../../utils/model-origin.js';
+import { describeModel, resolveModelEnvOrigin } from '@/utils/model-origin.js';
 import { logger } from '../../../utils/logger.js';
 import { ProfileDisplay } from './display.js';
 import { ProviderRegistry } from '../../../providers/core/registry.js';
@@ -30,7 +30,7 @@ async function resolveIdentityDisplay(workingDir: string, profileName?: string):
 export async function loadStatusConfig(
   cwd: string
 ): Promise<{ configDir: string; config: CodeMieConfigOptions; modelText: string }> {
-  const { findNearestConfigDir } = await import('../../../agents/core/event-fields/identity-fields.js');
+  const { findNearestConfigDir } = await import('@/agents/core/event-fields/identity-fields.js');
   const configDir = await findNearestConfigDir(cwd);
   const config = await ConfigLoader.load(configDir, undefined, cwd);
   const resolution = ConfigLoader.modelResolutionOf(config);
@@ -198,7 +198,7 @@ async function handleStatus(): Promise<void> {
  * Shows where each configuration value comes from
  */
 async function handleStatusWithSources(): Promise<void> {
-  const { findNearestConfigDir } = await import('../../../agents/core/event-fields/identity-fields.js');
+  const { findNearestConfigDir } = await import('@/agents/core/event-fields/identity-fields.js');
   const cwd = process.cwd();
   await ConfigLoader.showWithSources(await findNearestConfigDir(cwd), cwd);
 }
