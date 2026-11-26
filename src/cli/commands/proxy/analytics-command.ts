@@ -43,6 +43,7 @@ import {
   type ConnectorOptions,
 } from './analytics-targets.js';
 import { addConsentCommands } from './analytics-consent-command.js';
+import { addResendCommand } from './analytics-resend-command.js';
 import { vendorFlag } from './flag-list.js';
 
 export { resolveAnalyticsConnector, selectTargetConnectors, type TargetSelection } from './analytics-targets.js';
@@ -308,6 +309,7 @@ export function createProxyAnalyticsCommand(): Command {
   ).action((path: string | undefined, opts: ConnectorOptions) => includeProject(path, opts));
 
   addConsentCommands(analytics);
+  addResendCommand(analytics);
 
   withConnectorOptions(
     analytics.command('status').description('Show the effective analytics configuration for the connector')

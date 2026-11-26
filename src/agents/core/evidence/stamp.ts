@@ -9,7 +9,8 @@ import { apiIdentity, ownerHash } from './api-identity.js';
 import { launchMode, type FundingRoute, type RoutingResult } from './routing.js';
 import { resolveConsent } from './consent-store.js';
 import { parseProjectBinding, PROJECT_BINDING_ENV, type ProjectBindingState } from '@/utils/project-binding.js';
-import { createOrRead, readRecord, recordKey, touch, type EvidenceFields, type EvidenceRecord } from './record-store.js';
+import { canonicalizePath } from '../project-allowlist.js';
+import { createOrRead, readRecord, recordFits, recordKey, touch, type EvidenceFields, type EvidenceRecord } from './record-store.js';
 import type { PendingFields } from './owner-pending.js';
 import { credentialFingerprint } from '@/providers/core/credential-owner.js';
 import { isSSOCredentials, type SSOCredentials } from '@/providers/core/types.js';
@@ -109,6 +110,20 @@ function projectBindingFor(project: string | undefined): ProjectBindingState | u
   return launched === project ? binding : undefined;
 }
 
+/** Room a later consent reference takes on the record (`attachConsentRef`): reserved, so the folder never crowds it out. */
+const CONSENT_REF_RESERVE = '0'.repeat(16);
+
+/**
+ * A new-contract record stamped without consent keeps the session's canonical folder (local only), so a consent
+ * granted later can be matched to the session (`codemie proxy analytics resend`). Left out when it would not fit the
+ * record limit: the stamp never fails because of it.
+ */
+async function withSessionFolder(fields: EvidenceFields, cwd: string): Promise<EvidenceFields> {
+  if (fields.funding_route === undefined || !fields.project || fields.consent_ref) return fields;
+  const session_folder = await canonicalizePath(cwd);
+  return recordFits({ ...fields, session_folder, consent_ref: CONSENT_REF_RESERVE }) ? { ...fields, session_folder } : fields;
+}
+
 /**
  * Creates or reads the session's durable evidence record before anything is spooled.
  * Never throws. A failure carries a reason code only (no URL, email, org or path values).
@@ -145,7 +160,7 @@ export async function stampEvidence(
     const consent_ref = hookFields.funding_route !== undefined && hookFields.project
       ? await resolveConsent({ owner_hash: ownerHash(email), api_identity: api, project: hookFields.project }, context.cwd)
       : undefined;
-    const fields = { ...hookFields, ...(consent_ref ? { consent_ref } : {}), owner_hash: ownerHash(email) };
+    const fields = await withSessionFolder({ ...hookFields, ...(consent_ref ? { consent_ref } : {}), owner_hash: ownerHash(email) }, context.cwd);
     let created = await createOrRead(key, fields);
     if (created.kind === 'evidence_capacity') {
       // At the cap: evict idle records whose sessions have no undelivered spool now, not at the next sweep.
