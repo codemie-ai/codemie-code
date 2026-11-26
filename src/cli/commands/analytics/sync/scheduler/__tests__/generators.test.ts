@@ -5,7 +5,17 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { isScheduledSyncRun } from '@/utils/scheduled-run.js';
 
-import { launchdPlist, resolveJobCommand, systemdUnits, taskSchedulerXml, type JobCommand } from '../generators.js';
+import { SyncConfigError } from '@/utils/errors.js';
+
+import {
+  assertNameSupportedOnPlatform,
+  launchdPlist,
+  resolveJobCommand,
+  systemdUnits,
+  taskSchedulerXml,
+  validateSchedulerName,
+  type JobCommand
+} from '../generators.js';
 
 const CMD: JobCommand = {
   node: '/usr/local/bin/node',
@@ -14,7 +24,7 @@ const CMD: JobCommand = {
 };
 
 describe('launchdPlist', () => {
-  const plist = launchdPlist(CMD, '07:05', '/Users/dev/.codemie/logs/analytics-sync.log');
+  const plist = launchdPlist(CMD, '07:05', '/Users/dev/.codemie/logs/analytics-sync.log', 'com.epam.codemie.analytics-sync');
 
   it('contains the launchd label', () => {
     expect(plist).toContain('<string>com.epam.codemie.analytics-sync</string>');
@@ -130,5 +140,68 @@ describe('resolveJobCommand', () => {
     expect(cmd.node).toBe(process.execPath);
     expect(cmd.entry).toBe(await realpath(target));
     expect(isScheduledSyncRun([cmd.node, cmd.entry, ...cmd.args])).toBe(true);
+  });
+});
+
+describe('launchdPlist with a custom label', () => {
+  it('uses the given label and XML-escapes it', () => {
+    const plist = launchdPlist(CMD, '07:05', '/tmp/log', 'My & <Task>');
+    expect(plist).toContain('<key>Label</key>\n    <string>My &amp; &lt;Task&gt;</string>');
+    expect(plist).not.toContain('<string><string>');
+  });
+});
+
+describe('validateSchedulerName', () => {
+  it.each(['my-task', 'com.example.sync', 'CodeMie Analytics Sync', 'task_1:a', 'a'.repeat(100), 'ж'.repeat(100)])(
+    'accepts %j unchanged',
+    (name) => {
+      expect(validateSchedulerName(name)).toBe(name);
+    }
+  );
+
+  it.each([
+    ['empty', ''],
+    ['leading space', ' task'],
+    ['trailing space', 'task '],
+    ['newline', 'ta\nsk'],
+    ['NUL', 'ta\0sk'],
+    ['C1 control', 'ta\u0085sk'],
+    ['line separator', 'ta\u2028sk'],
+    ['forward slash', 'a/b'],
+    ['backslash', 'a\\b'],
+    ['parent segment', 'a..b'],
+    ['path traversal', '../../etc/passwd'],
+    ['leading dash', '-task'],
+    ['leading dot', '.task'],
+    ['101 characters', 'a'.repeat(101)]
+  ])('rejects %s', (_label, name) => {
+    expect(() => validateSchedulerName(name)).toThrow(SyncConfigError);
+  });
+
+  it('counts characters, not UTF-16 units, for the length limit', () => {
+    expect(() => validateSchedulerName('😀'.repeat(100))).not.toThrow();
+    expect(() => validateSchedulerName('😀'.repeat(101))).toThrow(SyncConfigError);
+  });
+});
+
+describe('assertNameSupportedOnPlatform', () => {
+  it.each(['codemie-analytics-sync', 'a.b_c:d-1', 'A'])('accepts %j on linux', (name) => {
+    expect(() => assertNameSupportedOnPlatform(name, 'linux')).not.toThrow();
+  });
+
+  it.each(['has space', 'a@b', 'a/b', 'a+b', 'naïve', 'a#b'])('rejects %j on linux (systemd charset)', (name) => {
+    expect(() => assertNameSupportedOnPlatform(name, 'linux')).toThrow(/systemd/);
+  });
+
+  it.each([':', '*', '?', '"', '<', '>', '|'])('rejects %s on win32', (char) => {
+    expect(() => assertNameSupportedOnPlatform(`a${char}b`, 'win32')).toThrow(/Task Scheduler/);
+  });
+
+  it('accepts spaces and other punctuation on win32', () => {
+    expect(() => assertNameSupportedOnPlatform('CodeMie Analytics Sync (daily) #1', 'win32')).not.toThrow();
+  });
+
+  it('accepts any validated name on darwin', () => {
+    expect(() => assertNameSupportedOnPlatform('My Task: * ? | <x>', 'darwin')).not.toThrow();
   });
 });
