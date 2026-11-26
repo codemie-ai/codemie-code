@@ -124,7 +124,8 @@ describe('createDoctorCommand', () => {
     const output = await doctor();
 
     expect(output).toContain(`Local analytics folder is missing (${join(home, 'analytics', 'sessions')})`);
-    expect(output).toMatch(/Scheduled job \S+: not registered or disabled/);
+    // The job's name is the platform's own, and on Windows it holds spaces.
+    expect(output).toMatch(/Scheduled job .+: not registered or disabled/);
     expect(output).not.toContain('Proxy check failed');
     expect(exitCodes).toEqual([1]);
     expect(h.spawned).toEqual([]);
