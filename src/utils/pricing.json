@@ -18,6 +18,7 @@
       "cacheWrite": "cache write price (Anthropic: 1.25x input, OpenAI: ~same as input)",
       "gpt61Sol": "Row added 2026-10-05: gpt-6-1-sol short-context Standard $2.00/$0.10/$2.50/$10.00 verified against https://developers.openai.com/api/docs/pricing?latest-pricing=standard (Standard pricing table, row 'gpt-6.1-sol'). Dashed key per this file's convention; dotted ids normalize via normalizeModelName.",
       "fable52Hydrogen": "Rows added 2026-11-16 from the provider price listing: claude-fable-5-2 $8/$40, cache read $0.20 (0.025x input), cache write $10 (1.25x), the same on Anthropic-model listings at Vertex AI and GitHub Copilot; the row holds the global rate with bedrockRegionalMultiplier 1.1, as on the other Claude 5 rows. 1h cache write is not listed and is set to $16 (2x input) per the Anthropic 1h-cache convention of the other Claude 5 rows. gemini-4-hydrogen $1.50/$7.50, cache read $0.07, identical on Google AI Studio and Vertex AI; no cache-write price is listed, so the row has no cacheWrite.",
+    "gpt62SolCarbon": "Rows added 2026-11-23 from the provider price listing: gpt-6-2-sol $2/$10, cache read $0.10, cache write $2.50 per MTok (Azure OpenAI; the same shape as gpt-6-1-sol). The listing also shows a second Azure OpenAI row at exactly 1.1x ($2.20/$11/$0.11/$2.75), a regional rate; the row holds the base rate, and bedrockRegionalMultiplier is Bedrock-only so none is set. gemini-4-carbon $2/$10, cache read $0.10, identical on Google AI Studio and Vertex AI; no cache-write price is listed, so the row has no cacheWrite (as gemini-4-hydrogen).",
     "haiku55": "Row added 2026-10-23: claude-haiku-5-5 ($0.10/$0.50 base <=100K, cache read $0.01 = 0.1x input, cache write $0.125 = 1.25x, 1h cache write $0.20 = 2x; >100K tier $0.50/$2.50 not represented per flat schema, bedrockRegionalMultiplier 1.1) verified at https://platform.claude.com/docs/en/about-claude/pricing (Model pricing table row 'Claude Haiku 5.5').",
       "astraCacheWriteFix": "Corrected 2026-10-05: gpt-6-astra cacheWrite 10 -> 12.5 per the same vendor Standard table (row 'gpt-6-astra': $10.00/$1.00/$12.50/$50.00); 10 was a mirrored-input error, real price is ~1.25x input.",
       "claude5": "Sonnet 5 and Opus 5 standard API-equivalent token rates verified 2026-09-15; Fable 5/5.1, Mythos 5/5.1 and Opus 4.7/4.8 verified 2026-09-27 at https://platform.claude.com/docs/en/about-claude/pricing; excludes additional tool charges. Sonnet 5's planned September 1 price increase was cancelled.",
@@ -295,6 +296,12 @@
     "cacheRead": 0.2,
     "cacheWrite": 2.5
   },
+  "gpt-6-2-sol": {
+    "input": 2,
+    "output": 10,
+    "cacheRead": 0.1,
+    "cacheWrite": 2.5
+  },
   "gpt-6-1-sol": {
     "input": 2,
     "output": 10,
@@ -528,6 +535,11 @@
     "output": 3.75,
     "cacheRead": 0.075,
     "cacheWrite": 0.75
+  },
+  "gemini-4-carbon": {
+    "input": 2,
+    "output": 10,
+    "cacheRead": 0.1
   },
   "gemini-4-hydrogen": {
     "input": 1.5,

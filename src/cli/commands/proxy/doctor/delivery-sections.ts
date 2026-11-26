@@ -42,7 +42,7 @@ export interface HoldReasonEntry {
 export const HOLD_REASONS: Record<string, HoldReasonEntry> = {
   work_consent_required: {
     text: 'personal Claude subscription sessions need work consent',
-    fix: 'codemie proxy analytics consent grant (run in this repository, or add --all for every repository; applies to new sessions only)',
+    fix: 'codemie proxy analytics consent grant, then codemie proxy analytics resend (run in this repository, or add --all to grant for every repository)',
   },
 };
 

@@ -406,6 +406,64 @@ describe('hook.ts routeHookEvent + validateHookEvent contract', () => {
       expect(after.activeDurationMs).toBe(0);
     });
 
+    it('Stop with no session record → no sync and no active-duration accumulation', async () => {
+      const sessionId = `route-stop-norec-${process.pid}`;
+      const claudeId = 'claude-stop-norec';
+      createdSessions.add([sessionId, claudeId]);
+      cleanupSession(sessionId, claudeId);
+      const transcript = transcriptFile('stop-norec');
+      const processSession = vi.fn().mockResolvedValue({
+        success: true,
+        totalRecords: 0,
+        failedProcessors: [],
+        processors: {},
+      });
+      const mockAgent = { getSessionAdapter: () => ({ processSession }) };
+      vi.spyOn(AgentRegistry, 'getAgent').mockReturnValue(mockAgent as never);
+
+      const event = {
+        session_id: claudeId,
+        hook_event_name: 'Stop',
+        transcript_path: transcript,
+        permission_mode: 'default',
+        cwd: TMP,
+      } as BaseHookEvent;
+
+      await processEvent(event, { ...baseConfig, sessionId });
+
+      expect(processSession).not.toHaveBeenCalled();
+      expect(existsSync(getSessionPath(sessionId))).toBe(false);
+    });
+
+    it('SubagentStop with no session record → no sync', async () => {
+      const sessionId = `route-sub-norec-${process.pid}`;
+      const claudeId = 'claude-sub-norec';
+      createdSessions.add([sessionId, claudeId]);
+      cleanupSession(sessionId, claudeId);
+      const transcript = transcriptFile('sub-norec');
+      const processSession = vi.fn().mockResolvedValue({
+        success: true,
+        totalRecords: 0,
+        failedProcessors: [],
+        processors: {},
+      });
+      const mockAgent = { getSessionAdapter: () => ({ processSession }) };
+      vi.spyOn(AgentRegistry, 'getAgent').mockReturnValue(mockAgent as never);
+
+      const event = {
+        session_id: claudeId,
+        hook_event_name: 'SubagentStop',
+        transcript_path: transcript,
+        permission_mode: 'default',
+        cwd: TMP,
+      } as BaseHookEvent;
+
+      await processEvent(event, { ...baseConfig, sessionId });
+
+      expect(processSession).not.toHaveBeenCalled();
+      expect(existsSync(getSessionPath(sessionId))).toBe(false);
+    });
+
     it('unknown/unsupported event name is silently ignored (no throw, no session record written)', async () => {
       const sessionId = `route-unknown-${process.pid}`;
       const claudeId = 'claude-unknown-1';

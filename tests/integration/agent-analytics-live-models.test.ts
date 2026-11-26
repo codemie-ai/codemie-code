@@ -54,6 +54,7 @@ import {
   getTempDir,
   getCodemieTestUrl,
   fetchLiveCatalog,
+  isImageOnlyModel,
 } from '../helpers/index.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -201,7 +202,8 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('agent-analytics-live-mode
     const codeMieUrl = getCodemieTestUrl();
     const allModels = fetchLiveCatalog(codeMieUrl, 'catalog-fetch');
     // Routers dispatch to other models and carry no `deployment_name`; only concrete models are driven.
-    const enabledModels = allModels.filter((m) => m.enabled && !isRouterModel(m));
+    // Image-only models cannot run the tool-calling text prompt, so they are not driven.
+    const enabledModels = allModels.filter((m) => m.enabled && !isRouterModel(m) && !isImageOnlyModel(m));
 
     for (const model of enabledModels) {
       const binName = mapModelToBin(model.deployment_name);

@@ -12,5 +12,5 @@ export { waitForClaudeReady } from './claude-tui.js';
 export { getLatestMetricsRecord } from './metrics.js';
 export { getTestEnvFlag, getTestEnvFlagOrDefault, stripNodeModulesBin, getTestEnvValue, getCodemieTestUrl, getCodemieTestModel, DEFAULT_CODEMIE_TEST_URL, DEFAULT_CODEMIE_TEST_MODEL } from './test-env.js';
 export { pollForSession, type SessionPollOptions, type SessionPollResult } from './session-poll.js';
-export { fetchLiveCatalog } from './live-catalog.js';
+export { fetchLiveCatalog, isImageOnlyModel } from './live-catalog.js';
 export { runAgentTaskSmoke, type AgentSmokeOptions, type AgentSmokeRun } from './agent-smoke.js';

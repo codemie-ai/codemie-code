@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "task": "Make `codemie profile status` (plain and --show-sources) and the agent launch banner show the effective model and mark a CODEMIE_MODEL override, distinguishing shell vs .env, with tests for shell, .env and no-override cases (EPMCDME-17853 ACs 1-4, 6).",
+  "generated": "2026-11-25T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 19,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Five to six components across three subsystems: ConfigLoader (load/loadFromEnv/loadWithSources/showWithSources) and its source-type union, the profile CLI (handleStatus, ProfileDisplay.formatStatus), agent core (AgentCLI model-source marker, BaseAgentAdapter launch banner) and the shared renderProfileInfo renderer. ConfigLoader and renderProfileInfo are shared utilities with many callers, which is already part of the L criterion, so the 'touches core shared utilities' red flag is absorbed rather than bumped. The banner is shared by every agent, but it only changes how a value is displayed, so the 'affects multiple workflows or agents' flag was not applied. No new abstraction, unlike the project L example profile-provider-decoupling (scored XL here)." },
+    { "dimension": "file_change_estimate", "reason": "About 7 source files (config.ts, env/types.ts, profile/index.ts, profile/display.ts, AgentCLI.ts, BaseAgentAdapter.ts, utils/profile.ts), plus possible updates to CODEMIE_MODEL_SOURCE readers (claude.models.ts, codex-models.ts, copilot-cli.models.ts/plugin, bin/codemie-copilot.js) if a new source value is introduced, plus 3-5 test files (AgentCLI-model-source, config-project-override, profile index, BaseAgentAdapter/project-parity). That puts it at 11 or more files across src/utils, src/env, src/cli/commands/profile, src/agents/core and possibly src/agents/plugins, which is the XL band. Test files are counted the same way as in the project calibration example." },
+    { "dimension": "technical_risk", "reason": "Closest patterns are describeProjectBinding (adds a source suffix to a displayed value) and loadWithSources (per-key source labels). They cover the display side, but there is no precedent for telling shell values apart from .env values: dotenv.config mutates process.env and its return value is discarded, so provenance depends on call order across repeated load() calls. Other risks: the CODEMIE_MODEL_SOURCE contract has four readers and a second writer; loadWithSources reads env before .env is loaded (the reproduced mislabel). The change is display-only, has no security surface and is trivial to roll back, so the score stays M. The AC variant cases (shell, .env, no-override) are covered by the existing project-parity.test.ts template (real temp-dir .env and env snapshot/restore), so the edge-case auto-bump does not apply. The project L example scored L only because of its data migration, which this task does not have." },
+    { "dimension": "requirements_clarity", "reason": "ACs are concrete and include an example output string, but several design points are still open: where to capture shell-vs-.env provenance, whether to add a new CODEMIE_MODEL_SOURCE value or a separate variable, whether to mark an env value that equals the profile model, and how to handle an env model that an explicit --profile filtered out." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

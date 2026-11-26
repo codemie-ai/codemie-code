@@ -54,7 +54,10 @@ describe('recordConnectConsent', () => {
     const result = await recordConnectConsent('user');
 
     expect(result.ok).toBe(true);
-    expect(printed()).toEqual(['✓ Analytics from personal Claude subscriptions will be sent for any repository (applies to new sessions only).']);
+    expect(printed()).toEqual([
+      '✓ Analytics from personal Claude subscriptions will be sent for any repository (applies to new sessions only).',
+      '  Sessions already held for lack of consent: codemie proxy analytics resend',
+    ]);
     expect(await entries()).toEqual([expect.objectContaining({ all_folders: true, owner_hash: id.owner_hash, api_identity: id.api_identity })]);
   });
 
@@ -65,7 +68,10 @@ describe('recordConnectConsent', () => {
 
     expect(result.ok).toBe(true);
     expect(projectMock).toHaveBeenCalledWith(work);
-    expect(printed()).toEqual(['✓ Analytics from personal Claude subscriptions will be sent for this repository (applies to new sessions only).']);
+    expect(printed()).toEqual([
+      '✓ Analytics from personal Claude subscriptions will be sent for this repository (applies to new sessions only).',
+      '  Sessions already held for lack of consent: codemie proxy analytics resend',
+    ]);
     expect(printed().join('\n')).not.toContain('Secret-Project-Name');
     expect(printed().join('\n')).not.toContain(work);
     expect(await entries()).toEqual([expect.objectContaining({ project: 'Secret-Project-Name', folder: work })]);

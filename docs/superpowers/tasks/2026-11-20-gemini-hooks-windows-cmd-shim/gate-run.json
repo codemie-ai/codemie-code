@@ -1,0 +1,12 @@
+{"schema":1,"branch":"EPMCDME-16975_gemini-hooks-windows-shell","head":"9a0bed5c5ddbeea039ff94afc8fe0d460023e008","runner":"npm","started_at":"2026-11-20T15:33:04Z","completed_at":"2026-11-20T15:40:32Z","status":"PASSED","drift_detected":false,
+"gates":[
+{"id":"license","source":"guide","status":"PASS","duration_ms":2940,"command":"npm run license-check","exit_code":0},
+{"id":"lint","source":"guide","status":"PASS","duration_ms":16216,"command":"npm run lint","exit_code":0},
+{"id":"typecheck","source":"guide","status":"PASS","duration_ms":5655,"command":"npm run typecheck","exit_code":0},
+{"id":"build","source":"guide","status":"PASS","duration_ms":9952,"command":"npm run build","exit_code":0},
+{"id":"unit","source":"guide","status":"PASS","duration_ms":289794,"command":"npx vitest run --project unit","exit_code":0,"notes":"run with all CODEMIE_* env vars unset"},
+{"id":"integration","source":"guide","status":"PASS","duration_ms":97891,"command":"npx vitest run --project cli","exit_code":0,"notes":"run with all CODEMIE_* env vars unset"},
+{"id":"commitlint","source":"guide","status":"PASS","duration_ms":1318,"command":"npm run commitlint:last","exit_code":0},
+{"id":"secrets","source":"hook","status":"SKIPPED","duration_ms":1756,"command":"npm run validate:secrets","exit_code":0,"notes":"Output: 'No staged changes to scan'. Needs staged changes (and Docker/Gitleaks); CI scans unconditionally."},
+{"id":"lint-staged","source":"hook","status":"SKIPPED","duration_ms":1451,"command":"npx lint-staged","exit_code":0,"notes":"Output: 'lint-staged could not find any staged files.' Needs staged files; lint and typecheck gates cover the same checks."}
+],"failures":{}}
