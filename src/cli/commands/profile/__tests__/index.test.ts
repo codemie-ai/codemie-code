@@ -122,6 +122,28 @@ describe('ProfileDisplay — resolved identity', () => {
       logSpy.mockRestore();
     }
   });
+
+  it('formatStatus() shows the effective model text when given, else the profile model', () => {
+    const modelLine = (identity: Parameters<typeof ProfileDisplay.formatStatus>[2]): string | undefined => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        ProfileDisplay.formatStatus(
+          { name: 'personal', active: true, profile: { provider: 'ai-run-sso', model: 'Y' }, source: 'global' },
+          undefined,
+          identity
+        );
+        return logSpy.mock.calls.map(call => call.join(' ')).join('\n').split('\n').find(line => line.includes('Model'));
+      } finally {
+        logSpy.mockRestore();
+      }
+    };
+
+    expect(modelLine({ model: 'X (CODEMIE_MODEL from shell env overrides profile: Y)' })).toContain(
+      'X (CODEMIE_MODEL from shell env overrides profile: Y)'
+    );
+    expect(modelLine({})).toContain('Y');
+    expect(modelLine({})).not.toContain('overrides');
+  });
 });
 
 describe('listProfiles — per-profile resolved identity display (AC8)', () => {
