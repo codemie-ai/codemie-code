@@ -837,15 +837,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // Lifecycle hook: enrichArgs (provider-aware)
     // Enrich args with agent-specific defaults (e.g., --profile, --model)
     // Must run AFTER beforeRun so env vars are available
-    const beforeEnrich = { ...process.env };
-    let enrichedArgs = await executeEnrichArgs(this.metadata.lifecycle, this.metadata.name, args, this.extractConfig(env));
-    // enrichArgs receives no env and writes process.env; `env` (the child's) was built before it, so carry over only
-    // the keys it changed or removed, or the child never sees them (e.g. Copilot's native session pin).
-    for (const key of new Set([...Object.keys(beforeEnrich), ...Object.keys(process.env)])) {
-      if (process.env[key] === beforeEnrich[key]) continue;
-      if (process.env[key] === undefined) delete env[key];
-      else env[key] = process.env[key];
-    }
+    let enrichedArgs = await executeEnrichArgs(this.metadata.lifecycle, this.metadata.name, args, this.extractConfig(env), env);
 
     // Apply argument transformations using declarative flagMappings
     let transformedArgs: string[];

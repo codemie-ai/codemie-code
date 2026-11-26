@@ -317,7 +317,7 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
 
       return env;
     },
-    enrichArgs(args: string[], _config: AgentConfig): string[] {
+    enrichArgs(args: string[], _config: AgentConfig, spawnEnv?: NodeJS.ProcessEnv): string[] {
       const enriched = [...args];
 
       // --task is CodeMie's prompt flag (rewritten to --prompt later by flagMappings);
@@ -344,8 +344,11 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
       if (codemieSessionId && !selectsSession) {
         enriched.push('--session-id', codemieSessionId);
         process.env[PINNED_NATIVE_SESSION_ENV] = codemieSessionId;
+        // The child's env was built before this hook ran: hand the pin to the env it is spawned with.
+        if (spawnEnv) spawnEnv[PINNED_NATIVE_SESSION_ENV] = codemieSessionId;
       } else {
         delete process.env[PINNED_NATIVE_SESSION_ENV];
+        if (spawnEnv) delete spawnEnv[PINNED_NATIVE_SESSION_ENV];
       }
 
       return enriched;
