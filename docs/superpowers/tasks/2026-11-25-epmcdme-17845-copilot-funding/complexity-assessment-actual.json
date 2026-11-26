@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "mode": "actual",
+  "ticket": "EPMCDME-17845",
+  "base": "87a196b5a87e697d60ced1f915dc1676b0af0cf7",
+  "head_reviewed": "43c8e27ee7e7fd9204370199d94e1450f4592caf",
+  "note": "Authoritative actual assessment. Supersedes two concurrent assessor outputs (M/19 and L/23) that raced on this file; scored against the frozen diff 87a196b5..43c8e27e (11 files, +731/-11) with the installed rubric and calibration anchors. A later test-only commit and the review artifacts are not scored.",
+  "dimensions": {
+    "component_scope": {
+      "score": 4, "label": "L",
+      "evidence": "4 components in 3 subsystems: Copilot plugin gate (copilot-cli-otlp.plugin.ts), new Copilot evidence module (copilot-cli-otlp.evidence.ts), shared evidence core extended for an agent discriminator and generation (stamp.ts, record-store.ts, session-scope.ts), and the spool sender (evidence-send.ts sendGuard). Shared utilities touched; routing.ts reused unchanged; no new cross-service contract. Below the project L anchor (scope 5: provider/workspace config overhaul)."
+    },
+    "requirements_clarity": {
+      "score": 3, "label": "M",
+      "evidence": "Goal and negatives were explicit, but the session-binding rule, sticky stop on lost proof / changed or missing login and independent Copilot generation were settled over three review rounds (rework), i.e. some gaps and design decisions left open at the start."
+    },
+    "technical_risk": {
+      "score": 4, "label": "L",
+      "evidence": "Billing/attribution-sensitive: native, BYOK and unpinned sessions must never acquire funding. Closest pattern is the Claude managed-launch proof (routing.ts), which does not cover Copilot session pinning or the fail-closed sticky stop, so the divergence bumps risk from M to L (guide auto-bump). Held at L: additive optional record field, no migration, CLI-only, trivially reversible."
+    },
+    "file_change_estimate": {
+      "score": 5, "label": "XL",
+      "modified_files": 7,
+      "new_files": 4,
+      "evidence": "Exactly 11 files (+731/-11): 7 modified (docs/ARCHITECTURE-OTLP-PLUGIN.md, record-store.ts, session-scope.ts, stamp.ts, copilot-cli-otlp.plugin.ts, evidence-send.ts, backend_app.py) and 4 new (copilot-cli-otlp.evidence.ts, copilot-cli-otlp.funding.test.ts, drive-copilot.mjs, run-copilot-funding.sh); 5 directories. Matches XL: 11-15 files, 4-6 new, multiple subsystems. Only about 4 files change production behaviour."
+    },
+    "dependencies": {
+      "score": 1, "label": "XS",
+      "evidence": "No new packages or version changes; no backend change (the backend already stores funding_route and prices codemie-routed sessions as api_cost)."
+    },
+    "affected_layers": {
+      "score": 3, "label": "M",
+      "layers_changed": ["Service (agent hook gate and stamping)", "Persistence (file evidence record, additive optional field, no migration)", "Infrastructure (proxy spool sender guard)"],
+      "schema_migration": false,
+      "cross_system": false,
+      "evidence": "Three distinct layers on a standard path; the file-record change is additive and needs no migration, so not L."
+    }
+  },
+  "total": 20,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 11,
+  "routing": "brainstorming",
+  "split_recommendation": null,
+  "key_reasoning": [
+    { "dimension": "calibration", "reason": "Project L anchor profile-provider-decoupling (23: scope 5, files 6, data migration) sits above this change (no migration, 11 files); bundled M anchor epmcdme-10203 (15: risk 2, 6 files) sits below it on risk and file count. 20 is the top of M, one point under the L boundary (21)." },
+    { "dimension": "supersedes", "reason": "Earlier outputs M/19 (assessor read production files only, unverified file count) and L/23 (component scope XL, risk XL, layers L) disagreed on scope, risk and layers; both routed to brainstorming, so the routing is unchanged." }
+  ],
+  "red_flags_applied": ["technical_risk auto-bump: closest pattern does not cover session pinning and the sticky fail-closed stop"]
+}

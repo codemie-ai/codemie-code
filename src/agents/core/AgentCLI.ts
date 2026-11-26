@@ -6,6 +6,7 @@ import type { AgentAdapter, ResumeOwnershipResult } from './types.js';
 import { runProviderSettingsCheck, type ProviderSettingsSwitch } from './provider-settings-check.js';
 import { CONTINUE_SESSION_ENV_KEY, RESUME_SESSION_ENV_KEY, SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY } from './session/types.js';
 import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config.js';
+import { MODEL_ENV_ORIGIN_ENV, PROFILE_MODEL_ENV, resolveModelEnvOrigin } from '../../utils/model-origin.js';
 import { ensureApiBase, DEFAULT_CODEMIE_BASE_URL } from '../../providers/core/codemie-auth-helpers.js';
 import { AuthMethod, ProviderName } from '../../providers/core/types.js';
 import { JWTTemplate } from '../../providers/plugins/jwt/jwt.template.js';
@@ -29,6 +30,7 @@ import { PiPluginMetadata } from '../plugins/pi/pi.plugin.js';
 import { OpenWikiPluginMetadata } from '../plugins/openwiki/openwiki.plugin.js';
 import { CopilotCliPluginMetadata } from '../plugins/copilot-cli/index.js';
 import { getAgentInstallCommand, getAgentLauncherCommand } from './agent-aliases.js';
+import { formatNotOnPathHint, formatShadowWarning, type ShadowVerdict } from '../../utils/path-shadow.js';
 import { createAssistantsSetupCommand } from '../../cli/commands/assistants/setup/index.js';
 import { createSkillsSetupCommand } from '../../cli/commands/skills/setup/index.js';
 import { createClaudeModelsCommand } from '../../cli/commands/claude-models.js';
@@ -67,11 +69,12 @@ export class AgentCLI {
 
   /**
    * Silent flag definition. Agents whose native CLI already uses `-s`
-   * (codex: --sandbox <mode>, gemini: --sandbox) keep only the long form
-   * so `-s` is forwarded to the agent untouched.
+   * (codex: --sandbox <mode>, gemini: --sandbox, opencode: -s = --session)
+   * keep only the long form so `-s` is forwarded to the agent untouched.
+   * `opencode-acp` is a different adapter name and keeps `-s` as silent.
    */
   private getSilentFlags(): string {
-    const agentsWithNativeShortS = ['codex', 'gemini'];
+    const agentsWithNativeShortS = ['codex', 'gemini', 'opencode'];
     return agentsWithNativeShortS.includes(this.adapter.name) ? '--silent' : '-s, --silent';
   }
 
@@ -177,6 +180,18 @@ export class AgentCLI {
     }
   }
 
+  /** PATH shadow verdict for launch; `unknown` when the adapter has no check or it throws. */
+  private async resolvePathShadow(): Promise<ShadowVerdict> {
+    try {
+      return (await this.adapter.checkPathShadow?.()) ?? { status: 'unknown' };
+    } catch (error) {
+      logger.debug('[AgentCLI] PATH shadow check failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { status: 'unknown' };
+    }
+  }
+
   /**
    * Handle main run action
    */
@@ -185,17 +200,29 @@ export class AgentCLI {
     let settingsSwitch: ProviderSettingsSwitch | null = null;
     try {
       // Check if agent is installed
-      if (!(await this.adapter.isInstalled())) {
+      const [installed, shadow] = await Promise.all([this.adapter.isInstalled(), this.resolvePathShadow()]);
+      if (!installed) {
         // stderr, not stdout: callers that capture our stdout (t3code, SDKs)
         // must not receive install instructions in the stream they parse.
-        console.error(chalk.red(`\n✗ ${this.adapter.displayName} is not installed\n`));
-        console.error(chalk.white('Install it with:\n'));
-        console.error(chalk.cyan(`  ${getAgentInstallCommand(this.adapter.name)}\n`));
+        if (shadow.status === 'missing-on-path') {
+          // Installed by CodeMie but its directory is not on PATH: say so instead of "not installed".
+          for (const line of formatNotOnPathHint(shadow)) console.error(chalk.yellow(line));
+          console.error('');
+        } else {
+          console.error(chalk.red(`\n✗ ${this.adapter.displayName} is not installed\n`));
+          console.error(chalk.white('Install it with:\n'));
+          console.error(chalk.cyan(`  ${getAgentInstallCommand(this.adapter.name)}\n`));
 
-        // Windows-specific guidance for PATH refresh issue
-        this.displayWindowsPathGuidance();
+          // Windows-specific guidance for PATH refresh issue
+          this.displayWindowsPathGuidance();
+        }
 
         process.exit(1);
+      }
+
+      if (shadow.status === 'shadowed') {
+        for (const line of formatShadowWarning(shadow)) console.error(chalk.yellow(line));
+        console.error('');
       }
 
       // Auto-enable silent mode whenever this wrapper is not driving an
@@ -439,9 +466,13 @@ export class AgentCLI {
       // the marker bin/codemie-copilot.js already sets for the Copilot plugin.
       providerEnv.CODEMIE_MODEL_SOURCE = options.model
         ? 'cli'
-        : process.env.CODEMIE_MODEL
+        : ConfigLoader.modelResolutionOf(config)?.envModelUsed
           ? 'env'
           : 'default';
+      // Always set, so a nested launch never inherits a stale override marker for the banner.
+      const envModelShown = providerEnv.CODEMIE_MODEL_SOURCE === 'env' && Boolean(providerEnv.CODEMIE_MODEL);
+      providerEnv[MODEL_ENV_ORIGIN_ENV] = envModelShown ? (resolveModelEnvOrigin(process.env) ?? '') : '';
+      providerEnv[PROFILE_MODEL_ENV] = envModelShown ? (ConfigLoader.modelResolutionOf(config)?.profileModel ?? '') : '';
 
       // Pass status flag to lifecycle hooks
       if (options.status) {

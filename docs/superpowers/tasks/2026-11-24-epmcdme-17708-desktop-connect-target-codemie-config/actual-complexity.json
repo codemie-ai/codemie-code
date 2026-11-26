@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "generated": "2026-11-24T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 18,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 11,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "file_change_estimate", "reason": "11 files changed (805+/132-): 4 source files (connectors/desktop.ts, connect-orchestrator.ts, client-targets.ts, analytics-clients.ts), 6 test files under src/cli/commands/proxy/__tests__ and connectors/__tests__, plus docs/COMMANDS.md. Diffstat maps 11 files to the XL band, but over half are tests and the code is concentrated in one directory tree (src/cli/commands/proxy), so the file count overstates the real scope." },
+    { "dimension": "component_scope", "reason": "Most of the change is in the Claude Desktop connector: a new resolveCodeMieDesktopConfig picks the target entry (a named 'CodeMie Proxy' entry, else the applied entry if it already points at the local proxy, else a new UUID, or a pinned id), adds findCodeMieConfigOnDisk / getCodeMieDesktopConfigPath / readCodeMieDesktopGateway, and makes writeDesktopConfig activate the entry and report what it switched from. connect-orchestrator passes the resolved path from the gate through to the write. client-targets and analytics-clients switch disconnect and status detection to the CodeMie-entry reader. That is 3 to 4 components across 2 layers, all extending the existing writeDesktopConfig/removeDesktopConfig pattern, with no new subsystem." },
+    { "dimension": "technical_risk", "reason": "Closest pattern: the existing writeDesktopConfig/removeDesktopConfig. The work changes another application's saved config (configLibrary/_meta.json appliedId and entries), but entry ids pass through the existing isSafeSessionId check (path-safety), writes go through writeFileAtomic, and unrelated configs are explicitly left alone. The edge-case tests extend the existing desktop.test.ts template, so neither auto-bump applies. Scored M. Calibration note: the project L example (profile-provider-decoupling) scored L because it needed a data migration; this change has none." },
+    { "dimension": "requirements_clarity", "reason": "The core requirement was clear: target the CodeMie entry, not whichever config is applied. The order of fallback rules, pinning the gate-inspected path, and cleaning a non-applied entry on disconnect --all were decided during implementation, as the follow-up fix commits show. Scored M, not S." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

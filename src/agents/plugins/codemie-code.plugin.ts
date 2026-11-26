@@ -201,6 +201,7 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
   npmPackage: '@codemieai/codemie-opencode',
   supportedVersion: CODEMIE_CODE_SUPPORTED_VERSION,
   cliCommand: resolvedBinary || null,
+  pathShadowCheck: false, // cliCommand is a resolved binary path, not a PATH shim
 
   dataPaths: {
     home: '.opencode'

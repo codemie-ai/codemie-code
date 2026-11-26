@@ -7,7 +7,7 @@
 
 import chalk from 'chalk';
 import ora from 'ora';
-import {exec} from '../../../utils/exec.js';
+import {commandExists} from '@/utils/processes.js';
 import {getCodemiePath} from '@/utils/paths.js';
 import {existsSync} from 'fs';
 import {mkdir} from 'fs/promises';
@@ -23,18 +23,11 @@ async function checkAudioPlayer(): Promise<string | null> {
     const players = ['afplay', 'aplay', 'paplay', 'mpg123'];
 
     for (const player of players) {
-        try {
-            await exec('command', ['-v', player]);
+        if (await commandExists(player)) {
             logger.debug('Audio player found', { player, feature: 'sounds' });
             return player;
-        } catch (error) {
-            // Log the specific error for debugging
-            logger.debug('Audio player not available', {
-                player,
-                feature: 'sounds',
-                error: error instanceof Error ? error.message : String(error)
-            });
         }
+        logger.debug('Audio player not available', { player, feature: 'sounds' });
     }
 
     logger.debug('No audio players found', {

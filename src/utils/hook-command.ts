@@ -60,6 +60,12 @@ function quoteIfNeeded(p: string): string {
   return NEEDS_QUOTING.test(p) && !p.startsWith('"') ? `"${p}"` : p;
 }
 
+// npm's extensionless sh shim sits beside a `.cmd` the Windows shells can actually run; a hook pointed at the
+// sh shim opens a console window. Returns the `.cmd` path when it applies, else `p`. EPMCDME-16975.
+export function toCmdShim(p: string): string {
+  return process.platform === 'win32' && !extname(p) && existsSync(`${p}.cmd`) ? `${p}.cmd` : p;
+}
+
 function alwaysQuote(p: string): string {
   return p.startsWith('"') ? p : `"${p}"`;
 }
@@ -85,9 +91,7 @@ async function resolveBinary(): Promise<string> {
   try {
     let resolved = await getCommandPath('codemie');
     // npm's extensionless sh shim comes first in `where` output; PowerShell can only run the .cmd.
-    if (resolved && process.platform === 'win32' && !extname(resolved) && existsSync(`${resolved}.cmd`)) {
-      resolved = `${resolved}.cmd`;
-    }
+    if (resolved) resolved = toCmdShim(resolved);
     if (resolved && !isShadowedCodemieShim(resolved)) return quoteIfNeeded(toForwardSlash(resolved));
   } catch {
     // fall through
@@ -174,8 +178,12 @@ export function resolveHookCommand(command: string, binary: string, powershell =
   if (runsThroughWrapper || isStale) {
     return render(binary) + rest;
   }
+  if (!isCodemiePath) return command;
+  // The extensionless sh shim has a `.cmd` beside it on Windows: use that one (single-path heads only).
+  const healed = paths.length === 1 ? toCmdShim(last) : last;
+  const healedHead = healed === last ? head : head.replace(last, () => healed);
   // Same file, but the hook shell changed (Git Bash installed/removed): fix the `& ` prefix.
-  return isCodemiePath ? render(head) + rest : command;
+  return render(healedHead) + rest;
 }
 
 // Recursively rewrite every string `command` field anywhere in a hooks structure.

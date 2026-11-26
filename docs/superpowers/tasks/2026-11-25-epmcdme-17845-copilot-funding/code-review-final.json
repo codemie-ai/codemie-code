@@ -1,0 +1,157 @@
+{
+  "decision": "request-changes",
+  "rationale": "No spec (acceptance n/a, confidence low); 2 blocking (commit subjects carry the ticket key; no test for the owner-held recovery branches of transitionGate), 10 advisory (many reachability-unconfirmed, base-class signatures and backend runtime not opened), 0 deferred, 7 dismissed as below-floor test/style/design noise.",
+  "confidence": "low",
+  "risk_flags": ["security"],
+  "business_review": [],
+  "standards_review": [
+    {"kind":"commit-format","status":"partial","notes":"Subjects match <type>(<scope>) but all 4 put EPMCDME-17845 in the subject; git-workflow.md says put the ticket in the body footer."},
+    {"kind":"code-quality","status":"pass","notes":"Changed src files under 500 lines; no console.log/require/any; logger.debug used. Function length and return types not exhaustively audited."},
+    {"kind":"security","status":"pass","notes":"No attribution header, Responses user field or JWT override touched; added debug logs carry static text or err.name only."}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "git history (4c7a290c, b5a9b871, 9c4c020d, 43c8e27e)",
+      "title": "Ticket key in commit subjects",
+      "problem": "All four commit subjects contain EPMCDME-17845; git-workflow.md Anti-Patterns says to reference the ticket in the body footer when the scope already conveys context. commitlint does not reject it, so no automated gate enforces it.",
+      "impact": "Documented commit-format convention is not met across the review range; blocks the workflow per the standards audit.",
+      "recommendation": "Reword the four subjects without the ticket key and put EPMCDME-17845 in the body footer."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.plugin.ts",
+      "line": 129,
+      "title": "Owner-held recovery path of transitionGate untested",
+      "problem": "transitionGate returns 'continue' when the route is proven and hasPendingOwnerSession is true, in both the no-identity branch and the record-not-at-this-key branch (lines ~136 and ~143). The funding tests for missing or changed login never create a pending owner entry, so hasPendingOwnerSession is always false and only the stop outcome is asserted. Regression-gap.",
+      "impact": "Changing either branch to an unconditional stop, or dropping the pending check, would silently drop all later hooks of a proven Copilot session during an identity outage, and no test would fail. Branch is live: it is called on every Copilot hook.",
+      "recommendation": "Add tests in copilot-cli-otlp.funding.test.ts: with resolveHookCredentials undefined, and with a changed login key, plus a pending owner entry and intact proof, assert the hook is not stopped and the events are held or spooled."
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/agents/core/evidence/record-store.ts",
+      "line": 168,
+      "title": "Record agent validation untested; older readers",
+      "problem": "No test asserts that a record with agent 'other' is rejected or that 'copilot-cli-otlp' round-trips. Also, a reader that ignores the agent field would apply the Claude generation to a Copilot record.",
+      "impact": "Narrow trigger: a corrupted or foreign record file, or a mixed-version CLI. Reachability unconfirmed.",
+      "recommendation": "Add a record-store test for the agent field; consider whether older readers should treat an unknown agent as a stop."
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "type": "question",
+      "file": "src/agents/core/evidence/session-scope.ts",
+      "line": 26,
+      "title": "Copilot collection generation hardcoded to 0",
+      "problem": "currentGeneration returns 0 for copilot-cli-otlp and the stamp hardcodes collection_generation 0. The comment says Copilot's own enable/exclusion gate governs it, but only the hook-time gate is visible; the send path has no Copilot-specific collection check.",
+      "impact": "If disabling Copilot collection should stop already-recorded sessions in the forwarder, it would not. Reachability unconfirmed.",
+      "recommendation": "Confirm that the hook-time gate alone is the intended collection control for Copilot records."
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "type": "question",
+      "file": "src/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.evidence.ts",
+      "line": 67,
+      "title": "Pending-owner check not scoped to current login",
+      "problem": "isRecordedForCurrentLogin returns true on hasPendingOwnerSession(sessionId) for any held entry with that session id, regardless of owner. The Claude plugin uses the same pattern at claude-code-otlp.plugin.ts:227 and :241.",
+      "impact": "Could authorize continuing a claim for another owner's held session only if session ids collide; ids are per-session and replay re-checks the owner. Reachability unconfirmed.",
+      "recommendation": "Confirm that this matches the intended Claude parity."
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.evidence.ts",
+      "line": 417,
+      "title": "JWT branch of CodeMie-provider proof untested",
+      "problem": "codemieProvider is authType 'sso' or profile.authMethod 'jwt'; no test uses authMethod or a non-CodeMie api-key provider, so the jwt clause is never exercised.",
+      "impact": "Broadening or dropping the clause would change funding for JWT or non-CodeMie profiles with no failing test. Narrow trigger.",
+      "recommendation": "Add a jwt-profile test asserting api_based and an unknown-authType test asserting no claim."
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "type": "question",
+      "file": "src/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.evidence.ts",
+      "title": "Routing proof rests on parent-settable env",
+      "problem": "readLaunchProfile reads authMethod from CODEMIE_PROFILE_CONFIG, and routing proof is env exports plus a URL equality check. Any parent process can set matching values and obtain a codemie / api_based claim.",
+      "impact": "Funding spoof by the local user or a wrapper; the trust model is not stated. Reachability unconfirmed.",
+      "recommendation": "State whether env-based proof is the accepted trust boundary, and document it."
+    },
+    {
+      "id": "CR-008",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.funding.test.ts",
+      "title": "Test title overstates what it asserts",
+      "problem": "The test 'a native session with a record under the same id is stopped, not forwarded as legacy' asserts only spooled.length === 1 and never the stop marker. The missing-identity test similarly asserts no stop or hold state.",
+      "impact": "A regression that forwards without stopping would pass. Narrow.",
+      "recommendation": "Assert the stop marker (and hold state where relevant)."
+    },
+    {
+      "id": "CR-009",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.plugin.ts",
+      "line": 129,
+      "title": "Gate proof differs from stamping proof",
+      "problem": "transitionGate computes proven from copilotRouteProof(isManagedSession(...)) without the pinned/fresh-start binding copilotEvidenceInputs applies, so the two can disagree. Also, a known session with no record at this login key is stopped with writeStop scope_unproven, while the !id branch stops without a marker; the architecture doc says the marker is written on login change or missing. Same root cause as CR-002.",
+      "impact": "Possible inconsistent stop/continue decisions; a transient login change permanently stops a session. Intent vs fail-closed design unconfirmed.",
+      "recommendation": "Confirm the divergence is intended, and align ARCHITECTURE-OTLP-PLUGIN.md with the marker behaviour."
+    },
+    {
+      "id": "CR-010",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.plugin.ts",
+      "title": "extractHookContext now async and override signatures unverified",
+      "problem": "extractHookContext became async with filesystem reads on every hook; transitionGate is protected override. The base declarations and callers are not in the diff and were not opened here.",
+      "impact": "Mismatch would be caught by typecheck; per-hook latency undiscussed. Reachability unconfirmed.",
+      "recommendation": "Confirm via typecheck and the base-class declaration; no change expected."
+    },
+    {
+      "id": "CR-011",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "tests/e2e/subscription-analytics/drive-copilot.mjs",
+      "line": 182,
+      "title": "E2E no-stop-marker check throws when dir absent",
+      "problem": "The existsSync guard short-circuits, but the check detail argument calls readdirSync(...) eagerly, which throws ENOENT when the evidence directory is absent. The check also fails on any .stop.json from earlier scenarios, so it does not isolate the Copilot session.",
+      "impact": "E2E driver crashes instead of reporting a pass when no record exists; order-dependent failures. Test-only.",
+      "recommendation": "Compute files = existsSync(dir) ? readdirSync(dir) : [] once, filter for the g1 session's marker, and pass files as detail."
+    },
+    {
+      "id": "CR-012",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "tests/e2e/subscription-analytics/run-copilot-funding.sh",
+      "title": "E2E runner is machine-specific",
+      "problem": "Hardcodes developer-local absolute paths, .venv/Scripts/python.exe, taskkill, netstat -ano, ticket-specific container name and ports; it kills any PID on API_PORT, and the pg_isready loop proceeds after 40 failures. Fixed negative-wait sleeps prove absence only weakly. backend_app.py adds POST /_e2e/rollup, whose backend methods were not verified.",
+      "impact": "Runs only on one Windows machine; conflicts with the bash/Linux-compatible shell rule. Test tooling only.",
+      "recommendation": "Parameterize paths and ports through env, and fail when the DB never becomes ready."
+    }
+  ],
+  "deferred": []
+}
