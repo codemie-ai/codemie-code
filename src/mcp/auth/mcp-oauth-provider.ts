@@ -15,6 +15,7 @@ import { getMcpClientName } from '../constants.js';
 import { proxyLog } from '../proxy-logger.js';
 import { acquireAuthLock } from './auth-lock.js';
 import { startCallbackServer, type CallbackResult } from './callback-server.js';
+import { clearPendingLogin, writePendingLogin } from './pending-login.js';
 import {
   forgetPersistedLogin,
   loadPersistedLogin,
@@ -215,6 +216,9 @@ export class McpOAuthProvider implements OAuthClientProvider {
     logger.debug(`[mcp-proxy] Opening browser for authorization`);
     console.error('[mcp-proxy] Opening browser for MCP server authorization...');
 
+    if (this.serverUrl && this._redirectUrl) {
+      writePendingLogin({ serverUrl: this.serverUrl.toString(), authorizationUrl: url, redirectUrl: this._redirectUrl });
+    }
     openBrowser(url);
   }
 
@@ -261,6 +265,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       this.callbackWait = undefined;
       this.callbackClose = undefined;
       this.releaseLock();
+      clearPendingLogin();
     }
   }
 
@@ -277,6 +282,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
     this.callbackWait = undefined;
     this.callbackClose = undefined;
     this.releaseLock();
+    clearPendingLogin();
   }
 }
 
@@ -308,6 +314,7 @@ function openBrowser(url: string): void {
     if (error) {
       // Don't fail — user can manually copy the URL from stderr
       console.error(`[mcp-proxy] Could not open browser automatically. Please open this URL:\n${url}`);
+      console.error('[mcp-proxy] If the browser cannot reach this machine, run `codemie mcp-auth` to paste the callback URL');
     }
   });
 }
