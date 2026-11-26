@@ -46,4 +46,8 @@ describe('BackendPolicy', () => {
     expect(stopMarker).toHaveBeenCalledTimes(2);
     expect(existsSync(getCodemiePath('analytics', 'excluded'))).toBe(false);
   });
+
+  it('answers the reconnect reason for a corrupt scope file', () => {
+    expect(new BackendPolicy().scopeCorruptReason()).toBe('connector scope configuration is corrupt; repair it and reconnect');
+  });
 });

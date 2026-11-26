@@ -17,4 +17,8 @@ export class BackendPolicy implements CollectionPolicy {
   onUntracked(_sessionId: string | undefined, _byFilter: boolean, stopMarker: () => Promise<void>): Promise<void> {
     return stopMarker();
   }
+
+  scopeCorruptReason(): string {
+    return 'connector scope configuration is corrupt; repair it and reconnect';
+  }
 }

@@ -86,11 +86,7 @@ export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput
     const scope = await readCopilotConnectorScope(this.name);
     if (scope.kind === 'corrupt') {
       this.emitBlock(
-        this.buildBlock(
-          hookInput.hook_event_name,
-          'connector scope configuration is corrupt; repair it and reconnect',
-          false
-        )
+        this.buildBlock(hookInput.hook_event_name, this.policy.scopeCorruptReason(), false)
       );
       return;
     }
@@ -141,11 +137,7 @@ export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput
 
     const scope = await readCopilotConnectorScope(this.name);
     if (scope.kind === 'corrupt') {
-      return this.buildBlock(
-        hookInput.hook_event_name,
-        'connector scope configuration is corrupt; repair it and reconnect',
-        false
-      );
+      return this.buildBlock(hookInput.hook_event_name, this.policy.scopeCorruptReason(), false);
     }
     if (!scope.value.enabled) {
       return { decision: 'forward', payload: [] };

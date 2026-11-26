@@ -186,6 +186,45 @@ describe('analytics advice', () => {
     expect(out()).not.toContain('usage');
   });
 
+  describe('in the local mode', () => {
+    const LOCAL_NOTE = 'A session that fired an event while collection was off stays out; sessions started from now on are gathered.';
+    const BACKEND_NOTES = ['may be reported now that it is back on', 'whole-session usage'];
+
+    beforeEach(async () => {
+      await writeFile(join(tempDir, 'analytics-sync.json'), JSON.stringify({
+        webhookUrl: 'https://hooks.example.invalid/x?sig=FAKE', format: 'json', includeExternal: 'never', at: '03:00', taskName: 'CodeMieLocalJob', local: true,
+      }));
+    });
+
+    function expectLocalNoteOnly(): void {
+      expect(out()).toContain(LOCAL_NOTE);
+      for (const note of BACKEND_NOTES) expect(out()).not.toContain(note);
+    }
+
+    it('Claude: enable after disable and include after exclude print the local note and neither of the backend\'s', async () => {
+      await installClaudeHooks();
+      await run(['disable', '--claude-code-otlp']);
+      logSpy.mockClear();
+      await run(['enable', '--claude-code-otlp']);
+      expectLocalNoteOnly();
+      await run(['exclude', '/work/a', '--claude-code-otlp']);
+      logSpy.mockClear();
+      await run(['include', '/work/a', '--claude-code-otlp']);
+      expectLocalNoteOnly();
+    });
+
+    it.each(['--copilot-cli-otlp', '--copilot-chat-otlp'])('%s: enable after disable and include after exclude print the local note', async (flag) => {
+      await run(['disable', flag]);
+      logSpy.mockClear();
+      await run(['enable', flag]);
+      expectLocalNoteOnly();
+      await run(['exclude', '/work/a', flag]);
+      logSpy.mockClear();
+      await run(['include', '/work/a', flag]);
+      expectLocalNoteOnly();
+    });
+  });
+
   it('status text ends with a plain sentence naming the channels these settings do not control; --json carries no such text', async () => {
     const lastLine = (): string => out().split('\n').find((l) => l.includes('These settings do not affect')) as string;
     await run(['status']);

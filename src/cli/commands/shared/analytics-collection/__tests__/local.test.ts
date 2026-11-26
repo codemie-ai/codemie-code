@@ -473,6 +473,23 @@ describe('localCollection.teardown', () => {
     expect(existsSync(join(claudeDir, 'settings.json.codemie-backup'))).toBe(true);
   });
 
+  it("leaves byte for byte Claude Code settings with a pair of CodeMie's shape on another host and no CodeMie hook", async () => {
+    const claudeDir = join(home, '.claude');
+    mkdirSync(claudeDir, { recursive: true });
+    const own = JSON.stringify({
+      env: {
+        OTEL_EXPORTER_OTLP_ENDPOINT: 'https://analytics.example.invalid/v1/analytics/otlp',
+        OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer user-own-token',
+        USER_OWN_KEY: 'kept',
+      },
+    }, null, 2);
+    writeFileSync(join(claudeDir, 'settings.json'), own);
+
+    await (await collection()).teardown(async () => undefined);
+
+    expect(readFileSync(join(claudeDir, 'settings.json'), 'utf-8')).toBe(own);
+  });
+
   it('writes no Copilot scope record on a home that has none', async () => {
     await (await collection()).teardown(async () => undefined);
 

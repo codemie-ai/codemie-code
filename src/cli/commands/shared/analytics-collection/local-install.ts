@@ -27,6 +27,7 @@ import { requestedDaemonPort } from '../../proxy/connect-orchestrator.js';
 import {
   hasClaudeCodeOtlpEntries,
   hasClaudeCodeOtlpHooks,
+  readClaudeCodeSignalEndpoints,
   removeClaudeCodeOtlpConfig,
   writeClaudeCodeOtlpConfig,
 } from '../../proxy/connectors/claude-code-otlp.js';
@@ -88,6 +89,9 @@ export const LOCAL_CLIENTS: readonly LocalClient[] = [
     setUp: hasClaudeCodeOtlpHooks,
     hasEntries: hasClaudeCodeOtlpEntries,
     async write() {
+      // A per-signal endpoint of the user's would keep that signal away from the local proxy.
+      const signalEndpoints = await readClaudeCodeSignalEndpoints();
+      if (signalEndpoints.length > 0) throw new ConfigurationError(`its settings already set ${signalEndpoints.join(', ')}`);
       if (!(await isLiveLocal(await readState(), false))) throw new CodeMieError('The local proxy stopped during the install.');
       await writeClaudeCodeOtlpConfig({ keepProjectList: true, promptStatus: null });
     },

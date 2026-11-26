@@ -31,11 +31,21 @@ describe('coverage and resume notes', () => {
     expect(unaffectedChannels(CLAUDE, 'exclude')).toMatch(/^Claude Desktop chats \(exclusions are not applied to them\), the daily analytics collector/);
   });
 
-  it('warns about reporting on resume for Claude and Copilot CLI, not for Copilot Chat', async () => {
-    const { resumeNote } = await import('../analytics-hints.js');
-    expect(resumeNote(CLAUDE)).toMatch(/transcripts/);
-    expect(resumeNote(CLI)).toMatch(/whole-session usage/);
-    expect(resumeNote(CHAT)).toBeUndefined();
+  it('the backend warns about reporting on resume for Claude and Copilot CLI, not for Copilot Chat', () => {
+    expect(BACKEND_REMEDIES.resumeNote(CLAUDE)).toBe(
+      'Usage already written to session transcripts while collection was off may be reported now that it is back on.'
+    );
+    expect(BACKEND_REMEDIES.resumeNote(CLI)).toBe(
+      'A Copilot CLI session that was running while collection was off reports its whole-session usage when it ends.'
+    );
+    expect(BACKEND_REMEDIES.resumeNote(CHAT)).toBeUndefined();
+  });
+
+  it.each([CLAUDE, CLI, CHAT])('the local mode says on resume, for %s, that an excluded session stays out', async (id) => {
+    const { LOCAL_REMEDIES } = await import('../../shared/analytics-collection/local-doctor.js');
+    expect(LOCAL_REMEDIES.resumeNote(id)).toBe(
+      'A session that fired an event while collection was off stays out; sessions started from now on are gathered.'
+    );
   });
 
   it('knows the hooks-not-installed reason for Claude only', async () => {

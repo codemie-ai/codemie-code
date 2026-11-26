@@ -319,7 +319,7 @@ and still holds something of the local mode: its proxy's state, the local spool 
 marks.
 A session still in its grace in the local spool has not been moved into the folder yet and is
 never delivered.
-A client that holds nothing only CodeMie writes is not touched: for Claude Code that is CodeMie's hooks, or CodeMie's telemetry endpoint with its header — telemetry settings of your own stay as they are. A client set up before the install
+A client that holds nothing only CodeMie writes is not touched: for Claude Code that is CodeMie's hooks, or the local proxy's telemetry endpoint with its header — telemetry settings of your own, an endpoint on another host included, stay as they are. A client set up before the install
 loses its CodeMie hooks too, since the install rewrote them to the local proxy.
 A Claude Code settings file that cannot be read or does not parse stops the uninstall before
 anything is removed: `Uninstall failed: …`, exit 1, the settings kept.
@@ -575,7 +575,9 @@ there. On a machine that is local already such an install fails instead and leav
 job and the settings as they were.
 
 A step that fails undoes the steps before it, last first. A client whose settings already send
-its telemetry elsewhere is skipped, and the summary says why. So is a client whose files cannot be
+its telemetry elsewhere is skipped, and the summary says why: for Claude Code that is an OTLP
+endpoint of your own, the general one or one of the per-signal ones
+(`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, `…_METRICS_ENDPOINT`, `…_TRACES_ENDPOINT`). So is a client whose files cannot be
 written (`its files could not be written (<code>)`), and Claude Code when its settings file cannot
 be read or does not parse.
 
@@ -663,15 +665,23 @@ file is no larger than 70 MB: a larger run is cut into several (see [Export size
 - **Lost telemetry.** Claude Code's telemetry sent while the proxy is down is lost: nothing
   restarts the proxy until the next hook event.
 - **Copilot blocks.** Copilot CLI and Copilot Chat block an enforced event the local proxy did not
-  accept, as on any machine; that happens only when the hook could not start the proxy.
+  accept, as on any machine; that happens when the hook could not start the proxy. Copilot Chat
+  also blocks while `~/.codemie/copilot-connectors.json` cannot be read: the message names the file
+  and `codemie analytics sync install`.
+- **Collection turned back on.** A session that fired an event while your filters left it out is
+  not gathered again after `proxy analytics enable` or `include`; sessions started from then on
+  are, and the command says so.
 - **The size.** A delivered file is no larger than 70 MB, and a run can deliver several, for the
   webhook and for git; a session with a single line whose gzip alone is above 70 MB is left out whole, its lines
   that would fit included, and named in the run's log line, while the other sessions are delivered; once its newest
   write is outside the window no run names it. A push takes 120 seconds at most.
 - **The content and the filters.** See [What the file holds](#what-the-file-holds).
-- **One mode per machine.** `proxy connect` is refused until `sync uninstall`. A hook that finds
-  another CodeMie proxy running replaces it with the local proxy: this release starts no other
-  proxy on a local machine, and one left running would take the hook events to a backend.
+- **One mode per machine.** The local mode is for a machine with no CodeMie backend, where no
+  client is started through CodeMie. `proxy connect` is refused until `sync uninstall`, and the
+  commands of the local mode start no other proxy. A hook that finds another CodeMie proxy running
+  replaces it with the local proxy: one left running would take the hook events to a backend.
+  Starting a client through `codemie` (`codemie claude`) with a project's own profile is outside
+  the mode: it starts that profile's proxy in place of the local one.
 - **The hints.** Where another machine's `proxy doctor` or clients' list names `proxy connect` or
   `proxy disconnect`, a local machine's names `codemie analytics sync install`, the one command that
   writes the clients' settings there and never refuses in the mode. It is named for a routed VS Code

@@ -2,6 +2,7 @@
  * The hooks' decisions in the local mode: no sign-in, no evidence stamp; a session is gathered when the
  * `--include-external` answer allows it, and never once it fired a hook in a folder the developer's filters leave out.
  */
+import { getCopilotConnectorsConfigPath } from '@/agents/core/copilot-connector-scope.js';
 import type { CollectionPolicy } from '@/agents/core/types.js';
 import {
   isSessionExcluded,
@@ -41,5 +42,10 @@ export class LocalPolicy implements CollectionPolicy {
     } finally {
       await stopMarker();
     }
+  }
+
+  /** Names the install, not a reconnect: the local mode refuses `proxy connect`. */
+  scopeCorruptReason(): string {
+    return `connector scope configuration is corrupt; fix or delete ${getCopilotConnectorsConfigPath()} and run \`codemie analytics sync install\``;
   }
 }

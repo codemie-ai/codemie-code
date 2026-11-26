@@ -1,5 +1,9 @@
 import { BackendPolicy } from '@/agents/core/collection-policy.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { LocalPolicy } from '@/cli/commands/shared/analytics-collection/local-policy.js';
 const backendPolicy = new BackendPolicy();
 
 vi.mock('@/providers/plugins/sso/sso.auth-gate.js', () => ({ ensureCodeMieSsoAuth: vi.fn() }));
@@ -7,7 +11,8 @@ vi.mock('@/agents/core/hook-auth-profile.js', () => ({ resolveHookAuthProfile: v
 vi.mock('@/utils/config.js', () => ({
   ConfigLoader: { load: vi.fn(async () => ({})), getActiveProfileName: vi.fn(async () => null), hasLocalConfig: vi.fn(async () => false) },
 }));
-vi.mock('@/agents/core/copilot-connector-scope.js', () => ({
+vi.mock('@/agents/core/copilot-connector-scope.js', async (importOriginal) => ({
+  getCopilotConnectorsConfigPath: (await importOriginal<typeof import('@/agents/core/copilot-connector-scope.js')>()).getCopilotConnectorsConfigPath,
   isCopilotProjectTracked: vi.fn(),
   readCopilotConnectorScope: vi.fn(async () => ({ kind: 'ok', value: { enabled: true, scope: 'user' } })),
 }));
@@ -207,6 +212,67 @@ describe('CopilotChatOtlpPlugin', () => {
       stopReason: expect.stringContaining('corrupt'),
     });
     expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+  });
+
+  describe('a corrupt scope file: the reason comes from the policy', () => {
+    const ENFORCED = ['SessionStart', 'UserPromptSubmit', 'PreToolUse'] as const;
+    const PATHS = ['untracked', 'tracked'] as const;
+    let home: string;
+
+    beforeEach(async () => {
+      home = await mkdtemp(join(tmpdir(), 'copilot-chat-scope-'));
+      vi.stubEnv('CODEMIE_HOME', home);
+    });
+
+    afterEach(async () => {
+      vi.unstubAllEnvs();
+      await rm(home, { recursive: true, force: true });
+    });
+
+    /** `untracked` — the gate reads the corrupt file; `tracked` — the gate passed and `evaluate` reads it. */
+    function corruptScope(path: (typeof PATHS)[number]): void {
+      if (path === 'tracked') {
+        vi.mocked(readCopilotConnectorScope)
+          .mockResolvedValueOnce({ kind: 'ok', value: { enabled: true, scope: 'user' } } as never)
+          .mockResolvedValue({ kind: 'corrupt' } as never);
+      } else {
+        vi.mocked(readCopilotConnectorScope).mockResolvedValue({ kind: 'corrupt' } as never);
+      }
+    }
+
+    function reasonOf(output: Record<string, unknown> | undefined): string {
+      return String(output?.permissionDecisionReason ?? output?.stopReason);
+    }
+
+    const PATH_EVENTS = PATHS.flatMap((path) => ENFORCED.map((event) => [path, event] as const));
+
+    it.each(PATH_EVENTS)('local policy, %s path, %s: names the scope file and the install, no reconnect', async (path, event) => {
+      corruptScope(path);
+      const { captured } = log();
+
+      await plugin.processOtlpEvent(hookInput({ hook_event_name: event, prompt: 'hi' }), {
+        policy: new LocalPolicy(true),
+        ensureOtlpProxy,
+        forwardOtlpEventsToSpool,
+      });
+
+      const reason = reasonOf(captured());
+      expect(reason).toBe(
+        `CodeMie cannot safely process this event (connector scope configuration is corrupt; fix or delete ${join(home, 'copilot-connectors.json')} and run \`codemie analytics sync install\`). Fix the issue, then re-send your prompt.`
+      );
+      expect(reason).not.toContain('reconnect');
+    });
+
+    it.each(PATH_EVENTS)('backend policy, %s path, %s: today\'s reconnect reason', async (path, event) => {
+      corruptScope(path);
+      const { captured } = log();
+
+      await plugin.processOtlpEvent(hookInput({ hook_event_name: event, prompt: 'hi' }), { policy: backendPolicy, ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+      expect(reasonOf(captured())).toBe(
+        'CodeMie cannot safely process this event (connector scope configuration is corrupt; repair it and reconnect). Fix the issue, then re-send your prompt.'
+      );
+    });
   });
 
   it('untracked + corrupt connector scope: does nothing for a non-enforced event', async () => {

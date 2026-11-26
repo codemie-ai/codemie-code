@@ -21,6 +21,8 @@ export interface DoctorRemedies {
   restart: string;
   /** The words that end an advice to set a connector up again. */
   reconnect: string;
+  /** What to know once collection of a connector is back on; `undefined` when there is nothing to say. */
+  resumeNote(connectorId: string): string | undefined;
 }
 
 export interface DoctorPlan {

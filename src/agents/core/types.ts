@@ -765,6 +765,8 @@ export interface CollectionPolicy {
   authorize<T>(check: () => Promise<T>, allowed: T): Promise<T>;
   /** An untracked hook; `byFilter` is true when the developer's own filters left it out. */
   onUntracked(sessionId: string | undefined, byFilter: boolean, stopMarker: () => Promise<void>): Promise<void>;
+  /** The block reason of an enforced event when the connector scope file is corrupt: what to do, in this mode's words. */
+  scopeCorruptReason(): string;
 }
 
 export interface OtlpAdapterDeps {

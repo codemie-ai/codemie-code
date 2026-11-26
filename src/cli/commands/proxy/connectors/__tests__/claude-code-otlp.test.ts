@@ -1867,6 +1867,15 @@ describe('claude-code-otlp connector', () => {
       expect(await hasClaudeCodeOtlpEntries()).toBe(false);
     });
 
+    it("is false for no hook and a pair of CodeMie's shape on another host", async () => {
+      await writeSettings(JSON.stringify({ env: {
+        OTEL_EXPORTER_OTLP_ENDPOINT: 'https://analytics.example.invalid/v1/analytics/otlp',
+        OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer user-own-token',
+      } }));
+
+      expect(await hasClaudeCodeOtlpEntries()).toBe(false);
+    });
+
     it('is false with no settings file', async () => {
       expect(await hasClaudeCodeOtlpEntries()).toBe(false);
     });

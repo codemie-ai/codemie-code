@@ -8,6 +8,7 @@ import { checkProxyHealth } from '../health-check.js';
 import { collectDeliveryHealth, type DeliveryHealth } from '../delivery-health.js';
 import { RELATED } from '@/cli/related-commands.js';
 import { CLAUDE_OTLP_FLAG, COPILOT_OTLP_FLAG } from '../flag-list.js';
+import { resumeNote } from '../analytics-hints.js';
 import { deliverySections } from './delivery-sections.js';
 import { PROXY_DOCTOR_GROUPS } from './groups.js';
 import type { DoctorPlan, DoctorRemedies } from './plan.js';
@@ -21,6 +22,7 @@ export const BACKEND_REMEDIES: DoctorRemedies = {
   start: 'codemie proxy start',
   restart: 'codemie proxy restart',
   reconnect: 'reconnect',
+  resumeNote,
 };
 
 /** Delivery health of the running daemon, or `null` when it is stopped. */

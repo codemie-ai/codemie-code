@@ -90,4 +90,10 @@ describe('LocalPolicy', () => {
     await expect(new LocalPolicy(false).authorize(check, allowed)).resolves.toBe(allowed);
     expect(check).not.toHaveBeenCalled();
   });
+
+  it('scopeCorruptReason names the scope file under CODEMIE_HOME and the install, no reconnect', () => {
+    expect(new LocalPolicy(true).scopeCorruptReason()).toBe(
+      `connector scope configuration is corrupt; fix or delete ${join(home, 'copilot-connectors.json')} and run \`codemie analytics sync install\``
+    );
+  });
 });

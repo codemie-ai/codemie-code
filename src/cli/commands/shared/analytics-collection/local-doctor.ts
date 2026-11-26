@@ -32,6 +32,8 @@ export const LOCAL_REMEDIES: DoctorRemedies = {
   start: 'codemie proxy start, or the next Claude Code or Copilot event starts it',
   restart: 'codemie proxy restart',
   reconnect: `run \`${INSTALL_COMMAND}\``,
+  // An excluded session carries an exclusion mark and is never gathered again.
+  resumeNote: () => 'A session that fired an event while collection was off stays out; sessions started from now on are gathered.',
 };
 
 const BACKEND_ONLY_IDS: readonly string[] = ['auth', 'upstream', 'delivery'];

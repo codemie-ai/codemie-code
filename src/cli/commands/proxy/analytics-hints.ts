@@ -123,7 +123,7 @@ export function coverageNote(connectorId: string, verb: CoverageVerb = 'disable'
 }
 
 /**
- * What a user should know when collection resumes. Usage is read from session transcripts, which keep
+ * What a user of a machine with a CodeMie backend should know when collection resumes. Usage is read from session transcripts, which keep
  * growing while collection is off, so it is reported once collection is back on. Copilot Chat has no
  * transcript pass, hence no note.
  */

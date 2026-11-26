@@ -285,7 +285,9 @@ hook event line                  one OTLP LogsData: resource service.name=codemi
   developer's own folder filters and without the lead's `--include-external`; `sync status` and `sync uninstall` stop on
   the file until it is mended or `sync install` runs again (`--force` with a job name of its own).
 - D18: A hook of a local machine replaces another CodeMie proxy it finds running with the local one: a machine is in one
-  mode, this release starts no other proxy there, and one left running would take the hook events to a backend.
+  mode, the commands of the local mode start no other proxy there, and one left running would take the hook events to a
+  backend. The mode is for a machine with no CodeMie backend, where no client is started through CodeMie: a client started
+  through a CodeMie launcher with a project's own profile is outside the mode, and the launcher starts that profile's proxy.
 - D19: The exclusion marks, and a session whose move into the folder was interrupted in a way the proxy cannot continue,
   are never cleaned by themselves — the session stays undelivered — and `sync uninstall` clears both: repeating such a
   move would write the session's lines into the folder file a second time.

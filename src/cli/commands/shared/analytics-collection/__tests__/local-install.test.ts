@@ -344,6 +344,30 @@ describe('localInstallPlan', () => {
   });
 
   it.each([
+    [{ OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: 'https://logs.example.invalid/v1/logs' }, 'OTEL_EXPORTER_OTLP_LOGS_ENDPOINT'],
+    [{ OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: 'https://metrics.example.invalid/v1/metrics' }, 'OTEL_EXPORTER_OTLP_METRICS_ENDPOINT'],
+    [{ OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'https://traces.example.invalid/v1/traces' }, 'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT'],
+    [
+      { OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'https://traces.example.invalid/v1/traces', OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: 'https://logs.example.invalid/v1/logs' },
+      'OTEL_EXPORTER_OTLP_LOGS_ENDPOINT, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT',
+    ],
+  ])('a per-signal endpoint of the user\'s %j skips Claude Code, its settings byte for byte; another client set up', async (env, keys) => {
+    claudeCodeInstalled();
+    copilotCliInstalled();
+    touch(claudeSettingsPath());
+    const before = JSON.stringify({ env }, null, 2);
+    writeFileSync(claudeSettingsPath(), before);
+
+    const { code, printed } = await install(await localPlan());
+
+    expect(code).toBe(0);
+    expect(printed).toContain(`  Skipped:          Claude Code — its settings already set ${keys}`);
+    expect(readFileSync(claudeSettingsPath(), 'utf-8')).toBe(before);
+    expect(printed).toContain('  Clients set up:   Copilot CLI');
+    expect(JSON.parse(readFileSync(settingsPath(), 'utf-8'))).toMatchObject({ local: true });
+  });
+
+  it.each([
     ['no client found', () => undefined],
     ['the one client found refusing', () => {
       claudeCodeInstalled();

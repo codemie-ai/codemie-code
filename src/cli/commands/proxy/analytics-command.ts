@@ -20,7 +20,7 @@ import {
 } from '@/agents/core/project-allowlist.js';
 import { currentEvidenceIdentity } from '@/agents/core/evidence/hook-identity.js';
 import { listConsents } from '@/agents/core/evidence/consent-store.js';
-import { coverageNote, resumeNote } from './analytics-hints.js';
+import { coverageNote } from './analytics-hints.js';
 import { ANALYTICS_CONNECTORS, hasActiveAnalyticsConnector, listActiveAnalyticsConnectors, type AnalyticsConnector } from './analytics-connectors.js';
 import { printNext } from '../../related-commands.js';
 import { renderHint } from '@/utils/hint.js';
@@ -63,7 +63,7 @@ async function setEnabledFor(connectorId: AnalyticsConnectorId, enabled: boolean
     console.log(chalk.dim(coverageNote(connectorId, 'disable')));
     return true;
   }
-  const resume = changed ? resumeNote(connectorId) : undefined;
+  const resume = changed ? remedies.resumeNote(connectorId) : undefined;
   if (resume) {
     console.log(chalk.dim(resume));
   }
@@ -201,7 +201,7 @@ async function includeFor(connector: AnalyticsConnector, path: string | undefine
   }
   if (removed) {
     printSaved(store, ` (project: ${canonical})`);
-    const resume = resumeNote(connectorId);
+    const resume = remedies.resumeNote(connectorId);
     if (resume) {
       console.log(chalk.dim(resume));
     }
