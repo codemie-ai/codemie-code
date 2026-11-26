@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { formatLogLine } from '../run-sync.js';
 import { parseLastFailure, parseLastRun, runStatus } from '../status.js';
 import type { StatusDeps } from '../status.js';
+import type { JobState, Scheduler } from '../scheduler/index.js';
 import type { SyncSettings } from '../types.js';
 
 const NOW = new Date('2026-10-29T12:00:00.000Z');
@@ -25,6 +26,17 @@ const GIT_SETTINGS: SyncSettings = {
   },
 };
 
+/** A scheduler stub whose `query()` reports the given state; the other methods are never used by status. */
+function schedulerStub(state: JobState): Scheduler {
+  return {
+    preflight: async () => undefined,
+    register: async () => ({}),
+    unregister: async () => false,
+    query: async () => state,
+    exists: async () => 'present',
+  };
+}
+
 interface Harness {
   deps: StatusDeps;
   printed: string[];
@@ -35,7 +47,7 @@ function makeDeps(overrides: Partial<StatusDeps> = {}): Harness {
 
   const deps: StatusDeps = {
     loadSettings: async () => BASE_SETTINGS,
-    query: async () => 'enabled',
+    schedulerFor: () => schedulerStub('enabled'),
     readLog: async () => null,
     readMarker: async () => null,
     now: () => NOW,
@@ -226,7 +238,7 @@ describe('runStatus', () => {
   });
 
   it('reports "disabled" and tells the user to run install again when the OS job is not enabled', async () => {
-    const { deps, printed } = makeDeps({ query: async () => 'disabled' });
+    const { deps, printed } = makeDeps({ schedulerFor: () => schedulerStub('disabled') });
 
     const code = await runStatus(deps);
 

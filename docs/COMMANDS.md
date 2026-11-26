@@ -1002,11 +1002,28 @@ is logged out, via `loginctl enable-linger`.
 **`install` options:** `--webhook <url>` (required, https; or `--webhook-b64 <value>`, the
 same URL base64url-encoded as printed by `bootstrap` — pass one, not both), `--at <HH:MM>` (default
 `03:00`), `--lookback-days <1-30>` (default `7`, follows CLI updates when omitted),
-`--include-external <windows|always|never>` (default `never`). Install prints the run
+`--include-external <windows|always|never>` (default `never`), `--task-name <name>` (full scheduler task name, used as-is), `--force` (overwrite an existing task with that name that this tool did not create). Install prints the run
 time, lookback, policy, the webhook host (signature masked), the email the reports will
 carry, and a hint to verify with `sync run`/`sync status`. Running `install` again
 replaces the existing job and settings rather than duplicating them, and keeps the
 last-sent marker.
+
+**Job name.** `--task-name <name>` sets the full name of the scheduler task and is used
+as-is on every platform (launchd label and plist file name, systemd unit base name, Windows
+`schtasks /TN`); the defaults are `com.epam.codemie.analytics-sync`, `codemie-analytics-sync`
+and `CodeMie Analytics Sync`. Names may hold spaces and other printable characters, but not
+control characters, `/`, `\`, `..`, a leading `-` or `.`, or more than 100 characters; systemd
+and Task Scheduler add limits of their own, reported before anything is changed. In a
+terminal without the flag, install prompts `Scheduler task name (Enter for default "<default>"):`;
+without a terminal it uses the default. The name is saved as `taskName` in
+`analytics-sync.json` only when it differs from the default. If a task with that name already
+exists and is neither the previously installed job nor the platform default, install warns
+that it will be deleted and overwritten: it asks `y/N` (default No) when you typed the name
+at the prompt, and otherwise refuses unless `--force` is given. `status` prints the resolved
+name as `OS job name`; `uninstall` and `status` resolve it from saved settings (an unreadable
+file is reported, not guessed). `bootstrap` asks for an optional name and prints `--task-name`
+in the install command. Manual `launchctl`/`systemctl`/`schtasks` commands must use the
+resolved name.
 
 **Taking over the standalone collector.** If the standalone collector's daily job is
 already registered, `install` removes it before registering the CLI's job and keeps the
@@ -1951,11 +1968,13 @@ The allowlist in `~/.claude/settings.json` is the only source of truth. An empty
 
 #### Personal subscriptions
 
-Sessions billed to a personal Claude subscription are sent only with work consent. `--include-personal-subscriptions` (needs `--claude-otlp`) records it after the setup succeeds: for this repository with `--scope project`, for any repository with `--scope user` or no `--scope`. Without the flag, an interactive run asks `Include analytics from personal Claude subscriptions in this repository?` (or `... in any repository?`) after `Enable Claude Code analytics?` is confirmed; `Decline` records nothing and prints the command to enable it later. With `--yes` nothing is asked and consent is recorded only with the flag.
+Sessions billed to a personal Claude subscription are sent only with work consent. `--include-personal-subscriptions` (needs `--claude-otlp`) records it after the setup succeeds: for this repository with `--scope project`, for any repository with `--scope user` or no `--scope`. Without the flag, an interactive run asks `Include analytics from personal Claude subscriptions in this repository?` (or `... in any repository?`) after `Enable Claude Code analytics?` is confirmed; `Decline` records nothing and prints the command to enable it later. Answering yes records the consent right away, so no separate `consent grant` is needed afterwards. With `--yes` nothing is asked and consent is recorded only with the flag.
 
 The same consent is managed with `codemie proxy analytics consent grant [path] [--all]`, `consent revoke [path] [--all]` and `consent list`. `--all` covers any repository (shown as `any repository`), cannot be combined with a path or `--project`, and `revoke --all` leaves per-path consents alone.
 
-`codemie proxy doctor` adds an `On hold:` / `Fix:` pair under `Unsent data` for sessions held back for lack of consent.
+`codemie proxy analytics resend` releases sessions held locally once what held them is resolved. Today that means sessions held for lack of consent that a consent granted since covers. The proxy sends their queued data on its next pass. A folder consent covers a held session that started in that folder or below it. Only the start folder is checked, so data from other folders of the same project the session worked in before `resend` is sent too. `--all` covers every held session, including those recorded by an earlier version. Sessions recorded before the publication contract, stopped sessions, and data past the 24-hour hold retention are not sent.
+
+`codemie proxy doctor` adds an `On hold:` / `Fix:` pair under `Unsent data` for sessions held back for lack of consent; the fix is `consent grant`, then `resend`.
 
 **Confirmation.** Before the proxy starts or `~/.claude/settings.json` is changed, `connect --claude-otlp` asks once for the Claude Code settings. The prompt shows the profile and the CodeMie URL when configured and, for `--scope project`, a `Repository:` line with the current repository's analytics name (`owner/repo` from the git remote, or `parent/folder` without the drive letter), and then offers **Confirm** or **Decline** in the same list style as `codemie setup`. **Decline** or Ctrl+C stop the command: the proxy is not started, `settings.json` is not written, and the existing allowlist is left untouched (a cancelled prompt is never treated as Global). An already running proxy keeps running. Under `--claude-otlp` the clients the prompt says will be routed are not routed either; a client named by its own flag (`--claude-desktop`, `--vscode-claude-code`) or another target in the same run is still connected.
 
@@ -1981,6 +2000,10 @@ Allowlist changes apply immediately; the first-time setup needs a Claude Code re
 | `codemie proxy analytics enable` | Resume collection (same connectors as `disable`). |
 | `codemie proxy analytics exclude [path]` | Exclude one project from collection (default: the current project root; without a connector flag, for every connected connector). Takes effect even under Global scope (`[]` allowlist), where no entry can otherwise be removed. Other projects keep working. |
 | `codemie proxy analytics include [path]` | Track a project again (default: the current project root; without a connector flag, for every connected connector). In Project scope it first adds the project to the connector's own tracked list (the `settings.json` allowlist for Claude Code, `~/.codemie/copilot-connectors.json` for Copilot), then removes its exclusion, and confirms it is tracked only after both succeed; if the second step fails it names the step still owed, and a re-run is safe. A project excluded through a parent folder stays excluded: the command says so and names the `include` for the parent. `exclude` and `include` are exact inverses. |
+| `codemie proxy analytics consent grant [path] [--all] [--project <name>] [--yes]` | Authorize sending analytics from personal Claude subscriptions for a folder (default: the current project root). `--all` authorizes any repository instead of one path; it can't be combined with a path or `--project`. Claude Code only. |
+| `codemie proxy analytics consent revoke [path] [--all]` | Withdraw the authorization for a folder. `--all` withdraws only the any-repository authorization and leaves per-path ones as they are. |
+| `codemie proxy analytics consent list` | List the authorized folders of the signed-in account (`any repository` for an `--all` grant). |
+| `codemie proxy analytics resend` | Send the data of sessions held for lack of consent once a consent covers them (a folder consent for the session's start folder, or `--all`). Sessions recorded before this version are released only by `--all`. |
 | `codemie proxy analytics status [--json]` | Shows the effective configuration, not delivery health. One `Claude`, `Copilot CLI` or `Copilot Chat` section per connected tool, or only the tool a connector flag selects (`Claude` when no tool is connected), separated by empty lines. Each shows hooks installed or connected, the effective scope (`all projects (user scope)`, `selected projects (project scope)`, `not set up`, or `unreadable (...)` when its settings cannot be read; `--json` keeps the raw values `user`, `project`, `not-configured`, `not-connected`, `invalid`, `corrupt`), the tracked projects (one per line), whether collection is enabled and the excluded projects (one per line), each shown as its analytics project name (`owner/repo` from the git remote, otherwise `parent/folder`); an empty list reads `none`. Then a `Consented folders` row lists the work-consent folders of the signed-in account (`none` when there are none or nobody is signed in, `unknown` when the consent store cannot be read), followed by `Delivery health — run: codemie proxy doctor`: delivery (its verdict, `Unsent data`, `Next retry` with the error of a failing send, and `Last dropped`) is reported by `codemie proxy doctor`. With `--json` the output is a `delivery` key (the analytics delivery health, including `pendingBytes`, `heldBytes` when some is on hold and `sendFailure` with `nextAt` and `detail` when sending fails; `null` when the daemon is stopped or no connector is connected), a `connectors` array with one object per shown tool (each with its `connector` id and the status fields above) and `consentedFolders` (the signed-in account's folders with their projects; `null` when the consent store cannot be read). |
 
 Claude Desktop Cowork sessions follow `disable` / `enable` and `exclude` / `include` too (the session's folder is what is excluded), although no hook runs for them; the folder allowlist of `connect --claude-otlp` does not apply to them.

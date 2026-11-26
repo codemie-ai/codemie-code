@@ -25,6 +25,7 @@ import {
   validateLookbackDays
 } from '../config-store.js';
 import { SyncConfigError } from '@/utils/errors.js';
+import { validateSchedulerName } from '../scheduler/index.js';
 import { validateTriggerUrl } from '../trigger-url.js';
 import type { InstallCommandOptions } from '../install-command.js';
 import type { IncludeExternalPolicy } from '../types.js';
@@ -65,6 +66,9 @@ export interface BootstrapState {
   gitTest?: 'passed' | 'skipped';
   includeExternal?: IncludeExternalPolicy;
   lookbackDays?: number | 'default';
+  /** Optional full scheduler task name; `''` means the lead answered "default name" (omit
+   * `--task-name`). Absent in state files saved before this step existed. */
+  taskName?: string;
 }
 
 /** The pre-Task-2 saved-state shape: no `targets` field at all. Read-compat only —
@@ -214,6 +218,8 @@ function isStepAnswered(state: BootstrapState, id: string): boolean {
       return state.includeExternal !== undefined;
     case 'lookback':
       return state.lookbackDays !== undefined;
+    case 'task-name':
+      return state.taskName !== undefined;
     default:
       return false;
   }
@@ -257,6 +263,11 @@ const REVALIDATORS: Partial<Record<string, (state: BootstrapState) => void>> = {
   external: (state) => {
     if (state.includeExternal !== undefined) {
       validateIncludeExternal(state.includeExternal);
+    }
+  },
+  'task-name': (state) => {
+    if (state.taskName !== undefined && state.taskName !== '') {
+      validateSchedulerName(state.taskName);
     }
   },
   lookback: (state) => {
@@ -326,7 +337,8 @@ export function toInstallCommandOptions(state: BootstrapState): InstallCommandOp
     ...(state.targets.git && state.gitBranch !== undefined && { gitBranch: state.gitBranch }),
     ...(state.targets.git && state.gitPath !== undefined && { gitPath: state.gitPath }),
     includeExternal: validateIncludeExternal(state.includeExternal),
-    ...(typeof state.lookbackDays === 'number' && { lookbackDays: state.lookbackDays })
+    ...(typeof state.lookbackDays === 'number' && { lookbackDays: state.lookbackDays }),
+    ...(state.taskName !== undefined && state.taskName !== '' && { taskName: state.taskName })
   };
 }
 
@@ -399,6 +411,9 @@ export function summarizeState(state: BootstrapState): string[] {
   }
   if (state.lookbackDays !== undefined) {
     lines.push(`Lookback: ${state.lookbackDays === 'default' ? 'default' : `${state.lookbackDays} days`}`);
+  }
+  if (state.taskName !== undefined && state.taskName !== '') {
+    lines.push(`Scheduler task name: ${state.taskName}`);
   }
 
   return lines;

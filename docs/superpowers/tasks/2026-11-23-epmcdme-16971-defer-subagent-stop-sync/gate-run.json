@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-16971_defer-subagent-stop-sync-without-session",
+  "head": "1d45426d26879093602c92f1af57e4d2fbf5eeaa",
+  "runner": "node",
+  "started_at": "2026-11-23T15:24:17Z",
+  "completed_at": "2026-11-23T15:24:17Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {"id": "lint", "source": "guide", "status": "PASS", "command": "npm run lint", "exit_code": 0},
+    {"id": "typecheck", "source": "guide", "status": "PASS", "command": "npm run typecheck", "exit_code": 0},
+    {"id": "build", "source": "guide", "status": "PASS", "command": "npm run build", "exit_code": 0},
+    {"id": "test-unit", "source": "guide", "status": "PASS", "command": "npx vitest run --project unit", "exit_code": 0, "notes": "Test Files 661 passed (661); Tests 12541 passed (12541); run outside the sandbox"},
+    {"id": "test-cli", "source": "guide", "status": "PASS", "command": "npx vitest run --project cli", "exit_code": 0, "notes": "Test Files 47 passed | 2 skipped (49); Tests 389 passed | 12 skipped (401); run outside the sandbox"},
+    {"id": "test-agent", "source": "guide", "status": "N/A", "command": "npx vitest run --project agent", "notes": "not run: live-network integration tests (real models), unrelated to this change; user decision"},
+    {"id": "secrets", "source": "hook", "status": "PASS", "command": "npm run validate:secrets (husky pre-commit)", "exit_code": 0, "notes": "gitleaks reported no leaks on each of the 3 commits; not re-run separately in this pass"}
+  ],
+  "failures": {}
+}

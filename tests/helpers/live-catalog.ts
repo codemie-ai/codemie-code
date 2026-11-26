@@ -12,6 +12,17 @@ import type { LlmModel } from '../../src/providers/plugins/sso/sso.http-client.j
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /**
+ * Catalog ids that only generate images. The analytics tests drive text sessions (a tool-calling
+ * prompt, a priced chat turn), which these models cannot serve, so both tests skip them.
+ */
+const IMAGE_ONLY_MODEL_IDS: ReadonlySet<string> = new Set(['gemini-nano-banana-2.1']);
+
+/** Whether a catalog model only produces images and so cannot take part in the text-session analytics tests. */
+export function isImageOnlyModel(model: Pick<LlmModel, 'deployment_name'>): boolean {
+  return IMAGE_ONLY_MODEL_IDS.has(model.deployment_name);
+}
+
+/**
  * Fetch the live model catalog in a throwaway CHILD process, not in-process.
  *
  * The `agent` vitest project pins `CODEMIE_HOME` to a fixed per-worker temp dir (see

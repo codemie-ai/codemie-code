@@ -31,6 +31,8 @@ export interface InstallCommandOptions {
   at?: string;
   lookbackDays?: number;
   includeExternal?: IncludeExternalPolicy;
+  /** Full scheduler task name (`--task-name`); omitted when absent or empty. */
+  taskName?: string;
 }
 
 /** Characters that are never safe to print inside a double-quoted shell token. */
@@ -97,7 +99,8 @@ export function buildInstallCommand(opts: InstallCommandOptions): string {
     flag('--git-path', opts.gitPath),
     flag('--at', opts.at),
     flag('--lookback-days', opts.lookbackDays),
-    flag('--include-external', opts.includeExternal)
+    flag('--include-external', opts.includeExternal),
+    flag('--task-name', opts.taskName === '' ? undefined : opts.taskName)
   ].filter((token): token is string => token !== undefined);
 
   return ['codemie analytics sync install', ...tokens].join(' ');
