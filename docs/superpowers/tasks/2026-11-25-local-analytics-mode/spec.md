@@ -115,7 +115,7 @@ With `--include-external never` a machine with no CodeMie launcher gathers nothi
 | every hook event of a client | `codemie hook --agent <client>` — one short Node process | Applies the developer's folder filters and `--include-external`; starts the local proxy when it is not running; posts the event to the proxy's `/v1/analytics/hooks`. No sign-in, no network beyond `127.0.0.1`. |
 | while Claude Code runs | Claude Code's own exporter | Posts its logs, metrics and traces to the proxy's `/v1/analytics/otlp/v1/{logs,metrics,traces}`. |
 | every 15 minutes | the proxy's sweep | Moves each session past its grace from `~/.codemie/analytics/spool/` into `~/.codemie/analytics/sessions/`. |
-| daily at `--at` | `codemie analytics sync run --scheduled` | Per target: takes the window (the lookback, or since the last successful delivery when that is longer); gzips the lines of the sessions written to inside it, into files no larger than 70 MB; webhook — one POST per file with the file as a base64 attachment, which the lead's flow writes to SharePoint; git — a shallow clone in `~/.codemie/analytics-sync-repo`, the files at `<git-path>/<email>/<file>`, one commit under the developer's email, one push with the developer's own credentials. The delivery mark moves only after the target accepted every file. Log: `~/.codemie/logs/analytics-sync.log`. |
+| daily at `--at` | `codemie analytics sync run --scheduled` | Per target: takes the window (the lookback, or since the last successful delivery when that is longer); gzips the lines of the sessions written to inside it, into files no larger than 70 MB; webhook — one POST per file with the file as a base64 attachment, which the lead's flow writes to SharePoint; git — a shallow clone in `~/.codemie/analytics-sync-repo`, the files at `<git-path>/<email>/<file>`, one commit under the developer's email, one push with the developer's own credentials. The delivery mark moves only after the target accepted every file of a run that built all of them; when the OTLP files cannot be built — the analytics folder cannot be read, or a single line's gzip alone is above 70 MB — the run delivers the JSON report, if there is one, with a warning in its log line, and leaves the mark; with no report it fails with `fail export`. Log: `~/.codemie/logs/analytics-sync.log`. |
 
 ### Other commands a developer may run
 
@@ -236,6 +236,12 @@ hook event line                  one OTLP LogsData: resource service.name=codemi
 - One mode per machine over both at once: two spools and two proxies for a case nobody asked for.
 - The lead's existing command over a new flag: it already decides the targets, the time, the window and the sessions.
 - D3: The mode chosen once per process, the code below receiving that mode's implementation, over "if local" branches.
+  The modes are told apart at the entry of the command; an agent launcher, with no command entry of its own for the
+  analytics, tells them at the one place that needs it, before it spawns the client
+  (`src/agents/plugins/claude/claude.plugin.ts`), since carrying the collection through the launcher every agent shares
+  would change all of them for one caller. Nothing below branches on this process's mode. A check of another process's
+  state is no such branch: the backend cold start does not adopt a local-mode daemon
+  (`src/cli/commands/proxy/otlp-cold-start.ts`), as it reads that daemon's version.
 - The CLI's own proxy receiving and not sending over a third-party OpenTelemetry Collector on every machine.
 - A finished session moved into a folder over keeping the spool: the spool's lifetime is minutes, the run is daily.
 - Hook events as OTLP log records over the spool's envelope: one format in the folder and in the file.
@@ -257,7 +263,10 @@ hook event line                  one OTLP LogsData: resource service.name=codemi
   wrote: the install rewrites the entries of a client set up before it, and entries left behind would point at a proxy
   that no longer runs; nothing a user or another tool wrote is removed.
 - D14: Files no larger than 70 MB, cut at a line, over one file per run: the delivery hook of a project sends nothing
-  above its own limit, and a run that failed on the size failed the same way on every later run.
+  above its own limit, and a run that failed on the size failed the same way on every later run. When the OTLP files
+  cannot be built — the analytics folder cannot be read, or a single line's gzip alone is above 70 MB — the run delivers
+  the JSON report, if there is one, with a warning in its log line, and leaves the marker; with no report it fails with
+  `fail export`. A target's marker moves only when it accepted every file of a run that built all of them.
 - D15: A session counts as launched when the hook's environment holds the session id a CodeMie launcher sets, as in every
   mode: a client started by hand from a terminal opened inside a launched session is gathered under `never` too; on a
   machine with no profile this needs a profile added after the install.
@@ -275,6 +284,12 @@ hook event line                  one OTLP LogsData: resource service.name=codemi
 - D20: The JSON report and the OTLP files beside it, rather than the OTLP files alone — a machine in the local mode delivers
   the report built as on any other machine: what a team received before the mode it goes on receiving, Codex, Gemini and Pi included,
   while the receiving side moves to the OTLP files; the report is deprecated, not removed.
+- D21: A session's file holding that session's records alone over the export as it came: a telemetry export is divided
+  by the session each record names — a log record by its `session.id`, else its `session_id`, a span and a metric data
+  point by their `session.id` — each session's records going to its own file with the resource and scope around them,
+  and a record that names no session, or no valid one, staying with the session the export goes to. A Claude Code
+  process that changes its session id sends one request with records of both sessions, and a reader that goes by the
+  file would count the end of one session to the next.
 
 ## Limitations
 
@@ -292,8 +307,9 @@ hook event line                  one OTLP LogsData: resource service.name=codemi
 - **Copilot can be blocked.** When a hook cannot start the proxy, Copilot CLI refuses the prompt or the tool call, and
   Copilot Chat also the session start, as with a CodeMie backend today. Claude Code is never blocked.
 - **Size.** Measured on one machine over about a day: 62,909,648 bytes of lines, 3,489,676 gzipped. A run carries the whole
-  window, cut into files of 70,000,000 bytes at most; a session larger than that is cut at a line, and only a single line
-  whose gzip alone is above it fails the run. The folder on the developer's disk is never cleaned.
+  window, cut into files of 70,000,000 bytes at most; a session larger than that is cut at a line. A single line whose
+  gzip alone is above it leaves the OTLP files unbuilt: the run delivers the JSON report, if there is one, with a
+  warning, and leaves the marker; with no report it fails with `fail export`. The folder on the developer's disk is never cleaned.
 - **The git target.** One file per developer per day, or its parts when it is cut, never pruned; a second run on the same
   day whose files are cut differently leaves the earlier files beside the new ones, and the reader keeps one copy of a
   line by its id. Every developer's working copy holds the team's files.

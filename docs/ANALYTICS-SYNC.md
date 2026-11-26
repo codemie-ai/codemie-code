@@ -302,6 +302,8 @@ On a machine in the local mode it also removes, in this order: the hooks of Clau
 Copilot CLI and Copilot Chat; then, holding the daemon lock, the local proxy, the moves into the
 folder left half-done, the local spool (`~/.codemie/analytics/spool/`, with the sessions not yet
 moved) and the exclusion marks (`~/.codemie/analytics/excluded/`); the job and the settings last.
+A session still in its grace in the local spool has not been moved into the folder yet and is
+never delivered.
 A client whose CodeMie hooks are not in place is not touched. A client set up before the install
 loses its CodeMie hooks too, since the install rewrote them to the local proxy; on a machine with a
 profile `codemie proxy connect` sets it up again.
@@ -333,10 +335,11 @@ Each run appends one line per delivery target to `~/.codemie/logs/analytics-sync
 | --- | --- | --- |
 | `ok sent <name> <bytes> target=…` | The target accepted the file. | Nothing. |
 | `ok sent <n> files <total bytes> target=…` | Local mode: the target accepted every file of the run, the OTLP files and the JSON report. | Nothing. |
+| `ok sent <name> <bytes> (warning: OTLP files not built, the marker stays and the next run tries them again: …) target=…` | Local mode: the OTLP files could not be built — the analytics folder could not be read, or a single line whose gzip alone is above 70 MB — and the target accepted the JSON report alone. The last-sent marker stays. | The detail names the cause. The next run's window covers the time since the last run that delivered everything: it sends the report again and tries the OTLP files again. See [Export size limit](#export-size-limit). |
 | `skip no sessions in window … target=…` | There were no CodeMie sessions in the window. In the local mode: neither the JSON report nor `~/.codemie/analytics/sessions/` has a session in the window. | Nothing. Nothing was sent, and the next run covers this period too. In the local mode, see [Limitations](#limitations) for why a session may be missing. |
 | `fail setup No sync identity configured …` | No email in the CodeMie CLI config or in git. | Run `codemie profile login`, or `git config --global user.email you@example.com`, then run install again. |
 | `fail setup No sync target configured …` | This machine has nowhere to send to. | Run the install command again. |
-| `fail export …` | The report could not be built, or it is above the 70 MB limit. In the local mode also: the analytics folder could not be read, or a single line whose gzip alone is above 70 MB. | For the JSON report, run `codemie analytics --last 1d` by hand to see why. In the local mode, the line's detail names the cause: the analytics folder could not be read, or one line's gzip alone is above 70 MB (it names the size). See [Export size limit](#export-size-limit). |
+| `fail export …` | The report could not be built, or it is above the 70 MB limit. In the local mode also, when the window has no JSON report: the analytics folder could not be read, or a single line whose gzip alone is above 70 MB. | For the JSON report, run `codemie analytics --last 1d` by hand to see why. In the local mode, the line's detail names the cause: the analytics folder could not be read, or one line's gzip alone is above 70 MB (it names the size). See [Export size limit](#export-size-limit). |
 | `fail send … target=webhook` | The webhook refused the request, or the network failed. | The next run retries the whole gap. If it keeps failing, the flow may be off or its URL rotated; ask your team lead. |
 | `fail send … target=git` | The push failed. | Check `git push` works from this machine without a prompt. For an unknown SSH host key, run `ssh -T <host>` once. |
 
@@ -463,6 +466,9 @@ When the run's lines do not fit in 70 MB they are cut at a line into
 Unpacked, every line is one OTLP JSON export request (`resourceLogs`, `resourceMetrics` or
 `resourceSpans`); the hook events are OTLP log records. Every `resource` carries the attribute
 `codemie.line_id` = `<the session file's name in the folder>:<the line's byte offset in it>`. A
+session's file holds that session's records alone: a telemetry export with records of two
+sessions (a Claude Code process that changed its session id) is divided between their files, and
+what names no session stays with the session of its request. A
 folder file is only appended to, so a line keeps its id in every file it reaches, and a reader
 keeps one copy of a line the overlapping windows repeat.
 
@@ -484,7 +490,10 @@ The JSON report is one document: above 70 MB the run fails as described here, in
 too, after the target took the OTLP files. A report that cannot be built fails the run before
 anything is sent, the OTLP files included. The local mode's OTLP output is cut into files no
 larger than 70 MB after compression, for the webhook and for
-git; only a single line whose gzip alone is above 70 MB fails the run with `fail export`. The OTLP lines compress well
+git. When the OTLP files cannot be built — the analytics folder cannot be read, or a single line's gzip alone is above
+70 MB — the run delivers the JSON report, if there is one, with a warning in its log line, and leaves the marker; with
+no report it fails with `fail export`. A target's marker moves only when it accepted every file of a run that built all
+of them. The OTLP lines compress well
 (about 18 to 1 measured on four day-long sessions), so a day of work is a few MB.
 
 ## Local analytics mode
@@ -611,7 +620,8 @@ file is no larger than 70 MB: a larger run is cut into several (see [Export size
 - **Copilot blocks.** Copilot CLI and Copilot Chat block an enforced event the local proxy did not
   accept, as on any machine; that happens only when the hook could not start the proxy.
 - **The size.** A delivered file is no larger than 70 MB, and a run can deliver several, for the
-  webhook and for git; a single line whose gzip alone is above 70 MB fails the run. A push takes 120 seconds at most.
+  webhook and for git; a run with a single line whose gzip alone is above 70 MB delivers the JSON report alone, with a
+  warning, and leaves the marker, and with no report it fails with `fail export`. A push takes 120 seconds at most.
 - **The content and the filters.** See [What the file holds](#what-the-file-holds).
 - **One mode per machine.** `proxy connect` is refused until `sync uninstall`. A hook that finds
   another CodeMie proxy running replaces it with the local proxy: this release starts no other
@@ -632,6 +642,8 @@ file is no larger than 70 MB: a larger run is cut into several (see [Export size
 - **Never cleaned by itself, cleared by `sync uninstall`:** the exclusion marks, and a session whose
   move into the folder was interrupted in a way the proxy cannot continue — it stays where it is,
   undelivered, since repeating the move would write its lines twice under new ids.
+- **`sync uninstall` drops the sessions in their grace.** It removes the local spool with the
+  sessions not yet moved into the folder: what of them has not been moved is never delivered.
 - **Two CLI versions on one machine.** A Copilot CLI or Copilot Chat hook of a CLI before the
   local mode (where the CLI the hooks name was replaced by an earlier version) posts to the live
   local proxy, which stores its events with no `--include-external` applied; each such hook writes

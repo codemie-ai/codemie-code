@@ -134,6 +134,25 @@ describe('LocalExportSource', () => {
   it('neither: null', async () => {
     expect(await build(reportSessions())).toBeNull();
   });
+
+  it('the folder failing and a report session: the report alone, with a warning that names the failure', async () => {
+    const { LocalExportSource } = await import('../local.js');
+    const { ReportSource } = await import('../../../analytics/sync/report-builder.js');
+    const failing = { build: async () => { throw new Error('cannot read s1.hooks.jsonl'); } };
+
+    const files = await new LocalExportSource(failing, new ReportSource(reportSessions('r1'))).build(input());
+
+    expect(files?.map((file) => file.fileName)).toEqual([REPORT_NAME]);
+    expect(files?.warning).toBe('OTLP files not built, the marker stays and the next run tries them again: cannot read s1.hooks.jsonl');
+  });
+
+  it('the folder failing and no report session: the folder\'s error', async () => {
+    const { LocalExportSource } = await import('../local.js');
+    const { ReportSource } = await import('../../../analytics/sync/report-builder.js');
+    const failing = { build: async () => { throw new Error('cannot read s1.hooks.jsonl'); } };
+
+    await expect(new LocalExportSource(failing, new ReportSource(reportSessions())).build(input())).rejects.toThrow('cannot read s1.hooks.jsonl');
+  });
 });
 
 describe('localCollection', () => {

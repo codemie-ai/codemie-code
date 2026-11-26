@@ -283,11 +283,20 @@ async function startMove(sessionId: string): Promise<void> {
   await finish(sessionId, marker);
 }
 
-/** A marker found at a sweep's start: the move repeated from it, or undone when the session left the spool. */
+/**
+ * A marker found at a sweep's start: the move repeated from it, or undone when the session left the spool; a session
+ * excluded meanwhile is undone and dropped from the spool.
+ */
 async function resumeMove(sessionId: string): Promise<void> {
   // A marker that does not parse throws here and the session stays where it is: without its lengths a repeated move
   // would write the telemetry streams' lines a second time, under new line ids.
   const marker = await readMarker(sessionId);
+  if (await isSessionExcluded(sessionId)) {
+    await cutToLengths(sessionId, marker);
+    await withSessionLock(sessionId, () => deleteSession(sessionId));
+    await unlink(markerPath(sessionId));
+    return;
+  }
   const left = await Promise.all(
     SPOOL_STREAMS.map((stream) => stat(streamFile(sessionId, stream)).then(() => true, () => false))
   );

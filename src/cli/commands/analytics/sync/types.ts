@@ -11,9 +11,12 @@ export interface SyncReport {
   contentType: string;
 }
 
+/** The files of one run in delivery order; `warning` names a part of the run that could not be built. */
+export type SyncFiles = SyncReport[] & { warning?: string };
+
 /** What one `sync` run delivers for one window: its files in delivery order, or `null` when there is nothing to send. */
 export interface ExportSource {
-  build(input: { window: SyncWindow; email: string; includeExternal: boolean; now: Date }): Promise<SyncReport[] | null>;
+  build(input: { window: SyncWindow; email: string; includeExternal: boolean; now: Date }): Promise<SyncFiles | null>;
 }
 
 export type IncludeExternalPolicy = 'windows' | 'always' | 'never';

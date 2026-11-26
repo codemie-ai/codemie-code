@@ -26,6 +26,7 @@ import { adaptProviderResult } from './type-adapters.js';
 import { logger } from '../../../utils/logger.js';
 import { VersionWarningStore } from '../../../utils/version-warnings.js';
 import { renderTip } from '../../../utils/tips.js';
+import { resolveCollection } from '../shared/analytics-collection/resolve.js';
 
 export function createDoctorCommand(): Command {
   const command = new Command('doctor');
@@ -90,6 +91,12 @@ export function createDoctorCommand(): Command {
       // Display header
       formatter.displayHeader();
 
+      // A collection that does not resolve fails the proxy check alone; every other check still runs.
+      const doctorPlan = await resolveCollection().then(
+        (collection) => collection.doctor,
+        (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
+      );
+
       // Define standard health checks
       const checks: HealthCheck[] = [
         new NodeVersionCheck(),
@@ -103,7 +110,7 @@ export function createDoctorCommand(): Command {
         new AgentsCheck(),
         new WorkflowsCheck(),
         new FrameworksCheck(),
-        new ProxyCheck()
+        new ProxyCheck(doctorPlan)
       ];
 
       // Run and display standard checks immediately

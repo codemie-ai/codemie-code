@@ -557,8 +557,8 @@ same 70 MB ceiling as `--export json`; an export larger than that, a failed/unre
 webhook, or missing settings/identity are all logged and failed without moving the marker,
 so the next run covers the same sessions. In the local mode the output is the
 `.otlp.jsonl.gz` of the sessions written to the analytics folder inside the window, cut into
-files no larger than 70 MB, followed by the JSON report, sent one request per file; the marker moves only when every file
-was accepted. A report above the ceiling fails the export there too, after the OTLP files were taken; of the OTLP output only a single line whose gzip alone is above the ceiling does. There is no retry — the rolling window self-heals
+files no larger than 70 MB, followed by the JSON report, sent one request per file; the marker moves only when the target
+accepted every file of a run that built all of them. A report above the ceiling fails the export there too, after the OTLP files were taken. When the OTLP files cannot be built — the analytics folder cannot be read, or a single line's gzip alone is above the ceiling — the run delivers the JSON report, if there is one, with a warning in its log line, and leaves the marker; with no report it fails with `fail export`. There is no retry — the rolling window self-heals
 on the next scheduled run. `run` with nothing installed fails with the install command and
 sends nothing.
 

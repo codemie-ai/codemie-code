@@ -186,6 +186,130 @@ describe('LocalAnalyticsPlugin', () => {
     await second.interceptor.onProxyStop?.();
   });
 
+  describe('a JSON export goes to the file of the session each record names', () => {
+    const B = '11111111-2222-4333-8444-777777777777';
+    const JSON_TYPE = { 'content-type': 'application/json' };
+    const sid = (key: string, id: string) => ({ key, value: { stringValue: id } });
+    const lines = (sessionId: string, signal: string) =>
+      readFileSync(join(localSpool(), `${sessionId}.otel_${signal}.ndjson`), 'utf-8').trimEnd().split('\n').map((l) => JSON.parse(l) as unknown);
+    const resource = { attributes: [{ key: 'service.name', value: { stringValue: 'claude-code' } }] };
+    const scope = { name: 'com.anthropic.claude_code' };
+
+    it('a metrics export of two sessions: each file holds its own points alone, the resource and scope kept', async () => {
+      const { interceptor, post } = await started();
+      const point = (id: string, n: string) => ({ asInt: n, attributes: [sid('session.id', id)] });
+      await post('/v1/analytics/otlp/v1/metrics', {
+        resourceMetrics: [{ resource, scopeMetrics: [{ scope, metrics: [
+          { name: 'claude_code.token.usage', sum: { aggregationTemporality: 1, dataPoints: [point(SID, '1'), point(B, '2'), point(SID, '3')] } },
+          { name: 'claude_code.session.count', sum: { dataPoints: [point(B, '4')] } },
+        ] }] }],
+      }, JSON_TYPE);
+      await interceptor.onProxyStop?.();
+
+      expect(lines(SID, 'metrics')).toEqual([{ resourceMetrics: [{ resource, scopeMetrics: [{ scope, metrics: [
+        { name: 'claude_code.token.usage', sum: { aggregationTemporality: 1, dataPoints: [point(SID, '1'), point(SID, '3')] } },
+      ] }] }] }]);
+      expect(lines(B, 'metrics')).toEqual([{ resourceMetrics: [{ resource, scopeMetrics: [{ scope, metrics: [
+        { name: 'claude_code.token.usage', sum: { aggregationTemporality: 1, dataPoints: [point(B, '2')] } },
+        { name: 'claude_code.session.count', sum: { dataPoints: [point(B, '4')] } },
+      ] }] }] }]);
+    });
+
+    it('a logs export: a record by session.id and one by session_id each go to their own session', async () => {
+      const { interceptor, post } = await started();
+      const a = { body: { stringValue: 'a' }, attributes: [sid('session.id', SID)] };
+      const b = { body: { stringValue: 'b' }, attributes: [sid('session_id', B)] };
+      await post('/v1/analytics/otlp/v1/logs', { resourceLogs: [{ resource, scopeLogs: [{ scope, logRecords: [a, b] }] }] }, JSON_TYPE);
+      await interceptor.onProxyStop?.();
+
+      expect(lines(SID, 'logs')).toEqual([{ resourceLogs: [{ resource, scopeLogs: [{ scope, logRecords: [a] }] }] }]);
+      expect(lines(B, 'logs')).toEqual([{ resourceLogs: [{ resource, scopeLogs: [{ scope, logRecords: [b] }] }] }]);
+    });
+
+    it('a traces export of two sessions is divided by each span\'s session.id', async () => {
+      const { interceptor, post } = await started();
+      const a = { name: 'claude_code.interaction', attributes: [sid('session.id', SID)] };
+      const b = { name: 'claude_code.llm_request', attributes: [sid('session.id', B)] };
+      await post('/v1/analytics/otlp/v1/traces', { resourceSpans: [{ resource, scopeSpans: [{ scope, spans: [b, a] }] }] }, JSON_TYPE);
+      await interceptor.onProxyStop?.();
+
+      expect(lines(SID, 'traces')).toEqual([{ resourceSpans: [{ resource, scopeSpans: [{ scope, spans: [a] }] }] }]);
+      expect(lines(B, 'traces')).toEqual([{ resourceSpans: [{ resource, scopeSpans: [{ scope, spans: [b] }] }] }]);
+    });
+
+    it('an export of one session is written as the one line it is, to that session\'s file', async () => {
+      const { interceptor, post } = await started();
+      const body = { resourceLogs: [{ resource, scopeLogs: [{ scope, logRecords: [{ attributes: [sid('session.id', SID)] }, { attributes: [sid('session.id', SID)] }] }] }] };
+      await post('/v1/analytics/otlp/v1/logs', body, JSON_TYPE);
+      await interceptor.onProxyStop?.();
+
+      expect(readFileSync(join(localSpool(), `${SID}.otel_logs.ndjson`), 'utf-8')).toBe(JSON.stringify(body) + '\n');
+      expect(readdirSync(localSpool()).filter((f) => f.endsWith('.ndjson'))).toEqual([`${SID}.otel_logs.ndjson`]);
+    });
+
+    it('edge: a record whose id is no UUID v4 and one with no id stay with the session the export goes to', async () => {
+      const { interceptor, post } = await started();
+      const a = { attributes: [sid('session.id', SID)] };
+      const b = { attributes: [sid('session.id', B)] };
+      const notUuid = { attributes: [sid('session.id', '../not-a-session')] };
+      const none = { attributes: [{ key: 'event.name', value: { stringValue: 'api_request' } }] };
+      await post('/v1/analytics/otlp/v1/logs', { resourceLogs: [{ resource, scopeLogs: [{ scope, logRecords: [a, notUuid, b, none] }] }] }, JSON_TYPE);
+      await interceptor.onProxyStop?.();
+
+      expect(lines(SID, 'logs')).toEqual([{ resourceLogs: [{ resource, scopeLogs: [{ scope, logRecords: [a, notUuid, none] }] }] }]);
+      expect(lines(B, 'logs')).toEqual([{ resourceLogs: [{ resource, scopeLogs: [{ scope, logRecords: [b] }] }] }]);
+    });
+
+    it('a request whose first UUID is a third session keeps the record that names no session in that session\'s file', async () => {
+      const { interceptor, post } = await started();
+      const C = '11111111-2222-4333-8444-888888888888';
+      const own = { attributes: [{ key: 'host.id', value: { stringValue: C } }] };
+      const a = { attributes: [sid('session.id', SID)] };
+      const b = { attributes: [sid('session.id', B)] };
+      const none = { attributes: [{ key: 'event.name', value: { stringValue: 'api_request' } }] };
+      await post('/v1/analytics/otlp/v1/logs', { resourceLogs: [{ resource: own, scopeLogs: [{ scope, logRecords: [a, b, none] }] }] }, JSON_TYPE);
+      await interceptor.onProxyStop?.();
+
+      expect(readdirSync(localSpool()).filter((f) => f.endsWith('.ndjson')).sort()).toEqual(
+        [`${SID}.otel_logs.ndjson`, `${B}.otel_logs.ndjson`, `${C}.otel_logs.ndjson`].sort()
+      );
+      expect(lines(SID, 'logs')).toEqual([{ resourceLogs: [{ resource: own, scopeLogs: [{ scope, logRecords: [a] }] }] }]);
+      expect(lines(B, 'logs')).toEqual([{ resourceLogs: [{ resource: own, scopeLogs: [{ scope, logRecords: [b] }] }] }]);
+      expect(lines(C, 'logs')).toEqual([{ resourceLogs: [{ resource: own, scopeLogs: [{ scope, logRecords: [none] }] }] }]);
+    });
+
+    it('a request whose first UUID is a third session and whose only unnamed parts are a scope with no records and a metric of no known kind keeps them in that session\'s file', async () => {
+      const { interceptor, post } = await started();
+      const C = '11111111-2222-4333-8444-888888888888';
+      const own = { attributes: [{ key: 'host.id', value: { stringValue: C } }] };
+      const point = (id: string) => ({ asInt: '1', attributes: [sid('session.id', id)] });
+      const a = { name: 'claude_code.token.usage', sum: { dataPoints: [point(SID)] } };
+      const b = { name: 'claude_code.token.usage', sum: { dataPoints: [point(B)] } };
+      const unknownKind = { name: 'claude_code.other', other: { dataPoints: [] } };
+      const emptyScope = { scope: { name: 'empty' }, metrics: [] };
+      await post('/v1/analytics/otlp/v1/metrics', { resourceMetrics: [{ resource: own, scopeMetrics: [{ scope, metrics: [a, b, unknownKind] }, emptyScope] }] }, JSON_TYPE);
+      await interceptor.onProxyStop?.();
+
+      expect(readdirSync(localSpool()).filter((f) => f.endsWith('.ndjson')).sort()).toEqual(
+        [`${SID}.otel_metrics.ndjson`, `${B}.otel_metrics.ndjson`, `${C}.otel_metrics.ndjson`].sort()
+      );
+      expect(lines(SID, 'metrics')).toEqual([{ resourceMetrics: [{ resource: own, scopeMetrics: [{ scope, metrics: [a] }] }] }]);
+      expect(lines(B, 'metrics')).toEqual([{ resourceMetrics: [{ resource: own, scopeMetrics: [{ scope, metrics: [b] }] }] }]);
+      expect(lines(C, 'metrics')).toEqual([{ resourceMetrics: [{ resource: own, scopeMetrics: [{ scope, metrics: [unknownKind] }, emptyScope] }] }]);
+    });
+
+    it('a request whose records all name one session goes to that session, not to the first UUID of its text', async () => {
+      const { interceptor, post } = await started();
+      const own = { attributes: [{ key: 'host.id', value: { stringValue: SID } }] };
+      const body = { resourceLogs: [{ resource: own, scopeLogs: [{ scope, logRecords: [{ attributes: [sid('session.id', B)] }] }] }] };
+      await post('/v1/analytics/otlp/v1/logs', body, JSON_TYPE);
+      await interceptor.onProxyStop?.();
+
+      expect(readdirSync(localSpool()).filter((f) => f.endsWith('.ndjson'))).toEqual([`${B}.otel_logs.ndjson`]);
+      expect(readFileSync(join(localSpool(), `${B}.otel_logs.ndjson`), 'utf-8')).toBe(JSON.stringify(body) + '\n');
+    });
+  });
+
   it('leaves every other request to the next plugin', async () => {
     const { interceptor, post } = await started();
 

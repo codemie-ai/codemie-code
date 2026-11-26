@@ -15,7 +15,9 @@
  * `runSync` never throws and never calls `process.exit`. Every outcome for a target —
  * success, a skipped empty window, or a failure — prints and appends exactly one line via
  * {@link formatLogLine}:
- *   `<ISO> ok sent <name> <bytes> target=<id>` (one file), `<ISO> ok sent <n> files <total bytes> target=<id>`
+ *   `<ISO> ok sent <name> <bytes> target=<id>` (one file), `<ISO> ok sent <n> files <total bytes> target=<id>`,
+ *   either with ` (warning: <what>)` when a part of the run's files could not be built and the rest were delivered;
+ *   such a run leaves the marker
  *   `<ISO> skip <reason> target=<id>`
  *   `<ISO> fail <setup|export|send> <redacted detail> target=<id>`
  * A setup failure resolved before any target is chosen (no settings file, no configured
@@ -26,8 +28,8 @@
  * a report-build failure -> `export`; a webhook delivery failure -> `export` when it is an
  * `ExportTooLargeError` (its message carries the byte count), else `send`; a git delivery
  * failure is always `send`, with its detail carrying {@link gitHint}. The marker for a
- * target only moves (to the run's `now()`) after that target accepted every file — never on
- * `skip` or `fail`. A marker write that fails after delivery keeps the `ok sent` outcome
+ * target only moves (to the run's `now()`) after that target accepted every file of a run that built all of
+ * them — never on `skip`, `fail` or a build warning. A marker write that fails after delivery keeps the `ok sent` outcome
  * (exit 0 for that target) with a warning suffix; a run-log append that fails is ignored.
  */
 import { appendFile, chmod, mkdir } from 'fs/promises';
@@ -44,7 +46,7 @@ import { errorMessage, redactSecrets } from './redact.js';
 import { createGitRunner, gitHint } from './targets/git-client.js';
 import { GitTarget, gitMarkerPath } from './targets/git-target.js';
 import { sendWebhook } from './targets/webhook-target.js';
-import type { ExportSource, SyncReport, SyncSettings } from './types.js';
+import type { ExportSource, SyncFiles, SyncReport, SyncSettings } from './types.js';
 import type { AnalyticsCollection } from '../../shared/analytics-collection/types.js';
 import { dailyWindow } from './window.js';
 
@@ -139,7 +141,7 @@ async function runTarget(
     return true;
   }
 
-  let reports: SyncReport[] | null;
+  let reports: SyncFiles | null;
   try {
     reports = await deps.exportSource.build({ window, email, includeExternal, now });
   } catch (err) {
@@ -159,10 +161,12 @@ async function runTarget(
     return true;
   }
 
-  const markerWarning = await moveMarker(deps, target, now);
+  // A run that could not build all its files leaves the marker, so the next run covers this window again.
+  const markerWarning = reports.warning === undefined ? await moveMarker(deps, target, now) : '';
+  const buildWarning = reports.warning === undefined ? '' : ` (warning: ${reports.warning})`;
   const total = reports.reduce((sum, report) => sum + report.bytes.length, 0);
   const sent = reports.length === 1 ? `${reports[0].fileName} ${total}` : `${reports.length} files ${total}`;
-  await emit(deps, now, 'ok', `sent ${sent}${markerWarning}`, target);
+  await emit(deps, now, 'ok', `sent ${sent}${buildWarning}${markerWarning}`, target);
   return false;
 }
 

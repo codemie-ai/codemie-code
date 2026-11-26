@@ -32,11 +32,110 @@ export interface OtlpIntakeParts {
   afterHooksWrite(sessionId: string, agentName: string, batchEvents: Record<string, unknown>[]): void | Promise<void>;
   /** Records a batch's `evidence_loss`. */
   recordStampLoss(loss: StampLoss): Promise<void>;
+  /**
+   * A JSON export is divided by the session each record names, each session's records appended to its own file;
+   * without it the whole export goes to the file of the first session id in its text.
+   */
+  splitJsonBySession?: boolean;
 }
 
 export interface OtlpIntake {
   handleHooks(ctx: ProxyContext, res: ServerResponse): Promise<true>;
   handleOtlp(ctx: ProxyContext, res: ServerResponse, signal: 'logs' | 'metrics' | 'traces'): Promise<true>;
+}
+
+const SESSION_FILE_ID_RE = new RegExp(`^${UUID_V4_RE.source}$`, 'i');
+
+type JsonObject = Record<string, unknown>;
+const isObject = (v: unknown): v is JsonObject => !!v && typeof v === 'object' && !Array.isArray(v);
+
+const SIGNAL_LEVELS: Record<'logs' | 'metrics' | 'traces', [string[], string[], string[]]> = {
+  logs: [['resourceLogs', 'resource_logs'], ['scopeLogs', 'scope_logs'], ['logRecords', 'log_records']],
+  traces: [['resourceSpans', 'resource_spans'], ['scopeSpans', 'scope_spans'], ['spans']],
+  metrics: [['resourceMetrics', 'resource_metrics'], ['scopeMetrics', 'scope_metrics'], ['metrics']],
+};
+const METRIC_KINDS = ['gauge', 'sum', 'histogram', 'exponentialHistogram', 'exponential_histogram', 'summary'];
+
+/** The session a record or data point names, when it is a UUID v4: a log's `session.id`, else its `session_id`. */
+function recordSession(unit: unknown, signal: 'logs' | 'metrics' | 'traces'): string | undefined {
+  if (!isObject(unit) || !Array.isArray(unit['attributes'])) return undefined;
+  const text = (key: string): unknown => {
+    const attr = (unit['attributes'] as unknown[]).find((a) => isObject(a) && a['key'] === key);
+    const value = isObject(attr) ? attr['value'] : undefined;
+    return isObject(value) ? value['stringValue'] ?? value['string_value'] : undefined;
+  };
+  const id = text('session.id') ?? (signal === 'logs' ? text('session_id') : undefined);
+  return typeof id === 'string' && SESSION_FILE_ID_RE.test(id) ? id : undefined;
+}
+
+/**
+ * `obj` with its list under `keys` narrowed to the children `child` keeps; a container with no children stays with
+ * `fallback` alone, one whose children all go elsewhere is left out.
+ */
+function narrow(obj: JsonObject, keys: string[], child: (v: unknown) => unknown, session: string, fallback: string): JsonObject | undefined {
+  const key = keys.find((k) => Array.isArray(obj[k]));
+  const items = key ? (obj[key] as unknown[]) : [];
+  if (!key || items.length === 0) return session === fallback ? obj : undefined;
+  const kept = items.map(child).filter((v) => v !== undefined);
+  return kept.length ? { ...obj, [key]: kept } : undefined;
+}
+
+/** The part of an export that is `session`'s: a unit naming no valid session belongs to `fallback`. */
+function sessionPart(top: JsonObject, signal: 'logs' | 'metrics' | 'traces', session: string, fallback: string): JsonObject | undefined {
+  const [resources, scopes, units] = SIGNAL_LEVELS[signal];
+  const owns = (unit: unknown) => (recordSession(unit, signal) ?? fallback) === session;
+  const fallbackOnly = (v: unknown) => (session === fallback ? v : undefined);
+  const unit = (u: unknown): unknown => {
+    if (signal !== 'metrics') return owns(u) ? u : undefined;
+    const kind = isObject(u) ? METRIC_KINDS.find((k) => isObject(u[k])) : undefined;
+    if (!kind) return fallbackOnly(u);
+    const metric = u as JsonObject;
+    const points = narrow(metric[kind] as JsonObject, ['dataPoints', 'data_points'], (p) => (owns(p) ? p : undefined), session, fallback);
+    return points ? { ...metric, [kind]: points } : undefined;
+  };
+  const scope = (s: unknown) => (isObject(s) ? narrow(s, units, unit, session, fallback) : fallbackOnly(s));
+  const resource = (r: unknown) => (isObject(r) ? narrow(r, scopes, scope, session, fallback) : fallbackOnly(r));
+  return narrow(top, resources, resource, session, fallback);
+}
+
+/** Every session the records and data points of an export name, in their order. */
+function namedSessions(top: JsonObject, signal: 'logs' | 'metrics' | 'traces', fallback: string): string[] {
+  const [resources, scopes, units] = SIGNAL_LEVELS[signal];
+  const found = new Set<string>();
+  const listOf = (obj: unknown, keys: string[]): unknown[] => {
+    if (!isObject(obj)) return [];
+    const key = keys.find((k) => Array.isArray(obj[k]));
+    return key ? (obj[key] as unknown[]) : [];
+  };
+  for (const r of listOf(top, resources)) {
+    for (const s of listOf(r, scopes)) {
+      for (const u of listOf(s, units)) {
+        if (signal !== 'metrics') {
+          found.add(recordSession(u, signal) ?? fallback);
+          continue;
+        }
+        const kind = isObject(u) ? METRIC_KINDS.find((k) => isObject(u[k])) : undefined;
+        for (const p of kind ? listOf((u as JsonObject)[kind], ['dataPoints', 'data_points']) : []) found.add(recordSession(p, signal) ?? fallback);
+      }
+    }
+  }
+  return [...found];
+}
+
+/**
+ * The lines of a masked export, each with the session whose file it is appended to. An export whose records name one
+ * session goes whole to that session, and to `fallback` (the first UUID v4 of its text) only when no record names one.
+ * An export naming more is divided: each named session gets its records, and `fallback` also gets whatever names no
+ * session (a record, a metric of no known kind, a container with no records) whenever that part holds anything.
+ */
+function sessionLines(masked: unknown, signal: 'logs' | 'metrics' | 'traces', fallback: string): Array<[string, string]> {
+  const named = isObject(masked) ? namedSessions(masked, signal, fallback) : [];
+  if (named.length <= 1) return [[named[0] ?? fallback, JSON.stringify(masked)]];
+  const sessions = named.includes(fallback) ? named : [...named, fallback];
+  return sessions.flatMap((session) => {
+    const part = sessionPart(masked as JsonObject, signal, session, fallback);
+    return part ? [[session, JSON.stringify(part)] as [string, string]] : [];
+  });
 }
 
 function sendError(res: ServerResponse, status: number, type: string, message: string): true {
@@ -181,7 +280,10 @@ class SpoolIntake implements OtlpIntake {
     return this.handleOtlpBinary(ctx.requestBody, res, signal);
   }
 
-  /** `application/json` OTLP: parsed, masked, and NDJSON-spooled into the signal's `*Json` stream. */
+  /**
+   * `application/json` OTLP: parsed, masked, and NDJSON-spooled into the signal's `*Json` stream, to the file of the
+   * first session id in its text, or divided by the session each record names when `splitJsonBySession` is set.
+   */
   private async handleOtlpJson(
     body: Buffer,
     res: ServerResponse,
@@ -207,8 +309,10 @@ class SpoolIntake implements OtlpIntake {
     try {
       const parsed = JSON.parse(text);
       const masked = maskOtlpJson(parsed);
-      const line = JSON.stringify(masked);
-      await appendSpool(sessionId, OTEL_JSON_STREAM_BY_SIGNAL[signal], line + '\n');
+      const lines = this.parts.splitJsonBySession ? sessionLines(masked, signal, sessionId) : [[sessionId, JSON.stringify(masked)]];
+      for (const [lineSession, line] of lines) {
+        await appendSpool(lineSession, OTEL_JSON_STREAM_BY_SIGNAL[signal], line + '\n');
+      }
     } catch (err) {
       // Masking is the guarantee this path exists for: a parse/mask/spool failure drops
       // the record (logged) rather than falling through to spool the original bytes

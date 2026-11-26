@@ -298,6 +298,32 @@ describe('sweepToFolder', () => {
     expect(folderSnapshot()).toEqual(before);
   });
 
+  it('a move cut after its marker of a session excluded meanwhile → the folder at the marker\'s lengths, the spool and the marker gone', async () => {
+    await writeSession('x2', { hooks: EVENTS('x2'), logs: true });
+    past();
+    const m = await modules();
+    await m.sweepToFolder();
+    const before = folderSnapshot();
+
+    vi.setSystemTime(start);
+    await writeSession('x2', { hooks: [{ type: 'agent.prompt.submit', session_id: 'x2', event_id: 'e7' }], logs: true });
+    past();
+    beforeFsCall = (call) => {
+      if (call.fn === 'appendFile' && call.path.endsWith('x2.otel_logs.jsonl')) throw new Error('injected');
+    };
+    await m.sweepToFolder();
+    expect(existsSync(join(folderDir(), 'x2.moving'))).toBe(true);
+    expect(folderText('x2.hooks.jsonl')).not.toBe(before['x2.hooks.jsonl']);
+
+    beforeFsCall = undefined;
+    await m.markSessionExcluded('x2');
+    await m.sweepToFolder();
+
+    expect(folderSnapshot()).toEqual(before);
+    expect(spoolFilesOf('x2')).toEqual([]);
+    expect(existsSync(join(folderDir(), 'x2.moving'))).toBe(false);
+  });
+
   it('the grace decides: an ended session after 15 minutes, another after 60 quiet minutes', async () => {
     const m = await modules();
     await writeSession('ended', { hooks: EVENTS('ended') });

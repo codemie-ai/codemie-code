@@ -31,6 +31,8 @@ class LocalAnalyticsInterceptor implements ProxyInterceptor {
     },
     // The local mode stamps nothing, so a stamp loss an earlier CLI's hook reports is answered and written nowhere.
     recordStampLoss: async () => undefined,
+    // One export of a process that changed its session id holds records of both sessions; each goes to its own file.
+    splitJsonBySession: true,
   });
 
   async onProxyStart(): Promise<void> {

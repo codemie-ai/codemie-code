@@ -634,6 +634,55 @@ describe('runSync', () => {
       }
     });
 
+    it('the local export source whose OTLP files fail to build delivers the report, warns in its ok line and leaves the marker; the next run delivers both and moves it', async () => {
+      const OTLP: SyncReport = { fileName: 'codemie-analytics-jane-2026-10-29.otlp.jsonl.gz', bytes: Buffer.from('otlp'), contentType: 'application/gzip' };
+      const lastSent = new Date(NOW.getTime() - 10 * DAY_MS);
+      let marker = lastSent;
+      let broken = true;
+      const builtFrom: Date[] = [];
+      const delivered: SyncReport[][] = [];
+      const folder = {
+        build: async (input: { window: { from: Date } }) => {
+          builtFrom.push(input.window.from);
+          if (broken) throw new Error('line above the cap in s1.hooks.jsonl');
+          return [OTLP];
+        },
+      };
+      const { deps, logged } = makeDeps({
+        exportSource: new LocalExportSource(folder, { build: async () => [REPORT] }),
+        readMarker: async () => marker,
+        deliver: async (_target, _settings, _email, reports) => {
+          delivered.push([...reports]);
+        },
+        writeMarker: async (_target, at) => {
+          marker = at;
+        },
+      });
+
+      expect(await runSync(deps)).toBe(0);
+      expect(delivered).toEqual([[REPORT]]);
+      expect(logged).toEqual([
+        `${NOW.toISOString()} ok sent ${REPORT.fileName} ${REPORT.bytes.length} (warning: OTLP files not built, the marker stays and the next run tries them again: line above the cap in s1.hooks.jsonl) target=webhook`,
+      ]);
+      expect(marker).toBe(lastSent);
+
+      broken = false;
+      expect(await runSync(deps)).toBe(0);
+      expect(delivered[1]).toEqual([OTLP, REPORT]);
+      expect(builtFrom).toEqual([new Date(lastSent.getTime() - HOUR_MS), new Date(lastSent.getTime() - HOUR_MS)]);
+      expect(marker).toBe(NOW);
+    });
+
+    it('the local export source whose OTLP files fail to build and with no report fails export, the marker stays', async () => {
+      const writeMarker = vi.fn(async () => {});
+      const failing = { build: async () => { throw new Error('line above the cap in s1.hooks.jsonl'); } };
+      const { deps, logged } = makeDeps({ exportSource: new LocalExportSource(failing, { build: async () => null }), writeMarker });
+
+      expect(await runSync(deps)).toBe(1);
+      expect(logged).toEqual([`${NOW.toISOString()} fail export line above the cap in s1.hooks.jsonl target=webhook`]);
+      expect(writeMarker).not.toHaveBeenCalled();
+    });
+
     it('edge: a gzip above 70,000,000 bytes fails export naming its size and the cap, and the marker stays', async () => {
       const writeMarker = vi.fn(async () => {});
       const fetchImpl = vi.fn();

@@ -13,7 +13,8 @@ import { OtlpFolderSource } from '../../analytics/sync/otlp-file-builder.js';
 import { includeExternalFor } from '../../analytics/sync/policy.js';
 import { ReportSource } from '../../analytics/sync/report-builder.js';
 import { createRealStatusDeps } from '../../analytics/sync/status.js';
-import type { ExportSource, SyncReport, SyncSettings } from '../../analytics/sync/types.js';
+import { errorMessage } from '../../analytics/sync/redact.js';
+import type { ExportSource, SyncFiles, SyncReport, SyncSettings } from '../../analytics/sync/types.js';
 import { DEFAULT_DAEMON_PORT } from '../../proxy/connect-orchestrator.js';
 import { isDaemonAlive, readState, stopDaemon, type DaemonState } from '../../proxy/daemon-manager.js';
 import { DAEMON_LOCK_COMMAND_BUDGET_MS, withDaemonLock } from '../../proxy/daemon-lock.js';
@@ -63,7 +64,8 @@ async function teardown(removeInstall: () => Promise<void>): Promise<void> {
 
 /**
  * The files of a local machine's run: the OTLP files of the analytics folder first, the JSON report last, both built
- * for the run's input; `null` when neither has anything.
+ * for the run's input; `null` when neither has anything. When the folder's build throws, the report goes alone with a
+ * warning that names the failure and keeps the run's marker; with no report the folder's error is the run's.
  */
 export class LocalExportSource implements ExportSource {
   constructor(
@@ -71,8 +73,22 @@ export class LocalExportSource implements ExportSource {
     private readonly report: ExportSource = new ReportSource()
   ) {}
 
-  async build(input: Parameters<ExportSource['build']>[0]): Promise<SyncReport[] | null> {
-    const files = [...((await this.folder.build(input)) ?? []), ...((await this.report.build(input)) ?? [])];
+  async build(input: Parameters<ExportSource['build']>[0]): Promise<SyncFiles | null> {
+    let folderFiles: SyncReport[] = [];
+    let folderError: unknown;
+    try {
+      folderFiles = (await this.folder.build(input)) ?? [];
+    } catch (err) {
+      folderError = err;
+    }
+    const reportFiles = (await this.report.build(input)) ?? [];
+    if (folderError !== undefined) {
+      if (reportFiles.length === 0) throw folderError;
+      return Object.assign([...reportFiles], {
+        warning: `OTLP files not built, the marker stays and the next run tries them again: ${errorMessage(folderError)}`,
+      });
+    }
+    const files = [...folderFiles, ...reportFiles];
     return files.length === 0 ? null : files;
   }
 }
