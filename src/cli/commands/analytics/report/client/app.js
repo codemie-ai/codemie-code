@@ -19,7 +19,7 @@
 
   // ---- palette ------------------------------------------------------------
   var PALETTE = ['#7C5CFC', '#2297F6', '#F5A534', '#06B6D4', '#259F4C', '#F9303C', '#C084FC', '#E879A6'];
-  var AGENT_COLORS = { claude: '#7C5CFC', 'claude-acp': '#9D7BFF', 'claude-desktop': '#B79DFF', gemini: '#F5A534', 'gemini-acp': '#F8C27A', codex: '#06B6D4', 'codemie-codex': '#06B6D4', 'codex-acp': '#38D6EC', opencode: '#259F4C', 'opencode-acp': '#5BC97E', 'codemie-code': '#2297F6', 'copilot-cli': '#6E7681', pi: '#E879A6', omp: '#F9303C' };
+  var AGENT_COLORS = { claude: '#7C5CFC', 'claude-acp': '#9D7BFF', 'claude-desktop': '#B79DFF', gemini: '#F5A534', 'gemini-acp': '#F8C27A', codex: '#06B6D4', 'codemie-codex': '#06B6D4', 'codex-acp': '#38D6EC', opencode: '#259F4C', 'opencode-acp': '#5BC97E', 'codemie-code': '#2297F6', 'copilot-cli': '#6E7681', 'copilot-desktop': '#8B949E', pi: '#E879A6', omp: '#F9303C' };
   var seenAgentColor = {};
   var colorCursor = 0;
   function colorFor(agent) {
@@ -34,7 +34,7 @@
     claude: 'Claude Code', 'claude-acp': 'Claude Code ACP', 'claude-desktop': 'Claude Desktop',
     'codemie-code': 'CodeMie Code', codex: 'Codex CLI', 'codex-acp': 'Codex CLI ACP', 'codemie-codex': 'CodeMie Codex',
     gemini: 'Gemini CLI', 'gemini-acp': 'Gemini CLI ACP', opencode: 'OpenCode', 'opencode-acp': 'OpenCode ACP',
-    kimi: 'Kimi Code', 'kimi-acp': 'Kimi Code ACP', openwiki: 'OpenWiki', 'copilot-cli': 'GitHub Copilot CLI', pi: 'Pi', omp: 'Oh My Pi'
+    kimi: 'Kimi Code', 'kimi-acp': 'Kimi Code ACP', openwiki: 'OpenWiki', 'copilot-cli': 'GitHub Copilot CLI', 'copilot-desktop': 'GitHub Copilot Desktop', pi: 'Pi', omp: 'Oh My Pi'
   };
   var COMMANDS_NOT_RECORDED = { omp: true }; // omp persists no slash commands
   function labelFor(agent) { return AGENT_LABELS[agent] || agent; }

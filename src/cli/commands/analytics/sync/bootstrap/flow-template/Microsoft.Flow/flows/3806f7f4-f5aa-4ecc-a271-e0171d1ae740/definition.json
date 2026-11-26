@@ -1,0 +1,455 @@
+{
+  "name": "a2933a57-e3d6-4acc-9dfb-e3e848555536",
+  "id": "/providers/Microsoft.Flow/flows/a2933a57-e3d6-4acc-9dfb-e3e848555536",
+  "type": "Microsoft.Flow/flows",
+  "properties": {
+    "apiId": "/providers/Microsoft.PowerApps/apis/shared_logicflows",
+    "displayName": "CodeMie analytics delivery (webhook)",
+    "definition": {
+      "metadata": {},
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "contentVersion": "1.0.0.0",
+      "parameters": {
+        "$authentication": {
+          "defaultValue": {},
+          "type": "SecureObject"
+        },
+        "$connections": {
+          "defaultValue": {},
+          "type": "Object"
+        }
+      },
+      "triggers": {
+        "manual": {
+          "metadata": {},
+          "type": "Request",
+          "kind": "TeamsWebhook",
+          "inputs": {
+            "schema": {},
+            "triggerAuthenticationType": "All"
+          },
+          "runtimeConfiguration": {
+            "concurrency": {
+              "runs": 1
+            }
+          }
+        }
+      },
+      "actions": {
+        "Flow_config": {
+          "runAfter": {},
+          "type": "Compose",
+          "inputs": {
+            "siteUrl": "",
+            "folderPath": "",
+            "teamId": "",
+            "channelId": "",
+            "timeZone": "UTC",
+            "threadKeyPrefix": "analytics-thread",
+            "recentCount": 10
+          }
+        },
+        "Create_file": {
+          "runAfter": {
+            "Snapshot_file": [
+              "Succeeded"
+            ]
+          },
+          "type": "OpenApiConnection",
+          "inputs": {
+            "parameters": {
+              "dataset": "@outputs('Flow_config')?['siteUrl']",
+              "folderPath": "@outputs('Flow_config')?['folderPath']",
+              "name": "@outputs('Snapshot_file')?['name']",
+              "body": "@base64ToBinary(outputs('Snapshot_file')?['contentBytes'])"
+            },
+            "host": {
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+              "connectionName": "shared_sharepointonline-1",
+              "operationId": "CreateFile"
+            },
+            "authentication": "@parameters('$authentication')"
+          },
+          "runtimeConfiguration": {
+            "contentTransfer": {
+              "transferMode": "Chunked"
+            }
+          }
+        },
+        "Init_ThreadRootId": {
+          "runAfter": {
+            "Create_file": [
+              "Succeeded"
+            ]
+          },
+          "type": "InitializeVariable",
+          "inputs": {
+            "variables": [
+              {
+                "name": "ThreadRootId",
+                "type": "string",
+                "value": ""
+              }
+            ]
+          }
+        },
+        "Teams_delivery": {
+          "actions": {
+            "Channel_thread": {
+              "actions": {
+                "Thread_month_key": {
+                  "runAfter": {},
+                  "type": "Compose",
+                  "inputs": "@convertFromUtc(utcNow(), outputs('Flow_config')?['timeZone'], 'yyyy-MM')"
+                },
+                "Thread_month_label": {
+                  "runAfter": {
+                    "Thread_month_key": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Compose",
+                  "inputs": "@formatDateTime(concat(outputs('Thread_month_key'), '-01'), 'MMMM yyyy')"
+                },
+                "Thread_key": {
+                  "runAfter": {
+                    "Thread_month_label": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Compose",
+                  "inputs": "@concat(outputs('Flow_config')?['threadKeyPrefix'], '-', outputs('Thread_month_key'))"
+                },
+                "Snapshot_name": {
+                  "runAfter": {
+                    "Thread_key": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Compose",
+                  "inputs": "@outputs('Snapshot_file')?['name']"
+                },
+                "Snapshot_folder_url": {
+                  "runAfter": {
+                    "Snapshot_name": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Compose",
+                  "inputs": "@concat(outputs('Flow_config')?['siteUrl'], replace(substring(body('Create_file')?['Path'], 0, lastIndexOf(body('Create_file')?['Path'], '/')), ' ', '%20'))"
+                },
+                "Snapshot_file_url": {
+                  "runAfter": {
+                    "Snapshot_folder_url": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Compose",
+                  "inputs": "@concat(outputs('Snapshot_folder_url'), '/', uriComponent(body('Create_file')?['Name']))"
+                },
+                "Channel_messages": {
+                  "runAfter": {
+                    "Snapshot_file_url": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "OpenApiConnection",
+                  "inputs": {
+                    "parameters": {
+                      "groupId": "@outputs('Flow_config')?['teamId']",
+                      "channelId": "@outputs('Flow_config')?['channelId']"
+                    },
+                    "host": {
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_teams",
+                      "connectionName": "shared_teams",
+                      "operationId": "GetMessagesFromChannel"
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  }
+                },
+                "Existing_thread": {
+                  "runAfter": {
+                    "Channel_messages": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Query",
+                  "inputs": {
+                    "from": "@coalesce(body('Channel_messages')?['value'], json('[]'))",
+                    "where": "@and(equals(item()?['deletedDateTime'], null), contains(string(coalesce(item()?['attachments'], json('[]'))), outputs('Thread_key')))"
+                  }
+                },
+                "Prev_card_body": {
+                  "runAfter": {
+                    "Existing_thread": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Compose",
+                  "inputs": "@coalesce(json(coalesce(first(body('Existing_thread'))?['attachments']?[0]?['content'], '{}'))?['body'], json('[]'))"
+                },
+                "Prev_count_block": {
+                  "runAfter": {
+                    "Prev_card_body": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Query",
+                  "inputs": {
+                    "from": "@outputs('Prev_card_body')",
+                    "where": "@equals(item()?['id'], 'count')"
+                  }
+                },
+                "Prev_recent_block": {
+                  "runAfter": {
+                    "Prev_count_block": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Query",
+                  "inputs": {
+                    "from": "@outputs('Prev_card_body')",
+                    "where": "@equals(item()?['id'], 'recent')"
+                  }
+                },
+                "Snapshot_count": {
+                  "runAfter": {
+                    "Prev_recent_block": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Compose",
+                  "inputs": "@add(int(last(split(coalesce(first(body('Prev_count_block'))?['text'], '0'), ' '))), 1)"
+                },
+                "Recent_facts": {
+                  "runAfter": {
+                    "Snapshot_count": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Compose",
+                  "inputs": "@take(union(createArray(setProperty(setProperty(json('{}'), 'title', convertFromUtc(utcNow(), outputs('Flow_config')?['timeZone'], 'dd MMM HH:mm')), 'value', outputs('Snapshot_name'))), coalesce(first(body('Prev_recent_block'))?['facts'], json('[]'))), outputs('Flow_config')?['recentCount'])"
+                },
+                "Card_json": {
+                  "runAfter": {
+                    "Recent_facts": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "Compose",
+                  "inputs": {
+                    "type": "AdaptiveCard",
+                    "version": "1.4",
+                    "msteams": {
+                      "width": "Full"
+                    },
+                    "body": [
+                      {
+                        "type": "TextBlock",
+                        "size": "Medium",
+                        "weight": "Bolder",
+                        "wrap": true,
+                        "text": "📊 CodeMie analytics snapshots · @{outputs('Thread_month_label')}"
+                      },
+                      {
+                        "type": "FactSet",
+                        "id": "summary",
+                        "facts": [
+                          {
+                            "title": "Latest",
+                            "value": "@{outputs('Snapshot_name')}"
+                          },
+                          {
+                            "title": "Landed",
+                            "value": "@{convertFromUtc(utcNow(), outputs('Flow_config')?['timeZone'], 'dd MMM yyyy, HH:mm')} (@{outputs('Flow_config')?['timeZone']})"
+                          },
+                          {
+                            "title": "SharePoint",
+                            "value": "[Open folder](@{outputs('Snapshot_folder_url')})"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "TextBlock",
+                        "id": "count",
+                        "weight": "Bolder",
+                        "wrap": true,
+                        "text": "Snapshots this month: @{outputs('Snapshot_count')}"
+                      },
+                      {
+                        "type": "TextBlock",
+                        "text": "Recent",
+                        "weight": "Bolder",
+                        "spacing": "Medium",
+                        "wrap": true
+                      },
+                      {
+                        "type": "FactSet",
+                        "id": "recent",
+                        "spacing": "Small",
+                        "facts": "@outputs('Recent_facts')"
+                      },
+                      {
+                        "type": "TextBlock",
+                        "isSubtle": true,
+                        "size": "Small",
+                        "wrap": true,
+                        "spacing": "Medium",
+                        "text": "Card is updated each time a snapshot lands; every snapshot is logged as a reply. key @{outputs('Thread_key')}"
+                      }
+                    ]
+                  }
+                },
+                "If_no_thread_for_month": {
+                  "actions": {
+                    "Post_thread_card": {
+                      "type": "OpenApiConnection",
+                      "inputs": {
+                        "parameters": {
+                          "poster": "User",
+                          "location": "Channel",
+                          "body/recipient/groupId": "@outputs('Flow_config')?['teamId']",
+                          "body/recipient/channelId": "@outputs('Flow_config')?['channelId']",
+                          "body/messageBody": "@{string(outputs('Card_json'))}"
+                        },
+                        "host": {
+                          "apiId": "/providers/Microsoft.PowerApps/apis/shared_teams",
+                          "connectionName": "shared_teams",
+                          "operationId": "PostCardToConversation"
+                        },
+                        "authentication": "@parameters('$authentication')"
+                      }
+                    },
+                    "Set_ThreadRootId_new": {
+                      "runAfter": {
+                        "Post_thread_card": [
+                          "Succeeded"
+                        ]
+                      },
+                      "type": "SetVariable",
+                      "inputs": {
+                        "name": "ThreadRootId",
+                        "value": "@{body('Post_thread_card')?['id']}"
+                      }
+                    }
+                  },
+                  "runAfter": {
+                    "Card_json": [
+                      "Succeeded"
+                    ]
+                  },
+                  "else": {
+                    "actions": {
+                      "Update_thread_card": {
+                        "type": "OpenApiConnection",
+                        "inputs": {
+                          "parameters": {
+                            "poster": "User",
+                            "location": "Channel",
+                            "body/messageId": "@{first(body('Existing_thread'))?['id']}",
+                            "body/recipient/groupId": "@outputs('Flow_config')?['teamId']",
+                            "body/recipient/channelId": "@outputs('Flow_config')?['channelId']",
+                            "body/messageBody": "@{string(outputs('Card_json'))}"
+                          },
+                          "host": {
+                            "apiId": "/providers/Microsoft.PowerApps/apis/shared_teams",
+                            "connectionName": "shared_teams",
+                            "operationId": "UpdateCardInConversation"
+                          },
+                          "authentication": "@parameters('$authentication')"
+                        }
+                      },
+                      "Set_ThreadRootId_existing": {
+                        "runAfter": {
+                          "Update_thread_card": [
+                            "Succeeded"
+                          ]
+                        },
+                        "type": "SetVariable",
+                        "inputs": {
+                          "name": "ThreadRootId",
+                          "value": "@{first(body('Existing_thread'))?['id']}"
+                        }
+                      }
+                    }
+                  },
+                  "expression": {
+                    "equals": [
+                      "@length(body('Existing_thread'))",
+                      0
+                    ]
+                  },
+                  "type": "If"
+                },
+                "Reply_with_snapshot": {
+                  "runAfter": {
+                    "If_no_thread_for_month": [
+                      "Succeeded"
+                    ]
+                  },
+                  "type": "OpenApiConnection",
+                  "inputs": {
+                    "parameters": {
+                      "poster": "User",
+                      "location": "Channel",
+                      "body/parentMessageId": "@variables('ThreadRootId')",
+                      "body/recipient/groupId": "@outputs('Flow_config')?['teamId']",
+                      "body/recipient/channelId": "@outputs('Flow_config')?['channelId']",
+                      "body/messageBody": "<p class=\"editor-paragraph\">📥 @{outputs('Snapshot_name')} landed in SharePoint at @{convertFromUtc(utcNow(), outputs('Flow_config')?['timeZone'], 'dd MMM yyyy, HH:mm')} · <a href=\"@{outputs('Snapshot_file_url')}\" class=\"editor-link\">open file</a> · snapshot #@{outputs('Snapshot_count')} this month</p>"
+                    },
+                    "host": {
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_teams",
+                      "connectionName": "shared_teams",
+                      "operationId": "ReplyWithMessageToConversation"
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  }
+                }
+              },
+              "type": "Scope"
+            }
+          },
+          "runAfter": {
+            "Init_ThreadRootId": [
+              "Succeeded"
+            ]
+          },
+          "type": "Scope"
+        },
+        "Snapshot_file": {
+          "runAfter": {
+            "Flow_config": [
+              "Succeeded"
+            ]
+          },
+          "type": "Compose",
+          "inputs": {
+            "name": "@{replace(replace(trim(coalesce(coalesce(triggerBody()?['attachments']?[0], triggerBody())?['name'], coalesce(triggerBody()?['attachments']?[0], triggerBody())?['fileName'], '')), '/', '_'), '\\', '_')}",
+            "contentBytes": "@{coalesce(coalesce(triggerBody()?['attachments']?[0], triggerBody())?['contentBytes'], '')}"
+          }
+        }
+      },
+      "outputs": {}
+    },
+    "connectionReferences": {
+      "shared_sharepointonline-1": {
+        "connectionName": "shared-sharepointonl-bdaffdf2-674e-4dd2-89d8-46b8efb728c6",
+        "source": "Embedded",
+        "id": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline",
+        "tier": "NotSpecified",
+        "apiName": "sharepointonline",
+        "isProcessSimpleApiReferenceConversionAlreadyDone": false
+      },
+      "shared_teams": {
+        "connectionName": "shared-teams-ca3f335a221943a29bcb1dcce93fd929",
+        "source": "Embedded",
+        "id": "/providers/Microsoft.PowerApps/apis/shared_teams",
+        "tier": "NotSpecified",
+        "apiName": "teams",
+        "isProcessSimpleApiReferenceConversionAlreadyDone": false
+      }
+    },
+    "flowFailureAlertSubscribed": false,
+    "isManaged": false
+  }
+}

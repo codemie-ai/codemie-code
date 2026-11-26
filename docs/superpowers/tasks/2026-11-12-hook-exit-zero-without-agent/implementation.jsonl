@@ -1,0 +1,2 @@
+{"task_id":"1","status":"done","commit":"8fdfabe0","test_command":"vitest run src/cli/commands/__tests__/hook.not-managed.test.ts"}
+{"task_id":"2","status":"done","commit":"b4239133","test_command":"vitest run tests/integration/hook-stdout.test.ts src/cli/commands/__tests__/hook.lock.test.ts src/cli/commands/__tests__/hook.not-managed.test.ts"}

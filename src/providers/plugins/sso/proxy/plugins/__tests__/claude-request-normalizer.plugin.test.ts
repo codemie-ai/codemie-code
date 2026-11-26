@@ -117,24 +117,8 @@ describe('ClaudeRequestNormalizerPlugin', () => {
       expect(body.thinking).toBeUndefined();
     });
 
-    it('throws for codemie-code agent', async () => {
-      await expect(plugin.createInterceptor(createPluginContext('codemie-code')))
-        .rejects.toThrow('Plugin disabled for agent: codemie-code');
-    });
-
-    it('throws for codemie-opencode agent', async () => {
-      await expect(plugin.createInterceptor(createPluginContext('codemie-opencode')))
-        .rejects.toThrow('Plugin disabled for agent: codemie-opencode');
-    });
-
-    it('throws for undefined clientType', async () => {
-      await expect(plugin.createInterceptor(createPluginContext(undefined)))
-        .rejects.toThrow('Plugin disabled');
-    });
-
-    it('throws for empty string clientType', async () => {
-      await expect(plugin.createInterceptor(createPluginContext('')))
-        .rejects.toThrow('Plugin disabled');
+    it('declares exactly these clients, the VS Code Claude Code extension among them', () => {
+      expect(plugin.clients).toEqual(['codemie-claude', 'codemie-copilot', 'claude-desktop', 'vscode-claude-code']);
     });
   });
 
@@ -862,7 +846,7 @@ describe('ClaudeRequestNormalizerPlugin', () => {
       const interceptor = await plugin.createInterceptor(context);
 
       await interceptor.onRequest!(createProxyContext({ model: 'claude-opus-5', messages: [] }));
-      expect(fetchCodeMieLlmModels).toHaveBeenCalledWith('https://api.anthropic.com', { auth: 'stale-cookie' });
+      expect(fetchCodeMieLlmModels).toHaveBeenCalledWith('https://api.anthropic.com', { auth: 'stale-cookie' }, undefined);
 
       // A browser re-login completed; advance past both the credential-refresh throttle (5s)
       // and the model-cache TTL (10min) so the next request's loadModels() call re-fetches.
@@ -873,7 +857,7 @@ describe('ClaudeRequestNormalizerPlugin', () => {
       await vi.advanceTimersByTimeAsync(11 * 60 * 1000);
       await interceptor.onRequest!(createProxyContext({ model: 'claude-opus-5', messages: [] }));
 
-      expect(fetchCodeMieLlmModels).toHaveBeenLastCalledWith('https://api.anthropic.com', { auth: 'fresh-cookie' });
+      expect(fetchCodeMieLlmModels).toHaveBeenLastCalledWith('https://api.anthropic.com', { auth: 'fresh-cookie' }, undefined);
       vi.useRealTimers();
     });
 
@@ -897,7 +881,7 @@ describe('ClaudeRequestNormalizerPlugin', () => {
 
       await interceptor.onRequest!(createProxyContext({ model: 'claude-opus-5', messages: [] }));
 
-      expect(fetchCodeMieLlmModels).toHaveBeenCalledWith('https://api.anthropic.com', 'jwt-token');
+      expect(fetchCodeMieLlmModels).toHaveBeenCalledWith('https://api.anthropic.com', 'jwt-token', undefined);
     });
   });
 });

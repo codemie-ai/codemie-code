@@ -2,15 +2,17 @@
  * Analytics command - display aggregated metrics from sessions
  */
 
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { AnalyticsAggregator } from './aggregator.js';
 import { AnalyticsFormatter } from './formatter.js';
+import { loadAnalytics } from './analytics-core.js';
 import type { AnalyticsOptions, AnalyticsFilter, OtelCommandOptions, RootAnalytics } from './types.js';
 import type { CostSummary, SessionCostIndex } from './cost/types.js';
+import type { InstallOptions } from './sync/types.js';
+import type { BootstrapOptions } from './sync/bootstrap/types.js';
 import type { ExportFormat } from './report/output-target.js';
 import { logger } from '../../../utils/logger.js';
 import { parseDateOnly } from '@/utils/date-filter.js';
@@ -18,21 +20,79 @@ import { SessionsSource } from './sources/sessions-source.js';
 import { OtelSource } from './sources/otel-source.js';
 import type { AnalyticsSource } from './sources/types.js';
 import { ConfigLoader } from '../../../utils/config.js';
+import { parseDuration } from './date-args.js';
+import { EMAIL_REGEX } from './sync/identity.js';
+import { includeExternalFor } from './sync/policy.js';
+import type { IncludeExternalPolicy } from './sync/types.js';
+import { ConfigurationError } from '../../../utils/errors.js';
+import {
+  DEPRECATION_REMOVE_ON,
+  deprecate,
+  registerDeprecation,
+  removedOption,
+  type DeprecationEntry,
+} from '../../deprecation.js';
+
+const BARE_INCLUDE_EXTERNAL = {
+  kind: 'deprecated',
+  old: 'codemie analytics --include-external',
+  replacement: 'codemie analytics --include-external always',
+  bareOnly: true,
+} as const satisfies DeprecationEntry;
+
+const REMOVED_REPORT_FLAGS: ReadonlyArray<{ flags: string; entry: DeprecationEntry }> = [
+  { flags: '--report', entry: { kind: 'removed', old: 'codemie analytics --report', replacement: 'codemie analytics --export', dropOn: DEPRECATION_REMOVE_ON } },
+  { flags: '--report-format <format>', entry: { kind: 'removed', old: 'codemie analytics --report-format', replacement: 'codemie analytics --export <format>', dropOn: DEPRECATION_REMOVE_ON } },
+  { flags: '--report-output <path>', entry: { kind: 'removed', old: 'codemie analytics --report-output', replacement: 'codemie analytics -o <path>', dropOn: DEPRECATION_REMOVE_ON } },
+];
+
+const INCLUDE_EXTERNAL_POLICIES: readonly IncludeExternalPolicy[] = ['windows', 'always', 'never'];
+const INCLUDE_EXTERNAL_ACCEPTED = 'windows, always, or never';
 
 /**
- * Date on which the deprecated analytics report flags (`--report`, `--report-format`,
- * `--report-output`) will be removed.
+ * Resolve the raw `--include-external [policy]` value (undefined: flag absent; true: bare form).
+ * Returns the include flag, or `null` after reporting an invalid value (exitCode 1).
  */
-const LEGACY_FLAGS_REMOVAL_DATE = 'November 1, 2026';
+function resolveIncludeExternal(raw: string | true | undefined, json: boolean): boolean | undefined | null {
+  if (raw === undefined) return undefined;
+  if (raw === true) {
+    deprecate(BARE_INCLUDE_EXTERNAL, { json });
+    return includeExternalFor('always', process.platform);
+  }
+  if ((INCLUDE_EXTERNAL_POLICIES as readonly string[]).includes(raw)) {
+    return includeExternalFor(raw as IncludeExternalPolicy, process.platform);
+  }
+  const subcommand = raw === 'otel' || raw === 'sync';
+  process.stderr.write(
+    subcommand
+      ? `Error: --include-external takes a policy (${INCLUDE_EXTERNAL_ACCEPTED}), not the subcommand "${raw}" — to run "${raw}", drop --include-external or give it a policy first (e.g. --include-external always ${raw})\n`
+      : `Error: invalid --include-external value "${raw}" — use ${INCLUDE_EXTERNAL_ACCEPTED}\n`
+  );
+  process.exitCode = 1;
+  return null;
+}
 
 export function createAnalyticsCommand(): Command {
   const command = new Command('analytics')
-    .description('Display aggregated metrics and analytics from sessions');
+    .description('Display aggregated metrics and analytics from sessions')
+    // Required so a descendant subcommand can redeclare an option name an ancestor also
+    // defines with different semantics without the ancestor swallowing it: each level only
+    // consumes its own options up to the first non-option argument, then hands the rest
+    // down untouched.
+    .enablePositionalOptions();
 
   // Default source: local CodeMie-tracked sessions + native agent logs.
   applyCommonOptions(command)
-    .option('--include-external', 'Also count native agent sessions CodeMie did not launch (e.g. plain `claude`)')
-    .action((options: AnalyticsOptions) => runAnalytics(options, new SessionsSource()));
+    .option(
+      '--include-external [policy]',
+      `Also count native agent sessions CodeMie did not launch (e.g. plain \`claude\`): ${INCLUDE_EXTERNAL_ACCEPTED}`
+    )
+    .action((options: AnalyticsOptions & { includeExternal?: string | true }) => {
+      const includeExternal = resolveIncludeExternal(options.includeExternal, false);
+      if (includeExternal === null) return;
+      return runAnalytics({ ...options, includeExternal }, new SessionsSource());
+    });
+  registerDeprecation(BARE_INCLUDE_EXTERNAL);
 
   // `codemie analytics otel --file <path>` — OTEL file source.
   const otel = new Command('otel')
@@ -49,7 +109,147 @@ export function createAnalyticsCommand(): Command {
     });
   command.addCommand(otel);
 
+  // `codemie analytics sync` — a daily per-user OS job that sends this machine's analytics
+  // reports one way to the team's webhook and/or a team git repository. A pure group (no
+  // action of its own, no `--from/--to/--last`): everything lives in its four subcommands
+  // below.
+  command.addCommand(createSyncCommand());
+
   return command;
+}
+
+/**
+ * `codemie analytics sync` — the group description names the one-way delivery; each
+ * subcommand's own description says who runs it and what it changes (story AC, "Command
+ * surface"). `.enablePositionalOptions()` mirrors the parent command so a subcommand's own
+ * option (e.g. `install --include-external`) is never swallowed by an identically-named
+ * option on `analytics` or on `sync` itself (D14). This only holds when every ancestor is
+ * positional too: the root program in `src/cli/program.ts` must keep
+ * `.enablePositionalOptions()`, or `analytics` receives the options without `sync install`
+ * in front and takes `--include-external` as its own boolean.
+ *
+ * Every subcommand takes options only, so each sets `.allowExcessArguments(false)`: a stray
+ * word (such as an option value left behind by a mis-parse) fails the command instead of
+ * being silently ignored.
+ */
+function createSyncCommand(): Command {
+  const sync = new Command('sync')
+    .description(
+      "Send this machine's analytics reports one way to the team's webhook and/or a team git repository on a daily schedule"
+    )
+    .enablePositionalOptions();
+
+  sync.addCommand(createSyncBootstrapCommand());
+  sync.addCommand(createSyncInstallCommand());
+  sync.addCommand(createSyncStatusCommand());
+  sync.addCommand(createSyncRunCommand());
+  sync.addCommand(createSyncUninstallCommand());
+
+  return sync;
+}
+
+/** `codemie analytics sync bootstrap` — the team lead's one-time setup: choose where the
+ * team's reports go (a Teams webhook, a git repository, or both), connect a Teams channel and
+ * SharePoint folder to a Power Automate flow for the webhook, test-push to the repository for
+ * git, then print the `sync install` command for the team's developers. Installs nothing on
+ * the lead's own machine. With
+ * `--webhook` and/or `--git-repo`, runs non-interactively (no prompts, no TTY required); without it and with a
+ * TTY, runs the guided wizard. Dynamic-imports the runner so loading `codemie analytics`
+ * never pulls in the guided wizard's prompter or the webhook client. */
+function createSyncBootstrapCommand(): Command {
+  return new Command('bootstrap')
+    .allowExcessArguments(false)
+    .description(
+      'Lead: choose where your team delivers reports (Teams webhook, git repository, or both), set it up, then print the install command for your team (installs nothing on this machine)'
+    )
+    .option(
+      '--webhook <url>',
+      "The flow's https trigger URL: runs non-interactively instead of the guided wizard, testing delivery before printing the install command"
+    )
+    .option(
+      '--webhook-b64 <value>',
+      'The same trigger URL encoded as base64url, for shells that mangle a raw URL (use instead of --webhook)'
+    )
+    .option('--git-repo <url>', 'URL of a team git repository to push the daily report into (the other possible delivery target; runs non-interactively, test-pushing before printing the install command)')
+    .option('--git-branch <name>', 'Branch to push to (default: the repository\'s default branch)')
+    .option('--git-path <dir>', 'Repo-relative directory the report is pushed under (default: the repository root)')
+    .option('--lookback-days <n>', 'Fixed session window for the printed install command, 1-30 (default: follows the CLI default)')
+    .option('--include-external <policy>', 'Native agent sessions CodeMie did not launch: windows, always, or never (default: never)')
+    .action(async (options: BootstrapOptions) => {
+      const { runBootstrap, createRealBootstrapDeps } = await import('./sync/bootstrap/run-bootstrap.js');
+      process.exitCode = await runBootstrap(options, createRealBootstrapDeps());
+    });
+}
+
+/** `codemie analytics sync install` — registers the daily OS job. Dynamic-imports the
+ * install runner so loading `codemie analytics` never pulls in the scheduler module. */
+function createSyncInstallCommand(): Command {
+  return new Command('install')
+    .allowExcessArguments(false)
+    .description('Developer: register the daily delivery job on this machine')
+    .option(
+      '--webhook <url>',
+      "The team's https webhook URL that receives the daily report (one of two possible delivery targets, alongside --git-repo; at least one is required)"
+    )
+    .option('--webhook-b64 <value>', 'The webhook URL encoded as base64url, as printed by `sync bootstrap` (use instead of --webhook)')
+    .option('--git-repo <url>', 'URL of a team git repository to push the daily report into (the other possible delivery target)')
+    .option('--git-branch <name>', 'Branch to push to (default: the repository\'s default branch)')
+    .option('--git-path <dir>', 'Repo-relative directory the report is pushed under (default: the repository root)')
+    .option('--format <json>', "Report export format for every configured delivery target (default and only accepted value: json)")
+    .option('--at <HH:MM>', 'Daily run time, 24-hour local time (default: 03:00)')
+    .option('--lookback-days <n>', 'Session window looked back on each run, 1-30 (default: 7)')
+    .option('--include-external <policy>', 'Native agent sessions CodeMie did not launch: windows, always, or never (default: never)')
+    .option(
+      '--task-name <name>',
+      'Full name of the scheduler task, used as-is (default: com.epam.codemie.analytics-sync on macOS, codemie-analytics-sync on Linux, "CodeMie Analytics Sync" on Windows). No "/", "\\" or "..", no leading "-" or ".", at most 100 characters'
+    )
+    .option('--force', 'Overwrite an existing scheduler task with the --task-name name that this tool did not create')
+    .action(async (options: InstallOptions) => {
+      const { runInstall, createRealInstallDeps } = await import('./sync/install.js');
+      process.exitCode = await runInstall(options, createRealInstallDeps());
+    });
+}
+
+/** `codemie analytics sync status` — reports whether the job is installed and enabled, the
+ * current settings, and the outcome of the last run. */
+function createSyncStatusCommand(): Command {
+  return new Command('status')
+    .allowExcessArguments(false)
+    .description('Developer: show whether the delivery job is installed and its last outcome')
+    .action(async () => {
+      const { runStatus, createRealStatusDeps } = await import('./sync/status.js');
+      process.exitCode = await runStatus(createRealStatusDeps());
+    });
+}
+
+/** `codemie analytics sync run` — sends the pending analytics window to the webhook now.
+ * `--scheduled` is passed by the OS job itself (see `bin/codemie.js`/`scheduled-run.ts`) to
+ * skip the interactive startup checks; it is hidden from `--help` since developers invoke
+ * `run` without it. */
+function createSyncRunCommand(): Command {
+  return new Command('run')
+    .allowExcessArguments(false)
+    .description(
+      'Developer or the daily scheduled job: send the pending analytics report to the configured webhook and/or team git repository now'
+    )
+    .addOption(new Option('--scheduled').hideHelp())
+    .action(async () => {
+      const { runSync, realSyncDeps } = await import('./sync/run-sync.js');
+      process.exitCode = await runSync(realSyncDeps());
+    });
+}
+
+/** `codemie analytics sync uninstall` — removes the OS job and the settings holding the
+ * webhook and/or team git repository target. The last-sent marker(s), the run log and the
+ * git target's working copy are kept. */
+function createSyncUninstallCommand(): Command {
+  return new Command('uninstall')
+    .allowExcessArguments(false)
+    .description('Developer: remove the delivery job and its settings from this machine')
+    .action(async () => {
+      const { runUninstall, createRealUninstallDeps } = await import('./sync/uninstall.js');
+      process.exitCode = await runUninstall(createRealUninstallDeps());
+    });
 }
 
 /** Filter, report, export, and verbosity options shared by every analytics source. */
@@ -67,9 +267,9 @@ function applyCommonOptions(command: Command): Command {
     .option('-o, --output <path>', 'Output file or directory (default: ./codemie-analytics-YYYY-MM-DD.{ext})')
     .option('--open', 'Open the generated HTML report in the default browser')
     .option('--redact', 'Omit prompt text (session titles) and absolute paths from the exported report, for sharing outside this machine')
-    .option('--report', `Deprecated: use --export instead (removal planned for ${LEGACY_FLAGS_REMOVAL_DATE})`)
-    .option('--report-format <format>', `Deprecated: use --export [format] instead (removal planned for ${LEGACY_FLAGS_REMOVAL_DATE})`)
-    .option('--report-output <path>', `Deprecated: use -o/--output instead (removal planned for ${LEGACY_FLAGS_REMOVAL_DATE})`);
+    .addOption(removedOption(REMOVED_REPORT_FLAGS[0].entry, REMOVED_REPORT_FLAGS[0].flags))
+    .addOption(removedOption(REMOVED_REPORT_FLAGS[1].entry, REMOVED_REPORT_FLAGS[1].flags))
+    .addOption(removedOption(REMOVED_REPORT_FLAGS[2].entry, REMOVED_REPORT_FLAGS[2].flags));
 }
 
 /**
@@ -88,41 +288,10 @@ function keptCostSummary(summary: CostSummary, index: SessionCostIndex, analytic
 
 export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsSource): Promise<void> {
   try {
-    // Deprecated flags removed in 1144b247d, restored as aliases so existing scripts keep
-    // working. Each prints a warning pointing at its replacement; the new flag wins when both
-    // are set:
-    //   --report              -> bare --export (html)
-    //   --report-format <fmt> -> --export [format]
-    //   --report-output <p>   -> -o/--output <p>
-    //
-    // TODO: retire these aliases on LEGACY_FLAGS_REMOVAL_DATE — drop the three .option()
-    // registrations, this whole mapping block, and the report/reportFormat/reportOutput
-    // fields in types.ts.
-    let output = options.output;
-    if (options.reportOutput !== undefined) {
-      if (output === undefined) {
-        console.log(chalk.yellow(`\n! --report-output is deprecated; use -o/--output instead (will be removed on ${LEGACY_FLAGS_REMOVAL_DATE}).`));
-        output = options.reportOutput;
-      } else {
-        console.log(chalk.yellow('\n! --report-output is deprecated and ignored; -o/--output takes precedence.'));
-      }
-    }
-
-    let exportOpt = options.export;
-    if (options.reportFormat !== undefined) {
-      if (exportOpt === undefined) {
-        console.log(chalk.yellow(`\n! --report-format is deprecated; use --export [format] instead (will be removed on ${LEGACY_FLAGS_REMOVAL_DATE}).`));
-        exportOpt = options.reportFormat;
-      } else {
-        console.log(chalk.yellow('\n! --report-format is deprecated and ignored; --export takes precedence.'));
-      }
-    }
-    if (options.report) {
-      console.log(chalk.yellow(`\n! --report is deprecated; use --export instead (will be removed on ${LEGACY_FLAGS_REMOVAL_DATE}; html is the default format).`));
-      if (exportOpt === undefined) {
-        exportOpt = true;
-      }
-    }
+    // `--report*` are removed stubs: using one already failed (exitCode 1, naming the replacement).
+    if (usedRemovedReportFlag(options)) return;
+    const output = options.output;
+    const exportOpt = options.export;
 
     // --export [format] / --open / -o resolution — validated FIRST, before loading any
     // sessions, so an invalid format (csv included) fails closed even when the source would
@@ -148,40 +317,21 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
     }
 
     const filter = parseFilterOptions(options);
-    const { rawSessions, cost } = await source.load({
-      filter,
-      includeExternal: options.includeExternal
-    });
+    const loaded = await loadAnalytics(source, filter, options.includeExternal, !options.verbose);
 
-    if (rawSessions.length === 0) {
+    if (loaded.kind === 'empty-raw') {
       console.log(chalk.yellow('\nNo sessions found matching the specified criteria.'));
       console.log(chalk.dim('Run with different filters or check that metrics are being collected.\n'));
       return;
     }
 
-    // Cost computed BEFORE aggregation so zero-delta sessions that still carry real usage are
-    // retained instead of dropped as "empty". Authoritative from the source (OTEL) when present;
-    // otherwise always enriched from correlated native logs. Both branches populate the same
-    // shape, so `costResult` narrows without a throw or a non-null assertion.
-    let costResult: NonNullable<typeof cost>;
-    if (cost) {
-      costResult = cost;
-    } else {
-      const { enrichCosts, realDeps } = await import('./cost/cost-enricher.js');
-      costResult = await enrichCosts(rawSessions, realDeps);
-    }
-    const keepSessionIds = new Set(
-      [...costResult.index.values()].filter((c) => c.tokens.total > 0).map((c) => c.sessionId)
-    );
-
-    // Aggregate data (normalize models unless --verbose flag is set)
-    const analytics = AnalyticsAggregator.aggregate(rawSessions, !options.verbose, keepSessionIds);
-
-    if (analytics.totalSessions === 0) {
+    if (loaded.kind === 'empty-aggregate') {
       console.log(chalk.yellow('\nNo analytics data available.'));
       console.log(chalk.dim('Metrics collection may not have been enabled for these sessions.\n'));
       return;
     }
+
+    const { analytics, costResult } = loaded;
 
     // Display results
     const formatter = new AnalyticsFormatter(options.verbose);
@@ -212,7 +362,7 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
             type: 'input',
             name: 'email',
             message: 'Enter your email address:',
-            validate: (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()) || 'Please enter a valid email address',
+            validate: (v: string) => EMAIL_REGEX.test(v.trim()) || 'Please enter a valid email address',
           }]);
           userEmail = email.trim();
           await ConfigLoader.saveUserEmail(userEmail).catch(() => { /* non-fatal */ });
@@ -294,8 +444,14 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
   } catch (error) {
     logger.error('Analytics command failed:', error);
     console.error(chalk.red(`\n✗ Failed to generate analytics: ${error instanceof Error ? error.message : String(error)}\n`));
-    process.exit(1);
+    process.exitCode = 1;
   }
+}
+
+/** Commander binds a removed `--report*` stub's value under its camelCase name. */
+function usedRemovedReportFlag(options: AnalyticsOptions): boolean {
+  const bag = options as unknown as Record<string, unknown>;
+  return ['report', 'reportFormat', 'reportOutput'].some((k) => bag[k] !== undefined);
 }
 
 /**
@@ -324,55 +480,29 @@ function parseFilterOptions(options: AnalyticsOptions): AnalyticsFilter {
   if (options.from) {
     const fromDate = parseDateOnly(options.from, 'from');
     if (!fromDate) {
-      console.warn(chalk.yellow(`Warning: Invalid --from date "${options.from}", ignoring filter`));
-    } else {
-      filter.fromDate = fromDate;
+      throw new ConfigurationError(`Invalid --from date "${options.from}" — use YYYY-MM-DD (UTC)`);
     }
+    filter.fromDate = fromDate;
   }
 
   if (options.to) {
     const toDate = parseDateOnly(options.to, 'to');
     if (!toDate) {
-      console.warn(chalk.yellow(`Warning: Invalid --to date "${options.to}", ignoring filter`));
-    } else {
-      filter.toDate = toDate;
+      throw new ConfigurationError(`Invalid --to date "${options.to}" — use YYYY-MM-DD (UTC)`);
     }
+    filter.toDate = toDate;
   }
 
   // Parse --last duration (e.g., "7d", "24h")
   if (options.last) {
     const duration = parseDuration(options.last);
     if (!duration) {
-      console.warn(chalk.yellow(`Warning: Invalid --last duration "${options.last}", ignoring filter`));
-    } else {
-      filter.fromDate = new Date(Date.now() - duration);
-      filter.toDate = new Date();
+      throw new ConfigurationError(`Invalid --last duration "${options.last}" — use a number and a unit, e.g. 7d, 24h, 30m`);
     }
+    filter.fromDate = new Date(Date.now() - duration);
+    filter.toDate = new Date();
   }
 
   return filter;
 }
 
-/**
- * Parse duration string (e.g., "7d", "24h") to milliseconds
- */
-function parseDuration(durationStr: string): number | null {
-  const match = durationStr.match(/^(\d+)([dhm])$/);
-  if (!match) {
-    return null;
-  }
-
-  const value = parseInt(match[1], 10);
-  const unit = match[2];
-
-  switch (unit) {
-    case 'd':
-      return value * 24 * 60 * 60 * 1000;
-    case 'h':
-      return value * 60 * 60 * 1000;
-    case 'm':
-      return value * 60 * 1000;
-    default:
-      return null;
-  }
-}

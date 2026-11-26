@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildAttributionHeaders, HeaderInjectionPlugin, type AnalyticsAttribution } from '../header-injection.plugin.js';
+import { ClientAttributionPlugin } from '../client-attribution.plugin.js';
 import type { PluginContext } from '../types.js';
 import type { ProxyContext } from '../../proxy-types.js';
 import { ProviderRegistry } from '@/providers/core/registry.js';
@@ -61,7 +62,7 @@ describe('central attribution header contract', () => {
       provider: 'provider', clientType: 'codemie-codex', version: '1.2', integrationId: 'integration',
       model: 'model', timeout: 30, repository: 'org/репо', branch: 'feature/ветка', project: 'project',
     } } as PluginContext);
-    const request = context();
+    const request = { ...context(), agentName: 'codemie-codex' };
     request.headers['custom-header'] = 'keep';
     await interceptor.onRequest!(request);
     expect(request.headers).toEqual({
@@ -100,17 +101,19 @@ describe('central attribution header contract', () => {
 
   it('preserves Desktop/Cowork resolution and configured-branch precedence', async () => {
     const resolveForRequest = vi.fn().mockResolvedValue({ repository: '', branch: 'detected', isCowork: true });
-    const interceptor = await new HeaderInjectionPlugin().createInterceptor({ config: {
+    const pluginContext = { config: {
       desktopRepositoryResolver: { resolveForRequest }, branch: 'configured', clientType: 'codemie-codex',
-    } } as unknown as PluginContext);
-    const request = context();
+    } } as unknown as PluginContext;
+    const attribution = new ClientAttributionPlugin().createInterceptor(pluginContext);
+    const interceptor = await new HeaderInjectionPlugin().createInterceptor(pluginContext);
+    const request = { ...context(), agentName: 'claude-desktop' };
     request.remotePort = 123;
     request.headers['x-claude-code-session-id'] = 'desktop-session';
+    await attribution.handleRequest!(request, {} as never, {} as never, {} as never);
     await interceptor.onRequest!(request);
-    expect(resolveForRequest).toHaveBeenCalledWith('desktop-session', { remotePort: 123, url: '/v1/messages' });
+    expect(resolveForRequest).toHaveBeenCalledWith('desktop-session', { remotePort: 123, url: '/v1/messages' }, { skipLastResolved: false });
     expect(request.headers).toMatchObject({
       'X-CodeMie-Repository': '', 'X-CodeMie-Branch': 'configured', 'X-CodeMie-Client': 'claude-desktop',
-      'x-litellm-session-id': 's1',
     });
   });
 
@@ -118,7 +121,7 @@ describe('central attribution header contract', () => {
     const launch = { clientType: 'codemie-claude', version: '1.2', repository: 'launch/repo', branch: 'launch-branch', project: 'launch-project' };
     const send = async (url: string, headers: Record<string, string>): Promise<ProxyContext['headers']> => {
       const interceptor = await new HeaderInjectionPlugin().createInterceptor({ config: launch } as PluginContext);
-      const request = { ...context(), url, headers };
+      const request = { ...context(), agentName: launch.clientType, url, headers };
       await interceptor.onRequest!(request);
       return request.headers;
     };

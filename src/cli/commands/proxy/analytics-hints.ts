@@ -10,6 +10,7 @@
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
+import { CLAUDE_OTLP_FLAG, COPILOT_OTLP_FLAG, vendorFlag } from './flag-list.js';
 
 export interface NotTrackedAdvice {
   /** Why the project is not collected, as a clause ("it is excluded"). */
@@ -27,18 +28,19 @@ function quotePath(path: string): string {
 function claudeAdvice(reason: string, path: string): NotTrackedAdvice | undefined {
   switch (reason) {
     case 'disabled':
-      return { description: 'analytics collection is disabled', command: 'codemie proxy analytics enable' };
+      // Scoped to Claude: the flagless form acts on every connected connector, the Copilot ones included.
+      return { description: 'analytics collection is disabled', command: `codemie proxy analytics enable ${CLAUDE_OTLP_FLAG}` };
     case 'project-excluded':
-      return { description: 'this project is excluded', command: `codemie proxy analytics include ${quotePath(path)}` };
+      return { description: 'this project is excluded', command: `codemie proxy analytics include ${quotePath(path)} ${CLAUDE_OTLP_FLAG}` };
     case 'not-in-allowlist':
       return {
         description: 'it is not in the Project-scope allowlist',
-        action: `run this inside that project: codemie proxy connect --${CLAUDE_CODE_OTLP_AGENT_NAME} --scope project`,
+        action: `run this inside that project: codemie proxy connect ${CLAUDE_OTLP_FLAG} --scope project`,
       };
     case 'hooks-not-installed':
       return {
         description: 'the Claude Code hooks are not installed',
-        command: `codemie proxy connect --${CLAUDE_CODE_OTLP_AGENT_NAME}`,
+        command: `codemie proxy connect ${CLAUDE_OTLP_FLAG}`,
       };
     case 'preferences-corrupt':
       return {
@@ -54,16 +56,17 @@ function copilotAdvice(connectorId: string, reason: string, path: string): NotTr
   const flag = `--${connectorId}`;
   switch (reason) {
     case 'analytics-disabled':
-      return { description: 'analytics collection is disabled', command: `codemie proxy analytics enable ${flag}` };
+      // The analytics filter is the vendor flag, which covers both Copilot connectors.
+      return { description: 'analytics collection is disabled', command: `codemie proxy analytics enable ${COPILOT_OTLP_FLAG}` };
     case 'project-excluded':
-      return { description: 'this project is excluded', command: `codemie proxy analytics include ${quotePath(path)} ${flag}` };
+      return { description: 'this project is excluded', command: `codemie proxy analytics include ${quotePath(path)} ${COPILOT_OTLP_FLAG}` };
     case 'scope-untracked':
       return {
         description: "it is outside this connector's Project scope",
-        action: `run this inside that project: codemie proxy connect ${flag} --scope project`,
+        action: `run this inside that project: codemie proxy connect ${vendorFlag(flag)} --scope project`,
       };
     case 'scope-disabled':
-      return { description: 'the connector is not connected', command: `codemie proxy connect ${flag}` };
+      return { description: 'the connector is not connected', command: `codemie proxy connect ${vendorFlag(flag)}` };
     case 'scope-corrupt':
       return {
         description: 'the connector scope config is corrupt',
@@ -79,24 +82,38 @@ function copilotAdvice(connectorId: string, reason: string, path: string): NotTr
   }
 }
 
+export type CoverageVerb = 'disable' | 'exclude';
+
+const CLAUDE_UNAFFECTED = 'the daily analytics collector and the session sync that `codemie claude` runs itself';
+
 /**
- * Channels these settings do NOT control. The commands gate the hook pipeline only, so a user who
- * runs `disable` must not believe that nothing is ever sent.
+ * Channels these settings do NOT control, so a user who runs `disable` or `exclude` does not believe that
+ * nothing is ever sent. `disable` covers Claude Desktop chats; `exclude` does not apply to them.
  */
-export function unaffectedChannels(connectorId: string): string {
+export function unaffectedChannels(connectorId: string, verb: CoverageVerb = 'disable'): string {
   switch (connectorId) {
+    case CLAUDE_CODE_OTLP_AGENT_NAME:
+      return verb === 'exclude'
+        ? `Claude Desktop chats (exclusions are not applied to them), ${CLAUDE_UNAFFECTED}`
+        : CLAUDE_UNAFFECTED;
     case COPILOT_CLI_OTLP_AGENT_NAME:
       return 'managed `codemie copilot-cli` launches and the daily analytics collector';
     case COPILOT_CHAT_OTLP_AGENT_NAME:
       return 'the daily analytics collector';
     default:
-      return 'the daily analytics collector and the session sync that `codemie claude` runs itself';
+      return CLAUDE_UNAFFECTED;
   }
 }
 
 /** One-line statement of the coverage boundary, printed after `disable`/`exclude`. */
-export function coverageNote(connectorId: string): string {
-  return `Controls the hook pipeline only — not affected: ${unaffectedChannels(connectorId)}.`;
+export function coverageNote(connectorId: string, verb: CoverageVerb = 'disable'): string {
+  if (connectorId === CLAUDE_CODE_OTLP_AGENT_NAME) {
+    const controls = verb === 'exclude'
+      ? 'the hook pipeline and Cowork only'
+      : 'Claude Code hooks, Cowork and Claude Desktop chats (metrics and conversation sync)';
+    return `Controls ${controls} — not affected: ${unaffectedChannels(connectorId, verb)}.`;
+  }
+  return `Controls the hook pipeline only — not affected: ${unaffectedChannels(connectorId, verb)}.`;
 }
 
 /**

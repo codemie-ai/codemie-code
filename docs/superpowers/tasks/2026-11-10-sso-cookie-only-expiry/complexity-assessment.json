@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "task": "Stop cookie-only SSO credentials from getting a synthetic 24h expiry and being deleted on read; rely on server rejection, with 5 regression tests.",
+  "generated": "2026-11-10T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 19,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Code fix is small (deriveExpiresAt and getStoredCredentials in sso.auth.ts), but getStoredCredentials is a shared reader with about 13 callers (proxy, hook gate, sdk-client, desktop, skills) and expiresAt also feeds health/profile display. Bumped from M for the shared-utility red flag." },
+    { "dimension": "technical_risk", "reason": "Auth credential lifecycle change. Closest pattern is the existing optional-expiresAt-means-unknown convention, which does not cover credentials already on disk with a synthetic 24h expiresAt, or the incomplete server-rejection handling (plain 401 is a documented gap in the session-expiry plugin). Removing local expiry could let revoked credentials persist until a proxy/metrics marker is written." },
+    { "dimension": "file_change_estimate", "reason": "Roughly 3-4 modified source files (sso.auth.ts, possibly sso.health.ts, auth helpers, the existing sso.auth.test.ts that asserts the 24h fallback) plus 3-4 new test files for gate, sdk-client and store integration across several directories." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M to L: touches core shared credential reader used by about 13 callers",
+    "Technical Risk bumped to L: affects authentication credential lifecycle"
+  ],
+  "split_recommendation": null
+}

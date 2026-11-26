@@ -68,8 +68,9 @@ describe('flag-transform contract — --task', () => {
     expect(await finalArgs(GeminiPluginMetadata, ['--task', 'do X'])).toEqual(['-m', 'test-model', '-p', 'do X']);
   });
 
-  it('opencode: --task X → run X', async () => {
-    expect(await finalArgs(OpenCodePluginMetadata, ['--task', 'do X'])).toEqual(['run', 'do X']);
+  // --standalone: OpenCode v2's shared background service keeps another session's settings.
+  it('opencode: --task X → run X on a private server', async () => {
+    expect(await finalArgs(OpenCodePluginMetadata, ['--task', 'do X'])).toEqual(['run', 'do X', '--standalone']);
   });
 
   it('codex: --task X → exec subcommand with the task last + injected --model', async () => {
@@ -114,7 +115,7 @@ describe('flag-transform contract — --resume', () => {
 
   it('opencode: --resume ID → -s ID', async () => {
     expect(await finalArgs(OpenCodePluginMetadata, ['--task', 'do X', '--resume', 'abc-123']))
-      .toEqual(['run', 'do X', '-s', 'abc-123']);
+      .toEqual(['run', 'do X', '-s', 'abc-123', '--standalone']);
   });
 
   it('codex: --resume ID + --task → exec resume ID … task', async () => {

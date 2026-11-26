@@ -614,7 +614,7 @@ async function cmdEmails(args) {
     console.log(`Read     : ${msg.isRead ? 'Yes' : 'No'}`);
     console.log(`\n${'─'.repeat(60)}`);
     const body = msg.body || {};
-    console.log(body.contentType === 'text' ? body.content : stripHtml(body.content || '').slice(0, 2000));
+    console.log(body.contentType === 'text' ? body.content : stripHtml(body.content || ''));
     return;
   }
 

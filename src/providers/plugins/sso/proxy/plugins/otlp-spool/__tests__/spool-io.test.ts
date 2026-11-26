@@ -348,7 +348,16 @@ describe('snapshots — project gate under the lock', () => {
 
     expect(await snapshotPendingBytes(SESSION, 'logs')).toBeNull();
     await expectAllCursorsAtEof(Buffer.byteLength(hooks));
+    const { readStatus } = await import('../session-status.js');
+    const jsonBytes = Object.values(JSON_SEED).reduce((sum, s) => sum + Buffer.byteLength(s), 0);
+    const loss = (await readStatus(SESSION))?.lastLoss;
+    expect(loss).toMatchObject({
+      reason: 'project_conflict_discard',
+      stream: 'hooks',
+      bytes: Buffer.byteLength(hooks) + 6 + jsonBytes,
+    });
     expect(await snapshotPendingHookRecords(SESSION)).toBeNull();
+    expect((await readStatus(SESSION))?.lastLoss).toEqual(loss); // a repeat moves 0 bytes and keeps the record
   });
 
   it('returns null and discards every stream for an unbound session', async () => {
@@ -394,6 +403,13 @@ describe('snapshots — project gate under the lock', () => {
     expect(await snapshotPendingBytes(SESSION, 'logs')).toBeNull();
     expect(await snapshotPendingBytes(SESSION, 'metrics')).toBeNull();
     expect(await snapshotPendingBytes(SESSION, 'traces')).toBeNull();
+    const { readStatus } = await import('../session-status.js');
+    const jsonBytes = Object.values(JSON_SEED).reduce((sum, s) => sum + Buffer.byteLength(s), 0);
+    expect((await readStatus(SESSION))?.lastLoss).toMatchObject({
+      reason: 'project_conflict_discard',
+      stream: 'logs', // the hooks prefix is not discarded
+      bytes: 6 + jsonBytes,
+    });
   });
 
   it('nulls all three masked-JSON snapshots after a late conflict and parks their cursors at EOF', async () => {
@@ -707,6 +723,7 @@ describe('hooks seal — provably-original hooks survive a project switch', () =
     let status = await readStatus(SESSION);
     expect(status?.projectConflict).toEqual(['A', 'B']);
     expect(status?.projectSeal).toBeUndefined();
+    expect(status?.lastLoss).toBeUndefined(); // detection alone discards nothing
 
     await rm(file('status'));
     await rm(file('hooks.ndjson'));
@@ -716,6 +733,7 @@ describe('hooks seal — provably-original hooks survive a project switch', () =
     status = await readStatus(SESSION);
     expect(status?.projectConflict).toEqual(['A', 'B']);
     expect(status?.projectSeal).toBeUndefined();
+    expect(status?.lastLoss).toBeUndefined();
   });
 
   it('sends only records that are provably A below the seal; blank and later records are consumed unsent', async () => {
@@ -753,10 +771,20 @@ describe('hooks seal — provably-original hooks survive a project switch', () =
     await advanceCursor(SESSION, 'hooks', sealEnd);
     expect(await snapshotPendingHookRecords(SESSION)).toBeNull();
     expect((await readStatus(SESSION))?.cursors.hooks).toBe(bytes(a1, blank, a2, b));
+    expect((await readStatus(SESSION))?.lastLoss).toMatchObject({
+      reason: 'project_conflict_discard',
+      stream: 'hooks',
+      bytes: bytes(b) + 6, // the rest of the hooks plus the three OTLP chunks (L, MM, TTT)
+    });
 
     await appendSpool(SESSION, 'hooks', hookLine('A'), ['A']); // even an A hook after the conflict
     expect(await snapshotPendingHookRecords(SESSION)).toBeNull();
     expect((await readStatus(SESSION))?.cursors.hooks).toBe(bytes(a1, blank, a2, b, hookLine('A')));
+    expect((await readStatus(SESSION))?.lastLoss).toMatchObject({
+      reason: 'project_conflict_discard',
+      stream: 'hooks',
+      bytes: bytes(hookLine('A')), // the later loss wins
+    });
   });
 
   it('completes at the file size when the seal end is beyond the file: no endless wait', async () => {
@@ -884,5 +912,69 @@ describe('hooks seal — provably-original hooks survive a project switch', () =
     await appendSpool(SESSION, 'logs', Buffer.from('more'));
     await snapshotPendingBytes(SESSION, 'logs');
     expect(logger.warn).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('applyProjectPolicyLocked — a legacy session without a project', () => {
+  const NO_PROJECT_WARNING = '[otlp-spool] session has no CodeMie project: unsent analytics discarded';
+
+  beforeEach(async () => {
+    state.root = await mkdtemp(join(tmpdir(), 'otlp-spool-noproject-'));
+  });
+  afterEach(async () => {
+    await rm(state.root, { recursive: true, force: true });
+  });
+
+  const streamPath = (id: string, name: string): string => join(state.root, `${id}.${name}`);
+
+  async function seed(id: string, files: Record<string, number>): Promise<void> {
+    const { writeStatus, createStatus } = await import('../session-status.js');
+    for (const [name, bytes] of Object.entries(files)) {
+      await appendFile(streamPath(id, name), 'x'.repeat(bytes));
+    }
+    await writeStatus(id, { ...createStatus(), projectScanned: true });
+  }
+
+  async function applyPolicy(id: string) {
+    const { applyProjectPolicyLocked } = await import('../spool-io.js');
+    const { readStatus } = await import('../session-status.js');
+    const status = await readStatus(id);
+    await applyProjectPolicyLocked(id, status!);
+    return (await readStatus(id))!;
+  }
+
+  it('records the discard as a no_project loss naming the events stream', async () => {
+    await seed('np-record', { 'hooks.ndjson': 120, 'otel_logs.bin': 80 });
+
+    const status = await applyPolicy('np-record');
+
+    expect(status.lastLoss).toMatchObject({ reason: 'no_project', bytes: 200, stream: 'hooks' });
+    expect(status.lastDiscard).toBeUndefined();
+    expect(status.endingDiscard).toBeUndefined();
+  });
+
+  it('warns once per session and keeps the later loss', async () => {
+    const { logger } = await import('@/utils/logger.js');
+    await seed('np-twice', { 'hooks.ndjson': 120 });
+    await applyPolicy('np-twice');
+    await appendFile(streamPath('np-twice', 'hooks.ndjson'), 'x'.repeat(30));
+
+    const status = await applyPolicy('np-twice');
+
+    expect(status.lastLoss).toMatchObject({ reason: 'no_project', bytes: 30, stream: 'hooks' });
+    const warnings = vi.mocked(logger.warn).mock.calls.filter(
+      ([message, details]) => message === NO_PROJECT_WARNING && (details as { sessionId?: string }).sessionId === 'np-twice'
+    );
+    expect(warnings).toEqual([[NO_PROJECT_WARNING, { sessionId: 'np-twice', hooksBytes: 120, otelBytes: 0 }]]);
+  });
+
+  it('names the OTel stream when the events were discarded on an earlier tick', async () => {
+    await seed('np-otel', { 'hooks.ndjson': 120 });
+    await applyPolicy('np-otel');
+    await appendFile(streamPath('np-otel', 'otel_metrics.bin'), 'x'.repeat(50));
+
+    const status = await applyPolicy('np-otel');
+
+    expect(status.lastLoss).toMatchObject({ reason: 'no_project', bytes: 50, stream: 'metrics' });
   });
 });

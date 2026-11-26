@@ -1,0 +1,81 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-17068_exit-notice-dropped",
+  "head": "31b8c071ba0824f2f4f2f5ec19b6a2c6d3bd39c2",
+  "runner": "npm",
+  "started_at": "2026-11-13T13:24:04Z",
+  "completed_at": "2026-11-13T13:43:12.442Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 8737,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 49137,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 26877,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 45678,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 451545,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "5 failed of 10394 tests (5 files with failures: 2). File src/cli/commands/__tests__/hook.session-delivery.test.ts: (1) SessionEnd inside the agent hook process generation A's SessionEnd holds the lock 12 s while its line waits on the server: B's /clear start gives up at 10 s; B's Stop then writes a fresh record of its own, B's SessionEnd delivers it; no sidecar of A overwritten [expected 12450 to be less than 12000]; (2) SessionEnd inside the agent hook process a start whose request the server never answers spends no real attempt; no later start renames the record unsent [STACK_TRACE_ERROR]; (3) SessionStart source=clear closes the previous generation two /clear cycles on one id keep three sets, each with only its own lines, each closed generation delivered once [deep-equal mismatch, 7 vs 9 items]; (4) SessionStart source=clear closes the previous generation a delivery slower than the 2 s budget is cut, the generation set aside anyway, queued unmarked, and logged [expected 13856 to be less than 4000]. File src/providers/plugins/sso/proxy/plugins/__tests__/otlp.plugin.credentials-refresh.test.ts: (5) OtlpInterceptor — credential refresh tick() retries stale credentials and forwards sessions with the refreshed ones [mock not called with expected args]. Timing assertions suggest load sensitivity; not re-run in isolation."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 180436,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "npm run validate:secrets",
+      "exit_code": null,
+      "notes": "No container engine available (docker not found, exit 127); Gitleaks-backed scan needs a running Docker daemon. CI runs it unconditionally."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4810,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    }
+  ],
+  "failures": {
+    "unit": "5 failed of 10394 tests (5 files with failures: 2). File src/cli/commands/__tests__/hook.session-delivery.test.ts: (1) SessionEnd inside the agent hook process generation A's SessionEnd holds the lock 12 s while its line waits on the server: B's /clear start gives up at 10 s; B's Stop then writes a fresh record of its own, B's SessionEnd delivers it; no sidecar of A overwritten [expected 12450 to be less than 12000]; (2) SessionEnd inside the agent hook process a start whose request the server never answers spends no real attempt; no later start renames the record unsent [STACK_TRACE_ERROR]; (3) SessionStart source=clear closes the previous generation two /clear cycles on one id keep three sets, each with only its own lines, each closed generation delivered once [deep-equal mismatch, 7 vs 9 items]; (4) SessionStart source=clear closes the previous generation a delivery slower than the 2 s budget is cut, the generation set aside anyway, queued unmarked, and logged [expected 13856 to be less than 4000]. File src/providers/plugins/sso/proxy/plugins/__tests__/otlp.plugin.credentials-refresh.test.ts: (5) OtlpInterceptor — credential refresh tick() retries stale credentials and forwards sessions with the refreshed ones [mock not called with expected args]. Timing assertions suggest load sensitivity; not re-run in isolation."
+  }
+}

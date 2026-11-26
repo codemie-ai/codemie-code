@@ -1,0 +1,280 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "The owner accepted the check round's approve and asked to push the branch and create the PR."
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "The final round approved with four advisory findings; the owner asked for fix-ups of two of them (CR-001, CR-004) before the PR."
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "The owner accepted the check round's approve and asked to push the branch and create the PR."
+    }
+  ],
+  "reviewed_head": "cfa7a1c3a9bf2b71cc058d35b189bed8e502ab53",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "The prior verdict was approve with 0 blocking and 4 advisory findings (4 total), so there was no blocking finding to re-check and finding_status is empty. No fix_set_ids were passed, so no advisory_status entries were written. The fix-up diff addresses CR-001 (unusable appliedId now gives namesGateway true, with test rows) and CR-004 (stopped guard on startByIdIfDue); per fix evidence, CR-002 and CR-003 were accepted as they are. Business and standards rows were carried forward unchanged.",
+  "confidence": "high",
+  "check_confidence": "high",
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 0,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/telemetry/clients/claude-desktop/claude-desktop.gateway.ts",
+      "line": 88,
+      "title": "Unusable appliedId read as no gateway",
+      "problem": "readDesktopGatewayState returns namesGateway: false when _meta.json has an appliedId that is not a string or fails isSafeSessionId, the same answer as an absent appliedId. A config that names an entry the reader refuses to open is unreadable, not a disconnect.",
+      "impact": "Narrow trigger: Desktop would have to write a non-string or unsafe appliedId. In that case a not-connected daemon follows its tracked sessions while another gateway may be collecting them, against the spec's 'unreadable config is not followed'. No effect for well-formed Desktop configs.",
+      "recommendation": "When meta.appliedId is present but rejected by appliedConfigId, return namesGateway: true (e.g. `namesGateway: isRecord(meta) && meta.appliedId !== undefined`), and add a gateway test row for it.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "no gate row: recommended action",
+        "source": "default",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/telemetry/runtime/DesktopRedelivery.ts",
+      "line": 52,
+      "title": "First by-id pass fires on the remembering poll",
+      "problem": "startByIdIfDue returns early while nothing is remembered without moving lastPassAt. When the interval has elapsed since the last pass, the first id finalizeInactive remembers gets a by-id pass on the same poll, so a just-failed END is re-sent within milliseconds rather than at the 10-minute interval.",
+      "impact": "Trigger: the first failed finalization while not connected after a quiet stretch of 10+ minutes. Cost: one extra real delivery attempt that counts toward MIN_REAL_ATTEMPTS in delivery-budget.ts. Budget exhaustion still needs the retry window to elapse, so no record is dropped.",
+      "recommendation": "Have the remembering path start the interval (for example, set lastPassAt when remember() adds to an empty memory), or accept the immediate retry and note it in the interval docs.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "Accepted as is: one extra real attempt on the remembering poll after a quiet stretch; the delivery budget needs the retry window to pass, so no record is dropped.",
+        "source": "hitl",
+        "action": "wont-fix"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/telemetry/runtime/DesktopRedelivery.ts",
+      "line": 59,
+      "title": "Re-remembered-during-pass branch untested",
+      "problem": "The guard `if (this.undeliveredIds.get(sessionId) !== order) continue;` that keeps an id re-remembered while a by-id pass is in flight is not exercised by any test: every by-id test remembers before the pass starts and awaits it.",
+      "impact": "Trigger: a pass whose sends outlast a poll interval while a session finalizes in the same window. If the guard regressed, a re-remembered undelivered id would be deleted or rotated to the back, delaying its END until the next connected listing pass. No current defect.",
+      "recommendation": "Add one runtime test that holds redeliverById open, remembers the same id during the pass, settles it, and asserts the id is still remembered and first in the next redeliverById batch.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "Accepted as is: the branch is not reachable today, a remembered record is already finalised and untracked; the guard stays as correct by construction.",
+        "source": "hitl",
+        "action": "wont-fix"
+      }
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/telemetry/runtime/DesktopTelemetryRuntime.ts",
+      "line": 155,
+      "title": "Stop's final poll can start an unawaited by-id pass",
+      "problem": "stop() sets stopped and runs a final poll. On the not-connected branch, redelivery.startByIdIfDue(now) has no stopped guard, so that poll can start a detached by-id pass that stop() never awaits. The connected branch's listing pass already behaves the same way at base.",
+      "impact": "Trigger: stop while not connected, with remembered ids and the interval elapsed. If stopDaemon's SIGKILL cuts the pass mid-send, the record stays completed and is delivered again by the next start. That re-delivery path already exists and the ticket scopes out an unfinished stop, so the worst case is a repeated send attempt, not lost data.",
+      "recommendation": "Guard with `if (!this.stopped) this.redelivery.startByIdIfDue(now);`, or await redelivery.pass in stop() before the finalization loop.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "no gate row: recommended action",
+        "source": "default",
+        "action": "fix-later"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "AC5 of EPMCDME-17328 kept: from the second not-connected poll no new session is taken and the session store is not listed",
+      "status": "pass",
+      "notes": "debounce in DesktopConnection.check; not-connected branch builds no index, calls no reconcileRecords; test asserts no START"
+    },
+    {
+      "kind": "story-ac",
+      "item": "(A) A finalised record whose send failed while not connected is delivered by the same daemon without waiting for a reconnect",
+      "status": "pass",
+      "notes": "finalizeInactive remembers live ids; startByIdIfDue -> redeliverById; by-id test present"
+    },
+    {
+      "kind": "story-ac",
+      "item": "(B) A tracked session still active after disconnect is followed until quiet and finalised with its real end time",
+      "status": "pass",
+      "notes": "followTracked when namesGateway false; test finalizes at last append"
+    },
+    {
+      "kind": "story-ac",
+      "item": "Cowork behaviour unaffected",
+      "status": "pass",
+      "notes": "cowork.startIfIdle(now,false) unchanged"
+    },
+    {
+      "kind": "spec",
+      "item": "Re-delivery by record id, without listing the session store",
+      "status": "pass",
+      "notes": "redeliverById uses reconcileById only; no listCandidates"
+    },
+    {
+      "kind": "spec",
+      "item": "Follow only sessions already tracked; no new session, no record created, no START metric",
+      "status": "pass",
+      "notes": "followTracked skips untracked ids; pollSession(discovered,false)"
+    },
+    {
+      "kind": "spec",
+      "item": "A tracked session whose record is gone leaves the tracking",
+      "status": "pass",
+      "notes": "pollSession deletes entry on null ensureSession; tested"
+    },
+    {
+      "kind": "spec",
+      "item": "Follow only while Desktop's config names no gateway; other gateway or unreadable config not followed",
+      "status": "pass",
+      "notes": "namesGateway true on non-ENOENT errors; it.each rows for other port/key/non-loopback/sealed"
+    },
+    {
+      "kind": "spec",
+      "item": "Both config shapes a real disconnect leaves are followed",
+      "status": "pass",
+      "notes": "tests for removed entry/_meta without appliedId and entry without inference keys"
+    },
+    {
+      "kind": "spec",
+      "item": "Re-delivery by id every 10 minutes, at most 5 a pass, most recent first, still-undelivered rotated behind",
+      "status": "pass",
+      "notes": "DESKTOP_REDELIVERY_INTERVAL_MS, RECONCILE_PER_START; rotation tests"
+    },
+    {
+      "kind": "spec",
+      "item": "Remembered ids include records undelivered by the start-up pass and the listing pass",
+      "status": "pass",
+      "notes": "startupPass and startListingIfDue remember returned ids; tested"
+    },
+    {
+      "kind": "spec",
+      "item": "A record held by another process during a by-id pass stays remembered",
+      "status": "pass",
+      "notes": "reconcileById returns true on held lock; tested"
+    },
+    {
+      "kind": "spec",
+      "item": "Nothing remembered -> no by-id pass",
+      "status": "pass",
+      "notes": "early return on empty memory; tested"
+    },
+    {
+      "kind": "spec",
+      "item": "Delivery without usable credentials sends nothing and spends no attempt; delivery budget unchanged",
+      "status": "pass",
+      "notes": "reuses reconcileRecord handling; test asserts deliveryRealAttempts 0"
+    },
+    {
+      "kind": "spec",
+      "item": "A daemon that never served Desktop runs no delivery pass and reads no session record",
+      "status": "pass",
+      "notes": "empty tracking and memory make all not-connected steps no-ops; existing test"
+    },
+    {
+      "kind": "spec",
+      "item": "readDesktopGatewayState from one read; readDesktopGatewayConfig unchanged for callers",
+      "status": "pass",
+      "notes": "readDesktopGatewayConfig delegates to .gateway; gateway tests per shape"
+    },
+    {
+      "kind": "spec",
+      "item": "Bookkeeping in DesktopRedelivery, connection check in DesktopConnection; runtime file under 500 lines",
+      "status": "pass",
+      "notes": "runtime file is 493 lines"
+    },
+    {
+      "kind": "spec",
+      "item": "Not in scope: daemon that ended without finishing its stop",
+      "status": "pass",
+      "notes": "start-up pass gating and stop() finalization unchanged"
+    },
+    {
+      "kind": "spec",
+      "item": "proxy status / inspect lines and 'collection paused' log unchanged",
+      "status": "pass",
+      "notes": "log text preserved in DesktopConnection.check"
+    },
+    {
+      "kind": "spec",
+      "item": "Backend receives the same metrics/conversation calls as a connected daemon",
+      "status": "pass",
+      "notes": "follow reuses pollSession; by-id reuses reconcileRecord"
+    },
+    {
+      "kind": "spec",
+      "item": "docs/COMMANDS.md and docs/ARCHITECTURE-PROXY.md describe what a not-connected daemon finishes",
+      "status": "pass",
+      "notes": "both docs updated"
+    },
+    {
+      "kind": "spec",
+      "item": "Tests: typecheck, lint and full suite results",
+      "status": "pending-stage-7",
+      "notes": "Stage 7 owns execution evidence"
+    },
+    {
+      "kind": "spec",
+      "item": "Scenarios with a real daemon and Claude Desktop",
+      "status": "pending-stage-7",
+      "notes": "not run manually; runtime evidence only"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "2 subjects in the range use allowed types (fix, refactor) and the allowed scope analytics, imperative mood, subjects under the 100-char subject-max-length per git-workflow.md"
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "imports use .js and @/ alias, import type for type-only imports, exported/public methods carry explicit return types, JSDoc present, logger used not console; but code-quality.md Naming Conventions requires kebab-case.ts files and the two new files src/telemetry/runtime/DesktopConnection.ts and DesktopRedelivery.ts are PascalCase (they follow the PascalCase precedent of sibling files in the same directory). Pre-existing over-length items (DesktopTelemetryRuntime.test.ts already over 500 lines at base, poll() over 50 lines at base) are not attributed to this change; the change shrinks the runtime"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "no attribution headers touched, no credentials or header values logged (logs carry session ids and error messages only), the readDesktopGatewayState path build reuses the pre-existing appliedId validation; no concrete security issue seen in the changed files"
+    }
+  ],
+  "final_round": {
+    "decision": "approve",
+    "rationale": "All four lenses and the standards audit ran; every candidate was verified against source, leaving 0 blocking and 4 advisory findings (4 total), 0 deferred, and 11 dismissed (see code-review-dismissed.local.md), including the shared 'failed re-read never remembered' claim, which is unreachable because readLiveRecord never throws. The code-quality row is partial only on kebab-case naming of the two new files; triage dismissed that as non-blocking because the guide marks no blocking rule and the sibling class files in the directory are PascalCase. Stage 7 still owns the pending test and real-Desktop scenario evidence.",
+    "confidence": "high",
+    "risk_flags": []
+  }
+}

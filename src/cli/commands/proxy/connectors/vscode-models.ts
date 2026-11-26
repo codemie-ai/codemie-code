@@ -1,4 +1,4 @@
-import { resolveTenantModelId } from './model-name-resolver.js';
+import { resolveTenantModelId } from '@/providers/plugins/sso/sso.model-name-resolver.js';
 import type { TenantModelDescriptor } from './tenant-catalog.js';
 
 export type VsCodeApiType = 'chat-completions' | 'responses' | 'messages';

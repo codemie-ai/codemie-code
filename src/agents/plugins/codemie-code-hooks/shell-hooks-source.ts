@@ -24,8 +24,12 @@
  * skipped rather than invoked.
  */
 
-export const SHELL_HOOKS_PLUGIN_SOURCE = `
-import type { Plugin } from "@opencode-ai/plugin";
+/**
+ * What both plugin generations share: hooks config loading, matching, payloads, shell execution
+ * and response parsing. Each generation appends its own plugin definition (v1 below, v2 in
+ * shell-hooks-v2-source.ts).
+ */
+export const SHELL_HOOKS_SHARED_SOURCE = `
 import { execSync, spawn } from "child_process";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
@@ -154,19 +158,6 @@ function getMatchingCommands(
 
 // ─── Session / Payload Helpers ───────────────────────────────────────────────
 
-// OPENCODE_SESSION_ID is a last-resort fallback only: nothing sets it today, and
-// relying on it is what made every previous hook invocation ship an empty
-// session_id and get rejected with exit code 2.
-function resolveSessionId(input: any): string {
-  return (
-    input?.sessionID ||
-    input?.event?.properties?.sessionID ||
-    input?.event?.properties?.info?.id ||
-    process.env.OPENCODE_SESSION_ID ||
-    ""
-  );
-}
-
 // codemie hook needs a transcript path to re-parse the session; for OpenCode
 // that is the SQLite database, exported by the CLI before spawning.
 function transcriptPath(): string {
@@ -215,6 +206,7 @@ function execCommand(
       encoding: "utf-8",
       maxBuffer: 1024 * 1024,
       stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
     });
     return { stdout: stdout || "", stderr: "", exitCode: 0 };
   } catch (err: any) {
@@ -235,6 +227,7 @@ function execCommandAsync(
     env: { ...process.env, ...env },
     stdio: ["pipe", "ignore", "ignore"],
     detached: true,
+    windowsHide: true,
   });
   // A ChildProcess or stdin 'error' with no listener is an UNHANDLED error
   // event, which throws inside the host OpenCode process. Stop is configured
@@ -347,6 +340,24 @@ function shouldEmitIdle(sessionId: string, isIdle: boolean): boolean {
   const wasIdle = idleState.get(sessionId) === true;
   idleState.set(sessionId, isIdle);
   return isIdle && !wasIdle;
+}
+
+`;
+
+export const SHELL_HOOKS_PLUGIN_SOURCE = `
+import type { Plugin } from "@opencode-ai/plugin";
+${SHELL_HOOKS_SHARED_SOURCE}
+// OPENCODE_SESSION_ID is a last-resort fallback only: nothing sets it today, and
+// relying on it is what made every previous hook invocation ship an empty
+// session_id and get rejected with exit code 2.
+function resolveSessionId(input: any): string {
+  return (
+    input?.sessionID ||
+    input?.event?.properties?.sessionID ||
+    input?.event?.properties?.info?.id ||
+    process.env.OPENCODE_SESSION_ID ||
+    ""
+  );
 }
 
 // ─── Plugin Definition ───────────────────────────────────────────────────────

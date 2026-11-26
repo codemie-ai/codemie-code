@@ -35,21 +35,29 @@ export class LoggingPlugin implements ProxyPlugin {
   }
 }
 
+/** What the logging plugin collects of one response, kept in its request's metadata: concurrent requests never share it. */
+interface ResponseLog {
+  chunkCount: number;
+  totalBytes: number;
+  responseChunks: Buffer[];
+  responseContentType: string | null;
+}
+
+const RESPONSE_LOG_KEY = 'loggingResponse';
+
+function responseLog(context: ProxyContext): ResponseLog {
+  const existing = context.metadata[RESPONSE_LOG_KEY] as ResponseLog | undefined;
+  if (existing) return existing;
+  const created: ResponseLog = { chunkCount: 0, totalBytes: 0, responseChunks: [], responseContentType: null };
+  context.metadata[RESPONSE_LOG_KEY] = created;
+  return created;
+}
+
 class LoggingInterceptor implements ProxyInterceptor {
   name = 'logging';
-  private chunkCount = 0;
-  private totalBytes = 0;
-  private responseChunks: Buffer[] = [];
-  private responseContentType: string | null = null;
 
   async onRequest(context: ProxyContext): Promise<void> {
     try {
-      // Reset counters for new request
-      this.chunkCount = 0;
-      this.totalBytes = 0;
-      this.responseChunks = [];
-      this.responseContentType = null;
-
       // Get request content type
       const contentType = context.headers['content-type'] || context.headers['Content-Type'] || 'unknown';
       const isSessionSyncEndpoint = this.isSessionSyncEndpoint(context.url);
@@ -100,7 +108,8 @@ class LoggingInterceptor implements ProxyInterceptor {
     try {
       // Capture response content type for use in response body logging
       const contentTypeHeader = headers['content-type'] || headers['Content-Type'];
-      this.responseContentType = Array.isArray(contentTypeHeader)
+      const log = responseLog(context);
+      log.responseContentType = Array.isArray(contentTypeHeader)
         ? contentTypeHeader[0]
         : contentTypeHeader || 'unknown';
 
@@ -114,7 +123,7 @@ class LoggingInterceptor implements ProxyInterceptor {
           provider: context.provider,
           model: context.model,
           headers: {
-            'content-type': this.responseContentType,
+            'content-type': log.responseContentType,
             'content-length': headers['content-length'],
             'transfer-encoding': headers['transfer-encoding']
           }
@@ -130,22 +139,23 @@ class LoggingInterceptor implements ProxyInterceptor {
     chunk: Buffer
   ): Promise<Buffer | null> {
     try {
-      this.chunkCount++;
-      this.totalBytes += chunk.length;
+      const log = responseLog(context);
+      log.chunkCount++;
+      log.totalBytes += chunk.length;
 
       // Collect chunks for full response body
-      this.responseChunks.push(Buffer.from(chunk));
+      log.responseChunks.push(Buffer.from(chunk));
 
       // Log every 1000th chunk to avoid spam (or first/last chunks)
-      if (this.chunkCount === 1 || this.chunkCount % 1000 === 0) {
+      if (log.chunkCount === 1 || log.chunkCount % 1000 === 0) {
         logger.debug(
           `[proxy-streaming] ${context.url}`,
           {
             requestId: context.requestId,
             sessionId: context.sessionId,
-            chunkNumber: this.chunkCount,
+            chunkNumber: log.chunkCount,
             chunkSize: chunk.length,
-            totalBytes: this.totalBytes
+            totalBytes: log.totalBytes
           }
         );
       }
@@ -161,18 +171,12 @@ class LoggingInterceptor implements ProxyInterceptor {
     metadata: ResponseMetadata
   ): Promise<void> {
     try {
-      // Capture chunks for logging (use local reference to avoid race conditions)
-      const chunksToLog = this.responseChunks;
-      const chunkCount = this.chunkCount;
-      const totalBytes = this.totalBytes;
-      const contentType = this.responseContentType || 'unknown';
+      const log = responseLog(context);
+      const chunksToLog = log.responseChunks;
+      const chunkCount = log.chunkCount;
+      const totalBytes = log.totalBytes;
+      const contentType = log.responseContentType || 'unknown';
       const isSessionSyncEndpoint = this.isSessionSyncEndpoint(context.url);
-
-      // CRITICAL: Clear state immediately for next request
-      this.responseChunks = [];
-      this.chunkCount = 0;
-      this.totalBytes = 0;
-      this.responseContentType = null;
 
       // Process response body asynchronously (don't block)
       // Use setImmediate to defer heavy work to next tick

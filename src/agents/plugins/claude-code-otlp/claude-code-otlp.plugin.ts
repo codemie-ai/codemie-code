@@ -52,6 +52,8 @@ import {
   openMainTranscriptPass,
   openPostCompactPass,
   openSessionEnvCheckPass,
+  isSessionReopenedIdle,
+  markReopenedActive,
   openSessionStartPass,
   openSubagentPass,
   openSessionEndPass,
@@ -74,10 +76,11 @@ import { readClaudeSettingsEnv } from './event-fields/claude-settings-env.js';
 import { resolveLocalProxy } from './event-fields/local-proxy.js';
 import { resolveClientVersion } from './client-version-cache.js';
 import { resolveCommandFields } from './event-fields/command-fields.js';
+import { resolvePromptSource, stripInjectedContext } from './event-fields/prompt-fields.js';
 import { resolveSessionEnvFields } from './event-fields/session-env-fields.js';
 import { resolveSubagentStopFields } from './event-fields/subagent-fields.js';
 import {
-  resolveSkillForkFields,
+  resolveForkAgentFields,
   resolveToolContextFields,
   resolveToolDiffFields,
   withoutSensitiveFileContent,
@@ -375,6 +378,11 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       return await this.onConfigChange(hookInput);
     }
 
+    // Every other hook (`Notification`, `InstructionsLoaded`, ...) is sent as it came, except for a session that was
+    // reopened without a prompt and has done nothing since: opening it must not change its analytics (EPMCDME-16993).
+    if (await isSessionReopenedIdle(hookInput.session_id)) {
+      return { decision: 'forward', payload: [] };
+    }
     return { decision: 'forward', payload: [hookInput] };
   }
 
@@ -415,7 +423,17 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       resolveGitHeadFields(context, 'start'),
       resolveSessionEnvFields(hookInput.cwd, model, permissionMode),
     ]);
-    const pass = await openSessionStartPass(hookInput.session_id, gitHeadStart.git_head_start, sessionEnvFields);
+    const pass = await openSessionStartPass(
+      hookInput.session_id,
+      gitHeadStart.git_head_start,
+      sessionEnvFields,
+      hookInput.source
+    );
+    // Reopening an already reported session announces nothing: a start stamped now would move its
+    // activity window and re-bind it to this launch (EPMCDME-16993).
+    if (pass.reopened) {
+      return { decision: 'forward', payload: [], finalize: pass.finalize };
+    }
 
     const sessionStartEvent: Record<string, unknown> = {
       ...hookInput,
@@ -441,6 +459,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       openMainTranscriptPass(hookInput.session_id, hookInput.transcript_path, 'Stop', envCheckInput(hookInput)),
       resolveGitHeadFields({ cwd: hookInput.cwd }, 'end'),
     ]);
+    if (pass.suppressLifecycle) {
+      return { decision: 'forward', payload: [], finalize: pass.finalize };
+    }
     return {
       decision: 'forward',
       payload: [{ ...hookInput, ...gitHeadEnd }, ...pass.events],
@@ -455,6 +476,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       'PreCompact',
       envCheckInput(hookInput)
     );
+    if (pass.suppressLifecycle) {
+      return { decision: 'forward', payload: [], finalize: pass.finalize };
+    }
     return {
       decision: 'forward',
       payload: [hookInput, ...pass.events],
@@ -486,6 +510,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       'StopFailure',
       envCheckInput(hookInput)
     );
+    if (pass.suppressLifecycle) {
+      return { decision: 'forward', payload: [], finalize: pass.finalize };
+    }
     return {
       decision: 'forward',
       payload: [hookInput, ...pass.events],
@@ -499,6 +526,9 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       resolveGitHeadFields({ cwd: hookInput.cwd }, 'end'),
       resolveIdentityCandidateFields({ cwd: hookInput.cwd }),
     ]);
+    if (pass.suppressLifecycle) {
+      return { decision: 'forward', payload: [], finalize: pass.finalize };
+    }
     const gitCommitFields = await resolveGitCommitFields(
       hookInput.cwd,
       pass.sessionStartedAt,
@@ -673,17 +703,23 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     const authResult = await this.ensureProxyAuth();
 
     if (authResult.ok) {
-      // Derived fields read the raw prompt (the base class truncates `prompt` to 200 chars later).
-      // `prompt` itself is cleaned of pasted-content tags.
+      await markReopenedActive(hookInput.session_id); // a prompt is the reopened session's own activity
+      // Derived fields read the untruncated prompt (the base class truncates `prompt` to 200 chars
+      // later) without the context Claude Code injects, so an IDE file path or a system reminder
+      // neither yields a ticket nor hides a slash command; pasted content stays in, as typed.
+      // `prompt` itself is also cleaned of pasted-content tags; `prompt_length` is the raw length.
       const prompt = typeof hookInput.prompt === 'string' ? hookInput.prompt : '';
-      const cleaned = stripPastedContentTags(prompt);
+      const typed = stripInjectedContext(prompt);
+      const cleaned = stripPastedContentTags(typed);
       return {
         decision: 'forward',
         payload: [{
           ...hookInput,
-          ...parsePromptFields(prompt),
-          ...resolveCommandFields(prompt),
+          ...parsePromptFields(typed),
+          prompt_length: prompt.length,
+          ...resolveCommandFields(typed),
           ...(cleaned !== prompt && { prompt: cleaned }),
+          prompt_source: resolvePromptSource(prompt),
         }],
       }
     }
@@ -709,7 +745,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     const contextFields = resolveToolContextFields(hookInput.tool_name, hookInput.tool_input);
     // Line counts and the fork id are derived from the uncut input, before its content is dropped.
     const diffFields = resolveToolDiffFields(hookInput.tool_name, hookInput.tool_input, hookInput.tool_response);
-    const forkFields = resolveSkillForkFields(hookInput.tool_name, hookInput.tool_response);
+    const forkFields = resolveForkAgentFields(hookInput.tool_name, hookInput.tool_response);
     return {
       decision: 'forward',
       payload: [{ ...withoutSensitiveFileContent(hookInput), ...contextFields, ...diffFields, ...forkFields }],

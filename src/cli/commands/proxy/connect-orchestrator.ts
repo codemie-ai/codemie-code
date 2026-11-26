@@ -8,9 +8,11 @@
  */
 import chalk from 'chalk';
 import { ConfigLoader } from '../../../utils/config.js';
+import { resolveLoginUrl, resolveProfileCodeMieUrl } from '../../../providers/core/login-url.js';
 import { ProviderRegistry } from '../../../providers/index.js';
 import { displaySetupInstructions } from '../../../providers/integration/setup-ui.js';
 import {
+  ClientNotInstalledError,
   ConfigurationError,
   createErrorContext,
   formatErrorForUser,
@@ -21,27 +23,34 @@ import { syncRegisteredSkills } from '../skills/setup/sync.js';
 import { syncPluginSkills } from '../skills/setup/sync-plugin.js';
 import {
   checkStatus,
+  clearLegacyClientIdentity,
+  hasLegacyClientIdentity,
+  isOlderDaemon,
+  readConnectionRecord,
   readState,
   spawnDaemon,
   stopDaemon,
   writeConnectionRecord,
-  type ClientIdentity,
   type DaemonState,
 } from './daemon-manager.js';
+import { DAEMON_LOCK_COMMAND_BUDGET_MS, DaemonLockError, withDaemonLock } from './daemon-lock.js';
 import { reportDaemonProfileIdentity } from '../../../agents/core/launch-identity.js';
 import { describeProjectBinding, sanitizeDisplayText, type ProjectBindingState } from '../../../utils/project-binding.js';
-import { getEffectiveClientType } from './client-type.js';
 import {
   writeDesktopConfig,
   getDesktopBaseDir,
+  getDesktopConfigPath,
+  readDesktopGateway,
   mapCanonicalToDesktop,
   describeManagedSettingsOverride,
   summarizeManagedOauthShapes,
 } from './connectors/desktop.js';
 import { fetchManagedMcpServers } from './connectors/managed-mcp-remote.js';
-import { writeVsCodeClaudeCodeConfig } from './connectors/vscode-claude-code.js';
-import { writeVsCodeLanguageModelsConfig } from './connectors/vscode.js';
+import { getVsCodeClaudeCodeSettingsPath, writeVsCodeClaudeCodeConfig } from './connectors/vscode-claude-code.js';
+import { writeVsCodeLanguageModelsConfig, type ConnectorGateway } from './connectors/vscode.js';
 import { checkProxyHealth } from './health-check.js';
+import { decideDesktopRoute, decideVsCodeRoute } from './claude-client-config-state.js';
+import { readConfiguredOtlpPort } from './connectors/claude-code-otlp-endpoint.js';
 import {
   discoverCodexModels,
   findCodexDesktopApp,
@@ -51,19 +60,51 @@ import {
   selectCodexModel,
   writeCodexDesktopConfig,
 } from './connectors/codex-desktop.js';
-import {
-  confirmClaudeCodeOtlp,
-  runClaudeCodeOtlp,
-  type ClaudeCodeOtlpDisplay,
-} from './claude-code-otlp-flow.js';
+import { confirmClaudeCodeOtlp, runClaudeCodeOtlp, type ClaudeCodeOtlpAgreement, type ClaudeCodeOtlpDisplay } from './claude-code-otlp-flow.js';
+import { printEnableLaterHint, recordConnectConsent } from './connect-consent.js';
 import { writeCopilotChatOtlpConfig } from './connectors/copilot-chat-otlp.js';
 import { writeCopilotCliOtlpConfig } from './connectors/copilot-cli-otlp.js';
-import { writeOmpExtension } from './connectors/omp.js';
+import { isOmpExtensionInstalled, writeOmpExtension } from './connectors/omp.js';
+import { CLIENT_CONFIGS, type ClientConfig } from './analytics-delivery-lines.js';
+import {
+  aggregateConnectExamples,
+  aggregateFlagOf,
+  aggregateListRows,
+  failAggregateInvalidProjectList,
+  failDesktopWithoutCodeMieUrl,
+  memberFlag,
+  membersNotFound,
+  MEMBER_LABELS,
+  membersOf,
+  notInstalledLine,
+  type AnalyticsMember,
+  withAggregateFlags,
+  type AggregateId,
+} from './analytics-clients.js';
+import { CLAUDE_OTLP_FLAG, formatFlagRows, vendorFlags } from './flag-list.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
 import type { AllowlistScope } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
-import { isNonInteractiveEnvironment } from '@/utils/interactive.js';
+import { canPromptForProject, isNonInteractiveEnvironment } from '@/utils/interactive.js';
+import { verifyActiveCli } from '@/utils/active-cli.js';
+import { getCurrentCliVersion } from '@/utils/cli-updater.js';
+import {
+  CLAUDE_DESKTOP,
+  VSCODE_BYOK,
+} from '@/providers/plugins/sso/proxy/proxy-clients.js';
+import { getClaudeDesktopManagedSettingsPath } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
+import type { ProviderSettingsConnectTargets, ProviderSettingsProfile } from '@/agents/core/types.js';
+import { runProviderSettingsCheck, type ProviderSettingsSwitch } from '@/agents/core/provider-settings-check.js';
+import { renderHint } from '@/utils/hint.js';
+import {
+  ANALYTICS_TARGETS,
+  confirmScopeDrops,
+  runIfScopeUnchanged,
+  warnIgnoredAnalyticsFlags,
+  type AnalyticsTargetKey,
+  type ScopeBaselines,
+} from './connect-scope-preflight.js';
 
 export const DEFAULT_DAEMON_PORT = 4001;
 
@@ -86,85 +127,164 @@ export interface ConnectOptions {
   targets: ConnectTargets;
   profile?: string;
   insiders?: boolean;
-  force?: boolean;
+  /** Replace a running daemon even when it matches and is healthy: the deprecated `--force` only. */
+  restartDaemon?: boolean;
+  /** Replace client config CodeMie did not write (`--overwrite`). */
+  overwrite?: boolean;
   verbose?: boolean;
   /** Pin a specific model for the Codex desktop target. */
   model?: string;
   /**
-   * Claude Code OTLP tracking scope. Settings always live in ~/.claude/settings.json.
-   * When omitted, connect defaults to Global (`user`), identical to `--scope user`.
+   * Analytics connector tracking scope. Settings always live in ~/.claude/settings.json.
+   * Left undefined when `--scope` is omitted, so the omission stays detectable; connect
+   * coalesces it to Global (`user`) after its checks, identical to `--scope user`, except that an
+   * analytics member set by an aggregate (`--claude-otlp` / `--copilot-otlp`) keeps its stored project list.
    */
   scope?: AllowlistScope;
   /**
-   * Skip the Claude Code analytics confirmation prompt (`--silent`). The only
-   * bypass, and the only non-interactive success path for that target.
+   * Skip the confirmation prompts (`--yes`). The only bypass, and the only
+   * non-interactive success path for the Claude Code analytics target.
    */
-  silent?: boolean;
+  yes?: boolean;
+  /**
+   * `--include-personal-subscriptions`: with Claude Code analytics, also record work consent (this repository for
+   * `--scope project`, every folder for `user`), so personal-subscription sessions are sent too.
+   */
+  includePersonalSubscriptions?: boolean;
+  /** The analytics aggregates given; absent is none. */
+  aggregates?: readonly AggregateId[];
+  /**
+   * The clients whose own flag (`--claude-desktop` / `--vscode-claude-code`) was typed, as against implied by an
+   * aggregate: they are routed through the proxy whatever they are configured with. Absent is none typed.
+   */
+  explicitRoutes?: ExplicitRoutes;
 }
 
-/** Effective client type used by `daemonMatchesRequest`. */
-export type EffectiveClientType =
-  | 'claude-desktop'
-  | 'vscode-byok'
-  | 'codex-desktop'
-  | 'codemie-daemon'
-  | typeof CLAUDE_CODE_OTLP_AGENT_NAME
-  | typeof COPILOT_CHAT_OTLP_AGENT_NAME
-  | typeof COPILOT_CLI_OTLP_AGENT_NAME;
+/** The Claude clients whose route through the proxy was asked for by their own flag. */
+export interface ExplicitRoutes {
+  claudeDesktop?: boolean;
+  vscodeClaudeCode?: boolean;
+}
 
-/**
- * The daemon identity for a target set. `spawnOptions` is byte-identical to the
- * per-command spawn calls that existed before unification: the Anthropic-gateway
- * targets (Claude Desktop app, Claude Code extension) spawn with
- * `telemetryMode: 'claude-desktop'`; the BYOK models target spawns with
- * `clientType: 'vscode-byok'` and no telemetry mode.
- */
-export interface DaemonIdentity {
-  clientType: EffectiveClientType;
-  spawnOptions:
-    | { telemetryMode: 'claude-desktop' }
-    | { clientType: 'vscode-byok' }
-    | { clientType: 'codex-desktop' }
-    | { clientType: 'codemie-daemon' }
-    | { clientType: typeof CLAUDE_CODE_OTLP_AGENT_NAME }
-    | { clientType: typeof COPILOT_CHAT_OTLP_AGENT_NAME }
-    | { clientType: typeof COPILOT_CLI_OTLP_AGENT_NAME };
+/** The model-route outcome of `--claude-otlp` for the clients it set and no own flag set. */
+interface ClaudeRoutePlan {
+  /** Clients whose model requests go through the CodeMie proxy: a first route and a refreshed one. */
+  routed: AnalyticsMember[];
+  /** Clients left as configured, with the line that says so; their target is cleared. */
+  skipped: { member: AnalyticsMember; line: string }[];
+  /** For a refreshed route: the way back to the client's own login. */
+  refreshHints: string[];
+}
+
+/** The line printed under a client's `configured` line once its model requests go through the proxy. */
+export function routeBillingLine(): string {
+  return `  Its model requests now go through the gateway, not your Claude login.`;
+}
+
+const EXTENSION_SKIP_LINE =
+  '✓ VS Code Claude Code extension: analytics on (uses your Claude login; model routing unchanged)';
+const EXTENSION_OTHER_GATEWAY_SKIP_LINE =
+  '✓ VS Code Claude Code extension: analytics on (uses another gateway or key; model routing unchanged)';
+const EXTENSION_SWITCH_HINT = '  To route it through the proxy: codemie proxy connect --vscode-claude-code';
+const DESKTOP_SWITCH_HINT =
+  'Desktop analytics needs the gateway; to switch it: codemie proxy connect --claude-desktop';
+
+function disconnectToLoginHint(flag: string): string {
+  return `To use your Claude login instead: codemie proxy disconnect ${flag}`;
 }
 
 /**
- * Derive the single daemon identity for a target set, first match wins:
- * `claude-desktop` (also `vscodeClaudeCode`) > `claude-code-otlp` > `copilot-chat-otlp` >
- * `copilot-cli-otlp` > `codex-desktop` > `codemie-daemon` (`omp`) > `vscode-byok`.
- * One daemon carries one client type, so lower-priority targets share the winner's identity.
- * `connectTargets` rejects `omp` combined with VS Code BYOK because they need different identities.
- *
- * The hooks-only Copilot targets never export OTel through this daemon and only need it
- * running by the time their first real hook fires (`ensureOtlpProxy`, started lazily);
- * this identity exists so a bare `connect --copilot-chat-otlp` / `--copilot-cli-otlp` run
- * still has something to spawn/match against, consistent with every other target.
+ * The route decision of `--claude-otlp`: for Claude Desktop and the VS Code extension it set (not typed by their own
+ * flag), what each is configured with today decides whether its model requests move to the gateway. A client
+ * to leave alone has its target cleared in `activeTargets`, so no later step sees it. Reads files and runs
+ * `claude auth status`; writes nothing.
  */
-export function deriveDaemonIdentity(targets: ConnectTargets): DaemonIdentity {
-  if (targets.claudeDesktop || targets.vscodeClaudeCode) {
-    return { clientType: 'claude-desktop', spawnOptions: { telemetryMode: 'claude-desktop' } };
+async function resolveClaudeRoutes(
+  activeTargets: ConnectTargets,
+  aggregates: readonly AggregateId[],
+  explicitRoutes: ExplicitRoutes | undefined,
+  insiders: boolean,
+): Promise<ClaudeRoutePlan> {
+  const plan: ClaudeRoutePlan = { routed: [], skipped: [], refreshHints: [] };
+  const members = membersOf(aggregates);
+
+  if (members.has('vscodeClaudeCode') && activeTargets.vscodeClaudeCode && !explicitRoutes?.vscodeClaudeCode) {
+    const decision = await decideVsCodeRoute(insiders);
+    if (decision === 'skip' || decision === 'skip-other-gateway') {
+      activeTargets.vscodeClaudeCode = false;
+      const line = decision === 'skip' ? EXTENSION_SKIP_LINE : EXTENSION_OTHER_GATEWAY_SKIP_LINE;
+      plan.skipped.push({ member: 'vscodeClaudeCode', line });
+    } else {
+      plan.routed.push('vscodeClaudeCode');
+      if (decision === 'refresh') plan.refreshHints.push(disconnectToLoginHint('--vscode-claude-code'));
+    }
   }
-  if (targets.claudeCodeOtlp) {
-    return { clientType: CLAUDE_CODE_OTLP_AGENT_NAME, spawnOptions: { clientType: CLAUDE_CODE_OTLP_AGENT_NAME } };
+
+  if (members.has('claudeDesktop') && activeTargets.claudeDesktop && !explicitRoutes?.claudeDesktop) {
+    let decision: Awaited<ReturnType<typeof decideDesktopRoute>> = 'route';
+    try {
+      decision = await decideDesktopRoute();
+    } catch (error) {
+      // An unsupported platform: the writer reports it as it always did.
+      logger.debug('[proxy] Claude Desktop route decision failed', ...sanitizeLogArgs({ error: String(error) }));
+    }
+    if (decision === 'skip-1p' || decision === 'skip-other-gateway') {
+      activeTargets.claudeDesktop = false;
+      const why = decision === 'skip-1p' ? 'uses your own Claude account' : 'it uses another gateway';
+      plan.skipped.push({ member: 'claudeDesktop', line: `– Claude Desktop: skipped — ${why}. ${DESKTOP_SWITCH_HINT}` });
+    } else {
+      plan.routed.push('claudeDesktop');
+      if (decision === 'refresh') plan.refreshHints.push(disconnectToLoginHint('--claude-desktop'));
+    }
   }
-  if (targets.copilotChatOtlp) {
-    return { clientType: COPILOT_CHAT_OTLP_AGENT_NAME, spawnOptions: { clientType: COPILOT_CHAT_OTLP_AGENT_NAME } };
+  return plan;
+}
+
+/**
+ * A declined (or cancelled) analytics confirmation under `--claude-otlp`: the confirmation named the clients that would
+ * be routed, so none of them is, whether it is routed anew or refreshed. A client typed by its own flag is still
+ * routed. Clears their targets in `activeTargets`, and says so.
+ */
+function dropDeclinedClaudeRoutes(
+  activeTargets: ConnectTargets,
+  members: ReadonlySet<AnalyticsMember>,
+  explicitRoutes: ExplicitRoutes | undefined,
+  plan: ClaudeRoutePlan,
+): void {
+  const routable: (keyof ExplicitRoutes)[] = ['claudeDesktop', 'vscodeClaudeCode'];
+  const dropped = routable.filter((member) => {
+    if (!plan.routed.includes(member) || !members.has(member) || explicitRoutes?.[member]) return false;
+    activeTargets[member] = false;
+    return true;
+  });
+  if (dropped.length === 0) return;
+  console.log(chalk.yellow(`${dropped.map((member) => MEMBER_LABELS[member]).join(' and ')}: not routed through the proxy.`));
+}
+
+function printClaudeRoutePlan(plan: ClaudeRoutePlan): void {
+  for (const { member, line } of plan.skipped) {
+    if (member !== 'vscodeClaudeCode') {
+      console.log(chalk.yellow(line));
+      continue;
+    }
+    console.log(chalk.green(line));
+    console.log(chalk.dim(EXTENSION_SWITCH_HINT));
   }
-  if (targets.copilotCliOtlp) {
-    return { clientType: COPILOT_CLI_OTLP_AGENT_NAME, spawnOptions: { clientType: COPILOT_CLI_OTLP_AGENT_NAME } };
-  }
-  if (targets.codexDesktop) {
-    return { clientType: 'codex-desktop', spawnOptions: { clientType: 'codex-desktop' } };
-  }
-  // omp alone uses the generic identity `codemie proxy start` already spawns: it needs no
-  // client-specific request normalization, and a new client value would change attribution.
-  if (targets.omp) {
-    return { clientType: 'codemie-daemon', spawnOptions: { clientType: 'codemie-daemon' } };
-  }
-  return { clientType: 'vscode-byok', spawnOptions: { clientType: 'vscode-byok' } };
+  for (const hint of plan.refreshHints) console.log(chalk.dim(hint));
+}
+
+/**
+ * The port a start asks for, read before any status check or stop of the same command (both can delete the
+ * state file): the port recorded with the clients' connection; for a record without one (an older CLI's), the
+ * last daemon's port, live or not, else the port Claude Code's OTLP endpoint is set to, else Claude Desktop's
+ * gateway port, else the default.
+ */
+export async function requestedDaemonPort(): Promise<number> {
+  return (await readConnectionRecord())?.port ??
+    (await readState())?.port ??
+    (await readConfiguredOtlpPort()) ??
+    (await readDesktopGateway())?.port ??
+    DEFAULT_DAEMON_PORT;
 }
 
 // ── Daemon matching (shared strict path, spec §3.2) ──────────────────────────
@@ -175,7 +295,6 @@ export interface RequestedDaemonConfig {
   project?: string;
   /** Binding state of `project`, recorded in the daemon state (not part of matching). */
   projectBinding?: ProjectBindingState;
-  clientType: string;
   provider?: string;
   targetUrl?: string;
   /** Normalized profile model that drives the daemon lifecycle (see `normalizeDaemonModel`). */
@@ -193,9 +312,9 @@ export function normalizeDaemonModel(model: string | undefined): string | undefi
 }
 
 /**
- * Strict daemon match — the single reconciled matcher used for every target
- * (spec §3.2). Replaces the pre-unification loose desktop gate
- * (`telemetryMode !== 'claude-desktop'`).
+ * Strict daemon match — the single reconciled matcher used for every target (spec §3.2): profile, port and
+ * project, and provider, target URL and model when requested. The daemon serves every client, so no client
+ * type is compared.
  */
 export function daemonMatchesRequest(
   state: NonNullable<Awaited<ReturnType<typeof readState>>>,
@@ -207,8 +326,7 @@ export function daemonMatchesRequest(
     (!requested.provider || state.provider === requested.provider) &&
     (!requested.targetUrl || state.targetUrl === requested.targetUrl) &&
     (!normalizeDaemonModel(requested.model) ||
-      normalizeDaemonModel(state.model) === normalizeDaemonModel(requested.model)) &&
-    getEffectiveClientType(state) === requested.clientType;
+      normalizeDaemonModel(state.model) === normalizeDaemonModel(requested.model));
 }
 
 // ── Config resolution + credential/error helpers ─────────────────────────────
@@ -244,12 +362,11 @@ export async function resolveSsoProxyConfig(
       const available = await listCodeMieProfiles();
       const details = available.length > 0
         ? `Profiles to try:\n- ${available.join('\n- ')}`
-        : 'No SSO-backed CodeMie profiles were found. Run: codemie setup';
+        : renderHint({ reason: 'No SSO-backed CodeMie profiles were found', command: 'codemie setup' });
 
       throw new ConfigurationError(
         `Profile "${profileName}" cannot be used for ${clientLabel} proxy because it is not SSO-backed.\n\n` +
-        `Next step:\n` +
-        `  ${commandExample} --profile <name>\n\n` +
+        `${renderHint({ reason: 'Use an SSO-backed profile', command: `${commandExample} --profile <name>` })}\n\n` +
         `${details}`
       );
     }
@@ -276,15 +393,12 @@ export async function resolveSsoProxyConfig(
   const available = await listCodeMieProfiles();
   const providerName = activeConfig.provider ?? 'unknown';
   const details = available.length > 0
-    ? `Next step:\n` +
-    `  codemie profile switch <codemie-profile>\n` +
-    `  ${commandExample}\n\n` +
+    ? `${renderHint({ reason: 'Switch to an SSO-backed profile', command: `codemie profile switch <codemie-profile> && ${commandExample}` })}\n\n` +
     `Or run once with a specific profile:\n` +
     `  ${commandExample} --profile <codemie-profile>\n\n` +
     `Profiles to try:\n- ${available.join('\n- ')}`
     : `No SSO-backed CodeMie profiles were found.\n\n` +
-    `Next step:\n` +
-    `  codemie setup`;
+    renderHint({ reason: 'Set up a profile', command: 'codemie setup' });
 
   throw new ConfigurationError(
     `${clientLabel} proxy needs an SSO-backed CodeMie profile.\n` +
@@ -300,14 +414,17 @@ export async function resolveSsoProxyConfig(
 export async function assertSsoCredentials(
   baseUrl: string,
   profileName: string,
-  codeMieUrl?: string
+  codeMieUrl?: string,
+  provider?: string
 ): Promise<void> {
   let loginUrl: string | null = null;
   try {
     const { getStoredPlatformCredentials } = await import('../../../providers/core/codemie-auth-helpers.js');
-    const creds = await getStoredPlatformCredentials({ provider: 'ai-run-sso', baseUrl, codeMieUrl });
+    const creds = await getStoredPlatformCredentials({ provider: provider ?? 'ai-run-sso', baseUrl, codeMieUrl });
     if (!creds) {
-      loginUrl = resolveProfileCodeMieUrl(baseUrl, codeMieUrl);
+      // Bare `profile login` targets the active profile; any other profile needs its own host.
+      const activeProfileName = await resolveActiveProfileName();
+      loginUrl = activeProfileName === profileName ? '' : ` --url ${resolveLoginUrl(baseUrl, codeMieUrl)}`;
     }
   } catch (err) {
     throw new ConfigurationError(`Failed to verify credentials: ${(err as Error).message}`);
@@ -315,20 +432,24 @@ export async function assertSsoCredentials(
   // Thrown outside the try so the missing-login error is never re-wrapped.
   if (loginUrl !== null) {
     throw new ConfigurationError(
-      `No SSO credentials found for profile '${profileName}'.\n` +
-      `  Run: codemie profile login --url ${loginUrl}`
+      `No active CodeMie session for profile '${profileName}'.\n` +
+      `  ${renderHint({ reason: 'Sign in first', command: `codemie profile login${loginUrl}` })}`
     );
   }
 }
 
+/** Prints the credential error and exits 1; `beforeExit` runs first, before the error lines. */
 export async function verifySsoCredentials(
   baseUrl: string,
   profileName: string,
-  codeMieUrl?: string
+  codeMieUrl?: string,
+  provider?: string,
+  beforeExit?: () => void
 ): Promise<void> {
   try {
-    await assertSsoCredentials(baseUrl, profileName, codeMieUrl);
+    await assertSsoCredentials(baseUrl, profileName, codeMieUrl, provider);
   } catch (err) {
+    beforeExit?.();
     const [firstLine, ...rest] = (err as Error).message.split('\n');
     console.error(chalk.red(`✗ ${firstLine}`));
     for (const line of rest) {
@@ -338,12 +459,12 @@ export async function verifySsoCredentials(
   }
 }
 
-function resolveProfileCodeMieUrl(baseUrl: string, codeMieUrl?: string): string {
-  const profileOrigin = new URL(baseUrl).origin;
-  if (codeMieUrl && new URL(codeMieUrl).origin === profileOrigin) {
-    return codeMieUrl;
+async function resolveActiveProfileName(): Promise<string | null> {
+  try {
+    return await ConfigLoader.getActiveProfileName(process.cwd());
+  } catch {
+    return null;
   }
-  return profileOrigin;
 }
 
 export function printProxyError(error: unknown, label: string): never {
@@ -359,19 +480,79 @@ export function printProxyError(error: unknown, label: string): never {
   process.exit(1);
 }
 
+// ── Claude provider settings check ───────────────────────────────────────────
+
+/** The agent whose own settings the Claude targets (Desktop, VS Code extension, Claude Code analytics) read. */
+const CLAUDE_AGENT = 'claude';
+
+/**
+ * The settings file of the one VS Code edition this run configures (stable, or Insiders with `--insiders`);
+ * empty when that edition has no user-data directory.
+ */
+function resolveVsCodeSettingsFiles(insiders: boolean): string[] {
+  try {
+    return [getVsCodeClaudeCodeSettingsPath(insiders)];
+  } catch (error) {
+    if (!(error instanceof ConfigurationError)) throw error;
+    return [];
+  }
+}
+
+/** The client files this run is about to configure, or null when no Claude target is selected. */
+async function claudeConnectTargets(
+  targets: ConnectTargets,
+  insiders: boolean
+): Promise<ProviderSettingsConnectTargets | null> {
+  if (!targets.claudeDesktop && !targets.vscodeClaudeCode && !targets.claudeCodeOtlp) return null;
+  return {
+    ...(targets.claudeDesktop
+      ? { desktop: { configFile: await getDesktopConfigPath(), managedFile: getClaudeDesktopManagedSettingsPath() } }
+      : {}),
+    ...(targets.vscodeClaudeCode ? { vscodeSettingsFiles: resolveVsCodeSettingsFiles(insiders) } : {}),
+    claudeCodeOtlp: targets.claudeCodeOtlp,
+  };
+}
+
+/**
+ * Asks the Claude adapter, through the registry, about settings that would send Claude traffic around the
+ * gateway. Every stop (cancel, managed, unknown, no terminal) aborts the command through the caller's error
+ * path; nothing is changed until the returned switch is applied.
+ */
+async function checkClaudeProviderSettings(
+  targets: ConnectTargets,
+  profile: ProviderSettingsProfile,
+  options: { silent: boolean; insiders: boolean }
+): Promise<ProviderSettingsSwitch | null> {
+  const { silent, insiders } = options;
+  const connect = await claudeConnectTargets(targets, insiders);
+  if (!connect) return null;
+  const { AgentRegistry } = await import('@/agents/registry.js');
+  const claude = AgentRegistry.getAgent(CLAUDE_AGENT);
+  if (!claude) return null;
+  return runProviderSettingsCheck(
+    claude,
+    { flow: 'connect', canPrompt: canPromptForProject() && !silent, profile, connect },
+    'throw'
+  );
+}
+
 // ── Unified connect orchestrator ─────────────────────────────────────────────
 
-const TARGET_LIST = [
+/** The bare `proxy connect` target list; every description starts at one column, computed from the longest flag. */
+export const CONNECT_TARGET_LIST = [
   'Select at least one target to configure:',
   '',
-  '  --claude-desktop       Claude Desktop app (MCP servers)',
-  '  --vscode               VS Code Copilot Chat models (BYOK)',
-  '  --vscode-claude-code   VS Code Claude Code extension',
-  '  --codex-desktop        Codex desktop app (writes ~/.codex/config.toml)',
-  '  --omp                  oh-my-pi (installs a live CodeMie model catalog extension)',
-  `  --${CLAUDE_CODE_OTLP_AGENT_NAME}     Claude Code (analytics hooks + OTel settings)`,
-  `  --${COPILOT_CHAT_OTLP_AGENT_NAME}   VS Code Copilot Chat (hooks-only analytics, no OTel)`,
-  `  --${COPILOT_CLI_OTLP_AGENT_NAME}     Native GitHub Copilot CLI (hooks-only analytics, no OTel)`,
+  ...formatFlagRows([
+    ['--claude-desktop', 'Claude Desktop app (MCP servers)'],
+    ['--vscode', 'VS Code Copilot Chat models (BYOK)'],
+    ['--vscode-claude-code', 'VS Code Claude Code extension'],
+    ['--codex-desktop', 'Codex desktop app (writes ~/.codex/config.toml)'],
+    ['--omp', 'oh-my-pi (installs a live CodeMie model catalog extension)'],
+    ...aggregateListRows((a) => a.connectListLine),
+  ]),
+  '',
+  `  Note: ${CLAUDE_OTLP_FLAG} routes Claude Desktop and the VS Code extension through the proxy ` +
+    `only when they are not configured yet; disconnect ${CLAUDE_OTLP_FLAG} removes that route.`,
   '',
   'Examples:',
   '  codemie proxy connect --claude-desktop',
@@ -379,9 +560,7 @@ const TARGET_LIST = [
   '  codemie proxy connect --omp',
   '  codemie proxy connect --vscode --vscode-claude-code',
   '  codemie proxy connect --claude-desktop --vscode --insiders',
-  `  codemie proxy connect --${CLAUDE_CODE_OTLP_AGENT_NAME}`,
-  `  codemie proxy connect --${COPILOT_CHAT_OTLP_AGENT_NAME}`,
-  `  codemie proxy connect --${COPILOT_CLI_OTLP_AGENT_NAME}`,
+  ...aggregateConnectExamples(),
   '',
   "Run 'codemie proxy connect --help' for all options.",
 ].join('\n');
@@ -393,8 +572,11 @@ function hasAnyTarget(t: ConnectTargets): boolean {
   );
 }
 
-/** A human label and the base command to echo in remediation messages. */
-function describeTargets(t: ConnectTargets): { label: string; commandExample: string } {
+/**
+ * A human label and the base command to echo in remediation messages; the flags of the aggregates given stand in for
+ * their members' flags.
+ */
+function describeTargets(t: ConnectTargets, aggregates: readonly AggregateId[]): { label: string; commandExample: string } {
   const flags: string[] = [];
   const labels: string[] = [];
   if (t.claudeDesktop) { flags.push('--claude-desktop'); labels.push('Claude Desktop'); }
@@ -406,7 +588,7 @@ function describeTargets(t: ConnectTargets): { label: string; commandExample: st
   if (t.codexDesktop) { flags.push('--codex-desktop'); labels.push('Codex Desktop'); }
   if (t.omp) { flags.push('--omp'); labels.push('oh-my-pi'); }
   const label = labels.length === 1 ? labels[0] : 'CodeMie';
-  return { label, commandExample: `codemie proxy connect ${flags.join(' ')}` };
+  return { label, commandExample: `codemie proxy connect ${vendorFlags(withAggregateFlags(flags, aggregates)).join(' ')}` };
 }
 
 async function rollbackDaemon(): Promise<void> {
@@ -424,26 +606,51 @@ async function rollbackDaemon(): Promise<void> {
 }
 
 /**
+ * Stops the daemon this run started once every target failed, under the daemon lock, and only while the state
+ * still names it: another run may have replaced it meanwhile. A lock that stays held leaves the daemon running.
+ */
+async function rollbackOwnDaemon(pid: number): Promise<void> {
+  try {
+    await withDaemonLock(DAEMON_LOCK_COMMAND_BUDGET_MS, async () => {
+      if ((await readState())?.pid === pid) {
+        await rollbackDaemon();
+      }
+    });
+  } catch (error) {
+    if (!(error instanceof DaemonLockError)) throw error;
+    console.log(chalk.yellow(`Warning: ${error.message} The proxy started by this run was left running.`));
+  }
+}
+
+/**
  * Ensure a single daemon matching `requested` is running and healthy, spawning
  * or restarting it as needed (the reconciled strict-match lifecycle, spec §3.2).
+ * A running daemon that differs, was started by an older CLI, fails the deep
+ * check, or `restartDaemon` is replaced; `adoptLive` takes any running daemon as it is.
+ * `writeRecord: false` writes nothing into the connection record. Called under
+ * the daemon lock.
  */
 export async function ensureDaemon(
   requested: RequestedDaemonConfig,
-  spawnIdentity: ClientIdentity,
   config: Awaited<ReturnType<typeof ConfigLoader.load>>,
-  force?: boolean,
+  restartDaemon?: boolean,
   verbose?: boolean,
-  writeRecord = true
+  writeRecord = true,
+  adoptLive = false
 ): Promise<{ state: DaemonState; startedInThisRun: boolean }> {
   let { running, state } = await checkStatus();
+  if (adoptLive && running && state) {
+    return { state, startedInThisRun: false };
+  }
   // Connect has no explicit port option: preserve a matching daemon's actual fallback port.
   if (running && state && daemonMatchesRequest(state, { ...requested, port: state.port })) {
     requested = { ...requested, port: state.port };
   }
   const matches = Boolean(running && state && daemonMatchesRequest(state, requested));
+  const older = Boolean(running && state && (await isOlderDaemon(state)));
 
   let unhealthy = false;
-  if (running && state && matches && !force) {
+  if (running && state && matches && !older && !restartDaemon) {
     const health = await checkProxyHealth({
       port: state.port,
       gatewayKey: state.gatewayKey,
@@ -457,11 +664,13 @@ export async function ensureDaemon(
     }
   }
 
-  if (running && (!matches || unhealthy || force)) {
-    if (force) {
-      logger.status('Forcing a fresh proxy restart...');
+  if (running && (!matches || older || unhealthy || restartDaemon)) {
+    if (restartDaemon) {
+      logger.status('Restarting the proxy...');
+    } else if (older) {
+      logger.status('Restarting proxy: it was started by an older CodeMie CLI...');
     } else if (!matches) {
-      logger.status('Restarting proxy to match the requested client...');
+      logger.status('Restarting proxy to match the requested profile, port, project, provider, target URL and model...');
     }
     await stopDaemon();
     running = false;
@@ -479,10 +688,10 @@ export async function ensureDaemon(
       port: requested.port,
       project: config.codeMieProject,
       ...(requested.projectBinding ? { projectBinding: requested.projectBinding } : {}),
-      ...spawnIdentity,
       syncApiUrl: config.ssoConfig?.apiUrl,
       syncCodeMieUrl: config.codeMieUrl,
       writeRecord,
+      recordPort: writeRecord,
     });
     startedInThisRun = true;
     logger.success(verbose ? `Proxy started at ${state.url}` : 'Proxy started');
@@ -495,37 +704,69 @@ export type LoadedConfig = Awaited<ReturnType<typeof ConfigLoader.load>>;
 
 export function buildRequestedConfig(
   profile: string,
-  clientType: string,
   config: LoadedConfig,
-  projectBinding?: ProjectBindingState,
-  port: number = DEFAULT_DAEMON_PORT
+  projectBinding: ProjectBindingState | undefined,
+  port: number
 ): RequestedDaemonConfig {
   return {
     profile,
     port,
     project: config.codeMieProject,
     projectBinding,
-    clientType,
     provider: config.provider ?? 'ai-run-sso',
     targetUrl: config.baseUrl,
     model: normalizeDaemonModel(config.model),
   };
 }
 
-/** One per-target write outcome, collected for the summary (spec §3.4). */
+/** An older CodeMie install that is first on `PATH`: its path and version. */
+export interface OlderCliOnPath {
+  path: string;
+  version: string;
+}
+
+/**
+ * The first `codemie` on `PATH` when it is an older install than this CLI, else null (the same or a newer one, a
+ * lookup that answers nothing, this CLI's own version unreadable). Spawns no `codemie`; never throws.
+ */
+export async function findOlderCliOnPath(): Promise<OlderCliOnPath | null> {
+  const ownVersion = await getCurrentCliVersion();
+  if (!ownVersion) return null;
+  const verdict = await verifyActiveCli(ownVersion);
+  return verdict.status === 'stale' ? { path: verdict.active.path, version: verdict.active.version } : null;
+}
+
+export function formatOlderCliWarning(older: OlderCliOnPath): string {
+  return `Warning: an older CodeMie CLI is first on PATH: ${older.path} (${older.version}). ` +
+    'Its hooks start an older proxy, which can refuse the keys of the connected clients.';
+}
+
+/** One per-target write outcome, collected to report failures and set the exit code (spec §3.4). */
 export interface TargetResult {
   label: string;
   ok: boolean;
   error?: string;
+  /**
+   * Set under a vendor flag when the client's host application is not installed at all, so its writer could not run
+   * (`ClientNotInstalledError`): the client was skipped with its own line, which neither fails the run nor counts as
+   * configured.
+   */
+  skipped?: true;
 }
 
-function printSummary(results: TargetResult[]): void {
-  console.log(chalk.bold('\nTargets configured:'));
+/**
+ * The outcome of a vendor-flag member whose writer threw `ClientNotInstalledError`: one `skipped` line naming the host
+ * application and the command to re-run once it is installed.
+ */
+function skippedResult(label: string, host: string, rerun: string): TargetResult {
+  console.log(chalk.yellow(`${label}: skipped — ${host} not installed; re-run \`${rerun}\` after installing`));
+  return { label, ok: false, skipped: true };
+}
+
+function printFailures(results: TargetResult[]): void {
   for (const r of results) {
-    if (r.ok) {
-      console.log(chalk.green(`  ✓ ${r.label}`));
-    } else {
-      console.log(chalk.red(`  ✗ ${r.label}  — ${r.error ?? 'failed'}`));
+    if (!r.ok && !r.skipped) {
+      console.log(chalk.red(`✗ ${r.label} — ${r.error ?? 'failed'}`));
     }
   }
 }
@@ -554,19 +795,21 @@ async function runClaudeDesktop(state: DaemonState, verbose: boolean): Promise<T
       state.url,
       state.gatewayKey,
       getDesktopBaseDir(),
-      orgMcpServers
+      orgMcpServers,
+      undefined, // default managed-MCP state path
+      state.project
     );
     logger.info(
       '[proxy] Claude Desktop proxy configuration written',
       ...sanitizeLogArgs({
         configPath,
         gatewayUrl: state.url,
-        telemetryMode: state.telemetryMode,
         profile: state.profile,
-        inferenceGatewayApiKey: state.gatewayKey,
+        inferenceGatewayApiKey: `${state.gatewayKey}.${CLAUDE_DESKTOP}`,
       })
     );
     console.log(chalk.green('✓ Claude Desktop configured'));
+    console.log(chalk.yellow(routeBillingLine()));
     const managedSettingsWarning = describeManagedSettingsOverride();
     if (managedSettingsWarning) {
       console.log(chalk.yellow(`⚠ ${managedSettingsWarning}`));
@@ -603,7 +846,7 @@ async function runVscodeByok(
   projectBinding?: ProjectBindingState
 ): Promise<TargetResult> {
   try {
-    const result = await writeVsCodeLanguageModelsConfig(state.url, state.gatewayKey, insiders);
+    const result = await writeVsCodeLanguageModelsConfig(state.url, state.gatewayKey, insiders, state.project);
     logger.info(
       '[proxy] VS Code BYOK configuration written',
       ...sanitizeLogArgs({
@@ -612,7 +855,6 @@ async function runVscodeByok(
         profile: state.profile,
         project: state.project,
         modelCount: result.modelCount,
-        clientType: state.clientType,
         requiresSecretConfiguration: result.requiresSecretConfiguration,
       })
     );
@@ -624,6 +866,8 @@ async function runVscodeByok(
       console.log(`  Project: ${projectDisplay(projectBinding, config.codeMieProject)}`);
     }
 
+    // VS Code keeps the key in its secret storage; BYOK's named key is typed there by the user.
+    const byokKey = `${state.gatewayKey}.${VSCODE_BYOK}`;
     if (result.requiresSecretConfiguration) {
       displaySetupInstructions({
         setupInstructions: [
@@ -631,15 +875,16 @@ async function runVscodeByok(
           '1. Open VS Code and Press ⇧⌘P (macOS) or Ctrl+Shift+P (Windows/Linux).',
           '2. Find Chat: Manage Language Models',
           '3. In opened dialog Right-click any CodeMie model → Update API Key',
-          `4. Enter API key: ${state.gatewayKey}\n`,
+          `4. Enter API key: ${byokKey}\n`,
           'Reload VS Code, then select a CodeMie model from the model picker.',
         ].join('\n'),
       });
     } else {
+      // A shared key typed by an older connect still works and raises no error, so the update is always asked.
       console.log(
-        chalk.dim(
-          `  If VS Code reports a missing or invalid key, open Chat: Manage Language Models, ` +
-          `then right-click any CodeMie model → Update API Key and enter ${state.gatewayKey}.`
+        chalk.yellow(
+          `  Update the key VS Code holds: open Chat: Manage Language Models, ` +
+          `then right-click any CodeMie model → Update API Key and enter ${byokKey}.`
         )
       );
     }
@@ -652,13 +897,22 @@ async function runVscodeByok(
   }
 }
 
-async function runVscodeClaudeCode(state: DaemonState, insiders: boolean): Promise<TargetResult> {
+/**
+ * `skipRerun`, given when a vendor flag set the extension, is the command to re-run: a missing VS Code then skips the
+ * extension instead of failing it. Under `--vscode-claude-code` itself a missing VS Code stays a failure.
+ */
+async function runVscodeClaudeCode(state: DaemonState, insiders: boolean, skipRerun?: string): Promise<TargetResult> {
   try {
     const vsCodeResult = await writeVsCodeClaudeCodeConfig(state.url, state.gatewayKey, insiders);
     console.log(chalk.green(`✓ VS Code Claude Code extension configured (${vsCodeResult.path})`));
+    console.log(chalk.yellow(routeBillingLine()));
     console.log(chalk.yellow('  Reload VS Code to apply changes.'));
     return { label: 'VS Code Claude Code extension', ok: true };
   } catch (error) {
+    if (skipRerun && error instanceof ClientNotInstalledError) {
+      logger.debug('[proxy] VS Code Claude Code extension skipped: VS Code is not installed', ...sanitizeLogArgs({ insiders }));
+      return skippedResult('VS Code Claude Code extension', insiders ? 'VS Code Insiders' : 'VS Code', skipRerun);
+    }
     const message = error instanceof Error ? error.message : String(error);
     logger.warn(
       '[proxy] Failed to configure VS Code Claude Code extension',
@@ -669,14 +923,8 @@ async function runVscodeClaudeCode(state: DaemonState, insiders: boolean): Promi
   }
 }
 
-/**
- * Configure every requested target over a single daemon lifecycle. Bare invocation
- * (no target flag) prints the target list and returns without side effects. Each
- * target's writer runs independently; a per-target summary is printed and the
- * process exit code is set to 1 when any requested target fails (spec §3.4).
- */
 interface CodexDesktopRunOptions {
-  force?: boolean;
+  overwrite?: boolean;
   model?: string;
   profileModel?: string;
   verbose?: boolean;
@@ -689,15 +937,19 @@ async function runCodexDesktop(
   const label = 'Codex Desktop';
   try {
     const candidates = getCodexDesktopAppCandidates();
-    if (!options.force && !(await findCodexDesktopApp(candidates))) {
+    if (!options.overwrite && !(await findCodexDesktopApp(candidates))) {
       throw new ConfigurationError(
         candidates.length === 0
-          ? `The Codex desktop app is not supported on ${process.platform} ` +
-          '(macOS and Windows only). Re-run with --force to write the config anyway.'
-          : 'Could not find the ChatGPT desktop app (which ships Codex). Looked in: ' +
-          `${candidates.join(', ')}. ` +
-          (process.platform === 'win32' ? 'Also queried the current user\'s OpenAI.Codex MSIX package. ' : '') +
-          'Install it, or re-run with --force to write the config anyway.'
+          ? renderHint({
+            reason: `The Codex desktop app is not supported on ${process.platform} (macOS and Windows only)`,
+            action: 're-run with --overwrite to write the config anyway',
+          })
+          : renderHint({
+            reason: 'Could not find the ChatGPT desktop app (which ships Codex). Looked in: ' +
+              candidates.join(', ') +
+              (process.platform === 'win32' ? '. Also queried the current user\'s OpenAI.Codex MSIX package' : ''),
+            action: 'install it, or re-run with --overwrite to write the config anyway',
+          })
       );
     }
 
@@ -706,7 +958,7 @@ async function runCodexDesktop(
     const configPath = getCodexDesktopConfigPath();
     console.log(chalk.cyan(`Codex config: ${configPath}`));
 
-    const discovered = await discoverCodexModels(state.url, state.gatewayKey);
+    const discovered = await discoverCodexModels(state.url, state.gatewayKey, state.project);
     const model = selectCodexModel(discovered, options.model, options.profileModel);
 
     await writeCodexDesktopConfig({
@@ -716,7 +968,7 @@ async function runCodexDesktop(
       baseUrl: new URL('/v1', state.url).toString(),
       gatewayKey: state.gatewayKey,
       model,
-      force: options.force,
+      overwrite: options.overwrite,
     });
 
     console.log(chalk.green(`\u2713 Codex Desktop configured (model: ${model})`));
@@ -736,12 +988,14 @@ export const runCodexDesktopForTest = runCodexDesktop;
 
 interface CopilotOtlpRunOptions {
   scope?: 'user' | 'project';
+  /** With no `scope`: keep a stored list of named projects (a member set by an aggregate). */
+  keepProjectList?: boolean;
 }
 
 async function runCopilotChatOtlp(options: CopilotOtlpRunOptions): Promise<TargetResult> {
   const label = 'Copilot Chat Analytics';
   try {
-    const result = await writeCopilotChatOtlpConfig({ scope: options.scope });
+    const result = await writeCopilotChatOtlpConfig({ scope: options.scope, keepProjectList: options.keepProjectList });
     console.log(chalk.green('✓ Copilot Chat analytics configured (hooks-only, no OTel)'));
     console.log(chalk.dim(`  ${result.hookEvents} event(s) wired to codemie hook --agent ${COPILOT_CHAT_OTLP_AGENT_NAME}`));
     console.log(chalk.dim(`  Hook file:     ${result.hookFilePath}`));
@@ -768,7 +1022,7 @@ async function runCopilotChatOtlp(options: CopilotOtlpRunOptions): Promise<Targe
 async function runCopilotCliOtlp(options: CopilotOtlpRunOptions): Promise<TargetResult> {
   const label = 'Copilot CLI Analytics';
   try {
-    const result = await writeCopilotCliOtlpConfig({ scope: options.scope });
+    const result = await writeCopilotCliOtlpConfig({ scope: options.scope, keepProjectList: options.keepProjectList });
     console.log(chalk.green('✓ Copilot CLI analytics configured (hooks-only, no OTel)'));
     console.log(chalk.dim(`  ${result.hookEvents} event(s) wired to codemie hook --agent ${COPILOT_CLI_OTLP_AGENT_NAME}`));
     console.log(chalk.dim(`  Hook file: ${result.hookFilePath}`));
@@ -780,7 +1034,7 @@ async function runCopilotCliOtlp(options: CopilotOtlpRunOptions): Promise<Target
     } else {
       console.log(chalk.dim('  Tracked projects: all projects'));
     }
-    console.log(chalk.dim('  Managed `copilot-cli` launches are ignored by this adapter (no double counting).'));
+    console.log(chalk.dim('  Both native `copilot` and managed `codemie-copilot` launches are tracked.'));
     console.log(chalk.yellow('  Restart the Copilot CLI to apply changes (hooks load only at CLI start).'));
     return { label, ok: true };
   } catch (error) {
@@ -791,10 +1045,10 @@ async function runCopilotCliOtlp(options: CopilotOtlpRunOptions): Promise<Target
   }
 }
 
-async function runOmp(force: boolean): Promise<TargetResult> {
+async function runOmp(overwrite: boolean): Promise<TargetResult> {
   const label = 'oh-my-pi';
   try {
-    const result = await writeOmpExtension({ force });
+    const result = await writeOmpExtension({ overwrite });
     console.log(chalk.green(
       result.changed
         ? `\u2713 oh-my-pi extension installed (${result.path})`
@@ -812,21 +1066,86 @@ async function runOmp(force: boolean): Promise<TargetResult> {
   }
 }
 
+/**
+ * Moves every client config of {@link CLIENT_CONFIGS} that has a key-only write and is not one `targetFlags` names to
+ * that client's named key; a row written only while the record holds an older CLI's client identity is skipped without
+ * it. One line per client moved or failed. Never throws and never touches the exit code.
+ */
+async function moveOtherClientsToNamedKeys(state: DaemonState, targetFlags: ReadonlySet<string>): Promise<void> {
+  const legacyIdentity = await hasLegacyClientIdentity();
+  for (const config of CLIENT_CONFIGS) {
+    if (!config.moveToNamedKey || targetFlags.has(config.flag)) continue;
+    if (config.movedOnlyWithLegacyIdentity && !legacyIdentity) continue;
+    try {
+      const outcome = await config.moveToNamedKey.write(state);
+      if (outcome === 'moved') {
+        console.log(chalk.green(`✓ ${config.label} moved to its own key — ${config.moveToNamedKey.hint}`));
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn('[proxy] Failed to move a client to its named key', ...sanitizeLogArgs({ client: config.label, error: message }));
+      console.log(chalk.yellow(`Warning: could not move ${config.label} to its own key: ${message}`));
+    }
+  }
+}
+
+/**
+ * Whether a client config that is no succeeded target may still send the shared key, as read after the pass:
+ * Desktop's loopback gateway when its key is sealed or reads as the shared key; a config with a key-only write when it
+ * reads the shared key; any other (BYOK) config pointing at a local proxy.
+ */
+function mayHoldSharedKey(config: ClientConfig, gateway: ConnectorGateway | null): boolean {
+  if (config.client === CLAUDE_DESKTOP) return gateway !== null && (gateway.key === undefined || gateway.key === 'shared');
+  return config.moveToNamedKey ? gateway?.key === 'shared' : gateway !== null;
+}
+
+/**
+ * Removes the older CLI's client identity from the connection record, whichever client it names and also when it
+ * names none, once no client holds or may hold the shared key: every client of {@link CLIENT_CONFIGS} is a target in
+ * `targetOk` that succeeded, or its config, read after the pass, cannot send the shared key; an installed oh-my-pi
+ * extension that is no succeeded target keeps it. The running daemon keeps the default client it started with.
+ */
+async function clearLegacyIdentityWhenUnused(state: DaemonState, targetOk: ReadonlyMap<string, boolean>): Promise<void> {
+  if (!(await hasLegacyClientIdentity())) return;
+  const succeeded = (flag: string): boolean => targetOk.get(flag) === true;
+  for (const config of CLIENT_CONFIGS) {
+    if (succeeded(config.flag)) continue;
+    if (mayHoldSharedKey(config, await config.read(state))) return;
+  }
+  if (!succeeded('--omp') && isOmpExtensionInstalled()) return;
+  await clearLegacyClientIdentity();
+}
+
+/**
+ * The move a command a person types makes once the daemon of `state` runs: the clients that are no target in
+ * `targetOk` (every client for `proxy start` / `proxy restart`, whose map is empty) move to their named keys, then
+ * the record loses the older CLI's client identity once no client holds or may hold the shared key. Prints the
+ * pass's own lines; never throws and never touches the exit code. Run outside the daemon lock.
+ */
+export async function moveClientsToNamedKeys(state: DaemonState, targetOk: ReadonlyMap<string, boolean>): Promise<void> {
+  await moveOtherClientsToNamedKeys(state, new Set(targetOk.keys()));
+  await clearLegacyIdentityWhenUnused(state, targetOk);
+}
+
+/**
+ * Configure every requested target over a single daemon lifecycle. Bare invocation
+ * (no target flag) prints the target list and returns without side effects. A member of an aggregate given whose
+ * application is not found is dropped before any check made for it; when none is left, one line and nothing else. Claude
+ * Desktop set by an aggregate under a profile with no CodeMie URL does not run and is a failed target. Each
+ * target's writer runs independently; failed targets are listed and the
+ * process exit code is set to 1 when any requested target fails (spec §3.4).
+ * Once a target succeeded, the configs of the other clients that hold the shared key as text move to their named
+ * keys, and so does Claude Desktop's on this daemon's port while the record holds an older CLI's client identity;
+ * the record loses that identity once no client holds or may hold the shared key any more.
+ */
 export async function connectTargets(opts: ConnectOptions): Promise<void> {
   const { targets } = opts;
-  const activeTargets: ConnectTargets = { ...targets };
+  const aggregates = opts.aggregates ?? [];
 
   if (!hasAnyTarget(targets)) {
-    console.log(TARGET_LIST);
+    console.log(CONNECT_TARGET_LIST);
+    process.exitCode = 1;
     return;
-  }
-
-  // omp and VS Code BYOK need different daemon identities, and one daemon carries one.
-  if (targets.omp && targets.vscode) {
-    printProxyError(new ConfigurationError(
-      '--omp cannot be combined with --vscode: they need different proxy identities and share one daemon.\n' +
-      'Run `codemie proxy connect --omp` for oh-my-pi, or `codemie proxy connect --vscode` for VS Code.'
-    ), 'Failed to connect proxy');
   }
 
   const verbose = Boolean(opts.verbose);
@@ -842,93 +1161,133 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     console.log(chalk.yellow('Note: --model has no effect without --codex-desktop.'));
   }
 
-  // One daemon serves the whole run and carries a single client type. The Codex
-  // model normalizer is gated on that type, so a higher-priority target silently
-  // turns off the resolution the Codex app depends on.
-  if (targets.codexDesktop && deriveDaemonIdentity(targets).clientType !== 'codex-desktop') {
-    console.log(chalk.yellow(
-      'Warning: --codex-desktop was combined with a target that owns the shared daemon, so\n' +
-      '  Codex model-name resolution is disabled for this run. Selecting a model in the Codex\n' +
-      '  app will fail. Run `codemie proxy connect --codex-desktop` on its own instead.'
-    ));
-  }
+  warnIgnoredAnalyticsFlags(targets, opts.scope, Boolean(opts.yes), Boolean(opts.includePersonalSubscriptions));
+  // Coalesced only after the ignored-flag checks above, which need to see an omitted --scope.
+  const scope: AllowlistScope = opts.scope ?? 'user';
 
-  const { label, commandExample } = describeTargets(targets);
+  // An aggregate wires every member, found or not; one whose application is not found is named after the run.
+  const activeTargets: ConnectTargets = { ...targets };
+  const routePlan = await resolveClaudeRoutes(activeTargets, aggregates, opts.explicitRoutes, insiders);
+  const notFound = await membersNotFound(activeTargets, aggregates, { insiders });
+  const members = membersOf(aggregates);
+  // A member an aggregate set keeps its stored project list when --scope is omitted.
+  const keptLists = new Set<AnalyticsTargetKey>(
+    opts.scope === undefined ? ANALYTICS_TARGETS.map((t) => t.key).filter((key) => members.has(key)) : []
+  );
+
+  const { label, commandExample } = describeTargets(activeTargets, aggregates);
+  // Every target's outcome; a target that fails before the dispatch lands here first.
+  const results: TargetResult[] = [];
+  const failBeforeDispatch = (): void => {
+    printFailures(results);
+    if (results.length > 0) process.exitCode = 1;
+  };
 
   let startedInThisRun = false;
   let state: DaemonState;
   let config: Awaited<ReturnType<typeof ConfigLoader.load>>;
   let profile: string;
-  let clientType: string | undefined;
   let otlpDisplay: ClaudeCodeOtlpDisplay | undefined;
+  let agreement: ClaudeCodeOtlpAgreement | undefined;
   let projectBinding: ProjectBindingState | undefined;
+  let settingsSwitch: ProviderSettingsSwitch | null = null;
+  let scopeBaselines: ScopeBaselines;
   try {
-    // Without a TTY the confirmation cannot be shown; --silent is the only
+    // Pre-lock phase: the scope confirmation runs before SSO, the daemon or any config is touched,
+    // and sees the raw (possibly omitted) --scope.
+    const baselines = await confirmScopeDrops(activeTargets, opts.scope, Boolean(opts.yes), keptLists);
+    if (!baselines || !hasAnyTarget(activeTargets)) return;
+    scopeBaselines = baselines;
+
+    // Without a TTY the confirmation cannot be shown; --yes is the only
     // non-interactive path. Fail before SSO, the daemon or settings.json are touched.
-    if (targets.claudeCodeOtlp && !opts.silent && isNonInteractiveEnvironment()) {
-      throw new ConfigurationError(
-        'Claude Code analytics requires confirmation, but no interactive terminal is available.\n' +
-        `Re-run with --silent to apply it without a prompt: codemie proxy connect --${CLAUDE_CODE_OTLP_AGENT_NAME} --silent`
-      );
+    if (activeTargets.claudeCodeOtlp && !opts.yes && isNonInteractiveEnvironment()) {
+      throw new ConfigurationError(renderHint({
+        reason: 'Claude Code analytics requires confirmation, but no interactive terminal is available',
+        command: `codemie proxy connect ${memberFlag('claudeCodeOtlp', members)} --yes`,
+      }));
     }
 
     const resolved = await resolveSsoProxyConfig(opts.profile, label, commandExample);
     config = resolved.config;
     if (!config.baseUrl) {
-      throw new ConfigurationError('No API URL configured. Run: codemie setup');
+      throw new ConfigurationError(renderHint({ reason: 'No API URL configured', command: 'codemie setup' }));
     }
-    // The Claude Desktop target fetches org-managed MCP servers via codeMieUrl.
-    if (targets.claudeDesktop && !config.codeMieUrl) {
-      throw new ConfigurationError(
-        'Selected profile is missing CodeMie URL.\n' +
-        'Run: codemie setup or codemie profile login'
-      );
+    // The Claude Desktop target fetches org-managed MCP servers via codeMieUrl. Set by an aggregate, it fails alone.
+    if (failDesktopWithoutCodeMieUrl(activeTargets, members, config.codeMieUrl, results) && !hasAnyTarget(activeTargets)) {
+      return failBeforeDispatch();
     }
 
     profile = config.name ?? 'default';
     projectBinding = await reportDaemonProfileIdentity(config, 'proxy');
-    // Resolved once so the confirmation header and the post-start table show the same URL.
-    otlpDisplay = targets.claudeCodeOtlp
+    // Resolved here because the confirmation header needs the profile and the effective URL.
+    otlpDisplay = activeTargets.claudeCodeOtlp
       ? {
           profile,
           codeMieUrl: config.codeMieUrl
             ? resolveProfileCodeMieUrl(config.baseUrl, config.codeMieUrl)
             : undefined,
+          routedClients: routePlan.routed.map((member) => MEMBER_LABELS[member]),
         }
       : undefined;
+    const printProfileLine = () => console.log(verbose
+      ? chalk.cyan(
+        `Using profile: ${profile} ` +
+        `(source: ${resolved.profileSource === 'explicit' ? '--profile' : 'active profile'})`
+      )
+      : chalk.cyan(`Using profile: ${profile}`));
     // The confirmation prompt opens with its own `Using profile:` summary line, so this
     // one is skipped when that prompt will be shown to avoid printing it twice. The
-    // non-interactive-without-`--silent` case already threw above.
-    const confirmationWillBeShown = Boolean(targets.claudeCodeOtlp) && !opts.silent;
-    if (!confirmationWillBeShown) {
-      console.log(verbose
-        ? chalk.cyan(
-          `Using profile: ${profile} ` +
-          `(source: ${resolved.profileSource === 'explicit' ? '--profile' : 'active profile'})`
-        )
-        : chalk.cyan(`Using profile: ${profile}`));
-    }
+    // non-interactive-without-`--yes` case already threw above.
+    const confirmationWillBeShown = Boolean(activeTargets.claudeCodeOtlp) && !opts.yes;
+    if (!confirmationWillBeShown) printProfileLine();
+    // The route lines follow the analytics header (`CodeMie URL:`, the prompt or what `--yes` prints in its place).
+    let routePlanPrinted = false;
 
     await verifySsoCredentials(
       config.baseUrl,
       profile,
-      config.codeMieUrl
+      config.codeMieUrl,
+      config.provider,
+      () => printFailures(results)
     );
-    if (targets.claudeCodeOtlp && otlpDisplay) {
+
+    // Before anything is started or written: Bedrock settings in Claude's own configuration would send
+    // Claude traffic around the gateway this command is about to connect. Only the clients that will be
+    // configured (an aggregate flag leaves out the ones not found on this machine) are checked.
+    settingsSwitch = await checkClaudeProviderSettings(activeTargets, config, { silent: Boolean(opts.yes), insiders });
+
+    if (activeTargets.claudeCodeOtlp && otlpDisplay) {
       const confirmed = await confirmClaudeCodeOtlp(
-        opts.scope ?? 'user',
-        Boolean(opts.force),
-        Boolean(opts.silent),
+        scope,
+        Boolean(opts.overwrite),
+        Boolean(opts.yes),
         otlpDisplay,
-      );
+        Boolean(opts.includePersonalSubscriptions),
+      ).catch((error: unknown) => failAggregateInvalidProjectList(error, members, results, () => {
+        // The list is checked before the prompt opens, so the prompt never named the profile.
+        if (confirmationWillBeShown) printProfileLine();
+      }));
+      // `false` is a decline or a cancelled prompt; a falsy `undefined` is the analytics failing on its own (an invalid
+      // project list), which leaves the other clients to be configured.
+      const declined = confirmed === false;
+      if (confirmed) agreement = confirmed;
+      // The prompt printed the profile line; the route lines come after it. A declined run turns no analytics on and
+      // routes nothing the aggregate set, so its skip and hint lines would describe something that does not happen.
+      if (!declined) printClaudeRoutePlan(routePlan);
+      routePlanPrinted = true;
       if (!confirmed) {
         activeTargets.claudeCodeOtlp = false;
-        console.log(chalk.yellow('Claude Code analytics was not enabled.'));
-        if (!hasAnyTarget(activeTargets)) {
-          return;
+        if (declined) {
+          console.log(chalk.yellow('Claude Code analytics was not enabled.'));
+          dropDeclinedClaudeRoutes(activeTargets, members, opts.explicitRoutes, routePlan);
         }
+        if (!hasAnyTarget(activeTargets)) return failBeforeDispatch();
       }
     }
+    if (!routePlanPrinted) printClaudeRoutePlan(routePlan);
+
+    await settingsSwitch?.apply();
 
     const cwd = process.cwd();
     await Promise.allSettled([
@@ -936,24 +1295,23 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       syncPluginSkills(),
     ]);
 
-    const identity = deriveDaemonIdentity(activeTargets);
-    clientType = identity.clientType;
-
-    // The record is written after wiring succeeds (below), not at spawn time.
-    const ensured = await ensureDaemon(
-      buildRequestedConfig(profile, identity.clientType, config, projectBinding),
-      identity.spawnOptions,
+    // The record is written after wiring succeeds (below), not at spawn time; the lock is
+    // released before the targets are written.
+    const ensured = await withDaemonLock(DAEMON_LOCK_COMMAND_BUDGET_MS, async () => ensureDaemon(
+      buildRequestedConfig(profile, config, projectBinding, await requestedDaemonPort()),
       config,
-      Boolean(opts.force),
+      Boolean(opts.restartDaemon),
       verbose,
       false
-    );
+    ));
     state = ensured.state;
     startedInThisRun = ensured.startedInThisRun;
   } catch (error) {
     if (startedInThisRun) {
       await rollbackDaemon();
     }
+    printFailures(results);
+    settingsSwitch?.printBackupNote();
     printProxyError(error, 'Failed to connect proxy');
     // printProxyError calls process.exit and never returns; this explicit return
     // guarantees control can never fall through to the dispatch below with
@@ -962,57 +1320,84 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   }
 
   // Per-target dispatch (spec §3.4) — each writer runs independently.
-  const results: TargetResult[] = [];
+  // The `proxy connect` flags of the client configs this run wrote, and whether each write succeeded.
+  const targetOk = new Map<string, boolean>();
+  /** Whether each analytics member's writer succeeded, for the `configured (not installed yet)` lines. */
+  const memberOk = new Map<AnalyticsMember, boolean>();
+  const runClient = async (flag: string, result: Promise<TargetResult>, member?: AnalyticsMember): Promise<void> => {
+    const r = await result;
+    results.push(r);
+    targetOk.set(flag, r.ok);
+    if (member) memberOk.set(member, r.ok);
+  };
+  const editionFlag = (flag: string): string => (insiders ? `${flag} --insiders` : flag);
   if (activeTargets.claudeDesktop) {
-    results.push(await runClaudeDesktop(state, verbose));
+    await runClient('--claude-desktop', runClaudeDesktop(state, verbose), 'claudeDesktop');
   }
   if (activeTargets.vscode) {
-    results.push(await runVscodeByok(state, insiders, config, verbose, projectBinding));
+    await runClient(editionFlag('--vscode'), runVscodeByok(state, insiders, config, verbose, projectBinding));
   }
   if (activeTargets.vscodeClaudeCode) {
-    results.push(await runVscodeClaudeCode(state, insiders));
+    const skipRerun = members.has('vscodeClaudeCode')
+      ? `codemie proxy connect ${editionFlag(aggregateFlagOf('vscodeClaudeCode'))}`
+      : undefined;
+    await runClient(editionFlag('--vscode-claude-code'), runVscodeClaudeCode(state, insiders, skipRerun), 'vscodeClaudeCode');
   }
   if (activeTargets.codexDesktop) {
-    results.push(await runCodexDesktop(state, {
-      force: Boolean(opts.force),
+    await runClient('--codex-desktop', runCodexDesktop(state, {
+      overwrite: Boolean(opts.overwrite),
       model: opts.model,
       profileModel: config.model,
       verbose,
     }));
   }
-  if (activeTargets.claudeCodeOtlp && otlpDisplay) {
-    results.push(await runClaudeCodeOtlp({
-      force: Boolean(opts.force),
-      scope: opts.scope ?? 'user',
-      ...otlpDisplay,
-    }));
+  const writerScope = (key: AnalyticsTargetKey): { scope?: AllowlistScope; keepProjectList?: boolean } =>
+    keptLists.has(key) ? { keepProjectList: true } : { scope };
+  const analyticsWriters: Record<AnalyticsTargetKey, () => Promise<TargetResult>> = {
+    claudeCodeOtlp: () => runClaudeCodeOtlp({ overwrite: Boolean(opts.overwrite), ...writerScope('claudeCodeOtlp') }),
+    copilotChatOtlp: () => runCopilotChatOtlp(writerScope('copilotChatOtlp')),
+    copilotCliOtlp: () => runCopilotCliOtlp(writerScope('copilotCliOtlp')),
+  };
+  for (const target of ANALYTICS_TARGETS.filter((entry) => activeTargets[entry.key])) {
+    const r = await runIfScopeUnchanged(target, scopeBaselines, analyticsWriters[target.key]);
+    results.push(r);
+    memberOk.set(target.key, r.ok);
+    // The consent is recorded only once Claude Code settings are written; a denied question leaves the way to grant it later.
+    if (target.key === 'claudeCodeOtlp' && r.ok && agreement) {
+      if (agreement.workConsent) results.push(await recordConnectConsent(scope));
+      else if (agreement.deniedQuestion) printEnableLaterHint(scope);
+    }
   }
-  if (targets.copilotChatOtlp) {
-    results.push(await runCopilotChatOtlp({ scope: opts.scope }));
-  }
-  if (targets.copilotCliOtlp) {
-    results.push(await runCopilotCliOtlp({ scope: opts.scope }));
+  for (const member of notFound) {
+    if (memberOk.get(member)) console.log(chalk.yellow(notInstalledLine(member)));
   }
   if (activeTargets.omp) {
-    results.push(await runOmp(Boolean(opts.force)));
+    await runClient('--omp', runOmp(Boolean(opts.overwrite)));
   }
 
-  const anyFailed = results.some((r) => !r.ok);
+  const anyFailed = results.some((r) => !r.ok && !r.skipped);
   const allFailed = results.every((r) => !r.ok);
 
   // Record the connection only once something was actually wired, so a connect that
   // configured nothing never redirects hook cold starts. A refused write only warns.
+  // Only such a connect moves the other clients off the shared key, as `proxy start` and `proxy restart` do.
   if (results.some((r) => r.ok)) {
-    await writeConnectionRecord(state, profile, clientType);
+    await writeConnectionRecord(state, profile, { port: state.port });
+    await moveClientsToNamedKeys(state, targetOk);
   }
 
-  // Spec §3.4: print the per-target summary after all requested targets run,
-  // unconditionally — a single-target success gets the summary block too.
-  printSummary(results);
+  // Spec §3.4: after all requested targets run, list the ones that failed; successes
+  // already printed their own line.
+  printFailures(results);
   if (anyFailed) {
+    settingsSwitch?.printBackupNote();
     process.exitCode = 1;
   }
+  const olderCli = await findOlderCliOnPath();
+  if (olderCli) {
+    console.log(chalk.yellow(formatOlderCliWarning(olderCli)));
+  }
   if (allFailed && startedInThisRun) {
-    await rollbackDaemon();
+    await rollbackOwnDaemon(state.pid);
   }
 }

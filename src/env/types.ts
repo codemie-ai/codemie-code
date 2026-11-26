@@ -68,6 +68,12 @@ export interface ProviderProfile {
   haikuModel?: string;
   sonnetModel?: string;
   opusModel?: string;
+  /**
+   * Non-Claude catalog models the user opted into for the Claude clients (the Claude Code
+   * `/model` picker and Claude Desktop). Claude-family models are always offered; these are
+   * added on top. Set with `codemie-claude models select`.
+   */
+  claudeExtraModels?: string[];
 
   timeout?: number;
   debug?: boolean;
@@ -212,7 +218,7 @@ export interface MultiProviderConfig {
  */
 export interface ConfigWithSource {
   value: any;
-  source: 'default' | 'global' | 'project' | 'profile' | 'env' | 'cli';
+  source: 'default' | 'global' | 'project' | 'profile' | 'env' | 'dotenv' | 'cli';
 }
 
 /**

@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { rename } from 'fs/promises';
 import os from 'node:os';
 import { join } from 'node:path';
-import { writeJsonFileAtomic } from '../atomic-write.js';
+import { writeFileAtomic, writeJsonFileAtomic } from '../atomic-write.js';
 
 vi.mock('fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs/promises')>();
@@ -90,5 +90,84 @@ describe('writeJsonFileAtomic rename retry', () => {
 
     expect(content()).toEqual({ v: 'old' });
     expect(tempFiles()).toEqual([]);
+  });
+});
+
+describe('writeFileAtomic', () => {
+  let dir: string;
+  const tempFiles = (directory: string) => readdirSync(directory).filter((name) => name.endsWith('.tmp'));
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(os.tmpdir(), 'atomic-text-'));
+    vi.mocked(rename).mockReset();
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it.skipIf(process.platform === 'win32')('writes through a link to a file: the link kept, the target holds the content, its mode kept', async () => {
+    const targetDir = join(dir, 'dotfiles');
+    mkdirSync(targetDir);
+    const target = join(targetDir, 'settings.json');
+    const link = join(dir, 'settings.json');
+    writeFileSync(target, 'old');
+    chmodSync(target, 0o644);
+    symlinkSync(target, link);
+
+    await writeFileAtomic(link, 'new');
+
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(readFileSync(target, 'utf-8')).toBe('new');
+    expect(statSync(target).mode & 0o777).toBe(0o644);
+    expect(tempFiles(dir)).toEqual([]);
+    expect(tempFiles(targetDir)).toEqual([]);
+  });
+
+  it.skipIf(process.platform === 'win32')('replaces the content of a regular file and keeps its mode', async () => {
+    const file = join(dir, 'settings.json');
+    writeFileSync(file, 'old');
+    chmodSync(file, 0o640);
+
+    await writeFileAtomic(file, 'new');
+
+    expect(lstatSync(file).isSymbolicLink()).toBe(false);
+    expect(readFileSync(file, 'utf-8')).toBe('new');
+    expect(statSync(file).mode & 0o777).toBe(0o640);
+  });
+
+  it.skipIf(process.platform === 'win32')('creates a missing file in a missing directory with mode 0600', async () => {
+    const file = join(dir, 'missing', 'settings.json');
+
+    await writeFileAtomic(file, 'new');
+
+    expect(readFileSync(file, 'utf-8')).toBe('new');
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+  });
+
+  it.skipIf(process.platform === 'win32')('replaces a dangling link with a regular file', async () => {
+    const link = join(dir, 'settings.json');
+    symlinkSync(join(dir, 'gone', 'settings.json'), link);
+
+    await writeFileAtomic(link, 'new');
+
+    expect(lstatSync(link).isSymbolicLink()).toBe(false);
+    expect(readFileSync(link, 'utf-8')).toBe('new');
+  });
+
+  it.skipIf(process.platform === 'win32')('a failed rename leaves the target unchanged and no temp file beside it', async () => {
+    const targetDir = join(dir, 'dotfiles');
+    mkdirSync(targetDir);
+    const target = join(targetDir, 'settings.json');
+    const link = join(dir, 'settings.json');
+    writeFileSync(target, 'old');
+    symlinkSync(target, link);
+    failRenames('ENOSPC', 1);
+
+    await expect(writeFileAtomic(link, 'new')).rejects.toMatchObject({ code: 'ENOSPC' });
+
+    expect(readFileSync(target, 'utf-8')).toBe('old');
+    expect(tempFiles(targetDir)).toEqual([]);
+    expect(tempFiles(dir)).toEqual([]);
   });
 });

@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "generated": "2026-10-30T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 5, "label": "XL" }
+  },
+  "total": 26,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 42,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "New analytics sync subsystem with many components: install/status/run/uninstall runners, config-store, marker, window, identity, policy, report-builder, redact, a cross-platform OS scheduler (launchd/systemd+loginctl/schtasks generators and register/unregister wiring) and a webhook delivery target. It also modifies the analytics CLI wiring, bin/codemie.js, shared src/utils/errors.ts and a new shared src/utils/scheduled-run.ts. Base L, bumped to XL for the new external webhook integration." },
+    { "dimension": "technical_risk", "reason": "No exact precedent for OS scheduler registration across 3 platforms. A signed webhook URL (sig= query param) needs redaction across errors, logs and cause chains. Delivery hardening adds a redirect block, a 5-minute timeout and a 70 MB size cap. A follow-up 'harden' commit signals rework. Base L, bumped to XL for secret handling (security)." },
+    { "dimension": "file_change_estimate", "reason": "Diffstat: 42 files changed, 4774 insertions. About 24 are new source and test files under src/cli/commands/analytics/sync/ (including scheduler/ and targets/), plus new src/utils/scheduled-run.ts and an integration test. Roughly 9 existing files changed across src/, bin/, docs/ and .ai-run/guides/. This is well beyond the 16+ XXL threshold." },
+    { "dimension": "affected_layers", "reason": "Touches the CLI/API command surface, service logic (run-sync, report-builder), local persistence (config-store and marker files), infrastructure (OS scheduler units/plists/tasks) and an external HTTPS webhook. Base L, bumped to XL for the external integration." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L to XL: integration with new external service (HTTPS webhook target)",
+    "Affected Layers bumped from L to XL: integration with new external service (HTTPS webhook target)",
+    "Technical Risk bumped from L to XL: security requirement (signed webhook URL secret redaction)"
+  ],
+  "split_recommendation": null
+}

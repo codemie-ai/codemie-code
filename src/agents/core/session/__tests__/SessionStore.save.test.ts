@@ -63,10 +63,10 @@ describe('SessionStore.saveSession', () => {
     const store = new SessionStore();
 
     const loaded = await store.loadSession(SESSION_ID);
-    await store.saveSession({ ...loaded!, deliveryAttempts: 1 });
+    await store.saveSession({ ...loaded!, deliveryRealAttempts: 1 });
 
     expect(existsSync(livePath())).toBe(false);
-    expect(JSON.parse(readFileSync(completedPath(), 'utf-8')).deliveryAttempts).toBe(1);
+    expect(JSON.parse(readFileSync(completedPath(), 'utf-8')).deliveryRealAttempts).toBe(1);
   });
 
   it('writes {id}.json for an active record of a new generation while a completed_ file exists', async () => {
@@ -143,12 +143,12 @@ describe('SessionStore.saveSession', () => {
   it('merges a completed save into completed_ written meanwhile, keeping the other process\'s delivery mark', async () => {
     writeFileSync(livePath(), JSON.stringify(makeSession()));
     await renameToCompletedDuringWrite(
-      makeSession({ status: 'completed', reason: 'stop', endMetricSentAt: 1_790_000_300_000, deliveryAttempts: 2 })
+      makeSession({ status: 'completed', reason: 'stop', endMetricSentAt: 1_790_000_300_000, deliveryRealAttempts: 2 })
     );
     const { SessionStore } = await import('../SessionStore.js');
 
     await new SessionStore().saveSession(
-      makeSession({ status: 'completed', reason: 'exit', activeDurationMs: 7_000, deliveryAttempts: 1 })
+      makeSession({ status: 'completed', reason: 'exit', activeDurationMs: 7_000, deliveryRealAttempts: 1 })
     );
 
     expect(existsSync(livePath())).toBe(false);
@@ -156,7 +156,7 @@ describe('SessionStore.saveSession', () => {
     expect(completed.reason).toBe('exit');
     expect(completed.activeDurationMs).toBe(7_000);
     expect(completed.endMetricSentAt).toBe(1_790_000_300_000);
-    expect(completed.deliveryAttempts).toBe(2);
+    expect(completed.deliveryRealAttempts).toBe(2);
   });
 
   it('keeps the legacy-metrics consent frozen in completed_ when a completed copy without it is merged', async () => {
@@ -173,13 +173,48 @@ describe('SessionStore.saveSession', () => {
 
   it('keeps the saving copy\'s larger attempt counter when merging into completed_', async () => {
     writeFileSync(livePath(), JSON.stringify(makeSession()));
-    await renameToCompletedDuringWrite(makeSession({ status: 'completed', deliveryAttempts: 1 }));
+    await renameToCompletedDuringWrite(makeSession({ status: 'completed', deliveryRealAttempts: 1 }));
     const { SessionStore } = await import('../SessionStore.js');
 
-    await new SessionStore().saveSession(makeSession({ status: 'completed', deliveryAttempts: 3 }));
+    await new SessionStore().saveSession(makeSession({ status: 'completed', deliveryRealAttempts: 3 }));
 
     expect(existsSync(livePath())).toBe(false);
-    expect(JSON.parse(readFileSync(completedPath(), 'utf-8')).deliveryAttempts).toBe(3);
+    expect(JSON.parse(readFileSync(completedPath(), 'utf-8')).deliveryRealAttempts).toBe(3);
+  });
+
+  it('keeps the earliest failing clock, the larger real-attempt count and the reason paired with droppedAt when merging into completed_', async () => {
+    writeFileSync(livePath(), JSON.stringify(makeSession()));
+    await renameToCompletedDuringWrite(
+      makeSession({
+        status: 'completed', deliveryFailingSince: 1_790_000_000_500, deliveryRealAttempts: 4,
+        droppedAt: 1_790_000_900_000, droppedReason: 'rejected by the server',
+      })
+    );
+    const { SessionStore } = await import('../SessionStore.js');
+
+    await new SessionStore().saveSession(
+      makeSession({ status: 'completed', deliveryFailingSince: 1_790_000_005_000, deliveryRealAttempts: 2 })
+    );
+
+    const completed = JSON.parse(readFileSync(completedPath(), 'utf-8'));
+    expect(completed.deliveryFailingSince).toBe(1_790_000_000_500);
+    expect(completed.deliveryRealAttempts).toBe(4);
+    expect(completed.droppedAt).toBe(1_790_000_900_000);
+    expect(completed.droppedReason).toBe('rejected by the server');
+  });
+
+  it('honours an explicit clear of the failing clock when merging into completed_, and keeps the other copy\'s clock otherwise', async () => {
+    writeFileSync(livePath(), JSON.stringify(makeSession()));
+    await renameToCompletedDuringWrite(
+      makeSession({ status: 'completed', deliveryFailingSince: 1_790_000_000_500, deliveryRealAttempts: 4 })
+    );
+    const { SessionStore } = await import('../SessionStore.js');
+
+    await new SessionStore().saveSession(makeSession({ status: 'completed', deliveryFailingSince: null, deliveryRealAttempts: 2 }));
+
+    const completed = JSON.parse(readFileSync(completedPath(), 'utf-8'));
+    expect(completed.deliveryFailingSince ?? null).toBeNull();
+    expect(completed.deliveryRealAttempts).toBe(4);
   });
 
   it('leaves a newer generation\'s {id}.json written after the completed_ merge in place', async () => {
@@ -258,16 +293,16 @@ describe('SessionStore.saveSession', () => {
     const setA = join(sessionsDir, setName);
     writeFileSync(setA, JSON.stringify(makeSession({
       status: 'completed', reason: 'exit', endTime: 1_790_000_100_000,
-      endMetricSentAt: 1_790_000_100_500, droppedAt: 1_790_000_200_000, deliveryAttempts: 3,
+      endMetricSentAt: 1_790_000_100_500, droppedAt: 1_790_000_200_000, deliveryRealAttempts: 3,
     })));
     const { SessionStore } = await import('../SessionStore.js');
 
-    await new SessionStore().saveSession(makeSession({ status: 'completed', reason: 'late', endTime: 1_790_000_100_000, deliveryAttempts: 1 }));
+    await new SessionStore().saveSession(makeSession({ status: 'completed', reason: 'late', endTime: 1_790_000_100_000, deliveryRealAttempts: 1 }));
 
     expect(readFileSync(livePath(), 'utf-8')).toBe(liveB);
     expect(JSON.parse(readFileSync(setA, 'utf-8'))).toMatchObject({
       status: 'completed', reason: 'late', startTime: 1_790_000_000_000,
-      endMetricSentAt: 1_790_000_100_500, droppedAt: 1_790_000_200_000, deliveryAttempts: 3,
+      endMetricSentAt: 1_790_000_100_500, droppedAt: 1_790_000_200_000, deliveryRealAttempts: 3,
     });
     expect(readdirSync(sessionsDir).sort()).toEqual([`${SESSION_ID}.json`, setName].sort());
   });

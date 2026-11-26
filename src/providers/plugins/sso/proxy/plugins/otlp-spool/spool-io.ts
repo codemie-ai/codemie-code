@@ -17,11 +17,10 @@ import {
   type StreamPolicy,
 } from './session-project.js';
 import { readOrCreateEpoch } from './epoch.js';
-import { warnConflictStarted, warnDiscardOnce } from './spool-warnings.js';
+import { warnConflictStarted, warnDiscardOnce, warnNoProjectDiscardOnce } from './spool-warnings.js';
 import { fileExists, hooksFileState, readHookProjectNames, readRange } from './spool-files.js';
-import { apiIdentity, ownerHash } from '@/agents/core/evidence/api-identity.js';
-import { resolveEmailFromCredentials } from '@/agents/core/identity-resolver.js';
-import type { JWTCredentials, SSOCredentials } from '@/providers/core/types.js';
+
+export { forwarderIdentity, pendingHooksMarkedLocked } from './spool-evidence.js';
 
 const NEWLINE = 0x0a;
 
@@ -100,22 +99,6 @@ export async function recordStampLoss(sessionId: string, reason: string, events:
   });
 }
 
-/** Any pending hook line carries the `evidence_v: 1` envelope marker. Caller holds the lock. */
-export async function pendingHooksMarkedLocked(sessionId: string, status: SessionStatus): Promise<boolean> {
-  const pending = await readRange(sessionId, 'hooks', status.cursors.hooks);
-  if (!pending) return false;
-  return pending
-    .toString('utf-8')
-    .split('\n')
-    .some((line) => {
-      try {
-        return (JSON.parse(line) as { evidence_v?: unknown }).evidence_v === 1;
-      } catch {
-        return false;
-      }
-    });
-}
-
 /**
  * Head-of-line hold of one stream (a proof hold past the verified prefix, Task 13). Persists the
  * first-hold time; `null` clears it. Past `heldRetentionMs` the stream's held backlog is dropped
@@ -157,26 +140,11 @@ export function clearHold(status: SessionStatus, scope: HoldScope): void {
 }
 
 /**
- * The forwarder's own evidence identity (spec item 7: "found by the forwarder's own key"): the
- * daemon credentials' API URL and signed-in email, the same pair the hook stamps with
- * (`resolveHookCredentials` mirrors the daemon's credential choice). `null` = no key can be built.
- */
-export function forwarderIdentity(
-  credentials: SSOCredentials | JWTCredentials
-): { api_identity: string; owner_hash: string } | null {
-  const email = resolveEmailFromCredentials(credentials);
-  if (!email) return null;
-  try {
-    return { api_identity: apiIdentity(credentials.apiUrl), owner_hash: ownerHash(email) };
-  } catch {
-    return null;
-  }
-}
-
-/**
  * The one place that applies the project policy, for the tick and for the snapshots. Caller holds
  * the lock. Runs the one-time legacy scan, evaluates `evaluateProjectPolicy`, executes every discard
- * it demands and persists the status once when anything changed.
+ * it demands and persists the status once when anything changed. A discard for want of a project is
+ * recorded as `lastLoss` (`no_project`) and warned once per session; a conflict discard is recorded as
+ * `lastLoss` (`project_conflict_discard`) and also warned once per session.
  */
 export async function applyProjectPolicyLocked(
   sessionId: string,
@@ -201,10 +169,24 @@ export async function applyProjectPolicyLocked(
     hooksBytes = result.bytes;
     dirty ||= result.changed;
   }
+  let otelStream: SpoolStream | undefined;
   if (policy.otel.kind === 'discard') {
-    const result = await discardBacklogLocked(sessionId, status, [...OTEL_STREAMS, ...OTEL_JSON_STREAMS]);
-    otelBytes = result.bytes;
-    dirty ||= result.changed;
+    for (const stream of [...OTEL_STREAMS, ...OTEL_JSON_STREAMS]) {
+      const result = await discardBacklogLocked(sessionId, status, [stream]);
+      otelBytes += result.bytes;
+      if (result.changed) otelStream ??= stream;
+      dirty ||= result.changed;
+    }
+  }
+  const discardedBytes = hooksBytes + otelBytes;
+  const lossReason = policy.state === 'unbound' ? 'no_project' : policy.state === 'conflict' ? 'project_conflict_discard' : undefined;
+  if (lossReason && discardedBytes > 0) {
+    status.lastLoss = {
+      reason: lossReason,
+      at: Date.now(),
+      bytes: discardedBytes,
+      stream: hooksBytes > 0 ? 'hooks' : otelStream,
+    };
   }
 
   if (dirty) {
@@ -217,6 +199,9 @@ export async function applyProjectPolicyLocked(
     );
     if (policy.state === 'conflict') {
       warnDiscardOnce(sessionId, { sessionId, reason: policy.reason ?? 'none', hooksBytes, otelBytes });
+    }
+    if (policy.state === 'unbound') {
+      warnNoProjectDiscardOnce(sessionId, { sessionId, hooksBytes, otelBytes });
     }
   }
   return policy;

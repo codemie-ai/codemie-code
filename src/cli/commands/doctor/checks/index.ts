@@ -13,3 +13,4 @@ export { JWTAuthCheck } from './JWTAuthCheck.js';
 export { AgentsCheck } from './AgentsCheck.js';
 export { WorkflowsCheck } from './WorkflowsCheck.js';
 export { FrameworksCheck } from './FrameworksCheck.js';
+export { ProxyCheck } from './ProxyCheck.js';

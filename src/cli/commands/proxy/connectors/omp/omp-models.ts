@@ -5,7 +5,8 @@
  * Bundled into the omp extension (see codemie-models.extension.ts), so it must stay free of
  * runtime imports beyond other dependency-free modules.
  */
-import type { LlmModel, RouterTier } from '@/providers/plugins/sso/sso.http-client.js';
+import type { LlmModel } from '@/providers/plugins/sso/sso.http-client.js';
+import { isClaudeFamilyModel, routerTierTargets } from '@/utils/model-family.js';
 import { isResponsesApiModel } from '@/utils/responses-api-models.js';
 
 export type OmpApi = 'openai-completions' | 'openai-responses' | 'anthropic-messages';
@@ -48,18 +49,7 @@ const REASONING_FAMILIES = [
   /gemini/i,
 ];
 
-const isClaudeFamily = (id: string): boolean => CLAUDE_FAMILY.test(id);
 const isReasoningFamily = (id: string): boolean => REASONING_FAMILIES.some(pattern => pattern.test(id));
-
-/** Distinct tier target ids of a Switchyard or LiteLLM router; `[]` for a plain model. */
-function tierTargets(model: LlmModel): string[] {
-  const tiers = model.tiers ?? model.litellm_router?.tiers;
-  if (!tiers) return [];
-  const ids = (Object.values(tiers) as (RouterTier | undefined)[])
-    .map(tier => tier?.model)
-    .filter((target): target is string => Boolean(target));
-  return [...new Set(ids)];
-}
 
 /** Lowest known output cap across a router's tier targets; `undefined` when none is known. */
 function routerOutputCap(targets: readonly string[], caps: ReadonlyMap<string, number>): number | undefined {
@@ -99,8 +89,8 @@ export function buildOmpModelRoster(models: readonly LlmModel[]): OmpModelRoster
     }
     seen.add(id);
 
-    const targets = tierTargets(model);
-    const anthropic = targets.length ? targets.every(isClaudeFamily) : isClaudeFamily(id);
+    const targets = routerTierTargets(model);
+    const anthropic = isClaudeFamilyModel(model);
     const reasoning = targets.length ? targets.every(isReasoningFamily) : isReasoningFamily(id);
     const api: OmpApi = anthropic
       ? 'anthropic-messages'

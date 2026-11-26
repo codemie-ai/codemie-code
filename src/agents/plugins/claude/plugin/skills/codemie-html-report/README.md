@@ -38,11 +38,17 @@ self-contained.
 
 ## What Every Page Gets
 
+- **The product's look.** A page reads like a screen of the CodeMie app, checked against the
+  running app in both themes: Geist Mono for titles, labels, numbers, tables and buttons, Geist for
+  paragraphs and lists, the app's type scale (24 / 20 / 18 px, weight 600), white or `#212224`
+  section cards with an 8 px corner and a hairline, elevated metric tiles with uppercase labels,
+  tables in a hairline box with a near-white header row, and the app's soft violet light in the
+  lower left corner of the window, which shows only in the margins.
 - **One file that opens offline.** The design system, the fonts and, for a page with charts,
   Chart.js are embedded, so the page looks the same as an email or Teams attachment, behind a
-  proxy that blocks CDNs, or with no network. Only the font faces the page needs go in: an English
-  report carries one 63 KB Inter face, a deck Geist and Geist Mono (69 KB together), and a page
-  in Polish or Ukrainian gets those subsets too. Each
+  proxy that blocks CDNs, or with no network. Only the font subsets the page needs go in: an
+  English page or deck carries Geist and Geist Mono, 69 KB together, and a page in Polish or
+  Ukrainian gets those subsets too. Each
   build prints whether the page is self-contained, counting a file loaded from beside the page as a dependency too. `--cdn` loads fonts and Chart.js from
   CDNs instead, for a page served from a website.
 - **Decks that present like slides.** Ask for a deck and the slides sit on a 1600 × 900 stage that
@@ -125,8 +131,8 @@ For maintainers:
   are ES modules (`.mjs`, `import`, the script folder from `import.meta.url`) rather than
   CommonJS `.js`, so they run under this repository's `"type": "module"` with no nested
   `package.json`. Keep that when you copy a newer source over.
-- `style-guide/fonts/fonts.css` (Inter and JetBrains Mono for pages, Geist and Geist Mono for decks,
-  every subset, base64) and
+- `style-guide/fonts/fonts.css` (Geist and Geist Mono, which pages and decks use, plus Inter and
+  JetBrains Mono, which no build embeds any more; every subset, base64) and
   `style-guide/js/chart.umd.min.js` (Chart.js 4.5.1) are vendored. Refresh them with
   `node scripts/vendor-assets.mjs`, and keep its Chart.js version and hash in step with
   `scripts/inject-charts.mjs`: the script refuses a download whose hash differs, and `--cdn` pages

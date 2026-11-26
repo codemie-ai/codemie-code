@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "task": "Redesign the codemie proxy and codemie analytics CLI surfaces: new proxy doctor, facts-only proxy status, proxy analytics project-tracking fixes, connect/disconnect symmetry with a --force split, analytics reporting cleanup, a shared deprecation standard with related-command hints, and documentation.",
+  "generated": "2026-11-17T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 6, "label": "XXL" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 5, "label": "XL" }
+  },
+  "total": 27,
+  "size": "XL",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "split-required",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Base XL. The work spans several subsystems in one repo: the proxy command group (status, doctor, inspect desktop, connect and disconnect orchestrators, the analytics subcommand), the analytics command, the doctor framework and formatter, the tips catalog and its staleness checker, connector writers (Claude Code OTLP, Copilot scope, VS Code BYOK, Codex, omp), and the consent store in agent-core. It also adds new cross-cutting abstractions: a deprecation helper, a related-commands registry, and a silent-context check that command code can reach. Bumped to XXL because it changes shared contracts (the proxy status --json payload, HealthCheckDetail hints, connector scope semantics) and affects several workflows and agent connectors." },
+    { "dimension": "requirements_clarity", "reason": "Each story is described in detail, but several statements contradict current documented behaviour: include does not touch the allowlist, proxy analytics with no flag targets Claude only, --scope user resets the project list by design, and a bare connect or disconnect exits 0. Some decisions are still open: whether doctor should exit non-zero on warn-only results (the formatter exits 1 on any success:false), how to reconcile the two incompatible HealthCheckDetail types, how to unify the two allowlist stores, and the source for a consent list that has no list export today." },
+    { "dimension": "technical_risk", "reason": "The closest pattern is the existing never-throwing collectors, composed inline in proxy status. They cover most of the doctor diagnostics, but nothing exists yet for the deprecation helper with its date-gated test, the related-commands and Next: mechanism, flag-level tip validation, the VS Code BYOK remover, disconnect --all, or proxy clients. The changes break user-visible contracts (status --json fields, removed aliases and flags, --force split into six call sites, different exit codes). The acceptance criteria list edge and error cases (strict --from/--to/--last validation, ignored-flag warnings, no-target non-zero exit, date-passed deprecation failure), but tips, doctor orchestration and date parsing have no tests today. Masking the gateway key is a security requirement." },
+    { "dimension": "file_change_estimate", "reason": "Well over 16 modified files across src/cli/commands/{proxy,proxy/connectors,analytics,doctor}, tips.ts, src/cli/index.ts, src/utils/tips.{ts,json}, bin/codemie.js, src/agents/core (consent store, copilot scope) and the claude-code-otlp notice. Around 40 proxy status unit cases and several integration tests need rewriting, and README.md, docs/COMMANDS.md and CHANGELOG also change. New files include the doctor command and check, the deprecation helper, the related-commands registry, the clients listing, a BYOK remover and their tests." },
+    { "dimension": "affected_layers", "reason": "Touches the CLI/UI surface, service-level orchestrators (connect, disconnect, doctor, delivery health), persistence (consent store, Copilot connector scope file, analytics preference files, Claude settings allowlist), and external client configuration (VS Code chatLanguageModels.json and settings.json, Codex config.toml, Claude Desktop config), plus the daemon /health and /v1/llm_models probes. Cross-cutting concerns (deprecation output, a single hint format, silent-context suppression) land in several of these layers." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from XL to XXL: affects multiple workflows and agent connectors (Claude Code, Copilot Chat/CLI, VS Code BYOK, Codex, omp, Claude Desktop) and changes shared contracts",
+    "Technical Risk bumped from M to L: acceptance criteria list edge and error cases (strict date validation, ignored-flag warnings, no-target non-zero exit, date-gated deprecation test) with no existing test template for tips, doctor orchestration or date parsing",
+    "Technical Risk bumped from L to XL: security requirement — the gateway key must be masked in proxy status, revealed only with --show-key"
+  ],
+  "split_recommendation": {
+    "strategy": "by-feature",
+    "secondary_strategy": "by-dependency",
+    "ordering_note": "Single repo (codemie-code). The shared deprecation helper, hint format and silent-context foundation goes first because every later slice imports it. Doctor and status come before analytics tracking, since analytics status diagnostics move into doctor. Connect/disconnect and analytics reporting only depend on the foundation.",
+    "slices": [
+      {
+        "title": "Deprecation standard and command discoverability foundation",
+        "slice_slug": "discoverability-foundation",
+        "component": "codemie-code",
+        "feature": "cli-surface-redesign",
+        "scope": "Shared deprecate({old, replacement, removeOn}) helper with date-gated test, silent-context detection reachable from command code, related-commands registry with Next: line, unified hint format, tips catalog updates and flag-level tip staleness checks, plus CHANGELOG Deprecated section.",
+        "depends_on": null
+      },
+      {
+        "title": "Proxy doctor and facts-only proxy status",
+        "slice_slug": "proxy-doctor-status",
+        "component": "codemie-code",
+        "feature": "cli-surface-redesign",
+        "scope": "New codemie proxy doctor [--json] [--verbose] built from existing collectors on doctor HealthCheck types, with a condensed ProxyCheck in codemie doctor. Proxy status slimmed to facts with the gateway key masked (--show-key), and status --deep plus proxy inspect desktop deprecated in favour of doctor.",
+        "depends_on": "Deprecation standard and command discoverability foundation"
+      },
+      {
+        "title": "Proxy analytics project tracking and consent",
+        "slice_slug": "analytics-tracking",
+        "component": "codemie-code",
+        "feature": "cli-surface-redesign",
+        "scope": "Make include and exclude true inverses, updating the scope allowlist across both allowlist stores. Replace connect-folder/disconnect-folder with consent grant|revoke|list, apply commands to every connected connector when no connector flag is given, and move the diagnostic part of analytics status into doctor.",
+        "depends_on": "Proxy doctor and facts-only proxy status"
+      },
+      {
+        "title": "Proxy connect/disconnect symmetry",
+        "slice_slug": "connect-disconnect",
+        "component": "codemie-code",
+        "feature": "cli-surface-redesign",
+        "scope": "Add disconnect --vscode (BYOK remover), disconnect --all and proxy clients. Split --force into --overwrite and --restart-daemon, replace --silent with --yes, keep --scope user from resetting project lists, warn on ignored flags, exit non-zero when no target is given, and remove the connect desktop/vscode aliases.",
+        "depends_on": "Deprecation standard and command discoverability foundation"
+      },
+      {
+        "title": "Analytics reporting cleanup",
+        "slice_slug": "analytics-reporting",
+        "component": "codemie-code",
+        "feature": "cli-surface-redesign",
+        "scope": "Remove the legacy --report* flags, make invalid --from/--to/--last an error, align --include-external semantics with analytics sync, set exit codes through process.exitCode, and update README and docs/COMMANDS.md.",
+        "depends_on": "Deprecation standard and command discoverability foundation"
+      }
+    ]
+  }
+}

@@ -42,6 +42,8 @@ export interface ProcessingContext {
   syncDeadlineMs?: number;
   /** Abort signal (e.g. SIGTERM during agent teardown) asking sync loops to stop early */
   abortSignal?: AbortSignal;
+  /** A timer run: one request, and the run ends at the first outcome that is not ok (the next tick tries again) */
+  stopAtFirstFailure?: boolean;
 }
 
 /**

@@ -1,5 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
-import { isSensitiveFilePath, resolveSkillForkFields, resolveToolContextFields, resolveToolDiffFields } from '../tool-fields.js';
+import { isSensitiveFilePath, resolveForkAgentFields, resolveToolContextFields, resolveToolDiffFields } from '../tool-fields.js';
 
 describe('isSensitiveFilePath', () => {
   it.each([
@@ -143,23 +144,57 @@ describe('resolveToolDiffFields', () => {
   });
 });
 
-describe('resolveSkillForkFields', () => {
+describe('resolveForkAgentFields', () => {
   const forkedResult = { agentId: 'a861e999c42f7f90c', status: 'forked', commandName: 'plugin:' + 's'.repeat(240) };
 
   it('reads the fork\'s agentId from a Skill result object', () => {
-    expect(resolveSkillForkFields('Skill', forkedResult)).toEqual({ fork_agent_id: 'a861e999c42f7f90c' });
+    expect(resolveForkAgentFields('Skill', forkedResult)).toEqual({ fork_agent_id: 'a861e999c42f7f90c' });
   });
 
   it('reads the fork\'s agentId from a Skill result given as JSON text', () => {
-    expect(resolveSkillForkFields('Skill', JSON.stringify(forkedResult))).toEqual({ fork_agent_id: 'a861e999c42f7f90c' });
+    expect(resolveForkAgentFields('Skill', JSON.stringify(forkedResult))).toEqual({ fork_agent_id: 'a861e999c42f7f90c' });
   });
 
   it('returns nothing for an inline skill\'s result, which has no agentId', () => {
-    expect(resolveSkillForkFields('Skill', { success: true, commandName: 'probe-skill' })).toEqual({});
+    expect(resolveForkAgentFields('Skill', { success: true, commandName: 'probe-skill' })).toEqual({});
   });
 
-  it('returns nothing for a tool other than Skill', () => {
-    expect(resolveSkillForkFields('Agent', { agentId: 'a861e999c42f7f90c' })).toEqual({});
+  it('returns nothing for a tool that starts no agent', () => {
+    expect(resolveForkAgentFields('Read', { agentId: 'a861e999c42f7f90c' })).toEqual({});
+  });
+
+  it('does not stamp the older Task tool, which keeps the parent-window estimate (decision A2)', () => {
+    expect(resolveForkAgentFields('Task', { agentId: 'a861e999c42f7f90c' })).toEqual({});
+  });
+
+  describe('Agent', () => {
+    const foregroundResult = JSON.parse(
+      readFileSync(new URL('./fixtures/foreground-agent-result.json', import.meta.url), 'utf-8')
+    ) as { tool_response: Record<string, unknown> };
+
+    it('reads agentId from the top-level key of a real foreground result, where it sits past the 300-char cut', () => {
+      const text = JSON.stringify(foregroundResult.tool_response);
+      expect(text.indexOf('a407f25330fd9c1e0')).toBeGreaterThan(300);
+      expect(resolveForkAgentFields('Agent', foregroundResult.tool_response)).toEqual({ fork_agent_id: 'a407f25330fd9c1e0' });
+    });
+
+    it.each([
+      ['a failure with no agentId', { status: 'error', error: 'boom' }],
+      ['a denial with no agentId', { status: 'denied' }],
+      ['an empty agentId', { agentId: '' }],
+      ['a non-string agentId', { agentId: 42 }],
+      ['an agentId that is not top-level', { content: [{ agentId: 'a407f25330fd9c1e0' }] }],
+      ['JSON text, which is not read for Agent', JSON.stringify({ agentId: 'a407f25330fd9c1e0' })],
+      ['text that quotes an id', 'result mentions "agentId":"a407f25330fd9c1e0"'],
+      ['null', null],
+      ['undefined', undefined],
+    ])('returns nothing for %s', (_case, toolResponse) => {
+      expect(resolveForkAgentFields('Agent', toolResponse)).toEqual({});
+    });
+
+    it('cuts an agentId longer than 300 chars to 300', () => {
+      expect(resolveForkAgentFields('Agent', { agentId: 'a'.repeat(350) })).toEqual({ fork_agent_id: 'a'.repeat(300) });
+    });
   });
 
   it.each([
@@ -168,10 +203,10 @@ describe('resolveSkillForkFields', () => {
     ['non-JSON text', 'not json'],
     ['null', null],
   ])('returns nothing for %s', (_case, toolResponse) => {
-    expect(resolveSkillForkFields('Skill', toolResponse)).toEqual({});
+    expect(resolveForkAgentFields('Skill', toolResponse)).toEqual({});
   });
 
   it('cuts an agentId longer than 300 chars to 300', () => {
-    expect(resolveSkillForkFields('Skill', { agentId: 'a'.repeat(350) })).toEqual({ fork_agent_id: 'a'.repeat(300) });
+    expect(resolveForkAgentFields('Skill', { agentId: 'a'.repeat(350) })).toEqual({ fork_agent_id: 'a'.repeat(300) });
   });
 });

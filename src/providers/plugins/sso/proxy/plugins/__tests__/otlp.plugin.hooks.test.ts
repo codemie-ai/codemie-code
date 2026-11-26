@@ -25,6 +25,7 @@ vi.mock('@/agents/registry.js', () => ({
 }));
 
 const { OtlpPlugin } = await import('../otlp.plugin.js');
+const { GatewayKeyPlugin } = await import('../gateway-key.plugin.js');
 
 function fakeResponse(): ServerResponse & { statusCode: number; body: string } {
   const res = {
@@ -79,6 +80,20 @@ describe('OtlpPlugin — POST /v1/analytics/hooks', () => {
     );
     expect(res.statusCode).toBe(401);
     expect(appendSpoolMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['the shared key', 'Bearer codemie-proxy'],
+    ['a named key', 'Bearer codemie-proxy.claude-desktop'],
+  ])('accepts a batch whose request carried %s, checked by the gateway key first', async (_case, authorization) => {
+    const gatewayKey = new GatewayKeyPlugin().createInterceptor({ config: { targetApiUrl: 'http://127.0.0.1:9', gatewayKey: 'codemie-proxy' } } as never);
+    const ctx = hooksContext({ agentName: 'claude-code-otlp', hookEvents: [hookEvent('s1')] }, { headers: { authorization }, metadata: {} });
+    const res = fakeResponse();
+
+    expect(await gatewayKey.handleRequest!(ctx, {} as IncomingMessage, res, {} as ProxyHTTPClient)).toBe(false);
+    await new OtlpPlugin().createInterceptor({} as never).handleRequest(ctx, {} as IncomingMessage, res, {} as ProxyHTTPClient);
+
+    expect(res.statusCode).toBe(202);
   });
 
   it('inbound analytics-only headers (cloned settings, any case) never reach the spooled record', async () => {

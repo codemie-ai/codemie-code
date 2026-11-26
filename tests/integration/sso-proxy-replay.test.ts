@@ -56,6 +56,8 @@ describe('SSO proxy replay after a superseding sign-in (end-to-end, in-process)'
   let proxyUrl: string;
   let received: UpstreamRequest[];
   let storedToken: string;
+  /** How the mock upstream answers request number `count` (1-based); the default is the redirect-then-200 replay case. */
+  let respond: (count: number, res: http.ServerResponse) => void;
 
   beforeEach(async () => {
     previousHome = process.env.CODEMIE_HOME;
@@ -65,21 +67,24 @@ describe('SSO proxy replay after a superseding sign-in (end-to-end, in-process)'
     storedToken = 'old-token';
     vi.mocked(getStoredPlatformCredentials).mockImplementation(async () => credentials(storedToken) as never);
     vi.mocked(startDetachedSsoLogin).mockClear();
+    respond = (count, res) => {
+      if (count === 1) {
+        // The old cookie is rejected; by then a sign-in has stored the new one.
+        storedToken = 'new-token';
+        res.writeHead(302, { Location: '/oauth2/start?rd=%2Fv1%2Fmessages' });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    };
 
     upstream = http.createServer((req, res) => {
       const chunks: Buffer[] = [];
       req.on('data', (chunk: Buffer) => chunks.push(chunk));
       req.on('end', () => {
         received.push({ method: req.method, cookie: req.headers.cookie, body: Buffer.concat(chunks).toString('utf-8') });
-        if (received.length === 1) {
-          // The old cookie is rejected; by then a sign-in has stored the new one.
-          storedToken = 'new-token';
-          res.writeHead(302, { Location: '/oauth2/start?rd=%2Fv1%2Fmessages' });
-          res.end();
-          return;
-        }
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true }));
+        respond(received.length, res);
       });
     });
     await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', () => resolve()));
@@ -124,5 +129,68 @@ describe('SSO proxy replay after a superseding sign-in (end-to-end, in-process)'
     expect(JSON.parse(received[1].body)).toEqual({ hello: 'world' });
     expect(existsSync(join(tempHome, 'analytics-auth-status.json'))).toBe(false);
     expect(startDetachedSsoLogin).not.toHaveBeenCalled();
+  });
+
+  describe('upstream 401', () => {
+    const markerPath = () => join(tempHome, 'analytics-auth-status.json');
+
+    it('passes a 401 that is not the backend session rejection to the client unchanged and starts no sign-in', async () => {
+      // A LiteLLM error relayed by the LLM proxy: valid session, different body.
+      const litellm = JSON.stringify({ error: { message: 'Invalid proxy server token passed', type: 'auth_error', code: '401' } });
+      respond = (_count, res) => {
+        res.writeHead(401, { 'Content-Type': 'application/json', 'X-Upstream-Error': 'litellm' });
+        res.end(litellm);
+      };
+
+      const res = await post();
+
+      expect(res.status).toBe(401);
+      expect(await res.text()).toBe(litellm);
+      expect(res.headers.get('content-type')).toBe('application/json');
+      expect(res.headers.get('x-upstream-error')).toBe('litellm');
+      expect(res.headers.get('content-length')).toBe(String(Buffer.byteLength(litellm)));
+      expect(received).toHaveLength(1);
+      expect(startDetachedSsoLogin).not.toHaveBeenCalled();
+      expect(existsSync(markerPath())).toBe(false);
+    });
+
+    it('turns the backend session rejection into one sign-in and the synthetic 401 at the client', async () => {
+      respond = (_count, res) => {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'Authentication failed', details: 'No valid authentication credentials were provided with this request.', help: null } }));
+      };
+
+      const res = await post();
+      const body = (await res.json()) as { type: string; error: { type: string; message: string } };
+
+      expect(res.status).toBe(401);
+      expect(body.type).toBe('error');
+      expect(body.error.type).toBe('authentication_error');
+      expect(body.error.message).toMatch(/^CodeMie SSO session expired\./);
+      expect(received).toHaveLength(1); // the cookies are current, so there is no replay
+      expect(startDetachedSsoLogin).toHaveBeenCalledTimes(1);
+      expect(existsSync(markerPath())).toBe(true);
+    });
+
+    it('replays a session rejection sent with superseded cookies once and returns the retried response', async () => {
+      respond = (count, res) => {
+        if (count === 1) {
+          storedToken = 'new-token'; // a sign-in finished while the request was in flight
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: { message: 'Authentication failed' } }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      };
+
+      const res = await post();
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true });
+      expect(received.map((r) => r.cookie)).toEqual([OLD_COOKIE, NEW_COOKIE]);
+      expect(startDetachedSsoLogin).not.toHaveBeenCalled();
+      expect(existsSync(markerPath())).toBe(false);
+    });
   });
 });

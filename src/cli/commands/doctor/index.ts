@@ -18,7 +18,8 @@ import {
   JWTAuthCheck,
   AgentsCheck,
   WorkflowsCheck,
-  FrameworksCheck
+  FrameworksCheck,
+  ProxyCheck
 } from './checks/index.js';
 import { ProviderRegistry } from '../../../providers/core/registry.js';
 import { adaptProviderResult } from './type-adapters.js';
@@ -101,7 +102,8 @@ export function createDoctorCommand(): Command {
         new JWTAuthCheck(),
         new AgentsCheck(),
         new WorkflowsCheck(),
-        new FrameworksCheck()
+        new FrameworksCheck(),
+        new ProxyCheck()
       ];
 
       // Run and display standard checks immediately

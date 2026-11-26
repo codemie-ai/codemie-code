@@ -75,8 +75,8 @@ export class CredentialRefresher<T extends SSOCredentials | JWTCredentials> {
    * otherwise pay an OS-keychain IPC call plus a file read/decrypt every time.
    *
    * Deliberately NOT gated on the credential's own `expiresAt` being in the future:
-   * SSOSessionExpiryPlugin (sso-session-expiry.plugin.ts) acts on the oauth2-proxy redirect
-   * signature ALONE, because a server-side session revoke does not change the local JWT's own
+   * SSOSessionExpiryPlugin (sso-session-expiry.plugin.ts) acts on the server's rejection (the
+   * oauth2-proxy redirect or the backend's session 401) ALONE, because a server-side session revoke does not change the local JWT's own
    * `exp` claim — that plugin's own header comment calls this out as the primary real-world
    * trigger. An `expiresAt`-based skip would treat a revoked-but-not-yet-expired credential as
    * "fresh" forever and never pick up the fresh cookies a revoke-triggered re-login writes to

@@ -1,0 +1,679 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "16/16 resolved, 0 new findings, high confidence"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "Fix all 16 blocking findings; CR-014 resolved by extending security guide exception to analytics-sync-bootstrap.json (0o600), code unchanged"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "16/16 resolved, 0 new findings, high confidence"
+    }
+  ],
+  "reviewed_head": "a641d37fd0f5f6c4c517ff6ec3c95b9016795c7d",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "Targeted re-check: all 16 prior blocking findings (CR-001..CR-016) resolved, each confirmed against current source at HEAD 67ecd078 with its path in changed_files; CR-014 resolved by the user-approved security-guide exception. business_review and standards_review carried forward from the final round unchanged; 2 deferred items not re-checked; no new findings by contract.",
+  "confidence": "high",
+  "check_confidence": "high",
+  "risk_flags": [
+    "breaking-change",
+    "security"
+  ],
+  "open": 0,
+  "closed": {
+    "fixed": 16,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/bootstrap/__tests__/guided.test.ts",
+      "title": "\"Enter a different URL\" branch never tested",
+      "problem": "The test titled '\"Try again\" re-sends, and \"Enter a different URL\" asks for a new one' only scripts 'retry'; no test selects 'url', so the step 5 re-ask-and-re-save loop (guided.ts step5TriggerUrl) is unexercised (broken-verification gap).",
+      "impact": "If 'url' were handled like retry/skip or the new URL not re-saved, the lead could not replace a wrong trigger URL and the printed command could carry the old one; no test would fail. Consumer: step 5 retry menu.",
+      "recommendation": "Add a guided.test.ts case where send fails once, select scripts ['url', 'windows', 'default'] and input [URL_A, URL_B]; expect input called twice, send last called with URL_B, saved webhookUrl URL_B, and the Step 5 heading printed once. Retitle or split the existing test.",
+      "status": "resolved",
+      "check_notes": "guided.test.ts:651 scripts the 'Enter a different URL' branch; retry test retitled",
+      "fix": {
+        "change": "Added a guided test for the 'Enter a different URL' branch; retitled the retry test",
+        "test": "guided.test.ts > \"Enter a different URL\" asks for a new URL, saves it, and test-sends that one"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/bootstrap/__tests__/guided.test.ts",
+      "title": "Guided tests never inspect written flow zip",
+      "problem": "No guided test opens the zip step 4 writes, so the state-to-Flow_config mapping in step4ImportFlow (siteUrl, folderPath, teamId, channelId, timeZone) is never checked; flow-package.test.ts uses its own INPUTS constant (regression gap).",
+      "impact": "A swapped teamId/channelId or empty defaults would ship a flow posting to the wrong or empty SharePoint folder / Teams channel with all tests green. Consumer: runGuided steps 1-4 feeding writeFlowPackage.",
+      "recommendation": "After a fresh runGuided run in guided.test.ts, unzipSync the codemie-analytics-flow.zip in the temp cwd and assert Flow_config.inputs carries the siteUrl, folderPath, teamId, channelId and timeZone answered in steps 1-3 (plus the template's threadKeyPrefix/recentCount once CR-003 is fixed).",
+      "status": "resolved",
+      "check_notes": "guided.test.ts:257 unzips the step 4 zip and asserts Flow_config.inputs incl. template keys",
+      "fix": {
+        "change": "Added a guided test that unzips the step 4 zip and checks Flow_config.inputs against the step 1-3 answers",
+        "test": "guided.test.ts > step 4 writes the answers from steps 1-3 into Flow_config.inputs, keeping the template-only keys"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/bootstrap/flow-package.ts",
+      "line": 101,
+      "title": "Flow_config inputs drop template-only keys",
+      "problem": "buildFlowPackage sets `action.inputs = { ...inputs }`, replacing the template's Flow_config inputs wholesale and dropping threadKeyPrefix ('analytics-thread') and recentCount (10). The flow still reads both: Thread_key concats threadKeyPrefix and Recent_facts calls take(..., recentCount). flow-package.test.ts asserts toEqual(INPUTS), locking the behavior in.",
+      "impact": "Every imported flow builds thread keys as '-yyyy-MM' (may collide with unrelated cards) and passes null to take(), which is expected to fail the Teams scope on every delivery: a broken runtime path for the feature's core output (confirmed against definition.json).",
+      "recommendation": "Merge instead of replace: `action.inputs = { ...action.inputs, ...inputs }`, so threadKeyPrefix and recentCount survive; update the flow-package.test.ts expectation that currently locks in the wholesale replacement.",
+      "status": "resolved",
+      "check_notes": "flow-package.ts:104 merges { ...action.inputs, ...inputs }; test asserts threadKeyPrefix/recentCount kept",
+      "fix": {
+        "change": "buildFlowPackage merges inputs onto the template's Flow_config.inputs, so threadKeyPrefix and recentCount are kept",
+        "test": "flow-package.test.ts > sets the given inputs on Flow_config, keeping the template-only threadKeyPrefix and recentCount"
+      }
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/bootstrap/guided.ts",
+      "line": 123,
+      "title": "SharePoint step ignores saved defaults",
+      "problem": "step2Folder takes `_state` unused and offers no saved siteUrl/folderPath as a default in either the paste or manual prompts, contradicting spec 'resumes with the earlier answers as defaults', AC12 and docs/COMMANDS.md. Also, without a saved webhook runGuided never consults firstUnansweredStep, so an interrupted run always restarts at step 1.",
+      "impact": "AC12 is only partially met: an interrupted or declined-reuse lead must re-enter the SharePoint folder although it is persisted.",
+      "recommendation": "Use the saved state in step2Folder: when state.siteUrl/folderPath exist, offer them back (e.g. confirm \"Keep site X, folder Y?\" or pass them as defaults to the manual site/path prompts); fix the doc-comment. Optionally resume at firstUnansweredStep when a partial state without a webhook exists, so docs and runGuided's comment hold.",
+      "status": "resolved",
+      "check_notes": "step2Folder offers saved site/folder via confirm; askManualFolder defaults to saved values",
+      "fix": {
+        "change": "step2Folder asks 'Keep site X, folder Y?' when a saved folder exists; manual prompts default to the saved values",
+        "test": "guided.test.ts > step 2 offers the saved SharePoint folder back; keeping it skips the paste"
+      }
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/bootstrap/guided.ts",
+      "line": 123,
+      "title": "step2Folder too long and deeply nested",
+      "problem": "code-quality.md requires functions under 50 lines and no nesting deeper than 3 levels; step2Folder is ~55 lines with for > if > else > try/catch > if nesting. No lint rule enforces this.",
+      "impact": "Breaks two documented code-quality standards on new code; standards row code-quality partial.",
+      "recommendation": "Extract the pasted-URL branch into a helper returning FolderLink | 'manual' | undefined with early returns, and the manual branch into its own helper, bringing step2Folder under 50 lines and 3 nesting levels.",
+      "status": "resolved",
+      "check_notes": "step2Folder now 22 lines; split into askPastedFolder/askManualFolder/savedFolder, nesting <=3",
+      "fix": {
+        "change": "Split step2Folder into askPastedFolder, askManualFolder and savedFolder helpers (under 50 lines, at most 3 nesting levels)",
+        "test": "existing guided.test.ts manual and declined-confirm folder tests"
+      }
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/bootstrap/guided.ts",
+      "line": 491,
+      "title": "runGuided exceeds 50-line function limit",
+      "problem": "code-quality.md requires functions under 50 lines; runGuided is ~65 lines mixing start-logic resolution and step dispatch. No lint rule enforces this.",
+      "impact": "Breaks a documented code-quality standard on new code.",
+      "recommendation": "Extract the saved-state reuse / startStep resolution (lines ~503-531) into a resolveStartStep helper so runGuided stays under 50 lines.",
+      "status": "resolved",
+      "check_notes": "runGuided now 38 lines; start logic moved to resolveStartStep (29) and discardStaleAnswers (9)",
+      "fix": {
+        "change": "Moved the start logic into resolveStartStep and discardStaleAnswers; runGuided is now about 40 lines",
+        "test": "existing guided.test.ts start-logic tests"
+      }
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/bootstrap/guided.ts",
+      "line": 504,
+      "title": "\"Already imported\" shortcut breaks later reuse",
+      "problem": "Answering yes to 'already imported?' jumps to step 5 without saving teamId/channelId/siteUrl/folderPath/timeZone/flowImported, but steps 5-8 save webhookUrl etc. On the next run the reuse summary appears; checkReuse calls firstUnansweredStep, which returns 1, so reuse can never succeed and the lead is forced through steps 1-4 and a fresh zip. Confirmed in state-store.ts:112-181. No rerun-after-shortcut test.",
+      "impact": "The AC11/AC12 reuse path is broken for every lead who used the shortcut: re-walking setup and re-importing a flow already in place.",
+      "recommendation": "Make reuse work for states created via the shortcut: on \"already imported? yes\" record that steps 1-4 were skipped (e.g. save flowImported: true / a skippedSetup marker), and have checkReuse/firstUnansweredStep evaluate from step 5 when that marker is set; add a rerun-after-shortcut test.",
+      "status": "resolved",
+      "check_notes": "shortcut saves skippedSetup: true; firstUnansweredStep checks only steps 5-8 when set; rerun test added",
+      "fix": {
+        "change": "The 'already imported' shortcut saves skippedSetup: true; firstUnansweredStep then checks from step 5",
+        "test": "guided.test.ts > a state saved via the \"already imported\" shortcut is reusable on the next run; state-store.test.ts shortcut cases"
+      }
+    },
+    {
+      "id": "CR-008",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/bootstrap/guided.ts",
+      "line": 518,
+      "title": "Stale webhook survives a re-walk of steps 1-4",
+      "problem": "Only resumeAt === 5 discards the saved webhookUrl/webhookTest. When reuse is declined (restart at 1) or resumeAt <= 4, the old values stay saved while the lead regenerates and re-imports a new flow; quitting before step 5 leaves a state the next run offers as reusable.",
+      "impact": "Next run can print an install command pointing at the old (possibly deleted) flow's trigger URL.",
+      "recommendation": "Discard webhookUrl/webhookTest whenever the run will re-execute step 4 (declined reuse or resumeAt <= 4), not only when resumeAt === 5, so a newly generated flow is never paired with the old trigger URL.",
+      "status": "resolved",
+      "check_notes": "discardStaleAnswers drops webhookUrl/webhookTest for any startStep <= 5, incl. declined reuse (step 1)",
+      "fix": {
+        "change": "discardStaleAnswers drops webhookUrl/webhookTest whenever the run restarts at step 5 or earlier (declined reuse or resumeAt <= 5)",
+        "test": "guided.test.ts > declining reuse discards the saved webhook…; a reuse check that resumes at step 4 discards the saved webhook"
+      }
+    },
+    {
+      "id": "CR-009",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/bootstrap/guided.ts",
+      "title": "guided.ts exceeds 500-line file limit",
+      "problem": "code-quality.md requires files under 500 lines; the new guided.ts is 556 lines. No lint rule enforces this.",
+      "impact": "Breaks a documented code-quality standard on a newly added file.",
+      "recommendation": "Split steps 5-8 (askTriggerUrl, testSendLoop, step5..step8, runStepsFiveThroughEight) into a sibling module such as bootstrap/guided-steps-late.ts.",
+      "status": "resolved",
+      "check_notes": "guided.ts 344 lines; steps 5-8 in guided-late-steps.ts (242), helpers in guided-support.ts (40)",
+      "fix": {
+        "change": "Moved steps 5-8 to bootstrap/guided-late-steps.ts and askValidated/SaveBootstrapState to bootstrap/guided-support.ts; guided.ts is now 344 lines",
+        "test": "existing guided.test.ts steps 5-8 suite"
+      }
+    },
+    {
+      "id": "CR-010",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/bootstrap/links.ts",
+      "line": 120,
+      "title": "Subsite folder links silently misparsed",
+      "problem": "parseFolderUrl's regex `^/(sites|teams)/([^/]+)/(.+?)` always takes the first two segments as the site, so a subsite folder (/sites/A/Sub/Shared Documents/X) parses as site /sites/A with folder 'Sub/Shared Documents/X' instead of being refused, although the doc-comment says subsites need separate entry.",
+      "impact": "The lead confirms a plausible-looking but wrong site/folder pair; the imported flow then targets a non-existent folder and deliveries fail.",
+      "recommendation": "Detect a folder path that does not start at a document library (e.g. the segment after /sites/<name>/ is not a library root such as \"Shared Documents\") and refuse with the \"type manual\" message, instead of folding the subsite into folderPath.",
+      "status": "resolved",
+      "check_notes": "parseFolderUrl calls assertNotSubsite: view site path must match or folder must start at a default library",
+      "fix": {
+        "change": "parseFolderUrl rejects subsite folders with the 'type manual' message, using the library view's site path or the default library roots",
+        "test": "links.test.ts > parseFolderUrl — subsites"
+      }
+    },
+    {
+      "id": "CR-011",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/bootstrap/run-bootstrap.ts",
+      "line": 105,
+      "title": "--webhook mode prints update hint before command",
+      "problem": "runWebhookMode writes UPDATE_HINT to stderr (line 105) before the install command to stdout (line 107); the spec requires the hint line after the command. Guided step 8 orders it correctly.",
+      "impact": "Spec requirement 'after the command, one update-hint line' is only partially met (non-interactive mode).",
+      "recommendation": "Move `deps.err(UPDATE_HINT)` after the `deps.out(buildInstallCommand(...))` call in runWebhookMode, matching guided step 8 and the spec, and assert the order in run-bootstrap.test.ts.",
+      "status": "resolved",
+      "check_notes": "runWebhookMode now calls deps.err(UPDATE_HINT) after deps.out(buildInstallCommand(...)); order tested",
+      "fix": {
+        "change": "runWebhookMode prints UPDATE_HINT after the install command",
+        "test": "run-bootstrap.test.ts > prints UPDATE_HINT after the install command, as its last line"
+      }
+    },
+    {
+      "id": "CR-012",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/bootstrap/run-bootstrap.ts",
+      "line": 127,
+      "title": "Guided path violates never-throws runner contract",
+      "problem": "runBootstrap returns runGuided(deps) unguarded; writeFlowPackage (cwd write), saveBootstrapState (mkdir/chmod), buildInstallCommand, inquirer prompt-close/Ctrl+C rejections, and non-validation errors rethrown by askValidated all propagate. The commander action in index.ts:109-110 has no catch.",
+      "impact": "Spec runner contract (exit code, never throws) is partially met: failures surface as raw stack traces with exitCode unset instead of a message and non-zero exit.",
+      "recommendation": "Wrap the guided call: `try { return await runGuided(deps); } catch (err) { deps.err(errorMessage(err)); return 1; }` (treat inquirer's prompt-close/ExitPromptError as a clean non-zero exit), so write/save/template/build errors become a message and exit code.",
+      "status": "resolved",
+      "check_notes": "runBootstrap routes guided mode through runGuidedSafely: catch -> deps.err(message), return 1",
+      "fix": {
+        "change": "runBootstrap wraps runGuided in runGuidedSafely: a thrown error becomes a message on err and exit code 1",
+        "test": "run-bootstrap.test.ts > turns a guided-mode failure into a message and a non-zero exit instead of throwing"
+      }
+    },
+    {
+      "id": "CR-013",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/bootstrap/run-bootstrap.ts",
+      "line": 166,
+      "title": "Guided prompts write to stdout, breaking output split",
+      "problem": "createRealPrompter uses inquirer's default output stream (stdout), contradicting the spec/docs contract that only the install command goes to stdout. isTTY also requires process.stdout.isTTY, so `bootstrap > cmd.txt` is refused as 'No terminal is attached'.",
+      "impact": "The documented stdout/stderr split is unusable in guided mode: capturing the command mixes in prompt text, and redirecting stdout is rejected with a misleading message.",
+      "recommendation": "Create the inquirer prompts with `output: process.stderr` (e.g. via inquirer.createPromptModule({ output: process.stderr })) and base isTTY on stdin + stderr, so `bootstrap > cmd.txt` works and only the install command reaches stdout.",
+      "status": "resolved",
+      "check_notes": "prompts via inquirer.createPromptModule({ output: process.stderr }); isTTY = stdin && stderr",
+      "fix": {
+        "change": "Real prompts use inquirer.createPromptModule({ output: process.stderr }); isTTY checks stdin and stderr",
+        "test": "run-bootstrap.test.ts > createRealBootstrapDeps — output split"
+      }
+    },
+    {
+      "id": "CR-014",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/bootstrap/state-store.ts",
+      "line": 38,
+      "title": "Bootstrap state stores webhook outside sanctioned exception",
+      "problem": "security-practices.md forbids plaintext tokens and documents only ~/.codemie/analytics-sync.json as the webhook exception; BootstrapState persists webhookUrl (with its secret sig) to a second plaintext file ~/.codemie/analytics-sync-bootstrap.json (0o600). The spec mandates this file, so the guide and spec disagree.",
+      "impact": "Widens the documented secret-at-rest surface beyond the single sanctioned exception without the guide recording it.",
+      "recommendation": "Extend the security-practices.md plaintext-token exception to name ~/.codemie/analytics-sync-bootstrap.json with its 0o600 rationale (the spec mandates this file), or drop webhookUrl from the state after step 8.",
+      "status": "resolved",
+      "check_notes": "security-practices.md now names ~/.codemie/analytics-sync-bootstrap.json (0o600) under the exception, per user decision",
+      "fix": {
+        "change": "security-practices.md lists ~/.codemie/analytics-sync-bootstrap.json (0o600, full webhook) under the analytics sync plaintext exception, per the user's decision",
+        "test": "n/a"
+      }
+    },
+    {
+      "id": "CR-015",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/config-store.ts",
+      "title": "config-store.ts pushed past 500-line limit",
+      "problem": "code-quality.md requires files under 500 lines; adding validateTriggerUrl and its reason tables grows config-store.ts from 398 to 522 lines. No lint rule enforces this.",
+      "impact": "This change moves the file across a documented limit.",
+      "recommendation": "Move validateTriggerUrl and its RAW_TRIGGER_URL_* message tables into a dedicated trigger-url.ts module and import it from there.",
+      "status": "resolved",
+      "check_notes": "validateTriggerUrl and tables moved to sync/trigger-url.ts; config-store.ts 396 lines; importers updated",
+      "fix": {
+        "change": "Moved validateTriggerUrl and its RAW_TRIGGER_URL_* tables into sync/trigger-url.ts and updated importers; config-store.ts is now 396 lines",
+        "test": "config-store.test.ts validateTriggerUrl suite (imports from ../trigger-url.js)"
+      }
+    },
+    {
+      "id": "CR-016",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/install-command.ts",
+      "line": 31,
+      "title": "Backslash passes the printable-value rule",
+      "problem": "FORBIDDEN_CHARACTERS is /[\"$`!]/; a backslash passes. Inside POSIX double quotes `\\\\` collapses to `\\` and a trailing `\\` escapes the closing quote, so the header's claim that the command is 'safe to pass to a shell as-is' does not hold for values containing `\\`.",
+      "impact": "A webhook value with a backslash (e.g. hand-pasted URL with one in the query, which new URL() preserves) prints a command that passes a different value or breaks quoting.",
+      "recommendation": "Add `\\` to FORBIDDEN_CHARACTERS (`/[\"$`!\\\\]/`) and the header/doc lists, so a double-quoted token can never collapse or escape its closing quote.",
+      "status": "resolved",
+      "check_notes": "FORBIDDEN_CHARACTERS = /[\"$`!\\\\]/ now includes backslash; tests cover mid and trailing backslash",
+      "fix": {
+        "change": "Added backslash to FORBIDDEN_CHARACTERS and to the doc/error lists",
+        "test": "install-command.test.ts > webhook containing a backslash / a trailing backslash"
+      }
+    }
+  ],
+  "deferred": [
+    {
+      "id": "DF-001",
+      "severity": "major",
+      "file": "src/cli/commands/analytics/sync/bootstrap/flow-template/Microsoft.Flow/flows/3806f7f4-f5aa-4ecc-a271-e0171d1ae740/definition.json",
+      "line": 29,
+      "title": "Flow trigger accepts anonymous callers",
+      "problem": "triggerAuthenticationType 'All' plus unrestricted caller-chosen file names lets any URL holder create files in SharePoint and post to Teams.",
+      "preexisting": "Collector's flow template shipped as-is; spec non-goal forbids changing the template."
+    },
+    {
+      "id": "DF-002",
+      "severity": "major",
+      "file": "src/cli/commands/analytics/sync/private-file.ts",
+      "line": 23,
+      "title": "Private JSON write leaves chmod window",
+      "problem": "writeFile then chmod on a pre-existing wider-mode file briefly exposes the secret; write is not atomic.",
+      "preexisting": "writeSyncSettings used the same writeFile+chmod sequence before this change."
+    }
+  ],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "Register bootstrap in createSyncCommand() with lazy runner, exact help, scoped options",
+      "status": "pass",
+      "notes": "index.ts createSyncBootstrapCommand; analytics-sync-cli.test.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "Runner returns an exit code, never throws, never calls process.exit",
+      "status": "partial",
+      "notes": "guided path unguarded at run-bootstrap.ts:127 (CR-012)"
+    },
+    {
+      "kind": "spec",
+      "item": "Guided mode: 8 steps headed 'Step N of 8', heading once per step",
+      "status": "pass",
+      "notes": "steps.ts stepHeading; heading-order test"
+    },
+    {
+      "kind": "spec",
+      "item": "Parsing rules, messages, import instructions, time zones, resume logic follow collector §8",
+      "status": "pass",
+      "notes": "links.ts/timezones.ts/setup-check.ts match §8"
+    },
+    {
+      "kind": "spec",
+      "item": "Start logic: saved webhook -> masked summary + reuse; reuse re-check; already imported -> step 5",
+      "status": "pass",
+      "notes": "guided.ts runGuided + checkReuse; reuse after shortcut broken (CR-007)"
+    },
+    {
+      "kind": "spec",
+      "item": "State saved after every step; interrupted run resumes with earlier answers as defaults",
+      "status": "partial",
+      "notes": "step 2 ignores saved siteUrl/folderPath (CR-004)"
+    },
+    {
+      "kind": "spec",
+      "item": "Unreadable / non-JSON / wrong-shape state treated as absent with one notice",
+      "status": "pass",
+      "notes": "loadBootstrapState notices"
+    },
+    {
+      "kind": "spec",
+      "item": "Trigger-URL rule: one validateTriggerUrl used by step 5, --webhook and reuse",
+      "status": "pass",
+      "notes": "config-store.ts validateTriggerUrl"
+    },
+    {
+      "kind": "spec",
+      "item": "Trigger-URL errors name --webhook only in non-interactive mode",
+      "status": "pass",
+      "notes": "option vs guided message tables"
+    },
+    {
+      "kind": "spec",
+      "item": "Printable-value rule owned by buildInstallCommand; values double-quoted",
+      "status": "pass",
+      "notes": "install-command.ts assertPrintableValue; backslash gap (CR-016)"
+    },
+    {
+      "kind": "spec",
+      "item": "Flow package zip in cwd from 5-file template, only Flow_config.inputs set, no webhook",
+      "status": "pass",
+      "notes": "wholesale inputs replacement drops template keys (CR-003)"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-interactive mode: no questions, validate first, test-send, exit codes, no state, no TTY",
+      "status": "pass",
+      "notes": "runWebhookMode"
+    },
+    {
+      "kind": "spec",
+      "item": "No TTY and no --webhook fails at once naming both remedies",
+      "status": "pass",
+      "notes": "NO_TTY_MESSAGE"
+    },
+    {
+      "kind": "spec",
+      "item": "Install command: webhook, --include-external always, --lookback-days only when fixed, no --at",
+      "status": "pass",
+      "notes": "toInstallCommandOptions"
+    },
+    {
+      "kind": "spec",
+      "item": "After the command, one update-hint line naming codemie self-update",
+      "status": "partial",
+      "notes": "--webhook mode prints hint before the command (CR-011)"
+    },
+    {
+      "kind": "spec",
+      "item": "Lead state at getCodemiePath('analytics-sync-bootstrap.json'), 0o600 + chmod",
+      "status": "pass",
+      "notes": "state-store.ts + writePrivateJson"
+    },
+    {
+      "kind": "spec",
+      "item": "BootstrapState interface shape",
+      "status": "pass",
+      "notes": "matches, plus additive webhookTest"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC1: sync --help lists bootstrap with exact description",
+      "status": "pass",
+      "notes": "analytics-sync-cli.test.ts"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC2: --webhook <url> --include-external always applies policy, no unexpected-argument error",
+      "status": "pass",
+      "notes": "enablePositionalOptions scoping test"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC3: guided mode runs 8 steps in order, each headed Step N of 8",
+      "status": "pass",
+      "notes": "heading-order test"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC4: Teams step parses team/channel, confirms, rejects non-channel links",
+      "status": "pass",
+      "notes": "step1Channel + parseChannelLink"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC5: SharePoint step parses site+folder, manual path, rejects bad links",
+      "status": "pass",
+      "notes": "step2Folder; subsite misparse (CR-010)"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC6: time-zone step accepts Windows ID (default UTC), rejects unknown",
+      "status": "pass",
+      "notes": "step3TimeZone"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC7: import step writes zip without webhook, instructions, opens Power Automate, waits",
+      "status": "pass",
+      "notes": "step4ImportFlow"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC8: trigger step uses AC17 rule; test send; failure reason, 4xx hint, retry/URL/skip",
+      "status": "pass",
+      "notes": "testSendLoop; 'url' branch untested (CR-001)"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC9: steps 6-7 offer three policies and default or fixed 1-30 lookback",
+      "status": "pass",
+      "notes": "step6/step7"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC10: step 8 prints one install command then one update hint",
+      "status": "pass",
+      "notes": "step8Developers"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC11: 'Already imported' skips steps 1-4",
+      "status": "pass",
+      "notes": "startStep = 5 on yes"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC12: re-run masked summary, reuse re-check, interrupted run resumes with saved defaults, 0o600",
+      "status": "partial",
+      "notes": "step 2 has no saved defaults (CR-004); reuse after shortcut fails (CR-007)"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC13: --webhook mode: no prompts, test-send, command on success, no TTY, no state",
+      "status": "pass",
+      "notes": "runWebhookMode"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC14: printed command runs unchanged in bash/zsh, PowerShell and cmd; caveat documented",
+      "status": "pending-stage-7",
+      "notes": "needs execution on each shell"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC15: no TTY and no --webhook fails immediately explaining both options",
+      "status": "pass",
+      "notes": "NO_TTY_MESSAGE"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC16: --webhook test send rejected/unreachable: no command, cause-specific error, non-zero",
+      "status": "pass",
+      "notes": "runWebhookMode catch"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC17: fails before any send naming the option for invalid URL/sig/whitespace/lookback/policy",
+      "status": "pass",
+      "notes": "validation before deps.send"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC18: signature never shown, logged or in an error",
+      "status": "pass",
+      "notes": "webhookHost / redactSecrets"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC19: COMMANDS.md documents bootstrap, both modes, lead-to-developer flow, secret warning",
+      "status": "pass",
+      "notes": "docs/COMMANDS.md section"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: no change to developer-side install/run/status/uninstall behavior",
+      "status": "pass",
+      "notes": "install does not call the builder"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: no change to the Power Automate flow template",
+      "status": "pass",
+      "notes": "static assets copied by copy-plugins.js"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: never read the collector's analytics-setup.json",
+      "status": "pass",
+      "notes": "only analytics-sync-bootstrap.json read"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: no minimum CLI version in bootstrap output",
+      "status": "pass",
+      "notes": "UPDATE_HINT names no version"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: single team per lead machine",
+      "status": "pass",
+      "notes": "one state file path"
+    },
+    {
+      "kind": "spec",
+      "item": "Every printed URL other than the install command goes through redactSecrets/webhookHost",
+      "status": "pass",
+      "notes": "summarizeState webhookHost"
+    },
+    {
+      "kind": "spec",
+      "item": "validateWebhookUrl/IncludeExternal/LookbackDays made public unchanged; validateTriggerUrl uses href",
+      "status": "pass",
+      "notes": "export-only changes"
+    },
+    {
+      "kind": "spec",
+      "item": "4xx hint keys off SyncDeliveryError.status",
+      "status": "pass",
+      "notes": "sendFailure4xxHint"
+    },
+    {
+      "kind": "spec",
+      "item": "Tests updated for help list and quoting; new tests use deps injection",
+      "status": "pass",
+      "notes": "both test files updated"
+    },
+    {
+      "kind": "spec",
+      "item": "Only the install command on stdout, everything else on stderr",
+      "status": "partial",
+      "notes": "inquirer prompts default to stdout; isTTY requires stdout TTY (CR-013)"
+    },
+    {
+      "kind": "spec",
+      "item": "Interactive test send ~30 s timeout with 'Sending test file…'; URL saved before send",
+      "status": "pass",
+      "notes": "testSendLoop 30_000"
+    },
+    {
+      "kind": "spec",
+      "item": "Template shipped via copy-plugins.js, resolved before step 1; zipSync level 0; fflate only",
+      "status": "pass",
+      "notes": "copy-plugins.js entry present"
+    },
+    {
+      "kind": "spec",
+      "item": "If the browser opener fails, print the URL instead",
+      "status": "pass",
+      "notes": "step4 catch"
+    },
+    {
+      "kind": "spec",
+      "item": "One shared 0o600 writePrivateJson; one toInstallCommandOptions for step 8 and reuse",
+      "status": "pass",
+      "notes": "private-file.ts shared"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "All 10 subjects in a56231832..HEAD use allowed types (feat/fix/docs) with allowed scope analytics, imperative mood, under 100 chars, no ticket key in subject, per git-workflow.md and commitlint.config.cjs"
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "code-quality.md Code Structure Guidelines: files under 500 lines, functions under 50 lines; Best Practices: no deep nesting (>3 levels); Pre-Commit Checklist: no console.log() left in code. New bootstrap/guided.ts is 556 lines; config-store.ts grows from 398 to 522 lines; runGuided (guided.ts:491-556, ~65 lines) and step2Folder (guided.ts:123-177, ~55 lines, for/if/else/try/catch/if nesting) exceed limits; run-bootstrap.ts:170,173 add console.log/console.error as the out/err sinks. Imports carry .js, exported functions have explicit return types, naming is kebab-case/camelCase, no generic Error found in changed sources"
+    },
+    {
+      "kind": "security",
+      "status": "partial",
+      "notes": "security-practices.md: never store tokens in plaintext files; the only documented exception is the analytics sync webhook in ~/.codemie/analytics-sync.json. bootstrap/state-store.ts persists webhookUrl (carrying the secret sig= parameter) to a second plaintext file ~/.codemie/analytics-sync-bootstrap.json (mode 0o600 via writePrivateJson) not covered by that exception. Redaction otherwise follows the guide: config-store.ts error messages wrap URLs in redactSecrets(), summarizeState masks the URL to its host; private files are 0o600. No attribution-header changes found"
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "16 blocking findings (4 critical: Flow_config inputs replacement breaks flow delivery, guided runner can throw, AC12 SharePoint defaults missing, --webhook update hint before command) plus 6 code-quality/security standards violations; all four lenses and the standards audit ran, every candidate verified against source. 2 deferred to code-review-deferred.local.md (pre-existing writeFile+chmod window; template's anonymous trigger, unchangeable per spec non-goal); 16 candidates dismissed as noise, out of contract or covered elsewhere; AC14 pending Stage 7.",
+    "confidence": "high",
+    "risk_flags": [
+      "breaking-change",
+      "security"
+    ]
+  }
+}

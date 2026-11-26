@@ -12,6 +12,7 @@ import { stopIntentPending } from './stop-intent.js';
 import { readClaudeAnalyticsPreferences } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
 import { classifySession, sessionPolicyState, type AnalyticsEndpoint } from './classification.js';
 import { publicationMode, type PublicationMode } from './publication-mode.js';
+import { readStatus } from './session-status.js';
 
 /** Project the session is bound to; the backend gates analytics on it. */
 export const PROJECT_HEADER = 'X-CodeMie-Project';
@@ -91,6 +92,25 @@ export function evidenceHeaders(sessionId: string, ctx: EvidenceContext): Record
   });
   for (const name of built.omitted) logger.debug(`[otlp-evidence] ${name} omitted: not_latin1_header_value`);
   return built.headers;
+}
+
+/**
+ * Unrecorded producer evidence persisted through the shared spool boundary. No producer discovery, contract or consent
+ * is inferred here. Missing/mismatched metadata and a project that cannot travel as a header retain legacy behavior.
+ */
+export async function producerAttributionHeaders(sessionId: string, project: string): Promise<Record<string, string> | undefined> {
+  const attribution = (await readStatus(sessionId))?.producerAttribution;
+  if (!attribution || attribution.project.toLowerCase() !== project.toLowerCase()) return undefined;
+  const { headers } = buildAttributionHeaders({
+    destination: 'analytics',
+    sessionId,
+    routedViaCodemie: attribution.routedViaCodemie,
+    subscriptionType: 'codemie',
+    routingUnproven: false,
+    project,
+    projectSource: attribution.projectSource,
+  });
+  return headers[PROJECT_HEADER] ? headers : undefined;
 }
 
 /**

@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "generated": "2026-11-10T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 21,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 15,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "SSO auth, health, setup-steps, proxy session-expiry plugin, new session-rejection module and the analytics-cli skill script all changed." },
+    { "dimension": "technical_risk", "reason": "Authentication credential expiry semantics changed and a session-shaped 401 recovery path with a loop guard was added; no exact precedent." },
+    { "dimension": "file_change_estimate", "reason": "15 files changed (827 insertions, 58 deletions), about 9 source and 6 test files across several directories." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from L to XL: affects authentication (credential expiry and 401 recovery)"
+  ],
+  "split_recommendation": null
+}

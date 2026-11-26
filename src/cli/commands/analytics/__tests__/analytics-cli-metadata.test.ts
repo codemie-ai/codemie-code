@@ -56,6 +56,13 @@ vi.mock('../report/report-generator.js', () => ({
   writeReportWithFallback: (...a: unknown[]) => writeReportMock(...a),
 }));
 
+const sessionsLoadMock = vi.fn();
+vi.mock('../sources/sessions-source.js', () => ({
+  SessionsSource: class {
+    load = (...a: unknown[]) => sessionsLoadMock(...a);
+  },
+}));
+
 const rawSession = { sessionId: 's1' };
 const costEntry = { sessionId: 's1', tokens: { total: 10 }, costUSD: 0.01, priced: true };
 const enrichResult = {
@@ -187,14 +194,24 @@ describe('runAnalytics CLI metadata wiring', () => {
 });
 
 describe('analytics CLI contract (unify-analytics-cost-command T6)', () => {
-  it('accepts the legacy --report, --report-format and --report-output flags as deprecated aliases', async () => {
-    const { createAnalyticsCommand } = await import('../index.js');
-    const command = createAnalyticsCommand();
-    const longFlags = command.options.map((o) => o.long);
-    for (const flag of ['--report', '--report-format', '--report-output']) {
-      expect(longFlags).toContain(flag);
+  it.each([['--report', []], ['--report-format', ['json']], ['--report-output', ['/tmp/x.html']]])(
+    'removed %s fails naming --export / -o and runs nothing',
+    async (flag, rest) => {
+      const { createAnalyticsCommand } = await import('../index.js');
+      const err = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      process.exitCode = undefined;
+      try {
+        await createAnalyticsCommand().parseAsync([flag, ...rest], { from: 'user' });
+        expect(process.exitCode).toBe(1);
+        const out = err.mock.calls.map((c) => String(c[0])).join('');
+        expect(out).toMatch(/--export|-o/);
+        expect(sessionsLoadMock).not.toHaveBeenCalled();
+      } finally {
+        err.mockRestore();
+        process.exitCode = undefined;
+      }
     }
-  });
+  );
 
   it('--export csv sets a non-zero exitCode and writes no file', async () => {
     const { runAnalytics } = await import('../index.js');
@@ -343,5 +360,85 @@ describe('-o without --export/--open infers the format from the path (unify-anal
     await runAnalytics({ output: outputDir } as never, mockSource() as never);
     expect(generateReportMock).toHaveBeenCalled();
     expect(generateReportJsonMock).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('analytics --include-external [policy] and filter validation (proxy-analytics-cli-redesign task 17)', () => {
+  let err: ReturnType<typeof vi.spyOn>;
+  let log: ReturnType<typeof vi.spyOn>;
+  const stderr = (): string => err.mock.calls.map((c) => String(c[0])).join('');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.exitCode = undefined;
+    sessionsLoadMock.mockResolvedValue({ rawSessions: [], cost: null });
+    err = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    process.exitCode = undefined;
+    vi.restoreAllMocks();
+  });
+
+  async function run(args: string[]): Promise<void> {
+    const { createAnalyticsCommand } = await import('../index.js');
+    await createAnalyticsCommand().parseAsync(args, { from: 'user' });
+  }
+
+  it.each([
+    ['never', false],
+    ['always', true],
+  ])('--include-external %s maps through includeExternalFor', async (policy, expected) => {
+    await run(['--include-external', policy]);
+    expect(sessionsLoadMock).toHaveBeenCalledWith(expect.objectContaining({ includeExternal: expected }));
+    expect(stderr()).not.toContain('Deprecated');
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it('--include-external windows follows the platform', async () => {
+    await run(['--include-external', 'windows']);
+    expect(sessionsLoadMock).toHaveBeenCalledWith(
+      expect.objectContaining({ includeExternal: process.platform === 'win32' })
+    );
+  });
+
+  it('bare --include-external means always and prints one deprecation notice', async () => {
+    await run(['--include-external']);
+    expect(sessionsLoadMock).toHaveBeenCalledWith(expect.objectContaining({ includeExternal: true }));
+    const lines = stderr().split('\n').filter((l) => l.includes('Deprecated'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('codemie analytics --include-external');
+  });
+
+  it.each(['otel', 'sync'])('--include-external %s (a subcommand name) is an error, not a policy', async (name) => {
+    await run(['--include-external', name]);
+    expect(process.exitCode).toBe(1);
+    expect(stderr()).toContain(name);
+    expect(stderr()).toMatch(/windows, always, or never/);
+    expect(sessionsLoadMock).not.toHaveBeenCalled();
+  });
+
+  it('an unknown policy value is an error', async () => {
+    await run(['--include-external', 'sometimes']);
+    expect(process.exitCode).toBe(1);
+    expect(stderr()).toMatch(/windows, always, or never/);
+    expect(sessionsLoadMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [['--from', '10/25/2026'], 'YYYY-MM-DD'],
+    [['--to', 'tomorrow'], 'YYYY-MM-DD'],
+    [['--last', '7x'], '7d'],
+  ])('invalid %j sets exitCode 1 and states the accepted format', async (args, accepted) => {
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    await run(args as string[]);
+    const out = stderr() + log.mock.calls.map((c) => String(c[0])).join('') +
+      (console.error as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0])).join('');
+    expect(process.exitCode).toBe(1);
+    expect(out).toContain(accepted);
+    expect(exit).not.toHaveBeenCalled();
+    expect(sessionsLoadMock).not.toHaveBeenCalled();
   });
 });

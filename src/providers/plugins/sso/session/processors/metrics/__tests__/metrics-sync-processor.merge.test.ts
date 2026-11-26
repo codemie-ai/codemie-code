@@ -93,10 +93,10 @@ describe('MetricsSyncProcessor final rewrite', () => {
     expect(statuses()).toEqual({ D1: 'synced', D2: 'pending' });
   });
 
-  it('marks what it sent failed and keeps a delta appended during the request pending', async () => {
+  it('marks what it sent rejected (a JSON 400) and keeps a delta appended during the request pending', async () => {
     await syncWhileAppending(() => new Response(JSON.stringify({ message: 'bad request' }), { status: 400, headers: { 'content-type': 'application/json' } }));
 
-    expect(statuses()).toEqual({ D1: 'failed', D2: 'pending' });
+    expect(statuses()).toEqual({ D1: 'rejected', D2: 'pending' });
   });
 
   // @case metrics-sync-preserves-concurrent-deltas_TC_004

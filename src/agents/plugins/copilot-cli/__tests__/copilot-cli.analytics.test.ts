@@ -503,6 +503,21 @@ describe('CopilotCliMetricsProcessor', () => {
     expect(read(`${sid}_metrics.jsonl`)).toHaveLength(2);
   });
 
+  it('keeps the prompts of a session that never got an assistant turn once its final pass runs', async () => {
+    const file = writeNative('n1', [start('n1'), user(10)]);
+    await new CopilotCliSessionAdapter(CopilotCliPluginMetadata).processSession(file, sid, { ...ctx, finalPass: true });
+    const rows = read(`${sid}_metrics.jsonl`) as Array<{ userPrompts?: unknown[] }>;
+    expect(rows.reduce((n, r) => n + (r.userPrompts?.length ?? 0), 0)).toBe(1);
+  });
+
+  it('does not double count when two passes over the same transcript overlap', async () => {
+    const file = writeNative('n1', [start('n1'), user(10), assistant(20), toolStart('c1', 30), toolDone('c1', 40), user(50), assistant(60)]);
+    await Promise.all([run(file), run(file)]);
+    const rows = read(`${sid}_metrics.jsonl`) as Array<{ tools?: Record<string, number>; userPrompts?: unknown[] }>;
+    expect(toolTotal(rows)).toBe(1);
+    expect(rows.reduce((n, r) => n + (r.userPrompts?.length ?? 0), 0)).toBe(2);
+  });
+
   it('counts tool calls once and still records a no-tool session', async () => {
     const file = writeNative('n1', [start('n1'), user(10), assistant(20), toolStart('c1', 30), toolDone('c1', 40), user(50), assistant(60)]);
     await run(file);
@@ -571,6 +586,55 @@ describe('CopilotCliMetricsProcessor', () => {
     const rows = read(`${sid}_metrics.jsonl`);
     expect(rows.map((r) => r.recordId)).toEqual([`${sid}-turn-0`, `${sid}-supplement-1`]);
     expect(toolTotal(rows)).toBe(1);
+  });
+
+  it('keeps a trailing prompt with no turn and no tool activity as one supplement delta', async () => {
+    const base = [start('n1'), user(10), assistant(20)];
+    const file = writeNative('n1', base);
+    await run(file);
+    writeNative('n1', [...base, user(30)]);
+    await run(file);
+    await run(file);
+    const rows = read(`${sid}_metrics.jsonl`);
+    expect(rows.map((r) => r.recordId)).toEqual([`${sid}-turn-0`, `${sid}-supplement-1`]);
+    expect(rows.reduce((n, r) => n + (r.userPrompts?.length ?? 0), 0)).toBe(2);
+  });
+
+  describe('total user prompts over a multi-prompt session', () => {
+    type PromptRow = { recordId: string; userPrompts?: Array<{ count: number; text: string }> };
+    const promptRows = (): PromptRow[] => read(`${sid}_metrics.jsonl`) as PromptRow[];
+    const promptTexts = (rows: PromptRow[]) => rows.flatMap((r) => (r.userPrompts ?? []).map((p) => p.text));
+    const promptTotal = (rows: PromptRow[]) => rows.reduce((n, r) => n + (r.userPrompts ?? []).reduce((m, p) => m + p.count, 0), 0);
+    const exchange = (n: number): Ev[] => [prompt(n * 100 + 10, `P${n}`), reply(n * 100 + 20, 5)];
+
+    it('counts all three prompts in one batch pass, with the first prompt first and replays adding nothing', async () => {
+      const file = writeNative('n1', [start('n1'), ...exchange(1), ...exchange(2), ...exchange(3)]);
+      await run(file);
+      await run(file);
+      await run(file);
+
+      const rows = promptRows();
+      expect(promptTotal(rows)).toBe(3);
+      expect(promptTexts(rows)).toEqual(['P1', 'P2', 'P3']);
+      expect(rows).toHaveLength(3);
+    });
+
+    it('counts all three prompts when the transcript is processed once per turn, with replays adding nothing', async () => {
+      const events: Ev[] = [start('n1')];
+      const file = writeNative('n1', events);
+      for (const n of [1, 2, 3]) {
+        events.push(...exchange(n));
+        writeNative('n1', events);
+        await run(file);
+      }
+      await run(file);
+      await run(file);
+
+      const rows = promptRows();
+      expect(promptTotal(rows)).toBe(3);
+      expect(promptTexts(rows)).toEqual(['P1', 'P2', 'P3']);
+      expect(rows).toHaveLength(3);
+    });
   });
 
   it('stamps a supplement delta with the window start when no transcript record lies before the window end', async () => {

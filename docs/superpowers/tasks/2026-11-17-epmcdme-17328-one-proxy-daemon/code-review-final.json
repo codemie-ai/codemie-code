@@ -1,0 +1,539 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "request-changes",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "yes, accepted: CR-002, CR-004 and CR-006 are fixed and CR-010 is the intended rule; CR-001, CR-003, CR-005, CR-007 and CR-008 stay as they are, each with its reason in the PR description; CR-009 - the security-review sign-off is requested on the PR and is given there before merge"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "CR-002: compare the port in the Codex and VS Code named-key moves; CR-004: bring codex-desktop.ts back under 500 lines; CR-006: read the kept state in proxy inspect desktop; the other findings are decided by the story owner"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "yes, accepted: CR-002, CR-004 and CR-006 are fixed and CR-010 is the intended rule; CR-001, CR-003, CR-005, CR-007 and CR-008 stay as they are, each with its reason in the PR description; CR-009 - the security-review sign-off is requested on the PR and is given there before merge"
+    }
+  ],
+  "reviewed_head": "d334f7337064526aa414523a0305035a9a23734a",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "Targeted check of 10 prior blocking findings: 4 resolved (CR-002, CR-004, CR-006 in source; CR-010 by owner decision), 6 unresolved. CR-001/003/005/007/008 are code findings closed by owner decision with no source change, which cannot resolve a code finding - accept them by a human or return to code-review.final; CR-009 still lacks the recorded security-review sign-off.",
+  "confidence": "low",
+  "check_confidence": "medium",
+  "risk_flags": [
+    "security",
+    "breaking-change",
+    "public-api"
+  ],
+  "open": 0,
+  "closed": {
+    "fixed": 0,
+    "moot": 0,
+    "decided": 4,
+    "wont_fix": 6
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/bin/proxy-daemon.ts",
+      "line": 87,
+      "title": "Unreadable daemon version recorded as 0.0.0",
+      "problem": "The daemon writes version '0.0.0' into its state when getCurrentCliVersion() returns undefined. isOlderDaemon accepts any valid x.y.z, so '0.0.0' compares as older than any CLI that can read its own version. The telemetry config at line 258 uses the same fallback.",
+      "impact": "A CLI from another install (or another resolution path) treats the daemon as older, so connect/start/restart and non-adopting hooks stop and respawn it, and the replacement can again record 0.0.0, which can loop. Status shows 'Version: 0.0.0'. Reachability unconfirmed: it needs the daemon's version lookup to fail while the CLI's succeeds.",
+      "recommendation": "Leave `version` unset (or a sentinel isOlderDaemon ignores) when getCurrentCliVersion() returns undefined, instead of writing '0.0.0'; apply the same to the telemetry config fallback at line 258.",
+      "status": "wont-fix",
+      "check_notes": "kind code; owner closed it with a decision record, no source change and file not in changed_files; a decision cannot resolve a code finding (proxy-daemon.ts still writes 0.0.0).",
+      "decision": {
+        "outcome": "closed without a code change by the story owner: the fallback is the one of origin/main and cannot loop; a test now pins what it means",
+        "rationale": "Writing version 0.0.0 when the daemon cannot read its package version is what origin/main does (readCliVersion returned '0.0.0' for the state and the telemetry config). The daemon and the CLI of one install read the same package.json, so the lookup fails for both together, and a CLI whose own version is unreadable never treats a daemon as older (isOlderDaemon returns false for an unreadable own version), so the install with the broken manifest cannot respawn in a loop. A CLI of another install that does read its version replaces that daemon once, with its own daemon, whose state carries a readable version. Leaving `version` unset, as recommended, would make every CLI treat the daemon as older: a state without a version is the mark of a daemon of an older CLI. Test added in d334f733: the row 'version 0.0.0' of 'a matching healthy daemon with %s is replaced only when older' in src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts."
+      },
+      "disposition": {
+        "rationale": "As on main; the daemon and the CLI of one install read the same package.json and a CLI that cannot read its own version never replaces a daemon, so it cannot loop; a test pins the case",
+        "source": "hitl"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/analytics-delivery-lines.ts",
+      "line": 188,
+      "title": "Named-key moves ignore the daemon's port",
+      "problem": "CLIENT_CONFIGS calls moveVsCodeClaudeCodeToNamedKey(state.gatewayKey, …) and moveCodexDesktopToNamedKey(state.gatewayKey) without state.port, and only the Desktop move gets the port. moveCodexDesktopToNamedKey checks only that the key reads as 'shared'. Every daemon uses the same default key, so a matching key does not show that the config targets this daemon.",
+      "impact": "A Codex or VS Code Claude Code config pointing at another daemon on another port (e.g. an older install's) is rewritten to '<key>.<client>', and that daemon then refuses it with 'Invalid API key'. This goes against NG3 (other-gateway configs are not rewritten). Reachability unconfirmed: it needs a second live daemon on another port.",
+      "recommendation": "Pass state.port to moveCodexDesktopToNamedKey and moveVsCodeClaudeCodeToNamedKey (as the Desktop row does) and return 'unchanged' when the config's loopback port is not this daemon's port.",
+      "status": "decided",
+      "check_notes": "Both move helpers take port and return unchanged on port mismatch; all CLIENT_CONFIGS rows pass state.port.",
+      "decision": {
+        "outcome": "fixed in code (commit d334f733, fix(proxy): move a client to its named key only on the daemon's port)",
+        "rationale": "moveCodexDesktopToNamedKey and moveVsCodeClaudeCodeToNamedKey take the daemon's port and return 'unchanged', writing nothing, when the config's loopback port is not that port (the condition is `gateway?.port !== port || gateway.key !== 'shared'`), as moveDesktopToNamedKey already did; the three rows of CLIENT_CONFIGS in analytics-delivery-lines.ts pass state.port. A config on another port stays as it is and the status names it with the connect that fixes it. Tests: 'leaves the bytes of a config holding the shared key on another loopback port than the daemon's' (codex-desktop-roundtrip.test.ts), 'leaves the bytes of settings holding the shared key on another loopback port than the daemon's' (vscode-claude-code.test.ts), '--claude-desktop leaves and does not name a Codex config and VS Code settings with the shared key on another loopback port' (connect-orchestrator.test.ts). Proof: with the port part of the condition removed all three fail ('moved' instead of 'unchanged'; the Codex bytes read `Bearer gk.codex-desktop`)."
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connect-orchestrator.ts",
+      "line": 863,
+      "title": "Legacy identity cleared while BYOK holds shared key",
+      "problem": "clearLegacyIdentityWhenUnused skips every succeeded target. A successful 'codemie proxy connect --vscode' therefore counts VS Code BYOK as off the shared key and clears a legacy 'vscode-byok' identity. But BYOK's key stays in VS Code secret storage as the shared key until the user retypes it, and runVscodeByok itself says the earlier shared key still works. No test covers a vscode-byok record with connect --vscode.",
+      "impact": "After the next daemon start, defaultClientOf(record) gives codemie-daemon. A BYOK user who has not retyped the key is served as codemie-daemon: VsCodeRequestNormalizer (clients ['vscode-byok']) stops running and X-CodeMie-Client changes. This breaks D1 (the identity is kept while a client holds the shared key).",
+      "recommendation": "Do not count a succeeded VS Code BYOK target as having left the shared key (its key lives in VS Code secret storage until the user retypes it); keep the legacy identity per D1, and add the connect --vscode case to the legacy-identity tests.",
+      "status": "wont-fix",
+      "check_notes": "kind code; owner closed it with a decision record, no source change and file not in changed_files; a decision cannot resolve a code finding; spec D1 amended to call it intended.",
+      "decision": {
+        "outcome": "closed without a code change by the story owner: intended; D1 of the spec and the PR description now state it, and a test covers it",
+        "rationale": "`proxy connect --vscode` is the user's own reconnection of VS Code BYOK: it prints the named key and asks to update the key VS Code holds. The CLI cannot read VS Code's secret storage, so a succeeded connect that targets the client is the only signal it has that the client left the shared key; keeping the identity after it would leave the older CLI's process-wide identity in the record for good, since nothing else could ever clear it for BYOK. D1 of the spec says the identity stays for as long as a client may still keep the shared key and that a client counts as moved once a connect that targets it succeeded, with the BYOK case named; D2 says a key typed before is served as the generic daemon client once the identity is removed and the daemon is started again. Test added in d334f733: 'is removed for a vscode-byok record after --vscode, the BYOK named key printed' (connect-orchestrator.test.ts)."
+      },
+      "disposition": {
+        "rationale": "Intended: a succeeded proxy connect --vscode is the only signal that VS Code BYOK was reconnected, its stored key cannot be read; stated in D1 and covered by a test",
+        "source": "hitl"
+      }
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/codex-desktop.ts",
+      "title": "codex-desktop.ts exceeds 500-line limit",
+      "problem": "code-quality.md Code Structure Guidelines say files stay under 500 lines. This change takes codex-desktop.ts from 451 to 515 lines, and connect-orchestrator.ts, desktop.ts, claude-code-otlp.ts and sso.proxy.ts grow further past the limit.",
+      "impact": "It breaks a written blocking code-quality standard (the standards audit blocks on it).",
+      "recommendation": "Move the new named-key helpers (moveCodexDesktopToNamedKey, readCodexDesktopGateway) into their own module so codex-desktop.ts stays under 500 lines, and avoid growing files already over the limit.",
+      "status": "decided",
+      "check_notes": "Named-key helpers moved to codex-desktop-named-key.ts (75 lines); codex-desktop.ts now 453 lines.",
+      "decision": {
+        "outcome": "fixed in code (commit d334f733, fix(proxy): move a client to its named key only on the daemon's port)",
+        "rationale": "readCodexDesktopGateway, moveCodexDesktopToNamedKey and isTable moved, unchanged but for the port of CR-002, to the new src/cli/commands/proxy/connectors/codex-desktop-named-key.ts; codex-desktop.ts is 453 lines (451 on origin/main), re-exports nothing and imports nothing back; the importers (analytics-delivery-lines.ts, codex-desktop-roundtrip.test.ts) read the new module. The other files named were over the limit before the change (on origin/main: connect-orchestrator.ts 1040, connectors/desktop.ts 1039, connectors/claude-code-otlp.ts 823, sso.proxy.ts 832 lines): the change does not take them past it, and splitting them is not part of this story; index.ts (453), daemon-manager.ts (495) and DesktopTelemetryRuntime.ts (494), which the change had taken past 500, were already brought back under it."
+      }
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/daemon-manager.ts",
+      "line": 430,
+      "title": "spawnDaemon fails when another daemon wins state",
+      "problem": "The readiness poll accepts only a state whose pid is the spawned child. If another daemon (e.g. an older install's lockless hook) writes the state file during the 5 s poll, the poll never sees its own pid and throws 'Daemon failed to start'.",
+      "impact": "connect/start/hook report a failure although a live daemon is serving, and two daemons may be left running. Reachability unconfirmed: it needs an older lockless start racing within the poll window.",
+      "recommendation": "In the readiness poll, when the state names another live pid (e.g. an older install's lockless hook won), adopt that daemon instead of timing out, or report the conflict explicitly.",
+      "status": "wont-fix",
+      "check_notes": "kind code; owner closed it with a decision record, no source change and file not in changed_files; a decision cannot resolve a code finding; stated as a known limit.",
+      "decision": {
+        "outcome": "closed without a code change by the story owner: a known limit, stated in the PR description",
+        "rationale": "Every start of this CLI (connect, start, restart, a hook's cold start) holds the daemon lock, so two of them never meet in the ready wait. The only writer that can put another daemon's state there within the five seconds is a hook of an older install, which takes no lock. In that race the start reports a failure, and the next start or hook of this CLI replaces the older daemon on its port, as AC7 requires. The ready wait takes only its own child's state on purpose: returning another daemon's state as the started daemon is the behaviour the change removes (test 'ignores a live state of another pid and returns the state its own child writes', daemon-manager.test.ts), and adopting the other daemon would adopt the older daemon the start is there to replace. The PR description names the limit."
+      },
+      "disposition": {
+        "rationale": "Known limit: only a hook of an older install, which takes no lock, can win the port inside the ready wait; the next start replaces that daemon",
+        "source": "hitl"
+      }
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/index.ts",
+      "line": 438,
+      "title": "inspect-desktop lost persisted-state fallback",
+      "problem": "The change removes 'const persistedState = state ?? await readState()'. readDaemonStatus returns state null when the daemon is not alive, so printDesktopInspection now gets null.",
+      "impact": "With the daemon down, 'codemie proxy inspect desktop' prints n/a for target URL, sync URLs and timing. That is exactly the situation the diagnostic exists to explain.",
+      "recommendation": "Restore the fallback: pass `state ?? await readState()` to printDesktopInspection when the daemon is not running.",
+      "status": "decided",
+      "check_notes": "index.ts passes state ?? readState() when not running; inspect-desktop keeps daemon-not-running per session.",
+      "decision": {
+        "outcome": "fixed in code (commit d334f733, fix(proxy): move a client to its named key only on the daemon's port)",
+        "rationale": "`proxy inspect desktop` passes the state readState() gives when no daemon is alive, so the header shows the target URL, the sync URLs and the start time of the daemon that stopped; inspectDesktopProxy gives its sessions no daemon state when the daemon is not running, so each keeps the reason daemon-not-running. On origin/main the removed fallback read a file the status check had just deleted and printed n/a as well; the state file is now kept by read-only commands, which is what makes the fallback useful. Tests: 'reads the kept state of a daemon that is not running' and 'reads no state when there is no state file' (index.test.ts), 'says daemon-not-running for the kept state of a daemon that is not running, and keeps that state in the result' (inspect-desktop.test.ts). Proof: with index.ts and inspect-desktop.ts as at the reviewed head the first and the third fail."
+      }
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/otlp-cold-start.ts",
+      "line": 216,
+      "title": "Non-restartable older daemon never replaced by hooks",
+      "problem": "In ensureOtlpProxy, a live older-CLI daemon whose state lacks targetUrl or provider is neither adopted (the event is not adopt-eligible) nor restarted from state, so it falls through to coldStartOnRecord on every hook.",
+      "impact": "Each hook takes the 12 s-budget lock and reloads the profile, and the older daemon may never be replaced. Reachability unconfirmed: coldStartOnRecord's handling of a live occupant was not traced.",
+      "recommendation": "When a live older daemon's state is not restartable (no targetUrl/provider), adopt it (or replace it via the recorded profile) explicitly instead of falling through to coldStartOnRecord on every hook.",
+      "status": "wont-fix",
+      "check_notes": "kind code; owner closed it with a decision record, no source change and file not in changed_files; a decision cannot resolve a code finding; owner argues unreachable.",
+      "decision": {
+        "outcome": "closed without a code change by the story owner: not reachable",
+        "rationale": "Every CLI that has written a daemon state wrote targetUrl and provider into it: both are in the state since the daemon's first commit (823479c0, #265) and in origin/main's proxy-daemon.ts. A live daemon of an older CLI is therefore always restartable from its state and is replaced by startFromState. A state without them exists only when edited by hand; it ends adopted through ensureDaemon after the lock and a profile load, never respawned, so there is no loop."
+      },
+      "disposition": {
+        "rationale": "Not reachable: every released CLI wrote targetUrl and provider into the daemon state",
+        "source": "hitl"
+      }
+    },
+    {
+      "id": "CR-008",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/start.ts",
+      "line": 91,
+      "title": "proxy start refuses daemon differing only in port",
+      "problem": "startProxy builds requestedDaemon.port from requestedDaemonPort(), which prefers the connection record's port, and daemonMatchesRequest compares state.port === requested.port. A running daemon whose port differs from the recorded one (e.g. one that came up on a fallback port that spawnDaemon did not record) throws formatDaemonConflict. connect avoids this by matching with port: state.port (connect-orchestrator.ts:423).",
+      "impact": "AC7/D3 are only partly met: proxy start should refuse only on a profile/project/provider/target difference, and reuse or replace otherwise. Users get a conflict error for a daemon that matches their request.",
+      "recommendation": "Without an explicit --port, match the running daemon with `{ ...requestedDaemon, port: state.port }` (as ensureDaemon does at connect-orchestrator.ts:423), so only a profile/project/provider/target difference is a conflict; reuse or replace otherwise.",
+      "status": "wont-fix",
+      "check_notes": "kind code; owner closed it with a decision record, no source change and file not in changed_files; a decision cannot resolve a code finding; spec AC7/D3 amended to include port.",
+      "decision": {
+        "outcome": "closed without a code change by the story owner: as on origin/main; AC7 and D3 of the spec now name the port",
+        "rationale": "The port was part of what `proxy start` matches on origin/main too (its start action compared state.port with the requested port and named a daemon on another port a conflict). Without --port the start resolves the port the clients are configured with — the connection record's — so a daemon that came up on a fallback port is named a conflict and not reported as the daemon the clients reach (AC9: the clients keep their port). A connect differs on purpose: it takes a matching daemon on whatever port it runs and writes that port into the client it configures. AC7 and D3 of the spec list the port among what the start compares; the PR description says the same. Test added in d334f733: 'names a running daemon of the same settings on another port than the record's as a conflict, and stops or spawns nothing' (index.test.ts)."
+      },
+      "disposition": {
+        "rationale": "As on main: the port is part of what proxy start compares, so a daemon on a fallback port is not taken for the one the clients reach; stated in AC7 and D3 and covered by a test",
+        "source": "hitl"
+      }
+    },
+    {
+      "id": "CR-009",
+      "kind": "decision",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "src/providers/plugins/sso/proxy/plugins/header-injection.plugin.ts",
+      "line": 148,
+      "title": "Attribution header change lacks security sign-off",
+      "problem": "security-practices.md (CRITICAL: Project & User Attribution Headers, Rules 1-2) forbids changing an attribution header's value or its source without a recorded security-review sign-off. X-CodeMie-Client now comes from context.agentName, which the request can set through the gateway-key suffix. vscode-claude-code is relabelled claude-desktop, the Cowork repository fallback is narrowed, and repository/branch come from the new client-attribution plugin. The change has no CRITICAL callout and no sign-off.",
+      "impact": "These headers back audit, tenant and billing attribution. The guide and the git-workflow review checklist require sign-off before merge.",
+      "recommendation": "Mark the PR CRITICAL, apply the security-practices reviewer checklist (state that the derivation is auditable and that the client label is chosen by the client through the key suffix), and record the security-review sign-off before merge.",
+      "status": "wont-fix",
+      "check_notes": "Decision record says the security-review sign-off is still to be recorded on the PR; the required human sign-off is missing.",
+      "decision": {
+        "outcome": "addressed in the PR description: the change is called out as CRITICAL with the reviewer checklist answered; the security-review sign-off is recorded on the PR by the reviewer before merge",
+        "rationale": "The PR description carries the CRITICAL callout the checklist of security-practices.md asks for: X-CodeMie-Client is the request's own client; its value comes from the client name in the request's gateway key, a closed list, and a key naming an unknown client is refused with 401 before any header is set (gateway-key.plugin.test.ts 'answers an unknown client name with the 401 of a wrong key'); the extension keeps the claude-desktop label and a proxy with no client sends none (header-injection.plugin.test.ts); injection stays in header-injection.plugin.ts alone; nothing is hashed, truncated or prefixed; the injector's log line prints no attribution value (header-injection.plugin.test.ts 'logs whether the attribution headers are set, never their values', in the reviewed head). The sign-off itself is a reviewer's act on the PR, which is not opened yet."
+      },
+      "disposition": {
+        "rationale": "The security-review sign-off is requested on the PR, with the CRITICAL callout, and is given there before merge",
+        "source": "hitl"
+      }
+    },
+    {
+      "id": "CR-010",
+      "kind": "decision",
+      "severity": "critical",
+      "triage": "decision_needed",
+      "file": "src/telemetry/runtime/cowork/CoworkEventProducer.ts",
+      "line": 194,
+      "title": "Cursor alone admits unserved Cowork sessions",
+      "problem": "listSessions keeps a session when it has a served mark OR an existing cursor. A cursor left by an older daemon that collected every Cowork session admits a session none of whose requests went through this daemon.",
+      "impact": "AC15 is only partly met: Cowork sessions served by another gateway can still reach CLI Analytics after an upgrade. Whether the cursor bypass is a wanted continuity exception needs product intent.",
+      "recommendation": "Decide whether a cursor left by an older daemon may stand in for a served mark. If AC15 holds strictly, require the served mark (or a cursor written by a daemon that marks served sessions); otherwise amend AC15 to state the continuity exception.",
+      "status": "decided",
+      "check_notes": "Owner decision with rationale: cursor continuity is intended, AC15 amended.",
+      "decision": {
+        "outcome": "accepted by the story owner: the cursor is the intended continuity rule; AC15 of the spec now states it",
+        "rationale": "A cursor exists only for a session the producer was already collecting. Taking such a session keeps the tail of a session in progress from being lost when the daemon is replaced at the update; requiring the mark would drop every session that was being collected at that moment, since no earlier daemon wrote marks. A cursor written before the update admits only its own session, within the producer's window (7 days, at most 14); every session that starts after the update needs the served mark. AC15 of the spec names both ways in. Tests: 'collects a session with a cursor and no mark as today' and 'appends nothing for a session in the window with no mark and no cursor' (CoworkEventProducer.test.ts)."
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "AC1: Desktop and Codex desktop on one daemon at once, each with its own label and normalisation",
+      "status": "pass",
+      "notes": "named key sets agentName; serves() gates hooks by client; e2e two-stream test"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC2: connecting another client kind does not restart the daemon",
+      "status": "pass",
+      "notes": "daemonMatchesRequest no longer compares client type"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC3: unknown-client key refused like a wrong key",
+      "status": "pass",
+      "notes": "clientOfGatewayKey null for unknown suffix; 401 INVALID_GATEWAY_KEY_MESSAGE"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC4: older CLI shared key served as recorded client, else generic daemon client",
+      "status": "pass",
+      "notes": "defaultClientOf(readConnectionRecord())"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC5: Desktop collected regardless of starter; connect-time window; two-read disconnect; finalisation",
+      "status": "pass",
+      "notes": "runtime unconditional; notConnectedReads<2; start-up pass on first connected poll"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC6: non-Desktop clients carry no Cowork repository or Desktop label",
+      "status": "pass",
+      "notes": "Cowork fallback only for claude-desktop agentName"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC7: same-version reused, older replaced on its port, newer reused",
+      "status": "partial",
+      "notes": "proxy start also matches on port, refusing a daemon that differs only in port (CR-008)"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC8: two simultaneous starts leave one daemon",
+      "status": "pass",
+      "notes": "withDaemonLock across connect/start/restart/stop/hook"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC9: replacement keeps a non-default port",
+      "status": "pass",
+      "notes": "requestedDaemonPort order; startFromState keeps port"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC10: status names other-port/shared-key clients, older CLI on PATH, foreign hooks, version",
+      "status": "pass",
+      "notes": "collectClientNotices, findOlderCliOnPath, Version line"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC11: one client's rejected reasoning state does not strip another's",
+      "status": "pass",
+      "notes": "reasoningStateUnusable keyed by agentName"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC12: --omp with --vscode configures both",
+      "status": "pass",
+      "notes": "rejection removed"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC13: wrapper-launched agent served by its own proxy",
+      "status": "pass",
+      "notes": "wrapper proxies keep clientType as agentName"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC14: same project, CLI marker, model, one forward per request",
+      "status": "pass",
+      "notes": "header-injection keeps config values; startFromState respawns from state"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC15: unserved Cowork session not sent; served one collected seven days back",
+      "status": "partial",
+      "notes": "an existing cursor alone admits a session without a served mark (CR-010)"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC16: no SSO login, named-key request gets sign-in prompt",
+      "status": "pass",
+      "notes": "awaiting-login-listener uses clientOfGatewayKey"
+    },
+    {
+      "kind": "spec",
+      "item": "NG1: VS Code Claude Code keeps Claude Desktop label",
+      "status": "pass",
+      "notes": "label mapping in header-injection"
+    },
+    {
+      "kind": "spec",
+      "item": "NG2: no backend/UI/control-plane change",
+      "status": "pass",
+      "notes": "CLI, tests, docs only"
+    },
+    {
+      "kind": "spec",
+      "item": "NG3: other-gateway configs not rewritten; typed commands move shared-key configs",
+      "status": "pass",
+      "notes": "move only from connect/start/restart; see CR-002 on port check"
+    },
+    {
+      "kind": "spec",
+      "item": "NG4: configs not re-pointed on port change; status names them",
+      "status": "pass",
+      "notes": "move writers change only the key"
+    },
+    {
+      "kind": "spec",
+      "item": "NG5: unrelated proxy fixes out of scope",
+      "status": "pass",
+      "notes": "not touched"
+    },
+    {
+      "kind": "spec",
+      "item": "NG6: no in-flight draining on replacement",
+      "status": "pass",
+      "notes": "stopDaemon then spawn"
+    },
+    {
+      "kind": "spec",
+      "item": "D1: client named by key suffix; shared key as default; identity kept while a client holds shared key",
+      "status": "pass",
+      "notes": "see CR-003 for the BYOK clearing path"
+    },
+    {
+      "kind": "spec",
+      "item": "D2: BYOK user types printed named key",
+      "status": "pass",
+      "notes": "runVscodeByok prints named key"
+    },
+    {
+      "kind": "spec",
+      "item": "D3: replacement rules; start refuses only on profile/project/provider/target difference",
+      "status": "partial",
+      "notes": "start conflict check includes port (CR-008)"
+    },
+    {
+      "kind": "spec",
+      "item": "D4: Desktop collected only while its config points at this daemon",
+      "status": "pass",
+      "notes": "isDesktopConnectedTo; desktopConnectedSince persisted"
+    },
+    {
+      "kind": "spec",
+      "item": "D5: one cross-process lock for start/stop",
+      "status": "pass",
+      "notes": "daemon-lock.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "D6: replacement port order",
+      "status": "pass",
+      "notes": "requestedDaemonPort"
+    },
+    {
+      "kind": "spec",
+      "item": "D7: daemon mode and one-identity rules removed",
+      "status": "pass",
+      "notes": "flags and helpers removed; state keeps clientType"
+    },
+    {
+      "kind": "spec",
+      "item": "D8: status lines",
+      "status": "pass",
+      "notes": "index.ts + analytics-delivery-lines.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "D9: CLI-only release; changelog/README; older-CLI warning",
+      "status": "pass",
+      "notes": "CHANGELOG, README, formatOlderCliWarning"
+    },
+    {
+      "kind": "spec",
+      "item": "D10: unit tests, one e2e, live checks on real clients",
+      "status": "pending-stage-7",
+      "notes": "unit/e2e present; live checks are Stage 7 evidence"
+    },
+    {
+      "kind": "spec",
+      "item": "D11: extension key codemie-proxy.vscode-claude-code",
+      "status": "pass",
+      "notes": "vscode-claude-code.ts writes named key"
+    },
+    {
+      "kind": "spec",
+      "item": "D12: one story, three parts accepted together",
+      "status": "na",
+      "notes": "process decision"
+    },
+    {
+      "kind": "spec",
+      "item": "D13: project, CLI marker, model, one forward never change",
+      "status": "pass",
+      "notes": "see AC14"
+    },
+    {
+      "kind": "spec",
+      "item": "D14: one key parser, one plugin gate",
+      "status": "pass",
+      "notes": "clientOfGatewayKey; CodeMieProxy.serves"
+    },
+    {
+      "kind": "spec",
+      "item": "Constraint: CLI and backend released separately",
+      "status": "pass",
+      "notes": "no backend contract change"
+    },
+    {
+      "kind": "spec",
+      "item": "Constraint: owners told before release",
+      "status": "na",
+      "notes": "organisational step"
+    },
+    {
+      "kind": "spec",
+      "item": "Constraint: daemon requests charged as today",
+      "status": "pass",
+      "notes": "see AC14"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: injector log prints only set/unset booleans",
+      "status": "pass",
+      "notes": "hasRepository/hasBranch/hasClient"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: gateway-key, client-attribution, desktop-models priorities 7, 8, 9",
+      "status": "pass",
+      "notes": "registry sorts by priority"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: served mark pruned out of window",
+      "status": "pass",
+      "notes": "pruneServedMarks"
+    },
+    {
+      "kind": "spec",
+      "item": "PR: status --json drops clientType",
+      "status": "pass",
+      "notes": "payload.clientType removed; version added"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "1 subject in range (feat(proxy): ...) matches <type>(<scope>): <subject>; type feat and scope proxy are in the allowed lists, imperative, well under 100 chars"
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "code-quality.md Code Structure Guidelines say files stay under 500 lines; src/cli/commands/proxy/connectors/codex-desktop.ts goes from 451 to 515 lines in this change, and connect-orchestrator.ts (1040->1083), desktop.ts (1039->1065), claude-code-otlp.ts (823->850) and sso.proxy.ts (832->843) grow further past the limit. Added CLI console.log lines are user-facing chalk output, not debug output, so they are not a violation; no require(), no new any in added non-test source"
+    },
+    {
+      "kind": "security",
+      "status": "partial",
+      "notes": "Met: header writing stays in header-injection.plugin.ts (Rule 4), and the header-injection log now records only booleans through sanitizeLogArgs (Rule 5). Unmet: Rules 1-2 and the reviewer checklist. The change rewrites how X-CodeMie-Client, X-CodeMie-Repository and X-CodeMie-Branch are derived. The client now comes from context.agentName, which a request can set itself with a Bearer <key>.<client> suffix (gateway-key.plugin.ts). vscode-claude-code is relabeled claude-desktop. The Cowork repository default now applies only to the claude-desktop agentName. Repository and branch now come through a new client-attribution plugin's metadata. The commit body has no CRITICAL callout and no security-review sign-off. Status output also prints the gateway key a second time (proxy/index.ts:243), but the API Key line above it already printed it at base, so the exposure is not new"
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "Oversized diff (~775 KB) and a truncated blind lens leave parts of the change unreviewed; AC7/D3 (proxy start port conflict) and AC15 (Cowork cursor bypass) are only partly met, and the attribution-header change lacks the required security sign-off (2 decision_needed: CR-009, CR-010). Four findings (CR-001, CR-002, CR-005, CR-007) have unconfirmed reachability and are capped at major; 0 deferred, 13 dismissed as spec-intended, documented or speculative.",
+    "confidence": "low",
+    "risk_flags": [
+      "security",
+      "breaking-change",
+      "public-api"
+    ]
+  }
+}

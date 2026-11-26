@@ -9,7 +9,7 @@ import {
   WRAPPER_PID_ENV,
   WRAPPER_STARTED_AT_ENV,
 } from '../../utils/processes.js';
-import { compareVersions } from '../../utils/version-utils.js';
+import { compareVersions, parseSemanticVersion } from '../../utils/version-utils.js';
 import { logger } from '../../utils/logger.js';
 import { spawn, type ChildProcess } from 'child_process';
 import { constants as osConstants } from 'os';
@@ -23,6 +23,7 @@ import { formatTipLine, getSessionTip } from '../../utils/tips.js';
 import { syncRegisteredSkills } from '../../cli/commands/skills/setup/sync.js';
 import { describeProjectBinding, parseProjectBinding, PROJECT_BINDING_ENV } from '../../utils/project-binding.js';
 import { renderProfileInfo } from '../../utils/profile.js';
+import { describeModel, MODEL_ENV_ORIGIN_ENV, parseModelEnvOrigin, PROFILE_MODEL_ENV } from '../../utils/model-origin.js';
 import chalk from 'chalk';
 import { existsSync } from 'fs';
 import { mkdir, writeFile } from 'fs/promises';
@@ -327,6 +328,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         compatible: false,
         installedVersion: null,
         supportedVersion,
+        isSupported: false,
         isNewer: false,
         hasUpdate: false,
         isBelowMinimum: false,
@@ -339,6 +341,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         compatible: true,
         installedVersion,
         supportedVersion: 'latest',
+        isSupported: true,
         isNewer: false,
         hasUpdate: false,
         isBelowMinimum: false,
@@ -349,6 +352,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     try {
       const comparison = compareVersions(installedVersion, supportedVersion);
       const hasUpdate = comparison < 0;
+      const isSupported = comparison === 0 || (
+        this.metadata.acceptsSupportedMajor === true &&
+        parseSemanticVersion(installedVersion).major === parseSemanticVersion(supportedVersion).major
+      );
 
       let isBelowMinimum = false;
       if (minimumSupportedVersion) {
@@ -363,6 +370,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         supportedVersion,
         minimumSupportedVersion,
         compatible: comparison <= 0,
+        isSupported,
         isNewer: comparison > 0,
         hasUpdate,
         isBelowMinimum,
@@ -372,6 +380,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         compatible: comparison <= 0,
         installedVersion,
         supportedVersion,
+        isSupported,
         isNewer: comparison > 0,
         hasUpdate,
         isBelowMinimum,
@@ -404,6 +413,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         compatible: false,
         installedVersion,
         supportedVersion,
+        isSupported: false,
         isNewer: false,
         hasUpdate: false,
         isBelowMinimum: false,
@@ -413,8 +423,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
-   * Emit a one-time notice when the installed version differs from the
-   * recommended `metadata.supportedVersion`, then record the marker so later
+   * Emit a one-time notice when the installed version is not supported
+   * (see {@link checkVersionCompatibility}), then record the marker so later
    * launches stay silent until the recommendation itself moves.
    *
    * Never prompts, never blocks, never throws — a failure to read or write the
@@ -427,8 +437,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       }
 
       const compat = await this.checkVersionCompatibility();
-      const { installedVersion, supportedVersion } = compat;
-      if (!installedVersion || installedVersion === supportedVersion) {
+      const { installedVersion, supportedVersion, isSupported } = compat;
+      if (!installedVersion || isSupported) {
         return;
       }
 
@@ -627,7 +637,14 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       const profileName = env.CODEMIE_PROFILE_NAME || 'default';
       const provider = env.CODEMIE_PROVIDER || 'unknown';
       const cliVersion = env.CODEMIE_CLI_VERSION || 'unknown';
-      const model = env.CODEMIE_MODEL || 'unknown';
+      // The origin describes the launcher's model; an agent that picked another one in setupProxy
+      // (Codex, Kimi catalog resolution) must not credit CODEMIE_MODEL for its own choice.
+      const launcherModelKept = env.CODEMIE_MODEL === envOverrides?.CODEMIE_MODEL;
+      const model = describeModel(
+        env.CODEMIE_MODEL || 'unknown',
+        launcherModelKept ? parseModelEnvOrigin(env[MODEL_ENV_ORIGIN_ENV]) : undefined,
+        env[PROFILE_MODEL_ENV] || undefined
+      );
       const codeMieUrl = env.CODEMIE_URL;
       // The launcher's binding and project; never re-resolved here (EPMCDME-15411).
       const project = describeProjectBinding(

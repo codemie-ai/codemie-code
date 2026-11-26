@@ -722,9 +722,9 @@ export function getChatCompletionsModelConfigs(
 }
 
 /**
- * Get model configs that require the OpenAI Responses API.
- * These are routed through OpenCode's built-in openai CUSTOM_LOADER
- * which calls POST /v1/responses instead of POST /v1/chat/completions.
+ * Get model configs that require the OpenAI Responses API
+ * (POST /v1/responses instead of POST /v1/chat/completions).
+ * The calling plugin places them in a provider block that speaks that API.
  *
  * @param source - Model map to filter; defaults to the static OPENCODE_MODEL_CONFIGS.
  *                 Pass the result of fetchDynamicModelConfigs() for live model lists.
@@ -803,7 +803,7 @@ const MODEL_FAMILY_DEFAULTS: Record<string, Partial<OpenCodeModelConfig>> = {
  * @returns Model configuration in OpenCode format
  *
  * Note: The returned config is used directly in OPENCODE_CONFIG_CONTENT
- * model = "<provider>/<modelId>" (e.g., "codemie-proxy/gpt-5-2-2025-12-11")
+ * model = "<provider>/<modelId>" (e.g., "codemie-proxy/gpt-4.1")
  */
 export function getModelConfig(modelId: string): OpenCodeModelConfig {
   const config = OPENCODE_MODEL_CONFIGS[modelId];

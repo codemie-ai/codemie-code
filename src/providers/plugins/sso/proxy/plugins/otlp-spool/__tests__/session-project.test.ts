@@ -406,11 +406,14 @@ describe('hold and loss persistence', () => {
     await rm(state.root, { recursive: true, force: true });
   });
 
-  it('keeps holds (first-hold timestamp), the last loss, the send mode and the marker across a restart', async () => {
+  it.each([
+    { reason: 'no_evidence_timeout' as const, at: 456, bytes: 9 },
+    { reason: 'project_conflict_discard' as const, at: 456, bytes: 9, stream: 'hooks' as const },
+  ])('keeps holds (first-hold timestamp), the last loss $reason, the send mode and the marker across a restart', async (lastLoss) => {
     const { readStatus, writeStatus, advanceCursor } = await import('../session-status.js');
     const kept = {
       holds: { session: { reason: 'stamp_pending' as const, since: 123 }, logs: { reason: 'otlp_unparseable' as const, since: 7 } },
-      lastLoss: { reason: 'no_evidence_timeout' as const, at: 456, bytes: 9 },
+      lastLoss,
       sendMode: 'evidence' as const,
       evidenceMarked: true as const,
     };

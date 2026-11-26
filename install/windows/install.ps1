@@ -84,17 +84,29 @@ function Get-PackageVersion {
     return 'dry-run'
   }
 
-  $output = & $NpmPath @('view', $PackageSpec, 'version', '--registry', $RegistryUrl) 2>&1
-  if ($LASTEXITCODE -ne 0) {
+  # Benign npm stderr (warnings) must not abort under the script-wide 'Stop' preference.
+  $previousPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    $output = & $NpmPath @('view', $PackageSpec, 'version', '--registry', $RegistryUrl) 2>&1
+    $npmExitCode = $LASTEXITCODE
+  }
+  finally {
+    $ErrorActionPreference = $previousPreference
+  }
+
+  $versionLines = @($output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] })
+  if ($npmExitCode -ne 0 -or $versionLines.Count -eq 0) {
+    $outputText = (@($output | Where-Object { $null -ne $_ }) | ForEach-Object { $_.ToString() }) -join ' '
     $message = @(
       "Package $PackageSpec was not found in registry $RegistryUrl.",
       'Ask IT to expose @codemieai/code through the approved virtual npm repository, or rerun with -ScopeRegistryUrl pointing to the approved registry.',
-      "npm output: $($output -join ' ')"
+      "npm output: $outputText"
     ) -join ' '
     throw $message
   }
 
-  return ($output | Select-Object -First 1).ToString().Trim()
+  return ($versionLines | Select-Object -First 1).ToString().Trim()
 }
 
 function Add-UserPath {
@@ -224,18 +236,19 @@ function Write-CommandShims {
     $shimPath = Join-Path $BinDir "$CommandName.cmd"
     $targetPath = Join-Path $PrefixDir "$CommandName.cmd"
     $fallbackTargetPath = Join-Path $PrefixDir "node_modules\.bin\$CommandName.cmd"
+    # No `call`: it re-expands `%` in the forwarded arguments, so `%20` in a URL turns into
+    # `%2` (the second argument) plus `0`. Jumping straight to the target batch file keeps the
+    # arguments as typed; control never returns, and the target's exit code is the shim's.
     $shim = @(
       '@echo off',
-      "if exist `"$targetPath`" (",
-      "  call `"$targetPath`" %*",
-      '  exit /b %ERRORLEVEL%',
-      ')',
-      "if exist `"$fallbackTargetPath`" (",
-      "  call `"$fallbackTargetPath`" %*",
-      '  exit /b %ERRORLEVEL%',
-      ')',
+      "if exist `"$targetPath`" goto run_target",
+      "if exist `"$fallbackTargetPath`" goto run_fallback",
       "echo CodeMie command shim could not find $CommandName.cmd in $PrefixDir",
-      'exit /b 1'
+      'exit /b 1',
+      ':run_target',
+      "`"$targetPath`" %*",
+      ':run_fallback',
+      "`"$fallbackTargetPath`" %*"
     ) -join "`r`n"
 
     if ($DryRun) {

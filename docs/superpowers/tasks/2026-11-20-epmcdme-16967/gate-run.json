@@ -1,0 +1,10 @@
+{"schema":1,"branch":"EPMCDME-16967_install-aborts-stderr","head":"08c060703bd37bb68aa9aa28abba1af3c431f611","runner":"npm","started_at":"2026-11-20T00:00:00Z","completed_at":"2026-11-20T00:01:00Z","status":"PASSED","drift_detected":false,"gates":[
+{"id":"license","source":"guide","status":"PASS","duration_ms":3687,"command":"npm run license-check","exit_code":0},
+{"id":"lint","source":"guide","status":"PASS","duration_ms":14050,"command":"npm run lint","exit_code":0},
+{"id":"typecheck","source":"guide","status":"PASS","duration_ms":5030,"command":"npm run typecheck","exit_code":0},
+{"id":"build","source":"guide","status":"PASS","duration_ms":11929,"command":"npm run build","exit_code":0},
+{"id":"unit","source":"guide","status":"SKIPPED","duration_ms":0,"command":"npx vitest run --project unit","exit_code":null,"notes":"Skipped by repo policy: tests only on explicit user request; CI will run them."},
+{"id":"integration","source":"guide","status":"SKIPPED","duration_ms":0,"command":"npx vitest run --project cli","exit_code":null,"notes":"Skipped by repo policy: tests only on explicit user request; CI will run them."},
+{"id":"secrets","source":"hook","status":"SKIPPED","duration_ms":2103,"command":"npm run validate:secrets","exit_code":0,"notes":"Self-skip: 'No staged changes to scan'. CI runs the scan unconditionally; stage changes and re-run to cover locally."},
+{"id":"commitlint","source":"guide","status":"PASS","duration_ms":1151,"command":"npm run commitlint:last","exit_code":0,"notes":"Only HEAD~1..HEAD checked."}
+],"failures":{}}

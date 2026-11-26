@@ -19,6 +19,7 @@
 import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
+import { CODEX_DESKTOP } from '../proxy-clients.js';
 import { fetchCodeMieLlmModels } from '../../sso.http-client.js';
 import { CredentialRefresher } from './credential-refresh.js';
 import {
@@ -27,7 +28,7 @@ import {
   resolveCodexDeployment,
 } from './codex-model-resolver.js';
 
-const ALLOWED_CLIENTS = ['codex-desktop'];
+const ALLOWED_CLIENTS: readonly string[] = [CODEX_DESKTOP];
 
 /** Re-list deployments occasionally so a long-lived daemon picks up new models. */
 const MODEL_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -117,13 +118,9 @@ export class CodexRequestNormalizerPlugin implements ProxyPlugin {
   name = 'Codex Request Normalizer';
   version = '1.0.0';
   priority = 14;
+  clients = ALLOWED_CLIENTS;
 
   async createInterceptor(context: PluginContext): Promise<ProxyInterceptor> {
-    const clientType = context.config.clientType;
-    if (!clientType || !ALLOWED_CLIENTS.includes(clientType)) {
-      throw new Error(`Plugin disabled for agent: ${clientType}`);
-    }
-
     return new CodexRequestNormalizerInterceptor(context);
   }
 }
@@ -266,9 +263,11 @@ class CodexRequestNormalizerInterceptor implements ProxyInterceptor {
 
     try {
       const apiUrl = credentials.apiUrl || this.context.config.targetApiUrl;
+      // Whole catalog, not one project's: this only looks up metadata for requests
+      // the client already sends, so a model outside the project must still resolve.
       const models = 'cookies' in credentials
-        ? await fetchCodeMieLlmModels(apiUrl, credentials.cookies)
-        : await fetchCodeMieLlmModels(apiUrl, credentials.token);
+        ? await fetchCodeMieLlmModels(apiUrl, credentials.cookies, undefined)
+        : await fetchCodeMieLlmModels(apiUrl, credentials.token, undefined);
 
       this.availableModels = models
         .filter((model) => model.enabled !== false)

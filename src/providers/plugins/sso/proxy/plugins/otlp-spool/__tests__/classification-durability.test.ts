@@ -20,6 +20,7 @@ vi.mock('@/utils/logger.js', () => ({ logger: { debug: vi.fn(), info: vi.fn(), w
 const record = {
   schema: 1, session_id: 's1', launch_mode: 'native', routed_via_codemie: false, routing_proof: 'proven',
   organization: 'Acme', project_source: 'none', api_identity: 'https://api', owner_hash: 'h', created: 0, last_used: 0,
+  funding_route: 'subscription', consent_ref: '0123456789abcdef', // Personal publishes only with explicit work consent
 } as never;
 const other = { organizations: ['Other'], version: 'v1' };
 

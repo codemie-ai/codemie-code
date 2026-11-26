@@ -41,6 +41,7 @@ import {
   type PiEntry,
   type PiToolCall,
 } from '../../../agents/plugins/pi/pi.types.js';
+import { COPILOT_CLI_AGENT_NAME, COPILOT_DESKTOP_AGENT_NAME } from '../../../agents/plugins/copilot-cli/copilot-cli.constants.js';
 
 /** Agents whose native logs we discover + synthesize. */
 const NATIVE_AGENTS = ['claude', 'codex', 'copilot-cli', 'pi', 'gemini'] as const;
@@ -226,7 +227,9 @@ export const realNativeDeps: NativeLoaderDeps = {
     return found;
   },
   async parse(agentName, filePath, sessionId) {
-    const adapter = AgentRegistry.getAgent(sessionAdapterKey(agentName))?.getSessionAdapter?.();
+    const adapter = AgentRegistry.getAgent(
+      sessionAdapterKey(agentName === COPILOT_DESKTOP_AGENT_NAME ? COPILOT_CLI_AGENT_NAME : agentName)
+    )?.getSessionAdapter?.();
     if (!adapter) {
       return null;
     }
