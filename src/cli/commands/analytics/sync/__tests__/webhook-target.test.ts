@@ -9,7 +9,7 @@ describe('WebhookTarget', () => {
     const target = new WebhookTarget('https://example.invalid/hook?sig=FAKE', fetchImpl);
 
     const bytes = Buffer.from('{"a":1}');
-    await expect(target.deliver({ fileName: 'report.json', bytes, contentType: 'application/json' })).resolves.toBeUndefined();
+    await expect(target.deliver([{ fileName: 'report.json', bytes, contentType: 'application/json' }])).resolves.toBeUndefined();
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const [url, init] = fetchImpl.mock.calls[0];
@@ -34,7 +34,7 @@ describe('WebhookTarget', () => {
     const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 202 });
     const target = new WebhookTarget('https://example.invalid/hook?sig=FAKE', fetchImpl);
 
-    await target.deliver({ fileName: 'export.otlp.jsonl.gz', bytes: Buffer.from('x'), contentType: 'application/gzip' });
+    await target.deliver([{ fileName: 'export.otlp.jsonl.gz', bytes: Buffer.from('x'), contentType: 'application/gzip' }]);
 
     expect(JSON.parse(fetchImpl.mock.calls[0][1].body).attachments[0].contentType).toBe('application/gzip');
   });
@@ -43,7 +43,7 @@ describe('WebhookTarget', () => {
     const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 500 });
     const target = new WebhookTarget('https://example.invalid/hook?sig=FAKE', fetchImpl);
 
-    await expect(target.deliver({ fileName: 'report.json', bytes: Buffer.from('{}'), contentType: 'application/json' })).rejects.toSatisfy(
+    await expect(target.deliver([{ fileName: 'report.json', bytes: Buffer.from('{}'), contentType: 'application/json' }])).rejects.toSatisfy(
       (err: unknown) => err instanceof SyncDeliveryError && err.status === 500
     );
     expect(fetchImpl).toHaveBeenCalledTimes(1);
@@ -53,7 +53,7 @@ describe('WebhookTarget', () => {
     const fetchImpl = vi.fn().mockRejectedValue(new Error('network failure for sig=FAKESIG'));
     const target = new WebhookTarget('https://example.invalid/hook?sig=FAKESIG', fetchImpl);
 
-    await expect(target.deliver({ fileName: 'report.json', bytes: Buffer.from('{}'), contentType: 'application/json' })).rejects.toSatisfy(
+    await expect(target.deliver([{ fileName: 'report.json', bytes: Buffer.from('{}'), contentType: 'application/json' }])).rejects.toSatisfy(
       (err: unknown) => {
         if (!(err instanceof SyncDeliveryError)) return false;
         return !err.message.includes('FAKESIG');
@@ -66,7 +66,7 @@ describe('WebhookTarget', () => {
     const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200 });
     const target = new WebhookTarget('https://example.invalid/hook?sig=FAKE', fetchImpl);
 
-    await target.deliver({ fileName: 'report.json', bytes: Buffer.from('{}'), contentType: 'application/json' });
+    await target.deliver([{ fileName: 'report.json', bytes: Buffer.from('{}'), contentType: 'application/json' }]);
 
     expect(fetchImpl.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
   });
@@ -76,7 +76,7 @@ describe('WebhookTarget', () => {
     const fetchImpl = vi.fn().mockRejectedValue(timeout);
     const target = new WebhookTarget('https://example.invalid/hook?sig=FAKE', fetchImpl);
 
-    await expect(target.deliver({ fileName: 'report.json', bytes: Buffer.from('{}'), contentType: 'application/json' })).rejects.toSatisfy(
+    await expect(target.deliver([{ fileName: 'report.json', bytes: Buffer.from('{}'), contentType: 'application/json' }])).rejects.toSatisfy(
       (err: unknown) => err instanceof SyncDeliveryError && /did not respond within 5 minutes/.test(err.message)
     );
   });
@@ -86,7 +86,7 @@ describe('WebhookTarget', () => {
     const spy = vi.spyOn(AbortSignal, 'timeout');
     const target = new WebhookTarget('https://example.invalid/hook?sig=FAKE', fetchImpl);
 
-    await target.deliver({ fileName: 'report.json', bytes: Buffer.from('{}'), contentType: 'application/json' });
+    await target.deliver([{ fileName: 'report.json', bytes: Buffer.from('{}'), contentType: 'application/json' }]);
 
     expect(spy).toHaveBeenCalledWith(WEBHOOK_TIMEOUT_MS);
   });
@@ -96,7 +96,7 @@ describe('WebhookTarget', () => {
     const spy = vi.spyOn(AbortSignal, 'timeout');
     const target = new WebhookTarget('https://example.invalid/hook?sig=FAKE', fetchImpl, 30_000);
 
-    await target.deliver({ fileName: 'report.json', bytes: Buffer.from('{}'), contentType: 'application/json' });
+    await target.deliver([{ fileName: 'report.json', bytes: Buffer.from('{}'), contentType: 'application/json' }]);
 
     expect(spy).toHaveBeenCalledWith(30_000);
   });
@@ -105,7 +105,7 @@ describe('WebhookTarget', () => {
     const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200 });
     const spy = vi.spyOn(AbortSignal, 'timeout');
 
-    await sendWebhook('https://example.invalid/hook?sig=FAKE', { fileName: 'report.json', bytes: Buffer.from('{}'), contentType: 'application/json' }, fetchImpl, 30_000);
+    await sendWebhook('https://example.invalid/hook?sig=FAKE', [{ fileName: 'report.json', bytes: Buffer.from('{}'), contentType: 'application/json' }], fetchImpl, 30_000);
 
     expect(spy).toHaveBeenCalledWith(30_000);
   });
@@ -115,9 +115,29 @@ describe('WebhookTarget', () => {
     const target = new WebhookTarget('https://example.invalid/hook?sig=FAKE', fetchImpl);
 
     const bytes = Buffer.alloc(MAX_EXPORT_BYTES + 1);
-    await expect(target.deliver({ fileName: 'report.json', bytes, contentType: 'application/json' })).rejects.toSatisfy(
+    await expect(target.deliver([{ fileName: 'report.json', bytes, contentType: 'application/json' }])).rejects.toSatisfy(
       (err: unknown) => err instanceof ExportTooLargeError
     );
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('posts several files one request each, in order, and stops at the first that fails', async () => {
+    const posted: string[] = [];
+    const fetchImpl = vi.fn(async (_url: string, init: { body: string }) => {
+      const name = JSON.parse(init.body).attachments[0].name as string;
+      posted.push(name);
+      return { ok: name !== 'b.gz', status: name === 'b.gz' ? 500 : 200 };
+    });
+    const target = new WebhookTarget('https://example.invalid/hook?sig=FAKE', fetchImpl as never);
+    const file = (fileName: string) => ({ fileName, bytes: Buffer.from(fileName), contentType: 'application/gzip' });
+
+    await target.deliver([file('a.gz'), file('c.gz')]);
+    expect(posted).toEqual(['a.gz', 'c.gz']);
+
+    posted.length = 0;
+    await expect(target.deliver([file('a.gz'), file('b.gz'), file('c.gz')])).rejects.toSatisfy(
+      (err: unknown) => err instanceof SyncDeliveryError && err.status === 500
+    );
+    expect(posted).toEqual(['a.gz', 'b.gz']);
   });
 });

@@ -1,6 +1,7 @@
 /**
  * The analytics intake of the local daemon: hook batches and OTLP exports land in the local spool, with no project
- * rule, no stamp and nothing sent; every sweep interval the sessions past their grace move into the analytics folder.
+ * rule, no stamp and nothing sent; at the start and every sweep interval the sessions past their grace move into the
+ * analytics folder.
  */
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { ProxyPlugin, ProxyInterceptor } from './types.js';
@@ -34,6 +35,8 @@ class LocalAnalyticsInterceptor implements ProxyInterceptor {
 
   async onProxyStart(): Promise<void> {
     useSpoolRoot(localSpoolRoot());
+    // A session that ended, or a move left half-done, while no proxy ran is taken now, not an interval later.
+    void this.runSweep();
     this.sweepHandle = setInterval(() => void this.runSweep(), sweepIntervalMs());
   }
 

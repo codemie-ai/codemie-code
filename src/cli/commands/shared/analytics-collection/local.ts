@@ -1,7 +1,7 @@
 /**
  * The collection of a machine in the local mode: no CodeMie backend; hooks spool through the local proxy daemon,
- * which moves every finished session into `~/.codemie/analytics/sessions`, and the daily sync delivers the OTLP file
- * of that folder.
+ * which moves every finished session into `~/.codemie/analytics/sessions`, and the daily sync delivers the OTLP files
+ * of that folder beside the JSON report every machine delivers.
  */
 import { rm } from 'node:fs/promises';
 import { ConfigurationError } from '@/utils/errors.js';
@@ -11,8 +11,9 @@ import { localSpoolRoot } from '@/providers/plugins/sso/proxy/plugins/otlp-spool
 import { loadSyncSettings } from '../../analytics/sync/config-store.js';
 import { OtlpFolderSource } from '../../analytics/sync/otlp-file-builder.js';
 import { includeExternalFor } from '../../analytics/sync/policy.js';
+import { ReportSource } from '../../analytics/sync/report-builder.js';
 import { createRealStatusDeps } from '../../analytics/sync/status.js';
-import type { SyncSettings } from '../../analytics/sync/types.js';
+import type { ExportSource, SyncReport, SyncSettings } from '../../analytics/sync/types.js';
 import { DEFAULT_DAEMON_PORT } from '../../proxy/connect-orchestrator.js';
 import { isDaemonAlive, readState, stopDaemon, type DaemonState } from '../../proxy/daemon-manager.js';
 import { DAEMON_LOCK_COMMAND_BUDGET_MS, withDaemonLock } from '../../proxy/daemon-lock.js';
@@ -61,6 +62,22 @@ async function teardown(removeInstall: () => Promise<void>): Promise<void> {
 }
 
 /**
+ * The files of a local machine's run: the OTLP files of the analytics folder first, the JSON report last, both built
+ * for the run's input; `null` when neither has anything.
+ */
+export class LocalExportSource implements ExportSource {
+  constructor(
+    private readonly folder: ExportSource = new OtlpFolderSource(),
+    private readonly report: ExportSource = new ReportSource()
+  ) {}
+
+  async build(input: Parameters<ExportSource['build']>[0]): Promise<SyncReport[] | null> {
+    const files = [...((await this.folder.build(input)) ?? []), ...((await this.report.build(input)) ?? [])];
+    return files.length === 0 ? null : files;
+  }
+}
+
+/**
  * The local collection. `settings` are the installed sync settings; `null` only for `sync install` on a machine with
  * none yet, whose collection is used for its install plan alone.
  */
@@ -71,7 +88,7 @@ export function localCollection(settings: SyncSettings | null): AnalyticsCollect
       return new LocalPolicy(includeExternalFor(settings.includeExternal, process.platform));
     },
     launcher: (agentName, event) => ensureLocalOtlpProxy(installed, agentName, event),
-    exportSource: () => new OtlpFolderSource(),
+    exportSource: () => new LocalExportSource(),
     install: localInstallPlan,
     teardown,
     statusLines: () => STATUS_LINES,

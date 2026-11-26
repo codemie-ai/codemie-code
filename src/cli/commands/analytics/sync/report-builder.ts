@@ -66,11 +66,12 @@ export async function buildSyncReport(opts: BuildSyncReportOptions): Promise<Syn
   };
 }
 
-/** The JSON report of a machine with a CodeMie backend, built from the analytics `source`. */
+/** The JSON report every machine delivers, built from the analytics `source`. */
 export class ReportSource implements ExportSource {
   constructor(private readonly source: AnalyticsSource = new SessionsSource()) {}
 
-  build(input: Parameters<ExportSource['build']>[0]): Promise<SyncReport | null> {
-    return buildSyncReport({ source: this.source, ...input });
+  async build(input: Parameters<ExportSource['build']>[0]): Promise<SyncReport[] | null> {
+    const report = await buildSyncReport({ source: this.source, ...input });
+    return report === null ? null : [report];
   }
 }

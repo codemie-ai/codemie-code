@@ -39,17 +39,17 @@ const writeSettings = (settings: unknown): void =>
 const writeConfig = (config: unknown): void =>
   writeFileSync(join(home, 'codemie-cli.config.json'), typeof config === 'string' ? config : JSON.stringify(config));
 
-async function sources(): Promise<{ ReportSource: unknown; OtlpFolderSource: unknown }> {
+async function sources(): Promise<{ ReportSource: unknown; LocalExportSource: unknown }> {
   const { ReportSource } = await import('../../../analytics/sync/report-builder.js');
-  const { OtlpFolderSource } = await import('../../../analytics/sync/otlp-file-builder.js');
-  return { ReportSource, OtlpFolderSource };
+  const { LocalExportSource } = await import('../local.js');
+  return { ReportSource, LocalExportSource };
 }
 
 describe('resolveCollection', () => {
   it.each([
     ['no settings file', undefined, 'ReportSource'],
     ['settings with no local', { ...LOCAL_SETTINGS, local: undefined, localJob: undefined }, 'ReportSource'],
-    ['settings with local: true', LOCAL_SETTINGS, 'OtlpFolderSource'],
+    ['settings with local: true', LOCAL_SETTINGS, 'LocalExportSource'],
     ['settings that are not JSON', '{not json', 'ReportSource'],
     ['settings with local: "yes"', { ...LOCAL_SETTINGS, local: 'yes' }, 'ReportSource'],
   ] as const)('%s → %s', async (_name, settings, expected) => {
@@ -63,8 +63,8 @@ describe('resolveCollection', () => {
   it('a hook after the settings are removed gets the backend collection', async () => {
     writeSettings(LOCAL_SETTINGS);
     const { resolveCollection } = await import('../resolve.js');
-    const { OtlpFolderSource, ReportSource } = await sources();
-    expect((await resolveCollection()).exportSource()).toBeInstanceOf(OtlpFolderSource);
+    const { LocalExportSource, ReportSource } = await sources();
+    expect((await resolveCollection()).exportSource()).toBeInstanceOf(LocalExportSource);
 
     unlinkSync(settingsPath());
 
@@ -75,9 +75,9 @@ describe('resolveCollection', () => {
 describe('resolveInstallCollection', () => {
   async function resolved(previous: SyncSettings | null): Promise<{ kind: string; note?: string }> {
     const { resolveInstallCollection } = await import('../resolve.js');
-    const { OtlpFolderSource } = await sources();
+    const { LocalExportSource } = await sources();
     const { collection, note } = await resolveInstallCollection(previous);
-    return { kind: collection.exportSource() instanceof (OtlpFolderSource as never) ? 'local' : 'backend', ...(note !== undefined && { note }) };
+    return { kind: collection.exportSource() instanceof (LocalExportSource as never) ? 'local' : 'backend', ...(note !== undefined && { note }) };
   }
 
   it('no CLI config → local', async () => {

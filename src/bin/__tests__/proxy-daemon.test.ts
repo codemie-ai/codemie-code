@@ -369,6 +369,31 @@ describe('proxy-daemon entry point', () => {
     await import('../proxy-daemon.js');
     expect(watcherCallbacks.onUnauthorized).toBeUndefined();
   });
+
+  it('the watcher\'s check reaches the upstream through the gateway with the state\'s gateway key', async () => {
+    const { createServer } = await import('node:http');
+    const authorizations: Array<string | undefined> = [];
+    const server = createServer((req, res) => {
+      if (req.url?.startsWith('/v1/llm_models')) authorizations.push(req.headers.authorization);
+      res.writeHead(200, { 'content-type': 'application/json' }).end('{}');
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const { port } = server.address() as { port: number };
+      // The proxy is mocked: the port it answers is where the watcher looks, and this server stands in for it.
+      proxyStart.mockResolvedValue({ port, url: `http://127.0.0.1:${port}` });
+      process.argv.push('--gateway-key', 'codemie-proxy-test');
+      await import('../proxy-daemon.js');
+      const state = JSON.parse(await readFile(stateFile, 'utf-8')) as DaemonState;
+
+      expect(await watcherCallbacks.check()).toMatchObject({ healthy: true, level: 'deep' });
+      expect(authorizations).toEqual([`Bearer ${state.gatewayKey}`]);
+      expect(state.gatewayKey).toBe('codemie-proxy-test');
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
   // Last in the file: these cases load the real proxy and the real plugin set, which stay unmocked for what follows.
   describe('--mode local', () => {
     beforeEach(() => {

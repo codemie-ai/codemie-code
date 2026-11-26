@@ -1052,9 +1052,10 @@ and the run log are kept.
 CodeMie proxy runs with an upstream), `install` turns on the local mode: it saves `local: true`,
 starts the local proxy and writes the hooks of Claude Code, Copilot CLI and Copilot Chat when it
 finds them, with no sign-in; the job then delivers `codemie-analytics-<email slug>-<UTC date>.otlp.jsonl.gz` from
-`~/.codemie/analytics/sessions/`. On a machine with a profile it prints
+`~/.codemie/analytics/sessions/`, cut into `.part-<k>-of-<n>.otlp.jsonl.gz` files no larger than 70 MB when one
+would be larger, beside the JSON report, which it goes on delivering as on any other machine. On a machine with a profile it prints
 `Local analytics mode not turned on: this machine has a CodeMie CLI profile (<names>).` and works as
-above. `status` adds `Mode: local — delivers the OTLP file of ~/.codemie/analytics/sessions`;
+above. `status` adds `Mode: local — delivers the OTLP files of ~/.codemie/analytics/sessions beside the JSON report`;
 `uninstall` also removes the hooks, the local proxy, the local spool and the exclusion marks, and
 keeps the analytics folder. See
 [ANALYTICS-SYNC.md](ANALYTICS-SYNC.md#local-analytics-mode).

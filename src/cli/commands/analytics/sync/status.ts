@@ -58,7 +58,7 @@ export interface LastRun {
 }
 
 // Matches a run-log line's `<ISO> <outcome> ...` prefix (see `run-sync.ts#formatLogLine`):
-// `ok sent <name> <bytes>` | `skip <reason>` | `fail <category> <detail>`, with an optional
+// `ok sent <name> <bytes>` | `ok sent <n> files <total bytes>` | `skip <reason>` | `fail <category> <detail>`, with an optional
 // trailing ` target=<id>` (single leading space, very end of line). Lines that don't start
 // this way (legacy collector lines, stack traces) are ignored.
 const LAST_RUN_LINE = /^(\S+) ((?:ok sent|skip|fail \w+).*)$/;

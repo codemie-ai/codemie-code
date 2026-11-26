@@ -420,10 +420,11 @@ sync bootstrap` in [COMMANDS.md](COMMANDS.md#team-lead-setup-analytics-sync-boot
 
 On a machine whose CodeMie CLI config holds no profile, `install` turns on the local analytics
 mode ([ANALYTICS-SYNC.md](ANALYTICS-SYNC.md#local-analytics-mode)): a local proxy gathers Claude
-Code, Copilot CLI and Copilot Chat, and the job delivers one OTLP file,
+Code, Copilot CLI and Copilot Chat, and the job delivers an OTLP file,
 `codemie-analytics-<email slug>-<UTC date>.otlp.jsonl.gz` (`application/gzip`), built from
-`~/.codemie/analytics/sessions/` instead of the JSON report. A machine in the local mode no longer
-delivers the Codex, Gemini and Pi sessions the JSON report held.
+`~/.codemie/analytics/sessions/` — or several, each no larger than 70 MB, when one would be
+larger — beside the JSON report, which it goes on delivering as on any other machine, the Codex,
+Gemini and Pi sessions in it.
 
 ### Commands
 
@@ -554,9 +555,10 @@ unchanged. The marker moves to the run's start time only after the webhook retur
 No sessions in the window sends nothing and leaves the marker untouched. The export has the
 same 70 MB ceiling as `--export json`; an export larger than that, a failed/unreachable
 webhook, or missing settings/identity are all logged and failed without moving the marker,
-so the next run covers the same sessions. In the local mode the file is the
-`.otlp.jsonl.gz` of the sessions written to the analytics folder inside the window, under the same
-ceiling and the same marker rules. There is no retry — the rolling window self-heals
+so the next run covers the same sessions. In the local mode the output is the
+`.otlp.jsonl.gz` of the sessions written to the analytics folder inside the window, cut into
+files no larger than 70 MB, followed by the JSON report, sent one request per file; the marker moves only when every file
+was accepted. A report above the ceiling fails the export there too, after the OTLP files were taken; of the OTLP output only a single line whose gzip alone is above the ceiling does. There is no retry — the rolling window self-heals
 on the next scheduled run. `run` with nothing installed fails with the install command and
 sends nothing.
 
@@ -565,12 +567,14 @@ redacted:
 
 ```
 <ISO> ok sent <name> <bytes>
+<ISO> ok sent <n> files <total bytes>
 <ISO> skip <reason>
 <ISO> fail <setup|export|send> <redacted detail>
 ```
 
 `setup` covers missing/invalid settings and identity errors; `export` covers a report-build
-failure or the 70 MB ceiling (the detail carries the size); `send` covers any other webhook
+failure or the 70 MB ceiling (the detail carries the size; in the local mode also an analytics folder that could not be read, or a single line whose
+gzip alone is above it); `send` covers any other webhook
 delivery failure. `run` exits non-zero on `fail`, zero on `ok`/`skip`, and never throws.
 
 ### `status`
@@ -582,7 +586,7 @@ with its reason, or "never"), and the time of the last successful send (the mark
 "never"). Nothing installed reports "not installed" with the install command and exits 0.
 Settings present but the job missing or disabled outside the CLI reports "disabled" and
 tells the developer to run install again. In the local mode it adds the line
-`Mode: local — delivers the OTLP file of ~/.codemie/analytics/sessions` after the first line.
+`Mode: local — delivers the OTLP files of ~/.codemie/analytics/sessions beside the JSON report` after the first line.
 
 ### `uninstall`
 

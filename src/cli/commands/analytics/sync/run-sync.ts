@@ -9,13 +9,13 @@
  * `runSync` resolves identity once, then loops over the targets configured in `settings`
  * (webhook, then git, in that order — whichever of `webhookUrl`/`git` is present). Each
  * target gets its own marker-derived window, its own `exportSource.build` call, its own delivery
- * attempt and its own marker move, so one target's failure never blocks or rolls back
+ * attempt of every built file and its own marker move, so one target's failure never blocks or rolls back
  * another's delivery (AC7/AC8).
  *
  * `runSync` never throws and never calls `process.exit`. Every outcome for a target —
  * success, a skipped empty window, or a failure — prints and appends exactly one line via
  * {@link formatLogLine}:
- *   `<ISO> ok sent <name> <bytes> target=<id>`
+ *   `<ISO> ok sent <name> <bytes> target=<id>` (one file), `<ISO> ok sent <n> files <total bytes> target=<id>`
  *   `<ISO> skip <reason> target=<id>`
  *   `<ISO> fail <setup|export|send> <redacted detail> target=<id>`
  * A setup failure resolved before any target is chosen (no settings file, no configured
@@ -26,7 +26,7 @@
  * a report-build failure -> `export`; a webhook delivery failure -> `export` when it is an
  * `ExportTooLargeError` (its message carries the byte count), else `send`; a git delivery
  * failure is always `send`, with its detail carrying {@link gitHint}. The marker for a
- * target only moves (to the run's `now()`) after that target's delivery resolves — never on
+ * target only moves (to the run's `now()`) after that target accepted every file — never on
  * `skip` or `fail`. A marker write that fails after delivery keeps the `ok sent` outcome
  * (exit 0 for that target) with a warning suffix; a run-log append that fails is ignored.
  */
@@ -56,9 +56,9 @@ export interface SyncDeps {
   now(): Date;
   loadSettings(): Promise<SyncSettings | null>;
   resolveIdentity(): Promise<string>;
-  /** Builds the file one target gets for its window. */
+  /** Builds the files one target gets for its window. */
   exportSource: ExportSource;
-  deliver(target: TargetId, settings: SyncSettings, email: string, report: SyncReport): Promise<void>;
+  deliver(target: TargetId, settings: SyncSettings, email: string, reports: SyncReport[]): Promise<void>;
   readMarker(target: TargetId, now: Date): Promise<Date | null>;
   writeMarker(target: TargetId, at: Date): Promise<void>;
   appendLog(line: string): Promise<void>;
@@ -139,28 +139,30 @@ async function runTarget(
     return true;
   }
 
-  let report: SyncReport | null;
+  let reports: SyncReport[] | null;
   try {
-    report = await deps.exportSource.build({ window, email, includeExternal, now });
+    reports = await deps.exportSource.build({ window, email, includeExternal, now });
   } catch (err) {
     await emit(deps, now, 'fail', `export ${errorMessage(err)}`, target);
     return true;
   }
 
-  if (report === null) {
+  if (reports === null || reports.length === 0) {
     await emit(deps, now, 'skip', `no sessions in window ${window.label}`, target);
     return false;
   }
 
   try {
-    await deps.deliver(target, settings, email, report);
+    await deps.deliver(target, settings, email, reports);
   } catch (err) {
     await emit(deps, now, 'fail', deliveryFailureDetail(target, err), target);
     return true;
   }
 
   const markerWarning = await moveMarker(deps, target, now);
-  await emit(deps, now, 'ok', `sent ${report.fileName} ${report.bytes.length}${markerWarning}`, target);
+  const total = reports.reduce((sum, report) => sum + report.bytes.length, 0);
+  const sent = reports.length === 1 ? `${reports[0].fileName} ${total}` : `${reports.length} files ${total}`;
+  await emit(deps, now, 'ok', `sent ${sent}${markerWarning}`, target);
   return false;
 }
 
@@ -232,27 +234,27 @@ async function appendSyncLog(line: string): Promise<void> {
   await chmod(logPath, LOG_FILE_MODE);
 }
 
-/** Deliver `report` to `target`. Only called for a target `configuredTargets` already found
+/** Deliver `reports` to `target`. Only called for a target `configuredTargets` already found
  * present on `settings`, so the "missing settings" branches below are defensive, not a
  * normal path. */
 async function deliverToTarget(
   target: TargetId,
   settings: SyncSettings,
   email: string,
-  report: SyncReport
+  reports: SyncReport[]
 ): Promise<void> {
   if (target === 'webhook') {
     if (settings.webhookUrl === undefined) {
       throw new SyncTargetMissingError();
     }
-    await sendWebhook(settings.webhookUrl, report);
+    await sendWebhook(settings.webhookUrl, reports);
     return;
   }
 
   if (settings.git === undefined) {
     throw new SyncTargetMissingError();
   }
-  await new GitTarget(settings.git, email, createGitRunner()).deliver(report);
+  await new GitTarget(settings.git, email, createGitRunner()).deliver(reports);
 }
 
 /** Real dependencies for `runSync`: real clock, settings, identity, markers, fs and network; the file comes from

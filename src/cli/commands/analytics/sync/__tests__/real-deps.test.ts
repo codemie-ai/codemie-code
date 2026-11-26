@@ -103,12 +103,12 @@ describe('real sync/status deps: per-target marker routing and delivery dispatch
   it('dispatches webhook delivery to sendWebhook and git delivery to GitTarget.deliver', async () => {
     const deps = realSyncDeps(COLLECTION);
 
-    await deps.deliver('webhook', SETTINGS, 'jane@example.com', REPORT);
-    expect(mocks.sendWebhook).toHaveBeenCalledWith(SETTINGS.webhookUrl, REPORT);
+    await deps.deliver('webhook', SETTINGS, 'jane@example.com', [REPORT]);
+    expect(mocks.sendWebhook).toHaveBeenCalledWith(SETTINGS.webhookUrl, [REPORT]);
     expect(mocks.gitDeliver).not.toHaveBeenCalled();
 
-    await deps.deliver('git', SETTINGS, 'jane@example.com', REPORT);
-    expect(mocks.gitDeliver).toHaveBeenCalledWith(REPORT);
+    await deps.deliver('git', SETTINGS, 'jane@example.com', [REPORT]);
+    expect(mocks.gitDeliver).toHaveBeenCalledWith([REPORT]);
     expect(mocks.gitTargetCtor.mock.calls[0]?.[0]).toEqual(SETTINGS.git);
     expect(mocks.gitTargetCtor.mock.calls[0]?.[1]).toBe('jane@example.com');
     expect(mocks.sendWebhook).toHaveBeenCalledTimes(1);

@@ -11,9 +11,9 @@ export interface SyncReport {
   contentType: string;
 }
 
-/** What one `sync` run delivers for one window: the file, or `null` when there is nothing to send. */
+/** What one `sync` run delivers for one window: its files in delivery order, or `null` when there is nothing to send. */
 export interface ExportSource {
-  build(input: { window: SyncWindow; email: string; includeExternal: boolean; now: Date }): Promise<SyncReport | null>;
+  build(input: { window: SyncWindow; email: string; includeExternal: boolean; now: Date }): Promise<SyncReport[] | null>;
 }
 
 export type IncludeExternalPolicy = 'windows' | 'always' | 'never';

@@ -214,14 +214,14 @@ describe('parseLastFailure', () => {
 
 describe('runStatus', () => {
   it('prints the mode\'s lines right after the first line of an installed status', async () => {
-    const { deps, printed } = makeDeps({ modeLines: () => ['Mode: local — delivers the OTLP file of ~/.codemie/analytics/sessions'] });
+    const { deps, printed } = makeDeps({ modeLines: () => ['Mode: local — delivers the OTLP files of ~/.codemie/analytics/sessions beside the JSON report'] });
 
     const code = await runStatus(deps);
 
     expect(code).toBe(0);
     expect(printed.slice(0, 2)).toEqual([
       'Analytics sync: enabled',
-      'Mode: local — delivers the OTLP file of ~/.codemie/analytics/sessions',
+      'Mode: local — delivers the OTLP files of ~/.codemie/analytics/sessions beside the JSON report',
     ]);
   });
 

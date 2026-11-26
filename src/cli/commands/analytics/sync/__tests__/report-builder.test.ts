@@ -4,7 +4,7 @@ import type { MetricDelta } from '../../../../../agents/core/metrics/types.js';
 import type { RawSessionData } from '../../data-loader.js';
 import type { AnalyticsSource, SourceLoadOptions, SourceResult } from '../../sources/types.js';
 import type { CostSummary, SessionCost, SessionCostIndex } from '../../cost/types.js';
-import { buildSyncReport } from '../report-builder.js';
+import { ReportSource, buildSyncReport } from '../report-builder.js';
 import { dailyWindow } from '../window.js';
 
 const EMAIL = 'Dev.User+tag@example.com';
@@ -112,5 +112,18 @@ describe('buildSyncReport', () => {
 
     // Bytes match the exact `generateReportJson` shape: JSON.stringify(payload, null, 2).
     expect(report!.bytes.toString('utf-8')).toBe(JSON.stringify(payload, null, 2));
+  });
+});
+
+describe('ReportSource', () => {
+  it('answers its one report as a list of one, and null for no sessions', async () => {
+    const now = new Date('2026-10-29T12:34:56.000Z');
+    const window = dailyWindow(now, null, 7);
+    const input = { window, email: EMAIL, includeExternal: false, now };
+
+    const reports = await new ReportSource(new StubSource({ rawSessions: [session('s1')], cost: cost('s1') })).build(input);
+
+    expect(reports?.map((report) => report.fileName)).toEqual(['codemie-analytics-dev-user-tag-example-com-2026-10-29.report.json']);
+    expect(await new ReportSource(new StubSource({ rawSessions: [] })).build(input)).toBeNull();
   });
 });

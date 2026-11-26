@@ -1,7 +1,7 @@
 /**
  * Git delivery target for `codemie analytics sync`.
  *
- * Pushes the analytics export as a JSON file into a team-owned git repository, under
+ * Pushes the analytics export's files, in one commit, into a team-owned git repository, under
  * `<git-path>/<lowercased email slug>/` only — never anywhere else in the repo, and the
  * working copy is never force-pushed. Member identity isolation (each developer only ever
  * writes inside their own slug folder) means one member's push can never race another's:
@@ -82,16 +82,22 @@ export class GitTarget {
     private readonly dir: string = gitWorkingCopyPath()
   ) {}
 
-  /** Commits and pushes `<git-path>/<slug>/<report.fileName>`. */
-  async deliver(report: SyncReport): Promise<void> {
+  /** Writes every report as `<git-path>/<slug>/<fileName>`, then commits and pushes them as one commit. */
+  async deliver(reports: SyncReport[]): Promise<void> {
     const branch = await this.ensureWorkingCopy();
     const relFolder = this.slugFolder();
 
     const absFolder = this.absoluteFolder(relFolder);
     await mkdir(absFolder, { recursive: true });
-    await writeFile(join(absFolder, report.fileName), report.bytes);
+    for (const report of reports) {
+      await writeFile(join(absFolder, report.fileName), report.bytes);
+    }
 
-    await this.commitAndPush(branch, relFolder, `analytics sync: ${relFolder}/${report.fileName}`);
+    const message =
+      reports.length === 1
+        ? `analytics sync: ${relFolder}/${reports[0].fileName}`
+        : `analytics sync: ${relFolder} (${reports.length} files)`;
+    await this.commitAndPush(branch, relFolder, message);
   }
 
   /** Commits and pushes `<git-path>/<slug>/.codemie-sync-check`, used by `install` to prove

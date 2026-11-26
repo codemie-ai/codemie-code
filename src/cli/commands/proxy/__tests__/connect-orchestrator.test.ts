@@ -3449,6 +3449,18 @@ describe('ensureOtlpProxy', () => {
     expect(s.warn).not.toHaveBeenCalled();
   });
 
+  it('does not adopt a live local-mode daemon: no record seeded and Claude Code not re-pointed at it', async () => {
+    const s = await arrange();
+    const local = daemonState({ mode: 'local', profile: '' }) as Awaited<ReturnType<typeof s.daemon.readState>>;
+    vi.mocked(s.daemon.readState).mockResolvedValue(local);
+    const { refreshClaudeCodeOtlpEndpoint } = await import('../connectors/claude-code-otlp-endpoint.js');
+
+    await s.ensureOtlpProxy(AGENT);
+
+    expect(s.daemon.seedConnectionRecord).not.toHaveBeenCalledWith(local);
+    expect(refreshClaudeCodeOtlpEndpoint).not.toHaveBeenCalledWith(local);
+  });
+
   it('waits for the lock and adopts the daemon the holder started meanwhile (a restart), stopping nothing', async () => {
     const s = await arrange();
     const cameUp = daemonState({ profile: 'other' }) as Awaited<ReturnType<typeof s.daemon.readState>>;

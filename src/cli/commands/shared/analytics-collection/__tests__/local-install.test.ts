@@ -284,7 +284,7 @@ describe('localInstallPlan', () => {
     const { code, printed } = await install(await localPlan());
 
     expect(code).toBe(0);
-    expect(printed).toContain('  Mode:             local — delivers the OTLP file of ~/.codemie/analytics/sessions');
+    expect(printed).toContain('  Mode:             local — delivers the OTLP files of ~/.codemie/analytics/sessions beside the JSON report');
     expect(printed.join('\n')).toContain('Skipped:          Copilot Chat — VS Code setting "chat.useHooks" is disabled');
     expect(printed.join('\n')).toContain('Clients set up:   Claude Code, Copilot CLI');
   });
@@ -588,7 +588,7 @@ describe('localInstallPlan', () => {
     claudeCodeInstalled();
     const store = await import('../../../analytics/sync/config-store.js');
     const { resolveCollection } = await import('../resolve.js');
-    const { OtlpFolderSource } = await import('../../../analytics/sync/otlp-file-builder.js');
+    const { LocalExportSource } = await import('../local.js');
     const seen: unknown[] = [];
 
     const { code } = await install(await localPlan(), scheduler(), {
@@ -600,7 +600,7 @@ describe('localInstallPlan', () => {
 
     expect(code).toBe(0);
     expect(seen).toHaveLength(1);
-    expect(seen[0]).toBeInstanceOf(OtlpFolderSource);
+    expect(seen[0]).toBeInstanceOf(LocalExportSource);
   });
 
   it('a first install undone after a hook started the local daemon in its window stops that daemon', async () => {

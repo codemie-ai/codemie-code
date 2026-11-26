@@ -1,15 +1,15 @@
 /**
  * Webhook delivery target for `codemie analytics sync`.
  *
- * POSTs the analytics export as a single JSON attachment to a configured HTTPS webhook URL —
- * the one target `codemie analytics sync` ships to (no per-target grouping, no retry). Any 2xx
- * response resolves; a response above {@link MAX_EXPORT_BYTES} throws `ExportTooLargeError`
- * before any network call; a POST that takes longer than {@link WEBHOOK_TIMEOUT_MS} is aborted;
+ * POSTs each file of the analytics export as a single JSON attachment, one request per file in
+ * order, to a configured HTTPS webhook URL (no per-target grouping, no retry); the first file that
+ * fails stops the delivery. Any 2xx response resolves; a file above {@link MAX_EXPORT_BYTES} throws
+ * `ExportTooLargeError` before its network call; a POST that takes longer than {@link WEBHOOK_TIMEOUT_MS} is aborted;
  * a redirect response or a non-2xx response or a `fetchImpl`
  * rejection becomes a `SyncDeliveryError` with a redacted message (the signed URL query
  * parameter must never leak into it).
  *
- * `sendWebhook` is the free-function seam `run-sync.ts`'s `SyncDeps.send(url, report)` wires to;
+ * `sendWebhook` is what `run-sync.ts`'s `deliverToTarget` calls with the run's files;
  * `WebhookTarget` is its implementation, constructed fresh per call since the URL can change
  * between settings reads.
  */
@@ -33,7 +33,7 @@ function deliveryFailureMessage(err: unknown, timeoutMs: number): string {
 
 const defaultFetch: typeof fetch = (...args: Parameters<typeof fetch>) => fetch(...args);
 
-/** POSTs one analytics export to one webhook URL. */
+/** POSTs an analytics export's files to one webhook URL, one request per file. */
 export class WebhookTarget {
   readonly id = 'webhook';
 
@@ -43,7 +43,14 @@ export class WebhookTarget {
     private readonly timeoutMs: number = WEBHOOK_TIMEOUT_MS
   ) {}
 
-  async deliver(report: SyncReport): Promise<void> {
+  /** Posts `reports` in order and stops at the first that fails. */
+  async deliver(reports: SyncReport[]): Promise<void> {
+    for (const report of reports) {
+      await this.post(report);
+    }
+  }
+
+  private async post(report: SyncReport): Promise<void> {
     if (report.bytes.length > MAX_EXPORT_BYTES) {
       throw new ExportTooLargeError(report.bytes.length, MAX_EXPORT_BYTES);
     }
@@ -78,14 +85,14 @@ export class WebhookTarget {
   }
 }
 
-/** Convenience wrapper matching `SyncDeps.send` in `run-sync.ts`: POST `report` to `url`. `timeoutMs`
+/** Convenience wrapper matching `SyncDeps.send` in `run-sync.ts`: POST `reports` to `url`. `timeoutMs`
  * defaults to {@link WEBHOOK_TIMEOUT_MS}; the bootstrap wizard's interactive test-send (Task 7)
  * passes a shorter one so a hung flow does not block the terminal for the full 5 minutes. */
 export async function sendWebhook(
   url: string,
-  report: SyncReport,
+  reports: SyncReport[],
   fetchImpl?: typeof fetch,
   timeoutMs?: number
 ): Promise<void> {
-  return new WebhookTarget(url, fetchImpl, timeoutMs).deliver(report);
+  return new WebhookTarget(url, fetchImpl, timeoutMs).deliver(reports);
 }

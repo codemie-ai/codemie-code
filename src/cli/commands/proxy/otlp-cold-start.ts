@@ -130,11 +130,13 @@ function warnStartingWithoutCredentials(name: string, problem: string, scope?: s
 }
 
 /**
- * Adopts the state's daemon when it is alive and not of an older CLI (or `acceptOlder`): seeds the connection
- * record and re-points Claude Code's OTLP endpoint at it.
+ * Adopts the state's daemon when it is alive, not the local mode's daemon, and not of an older CLI (or
+ * `acceptOlder`): seeds the connection record and re-points Claude Code's OTLP endpoint at it. The local mode's daemon
+ * has no upstream and no profile, so a backend hook never adopts it.
  */
 async function adoptLiveDaemon(state: DaemonState | null, acceptOlder: boolean): Promise<boolean> {
   if (!state || !(await isDaemonAlive(state))) return false;
+  if (state.mode === 'local') return false;
   if (!acceptOlder && (await isOlderDaemon(state))) return false;
   await seedConnectionRecord(state);
   await refreshClaudeCodeOtlpEndpoint(state);
@@ -226,7 +228,7 @@ export async function ensureOtlpProxy(agentName: string, event?: string): Promis
       await startFromState(state, port);
       return;
     }
-    // Not adopted above, so a daemon still alive here is an older one this event does not accept.
+    // Not adopted above, so a daemon still alive here is an older one this event does not accept, or the local mode's.
     await coldStartOnRecord(port, state !== null && (await isDaemonAlive(state)));
   });
 }

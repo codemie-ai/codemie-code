@@ -113,7 +113,7 @@ describe('analytics sync CLI wiring — command surface', () => {
 
     const run = sync.commands.find((c) => c.name() === 'run')!;
     expect(run.description()).toBe(
-      'Developer or the daily scheduled job: send the pending analytics report (in the local analytics mode, the OTLP file) to the configured webhook and/or team git repository now'
+      'Developer or the daily scheduled job: send the pending analytics report (in the local analytics mode, the OTLP files and the report) to the configured webhook and/or team git repository now'
     );
 
     for (const name of ['status', 'run', 'uninstall']) {
@@ -337,13 +337,13 @@ describe('analytics sync CLI wiring — the collection handed to each runner in 
 
   const writeLocalSettings = (): void => writeFileSync(join(home, 'analytics-sync.json'), JSON.stringify(LOCAL_SETTINGS));
 
-  it('"sync run" hands realSyncDeps a collection that exports the OTLP folder', async () => {
+  it('"sync run" hands realSyncDeps a collection that exports the OTLP folder beside the JSON report', async () => {
     writeLocalSettings();
     await parse(['sync', 'run']);
 
-    const { OtlpFolderSource } = await import('../sync/otlp-file-builder.js');
+    const { LocalExportSource } = await import('../../shared/analytics-collection/local.js');
     const collection = realSyncDepsMock.mock.calls[0][0] as { exportSource(): unknown };
-    expect(collection.exportSource()).toBeInstanceOf(OtlpFolderSource);
+    expect(collection.exportSource()).toBeInstanceOf(LocalExportSource);
   });
 
   it('"sync uninstall" runs the local teardown: the local spool is removed before the install', async () => {
@@ -365,7 +365,7 @@ describe('analytics sync CLI wiring — the collection handed to each runner in 
     await parse(['sync', 'status']);
 
     const statusLines = createRealStatusDepsMock.mock.calls[0][0] as () => string[];
-    expect(statusLines()).toEqual(['Mode: local — delivers the OTLP file of ~/.codemie/analytics/sessions']);
+    expect(statusLines()).toEqual(['Mode: local — delivers the OTLP files of ~/.codemie/analytics/sessions beside the JSON report']);
   });
 
   it('"sync install" with no settings and no profile hands createRealInstallDeps the local install plan', async () => {

@@ -166,6 +166,26 @@ describe('LocalAnalyticsPlugin', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('a start sweeps at once, with no timer advanced, and its interval sweeps go on', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    const other = '11111111-2222-4333-8444-666666666666';
+    const folderFile = (sessionId: string) => join(home, 'analytics', 'sessions', `${sessionId}.hooks.jsonl`);
+    const first = await started();
+    await first.post('/v1/analytics/hooks', { agentName: 'claude-code-otlp', hookEvents: [{ type: 'agent.session.end', session_id: SID }] });
+    await first.interceptor.onProxyStop?.();
+    vi.setSystemTime(Date.now() + 30 * MINUTE);
+
+    const second = await started();
+    // The limit guards a hung move; the move itself is real file work.
+    await vi.waitFor(() => expect(existsSync(folderFile(SID))).toBe(true), { timeout: 10_000 });
+
+    await second.post('/v1/analytics/hooks', { agentName: 'claude-code-otlp', hookEvents: [{ type: 'agent.session.end', session_id: other }] });
+    expect(existsSync(folderFile(other))).toBe(false);
+    await vi.advanceTimersByTimeAsync(2 * 15 * MINUTE);
+    await vi.waitFor(() => expect(existsSync(folderFile(other))).toBe(true), { timeout: 10_000 });
+    await second.interceptor.onProxyStop?.();
+  });
+
   it('leaves every other request to the next plugin', async () => {
     const { interceptor, post } = await started();
 

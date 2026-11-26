@@ -4,9 +4,13 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { RawSessionData } from '../../../analytics/data-loader.js';
+import type { CostSummary, SessionCostIndex } from '../../../analytics/cost/types.js';
+import type { AnalyticsSource } from '../../../analytics/sources/types.js';
 import type { SyncSettings } from '../../../analytics/sync/types.js';
+import { dailyWindow } from '../../../analytics/sync/window.js';
 import { isPidAlive, setUpHome, spawnedArgs, stateFile, tearDownHome, writeLiveState } from './stand.js';
 
 vi.mock('@/utils/processes.js', async (importOriginal) => {
@@ -57,12 +61,82 @@ async function collection(settings: SyncSettings = SETTINGS) {
   return (await import('../local.js')).localCollection(settings);
 }
 
-describe('localCollection', () => {
-  it('exports the OTLP file of the analytics folder', async () => {
+const NOW = new Date('2026-10-29T12:00:00.000Z');
+const EMAIL = 'Jane.Doe@x.com';
+const OTLP_NAME = 'codemie-analytics-jane-doe-x-com-2026-10-29.otlp.jsonl.gz';
+const REPORT_NAME = 'codemie-analytics-jane-doe-x-com-2026-10-29.report.json';
+
+/** A session in the analytics folder, its file written a day before NOW. */
+function folderSession(home: string, sessionId: string): void {
+  const folder = join(home, 'analytics', 'sessions');
+  mkdirSync(folder, { recursive: true });
+  const file = join(folder, `${sessionId}.hooks.jsonl`);
+  writeFileSync(file, `${JSON.stringify({ resourceLogs: [] })}\n`);
+  const written = new Date(NOW.getTime() - 24 * 60 * 60 * 1000);
+  utimesSync(file, written, written);
+}
+
+/** An analytics source holding `sessionIds` with their cost, so the report needs no client logs. */
+function reportSessions(...sessionIds: string[]): AnalyticsSource {
+  const rawSessions = sessionIds.map((sessionId) => ({
+    sessionId,
+    startEvent: { recordId: sessionId, type: 'session_start', timestamp: 1000, codeMieSessionId: sessionId, agentName: 'claude', syncStatus: 'synced', data: { provider: 'native', workingDirectory: '/repo', startTime: 1000 } },
+    endEvent: { recordId: `${sessionId}-end`, type: 'session_end', timestamp: 2000, codeMieSessionId: sessionId, agentName: 'claude', syncStatus: 'synced', data: { endTime: 2000, duration: 1000, totalTurns: 1 } },
+    deltas: [],
+  })) as unknown as RawSessionData[];
+  const index: SessionCostIndex = new Map(sessionIds.map((sessionId) => [sessionId, {
+    sessionId,
+    tokens: { input: 100, output: 50, cacheRead: 0, cacheCreation: 0, cacheCreation1h: 0, total: 150 },
+    costUSD: 0.01,
+    perModel: [],
+    priced: true,
+    hadLog: true,
+  }]));
+  const summary: CostSummary = { totalCostUSD: 0.01 * sessionIds.length, pricedSessions: sessionIds.length, totalSessions: sessionIds.length, unpricedModels: [], estimatedModels: [], localModels: [] };
+  return { load: async () => ({ rawSessions, ...(sessionIds.length > 0 && { cost: { index, summary } }) }) };
+}
+
+describe('LocalExportSource', () => {
+  const input = () => ({ window: dailyWindow(NOW, null, 7), email: EMAIL, includeExternal: false, now: NOW });
+
+  async function build(source: AnalyticsSource) {
+    const { LocalExportSource } = await import('../local.js');
     const { OtlpFolderSource } = await import('../../../analytics/sync/otlp-file-builder.js');
-    expect((await collection()).exportSource()).toBeInstanceOf(OtlpFolderSource);
+    const { ReportSource } = await import('../../../analytics/sync/report-builder.js');
+    return new LocalExportSource(new OtlpFolderSource(), new ReportSource(source)).build(input());
+  }
+
+  it('is the export source of the local collection', async () => {
+    const { LocalExportSource } = await import('../local.js');
+    expect((await collection()).exportSource()).toBeInstanceOf(LocalExportSource);
   });
 
+  it('a folder session and a report session: the OTLP file, then the report ReportSource alone builds', async () => {
+    folderSession(home, 's1');
+    const { ReportSource } = await import('../../../analytics/sync/report-builder.js');
+    const alone = await new ReportSource(reportSessions('r1')).build(input());
+
+    const files = await build(reportSessions('r1'));
+
+    expect(files?.map((file) => file.fileName)).toEqual([OTLP_NAME, REPORT_NAME]);
+    expect(files?.[1].bytes.equals(alone![0].bytes)).toBe(true);
+  });
+
+  it('a report session alone: that one report', async () => {
+    expect((await build(reportSessions('r1')))?.map((file) => file.fileName)).toEqual([REPORT_NAME]);
+  });
+
+  it('a folder session alone: the OTLP file alone', async () => {
+    folderSession(home, 's1');
+    expect((await build(reportSessions()))?.map((file) => file.fileName)).toEqual([OTLP_NAME]);
+  });
+
+  it('neither: null', async () => {
+    expect(await build(reportSessions())).toBeNull();
+  });
+});
+
+describe('localCollection', () => {
   it('collects under LocalPolicy built from the --include-external answer of this platform', async () => {
     const { LocalPolicy } = await import('../local-policy.js');
     const gate = async (): Promise<'continue' | 'stop'> => 'continue';
@@ -75,7 +149,7 @@ describe('localCollection', () => {
   });
 
   it('prints the mode as the status line of sync status', async () => {
-    expect((await collection()).statusLines()).toEqual(['Mode: local — delivers the OTLP file of ~/.codemie/analytics/sessions']);
+    expect((await collection()).statusLines()).toEqual(['Mode: local — delivers the OTLP files of ~/.codemie/analytics/sessions beside the JSON report']);
   });
 
   it('its doctor plan names the local next steps, no status lines, no keyed probe and the mode as the daemon label', async () => {

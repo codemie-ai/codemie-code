@@ -159,31 +159,39 @@ function clientStep(spec: LocalClient): InstallStep {
   };
 }
 
-function steps(settings: SyncSettings): InstallStep[] {
-  let snapshot: string | null = null;
-  const restoreSettings = async (): Promise<void> => {
-    if (snapshot === null) await deleteSyncSettings();
-    else await restoreSyncSettingsRaw(snapshot);
-  };
-  let started = false;
-  // Whether a live local daemon ran before the settings step wrote anything: one a hook starts inside the install's
-  // window, once `local: true` is written, is the install's to stop on undo.
-  let liveBefore = false;
-  let madeFolder: string | undefined;
+/** What the settings step and the daemon step of one install share. */
+interface InstallState {
+  /** The settings file as it was before the install, `null` when there was none. */
+  snapshot: string | null;
+  /** The install started the local daemon. */
+  started: boolean;
+  /**
+   * Whether a live local daemon ran before the settings step wrote anything: one a hook starts inside the install's
+   * window, once `local: true` is written, is the install's to stop on undo.
+   */
+  liveBefore: boolean;
+  madeFolder?: string;
+}
 
-  const settingsStep: InstallStep = {
+async function restoreSettings(state: InstallState): Promise<void> {
+  if (state.snapshot === null) await deleteSyncSettings();
+  else await restoreSyncSettingsRaw(state.snapshot);
+}
+
+function settingsStep(settings: SyncSettings, state: InstallState): InstallStep {
+  return {
     name: 'settings',
     async apply() {
-      liveBefore = await isLiveLocal(await readState(), true);
-      snapshot = await readSyncSettingsRaw();
+      state.liveBefore = await isLiveLocal(await readState(), true);
+      state.snapshot = await readSyncSettingsRaw();
       // An install leaves an empty folder, not a missing one: the doctor warns of a missing folder. Made before the
       // settings: a step that throws is not undone, so a folder that cannot be made must leave nothing written, and a
       // settings write that fails takes back the directories this step made, and fails with its own error.
-      madeFolder = await ensureAnalyticsFolder();
+      state.madeFolder = await ensureAnalyticsFolder();
       try {
         await writeSyncSettings({ ...settings, local: true });
       } catch (error) {
-        await removeMadeAnalyticsFolder(madeFolder).catch((removal: unknown) =>
+        await removeMadeAnalyticsFolder(state.madeFolder).catch((removal: unknown) =>
           logger.debug(
             '[local-install] analytics folder removal failed',
             ...sanitizeLogArgs({ err: removal instanceof Error ? removal.message : String(removal) })
@@ -194,18 +202,20 @@ function steps(settings: SyncSettings): InstallStep[] {
       return { name: 'settings', state: 'done' };
     },
     async undo() {
-      await restoreSettings();
-      await removeMadeAnalyticsFolder(madeFolder);
+      await restoreSettings(state);
+      await removeMadeAnalyticsFolder(state.madeFolder);
     },
   };
+}
 
-  const daemonStep: InstallStep = {
+function daemonStep(state: InstallState): InstallStep {
+  return {
     name: 'daemon',
     apply: () =>
       withDaemonLock(DAEMON_LOCK_COMMAND_BUDGET_MS, async (): Promise<StepOutcome> => {
         if (!(await isLiveLocal(await readState(), false))) {
           await spawnLocalDaemon(await requestedDaemonPort());
-          started = true;
+          state.started = true;
         }
         return { name: 'daemon', state: 'done' };
       }),
@@ -214,18 +224,21 @@ function steps(settings: SyncSettings): InstallStep[] {
     undo: () =>
       withDaemonLock(DAEMON_LOCK_COMMAND_BUDGET_MS, async () => {
         try {
-          await restoreSettings();
+          await restoreSettings(state);
         } finally {
-          if (started || !liveBefore) await stopDaemon();
+          if (state.started || !state.liveBefore) await stopDaemon();
         }
       }),
   };
+}
 
-  return [settingsStep, daemonStep, ...LOCAL_CLIENTS.map(clientStep)];
+function steps(settings: SyncSettings): InstallStep[] {
+  const state: InstallState = { snapshot: null, started: false, liveBefore: false };
+  return [settingsStep(settings, state), daemonStep(state), ...LOCAL_CLIENTS.map(clientStep)];
 }
 
 /** The local mode named in the install summary and in `sync status`, each under its own label. */
-export const LOCAL_MODE_TEXT = 'local — delivers the OTLP file of ~/.codemie/analytics/sessions';
+export const LOCAL_MODE_TEXT = 'local — delivers the OTLP files of ~/.codemie/analytics/sessions beside the JSON report';
 
 function conclude(outcomes: StepOutcome[]): { summary: string[]; failure?: string } {
   const clients = outcomes.filter((outcome) => outcome.name in CLIENT_LABELS);

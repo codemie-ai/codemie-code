@@ -48,16 +48,24 @@ that data on a machine that has no login at all.
   move joins its session. An event already in the session's file by its `event_id` is not written again. A repeated move
   gives the same files. The folder is never cleaned.
 - **Staying up.** A hook that finds no proxy starts the local one before it writes; an older one is replaced.
-- **Delivering.** The daily job gzips, as one stream, the lines of the sessions written to inside the run's window into
-  `codemie-analytics-<email>-<UTC date>.otlp.jsonl.gz` and sends it to the lead's targets instead of the JSON report. Above
-  the webhook's limit the run fails as the report's does, and every later run fails the same way.
+- **Delivering.** The daily job gzips the lines of the sessions written to inside the run's window into
+  `codemie-analytics-<email>-<UTC date>.otlp.jsonl.gz` and sends it to the lead's targets beside the JSON report, which is built as on any other machine. A
+  file is no larger than 70,000,000 bytes gzipped, for the webhook and for git: when the run's lines do not fit, they are
+  cut at a line into `codemie-analytics-<email>-<UTC date>.part-<k>-of-<n>.otlp.jsonl.gz` (`part-01-of-03`), each a gzip
+  stream of whole lines by itself, in no order a reader needs — a line is told from a repeated one by its
+  `codemie.line_id`. The webhook gets one request per file, git the files in one commit and one push; a target's marker
+  moves when it accepted every file of the run, and a failure at any file leaves it for the next run. A second run on the
+  same UTC day whose files are cut differently leaves the earlier files beside the new ones. The log holds one line per
+  target: `ok sent <name> <bytes>` for one file, `ok sent <n> files <total bytes>` for several.
 - **Other commands.** `proxy doctor`, `proxy status`, `proxy clients` and `codemie doctor` show the local mode's state and
   name `sync install` in their hints; `sync status` names the mode. `proxy start` and `proxy restart` start and restart the local
   proxy and refuse a `--profile`; `proxy connect` and `disconnect` refuse and name `sync uninstall`; `proxy stop` works and the
   next event starts the proxy again. `sync uninstall` removes
   the hooks, stops the proxy, removes the local spool with the sessions not yet moved, and leaves the folder; when a step
   of it fails the settings of the local mode stay and the uninstall can be run again — the hooks it had already removed
-  stay removed until then; a client the install skipped is not touched.
+  stay removed until then. It removes CodeMie's own entries of a client wherever they are in place, those of a client set
+  up before the install included — the install rewrote them to the local proxy; a client that holds none of CodeMie's
+  entries is not touched, and nothing that CodeMie did not write is removed.
   `codemie analytics --export json` prints a deprecation notice on stderr.
 
 ## Commands, and what runs under each
@@ -107,7 +115,7 @@ With `--include-external never` a machine with no CodeMie launcher gathers nothi
 | every hook event of a client | `codemie hook --agent <client>` — one short Node process | Applies the developer's folder filters and `--include-external`; starts the local proxy when it is not running; posts the event to the proxy's `/v1/analytics/hooks`. No sign-in, no network beyond `127.0.0.1`. |
 | while Claude Code runs | Claude Code's own exporter | Posts its logs, metrics and traces to the proxy's `/v1/analytics/otlp/v1/{logs,metrics,traces}`. |
 | every 15 minutes | the proxy's sweep | Moves each session past its grace from `~/.codemie/analytics/spool/` into `~/.codemie/analytics/sessions/`. |
-| daily at `--at` | `codemie analytics sync run --scheduled` | Per target: takes the window (the lookback, or since the last successful delivery when that is longer); gzips the lines of the sessions written to inside it; webhook — one POST with the file as a base64 attachment, which the lead's flow writes to SharePoint; git — a shallow clone in `~/.codemie/analytics-sync-repo`, the file at `<git-path>/<email>/<file>`, a commit under the developer's email, a push with the developer's own credentials. The delivery mark moves only after a delivery. Log: `~/.codemie/logs/analytics-sync.log`. |
+| daily at `--at` | `codemie analytics sync run --scheduled` | Per target: takes the window (the lookback, or since the last successful delivery when that is longer); gzips the lines of the sessions written to inside it, into files no larger than 70 MB; webhook — one POST per file with the file as a base64 attachment, which the lead's flow writes to SharePoint; git — a shallow clone in `~/.codemie/analytics-sync-repo`, the files at `<git-path>/<email>/<file>`, one commit under the developer's email, one push with the developer's own credentials. The delivery mark moves only after the target accepted every file. Log: `~/.codemie/logs/analytics-sync.log`. |
 
 ### Other commands a developer may run
 
@@ -120,7 +128,7 @@ With `--include-external never` a machine with no CodeMie launcher gathers nothi
 | `codemie proxy stop` | Stops the proxy; the next client event starts it again. |
 | `codemie proxy start` / `restart` | Start the local proxy (or say it is running), stop it and start it again; `--port` is honoured when `proxy start` starts the proxy, one already running stays on its port and is named with its URL; a `--profile` is refused. |
 | `codemie proxy connect` / `disconnect` | Refuse, and name `codemie analytics sync uninstall`. |
-| `codemie analytics sync uninstall` | Removes the hooks and telemetry settings it wrote, stops the proxy, removes the local spool, the job and the settings; leaves `~/.codemie/analytics/sessions/`. A step that fails stops it with the settings of the local mode in place; the hooks it had already removed stay removed until it is run again. |
+| `codemie analytics sync uninstall` | Removes the clients' CodeMie hooks and telemetry settings wherever they are in place, stops the proxy, removes the local spool, the job and the settings; leaves `~/.codemie/analytics/sessions/`. A step that fails stops it with the settings of the local mode in place; the hooks it had already removed stay removed until it is run again. |
 
 ## The local proxy: start, restart, stop
 
@@ -180,10 +188,12 @@ hook event line                  one OTLP LogsData: resource service.name=codemi
 - AC7: Given a move stopped part-way and repeated, then the folder files equal those of one clean move, and an `event_id`
   appears once in a session's file. (story AC5, AC7)
 - AC8: Given the local proxy was killed, when the next hook fires, then the proxy is up and that event is stored. (story AC10)
-- AC9: Given a run with at least one session in its window, then each target receives one
-  `codemie-analytics-<email>-<UTC date>.otlp.jsonl.gz` and no `.report.json`; unpacked, it is the sessions' lines; a second
-  run over the same window carries the same line ids. (story AC6, AC7)
-- AC10 (negative): Given a run with no session in its window, then nothing is sent and the log says so. (story AC8)
+- AC9: Given a run with at least one session in its window, then each target receives
+  `codemie-analytics-<email>-<UTC date>.otlp.jsonl.gz` — or, when one file would be larger than 70 MB, its
+  `.part-<k>-of-<n>.otlp.jsonl.gz` files, each no larger — and the `.report.json` after them; unpacked, they are the sessions' lines;
+  a second run over the same window carries the same line ids. (story AC6, AC7)
+- AC10 (negative): Given a run with no stored session in its window, then no OTLP file is sent; with nothing for the JSON
+  report either, nothing is sent and the log says so. (story AC8)
 - AC11: Given the local mode, when `proxy doctor` runs, then the sections `auth`, `upstream` and `delivery` are absent, a
   `local` section reports the folder, the job and the last delivery per target, and no hint names `proxy connect` or
   `disconnect`. (story AC11)
@@ -202,21 +212,21 @@ hook event line                  one OTLP LogsData: resource service.name=codemi
 - AC17: Given the lead's `sync bootstrap`, then its questions, its flags and the line it prints are what they were before
   this change. (story AC9)
 - AC18: Given a machine where `sync install` ran before this change, when the CLI is upgraded, then its job delivers the
-  JSON report until `sync install` runs again. (story AC13)
+  JSON report alone until `sync install` runs again. (story AC13)
 - AC19: Given a machine in the local mode and a hook of a CLI of an earlier version, when it fires, then nothing of a
   Claude Code hook is stored and the local proxy goes on running, and a Copilot hook's events are stored without
   `--include-external`; when that CLI's `sync install` runs, then the settings hold no `local` and
-  its job delivers the JSON report. (story AC18)
+  its job delivers the JSON report alone. (story AC18)
 
 ## Non-goals
 
 - NG1: Any change of the CodeMie backend or of what a machine not in the local mode sends to it. (story NG1)
-- NG2: Codex, Gemini and Pi — a machine in the local mode delivers nothing for them; Claude Desktop Cowork and the
+- NG2: Codex, Gemini and Pi — the local mode gathers nothing for them, they stay in the JSON report; Claude Desktop Cowork and the
   applications sending model requests through the proxy. (story NG2)
 - NG3: What reads the delivered file, and any cost computed from it. (story NG3)
 - NG4: A service of the OS for the proxy, a fixed port, a new schedule or flag, a cleanup or a size cap of the folder. (story NG4)
 - NG5: Cutting the content, and the protobuf telemetry streams. (story NG5)
-- NG6: A size check or pruning for the git target; a file sent in parts above the webhook's limit.
+- NG6: A size check or pruning for the git target's repository.
 - NG7: A warning that `never` collects nothing, and an entry or a removal date for `--export json` in the deprecation table.
 
 ## Decisions
@@ -230,7 +240,7 @@ hook event line                  one OTLP LogsData: resource service.name=codemi
 - A finished session moved into a folder over keeping the spool: the spool's lifetime is minutes, the run is daily.
 - Hook events as OTLP log records over the spool's envelope: one format in the folder and in the file.
 - A line id over each session sent once: the lead's window overlaps runs, and the id lets a reader keep one copy.
-- One gzip stream of lines over a tar or a zip: one file, nothing to unpack into files.
+- A gzip stream of whole lines per file over a tar or a zip: each file is read by itself, nothing to unpack into files.
 - `.jsonl` for all four files over the spool's names: the name is part of every line id and is kept for good.
 - No cleanup of the folder over a retention: the sessions store under `~/.codemie` is not cleaned by itself either.
 - D2: `--include-external` as the lead set it over collecting everything on a machine with no launcher.
@@ -243,14 +253,36 @@ hook event line                  one OTLP LogsData: resource service.name=codemi
   proxy is down is not told to remove the analytics.
 - D12: A hook of an earlier CLI left as it works over a field in the hook's request that tells the versions apart: a wire
   contract between the hook and the proxy for a CLI replaced by an earlier version.
+- D9: `sync uninstall` removing CodeMie's own entries of a client wherever they are in place over only what the install
+  wrote: the install rewrites the entries of a client set up before it, and entries left behind would point at a proxy
+  that no longer runs; nothing a user or another tool wrote is removed.
+- D14: Files no larger than 70 MB, cut at a line, over one file per run: the delivery hook of a project sends nothing
+  above its own limit, and a run that failed on the size failed the same way on every later run.
+- D15: A session counts as launched when the hook's environment holds the session id a CodeMie launcher sets, as in every
+  mode: a client started by hand from a terminal opened inside a launched session is gathered under `never` too; on a
+  machine with no profile this needs a profile added after the install.
+- D16: The hints of `proxy doctor` and of the clients' list name `codemie analytics sync install` where another machine is
+  told `proxy connect` or `disconnect`: it is the one command that writes the clients' settings there and never refuses
+  in the mode, and it is named for a routed VS Code extension or a project list too, which have no command of their own.
+- D17: Sync settings that no longer load are taken as no local mode: the hooks and the proxy commands act as on any
+  machine without it — nothing is gathered with no profile, and after `codemie setup` the hooks send to the profile's
+  backend; `sync status` and `sync uninstall` stop on the file until it is mended or `sync install` runs again.
+- D18: A hook of a local machine replaces another CodeMie proxy it finds running with the local one: a machine is in one
+  mode, this release starts no other proxy there, and one left running would take the hook events to a backend.
+- D19: The exclusion marks, and a session whose move into the folder was interrupted in a way the proxy cannot continue,
+  are never cleaned by themselves — the session stays undelivered — and `sync uninstall` clears both: repeating such a
+  move would write the session's lines twice under new ids.
+- D20: The JSON report and the OTLP files beside it, rather than the OTLP files alone — a machine in the local mode delivers
+  the report built as on any other machine: what a team received before the mode it goes on receiving, Codex, Gemini and Pi included,
+  while the receiving side moves to the OTLP files; the report is deprecated, not removed.
 
 ## Limitations
 
-- **Clients.** Claude Code, Copilot CLI and Copilot Chat. Nothing is delivered for Codex, Gemini or Pi from a machine in the
-  local mode, and the JSON report that covered them is no longer sent from it.
+- **Clients.** The OTLP files hold Claude Code, Copilot CLI and Copilot Chat. Codex, Gemini and Pi are not in them; they
+  reach the lead in the JSON report, which a machine in the local mode delivers beside the OTLP files.
 - **The default gathers nothing.** With `--include-external never` only sessions started by a CodeMie launcher are gathered,
   and a machine with no profile has none. No command warns of it.
-- **From the install on.** Sessions that ended before `sync install` are not gathered; the JSON report read them from logs.
+- **From the install on.** Sessions that ended before `sync install` are not gathered; the JSON report holds them, from the logs.
 - **A session is delivered late.** It reaches the folder 15 minutes after its end, or 60 after its last write — always 60
   for Copilot Chat — at the next 15-minute sweep, and the file at the next daily run. A session open for days is absent
   until then.
@@ -260,9 +292,11 @@ hook event line                  one OTLP LogsData: resource service.name=codemi
 - **Copilot can be blocked.** When a hook cannot start the proxy, Copilot CLI refuses the prompt or the tool call, and
   Copilot Chat also the session start, as with a CodeMie backend today. Claude Code is never blocked.
 - **Size.** Measured on one machine over about a day: 62,909,648 bytes of lines, 3,489,676 gzipped. A run carries the whole
-  window, so a 30-day window of such a machine passes the webhook's 70,000,000 bytes; the run then fails, and so does
-  every later one. The folder on the developer's disk is never cleaned.
-- **The git target.** One file per developer per day, never pruned; every developer's working copy holds the team's files.
+  window, cut into files of 70,000,000 bytes at most; a session larger than that is cut at a line, and only a single line
+  whose gzip alone is above it fails the run. The folder on the developer's disk is never cleaned.
+- **The git target.** One file per developer per day, or its parts when it is cut, never pruned; a second run on the same
+  day whose files are cut differently leaves the earlier files beside the new ones, and the reader keeps one copy of a
+  line by its id. Every developer's working copy holds the team's files.
 - **What the file holds.** Emails, file and transcript paths, the branch and the repository, shell commands and tool
   parameters, the first 200 characters of a prompt; only secrets are masked. On a machine with no CodeMie setup it holds
   no `user.email`, no project name and none of the values a backend gets as request headers (organization, subscription

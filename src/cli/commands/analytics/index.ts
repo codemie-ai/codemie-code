@@ -136,7 +136,7 @@ export function createAnalyticsCommand(): Command {
 function createSyncCommand(): Command {
   const sync = new Command('sync')
     .description(
-      "Send this machine's analytics reports one way to the team's webhook and/or a team git repository on a daily schedule (on a machine with no CLI profile: the OTLP file the local analytics mode gathers)"
+      "Send this machine's analytics reports one way to the team's webhook and/or a team git repository on a daily schedule (on a machine with no CLI profile: also the OTLP files the local analytics mode gathers)"
     )
     .enablePositionalOptions();
 
@@ -251,7 +251,7 @@ function createSyncRunCommand(): Command {
   return new Command('run')
     .allowExcessArguments(false)
     .description(
-      'Developer or the daily scheduled job: send the pending analytics report (in the local analytics mode, the OTLP file) to the configured webhook and/or team git repository now'
+      'Developer or the daily scheduled job: send the pending analytics report (in the local analytics mode, the OTLP files and the report) to the configured webhook and/or team git repository now'
     )
     .addOption(new Option('--scheduled').hideHelp())
     .action(async () => {

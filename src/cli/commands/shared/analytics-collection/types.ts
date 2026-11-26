@@ -36,7 +36,7 @@ export interface AnalyticsCollection {
   hookPolicy(): CollectionPolicy;
   /** Brings up the daemon a hook or a launched agent needs. */
   launcher: (agentName: string, event?: string) => Promise<void>;
-  /** The file the daily sync delivers. */
+  /** The files the daily sync delivers. */
   exportSource(): ExportSource;
   install: InstallPlan;
   /** The mode's own removal around the uninstall's: it calls `removeInstall` once. */

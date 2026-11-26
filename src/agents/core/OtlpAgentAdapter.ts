@@ -117,7 +117,8 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       return;
     }
 
-    // Per-hook session transition check (stop markers, folder / consent / generation changes). Adapters without one continue.
+    // The policy decides whether the adapter's per-hook session transition check (stop markers, folder / consent /
+    // generation changes) runs: the backend policy runs it, the local mode's policy never does. Adapters without one continue.
     const admitted = await this.policy.admit(
       this.sessionIdOf(hookInput),
       () => this.transitionGate(hookInput),
