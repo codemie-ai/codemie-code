@@ -3265,6 +3265,17 @@ describe('ensureOtlpProxy', () => {
       expect(s.spawner.spawnDaemon).toHaveBeenCalledTimes(1);
     });
 
+    it('names the active profile in the failure log when its config cannot be loaded', async () => {
+      const s = await arrange(null, undefined, undefined, { name: 'work' });
+      vi.mocked(s.ConfigLoader.getActiveProfileName).mockResolvedValueOnce('work');
+      vi.mocked(s.ConfigLoader.load).mockRejectedValueOnce(new Error('unreadable config'));
+
+      await expect(s.ensureOtlpProxy(AGENT)).rejects.toThrow('unreadable config');
+
+      expect(warnings(s.warn)).toEqual([expect.stringContaining('cold start failed (profile: work)')]);
+      expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+    });
+
     it('still starts, with a warning naming the profile, when SSO credentials are missing', async () => {
       const s = await arrange(null, undefined, undefined, { name: 'work' });
       lookup.mockResolvedValue(null);

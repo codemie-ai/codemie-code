@@ -111,7 +111,7 @@ describe('forwardOtlpEventsToSpool', () => {
     expect([noState.value, refused.value, reset.value, rejected.value, aborted.value]).toEqual([true, true, false, false, false]);
   });
 
-  it('EPMCDME-17854: a 401 (gateway key, or a daemon awaiting its login) is answered before anything is spooled, so the batch was not received', async () => {
+  it('EPMCDME-17854: a 401 (gateway key, or a daemon awaiting its login) is answered before anything is spooled, so the daemon did not take the batch', async () => {
     const rejected = { value: false };
     fetchMock.mockResolvedValueOnce(new Response('{}', { status: 401 }));
     await expect(forwardOtlpEventsToSpool([{ type: 'x' }], 'a', { undelivered: rejected })).resolves.toBe(false);
@@ -132,7 +132,9 @@ describe('forwardOtlpEventsToSpool', () => {
     expect(await run(aggregate([refusedAt('ECONNREFUSED'), refusedAt('ETIMEDOUT')]))).toBe(false);
   });
 
-  it('EPMCDME-17854: the error real fetch raises for a closed local port is recognised as refused (127.0.0.1 and localhost)', async () => {
+  it('EPMCDME-17854: the error real fetch raises for a closed IPv4 loopback port is recognised as refused', async () => {
+    // Only the literal IPv4 address: how `localhost` resolves (IPv6 first, several addresses) depends on the host, and that
+    // multi-address shape is covered deterministically by the AggregateError cases above.
     const { createServer } = await import('node:net');
     const port = await new Promise<number>((resolve) => {
       const server = createServer().listen(0, '127.0.0.1', () => {
@@ -141,12 +143,10 @@ describe('forwardOtlpEventsToSpool', () => {
       });
     });
     vi.unstubAllGlobals(); // the real fetch
-    for (const host of ['127.0.0.1', 'localhost']) {
-      readStateMock.mockResolvedValueOnce({ url: `http://${host}:${port}`, gatewayKey: 'gw-key' });
-      const flag = { value: false };
-      await expect(forwardOtlpEventsToSpool([{ type: 'x' }], 'a', { undelivered: flag })).resolves.toBe(false);
-      expect(flag.value, host).toBe(true);
-    }
+    readStateMock.mockResolvedValueOnce({ url: `http://127.0.0.1:${port}`, gatewayKey: 'gw-key' });
+    const flag = { value: false };
+    await expect(forwardOtlpEventsToSpool([{ type: 'x' }], 'a', { undelivered: flag })).resolves.toBe(false);
+    expect(flag.value).toBe(true);
   });
 
   it('aborts and returns false after the fixed 3s timeout', async () => {

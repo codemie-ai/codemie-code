@@ -145,9 +145,10 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       }
 
       // Commit-after-send: a handler with a cursor to protect (parse-state offsets) hands
-      // back `finalize`, which persists its state only when `accepted` is true. This keeps
-      // the whole invocation's events a single all-or-nothing unit: on failure nothing is
-      // committed, so the next hook re-derives and re-sends the same events.
+      // back `finalize`, which persists its state only when `accepted` is true: the spool
+      // took the batch, or it is durably in the owner-pending queue. This keeps the whole
+      // invocation's events a single all-or-nothing unit: on failure nothing is committed,
+      // so the next hook re-derives and re-sends the same events.
       let accepted = false;
       try {
         if (decision.payload.length === 0) {
@@ -182,8 +183,9 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
 
   /**
    * The transport step: one send, one retry when the handler asks for it (same prepared bytes and event IDs). A batch whose
-   * loss would lose the whole session is held for the daemon only when every attempt was certainly not received (refused or
-   * no daemon): one attempt that may have reached it (timeout, reset, error status) means it may already be spooled.
+   * loss would lose the whole session is held for the daemon only when every attempt was certainly not taken (no daemon state,
+   * refused connection, or a 401 answered before any spool): one attempt that may have reached it (timeout, reset, other error
+   * status) means it may already be spooled, so it is neither held nor replayed. A held batch counts as accepted.
    */
   private async deliver(
     forward: OtlpAdapterDeps['forwardOtlpEventsToSpool'],
@@ -316,8 +318,8 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         undelivered: true,
         events,
       });
-      if (ok) logger.warn(`[${this.name}] daemon not reachable; ${events.length} event(s) held until it is up`);
-      else logger.warn(`[${this.name}] daemon not reachable and the ${events.length} event(s) could not be held (queue unavailable or full)`);
+      if (ok) logger.warn(`[${this.name}] daemon did not take the batch (not reachable or not signed in); ${events.length} event(s) held until it is ready`);
+      else logger.warn(`[${this.name}] daemon did not take the batch and the ${events.length} event(s) could not be held (queue unavailable or full)`);
       return ok;
     } catch (error) {
       logger.debug(`[${this.name}] holding undelivered events failed: ${error instanceof Error ? error.name : 'error'}`);

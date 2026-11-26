@@ -182,7 +182,10 @@ async function coldStartOnWorkingDirectoryProfile(port: number, stopOlder: boole
   const cwd = process.cwd();
   let name = 'default';
   try {
-    const config = await loadWorkingDirectoryProfile(cwd);
+    // Same two steps as loadWorkingDirectoryProfile, kept apart so a load failure still names the active profile.
+    const activeProfileName = await ConfigLoader.getActiveProfileName(cwd);
+    if (activeProfileName) name = activeProfileName;
+    const config = await ConfigLoader.load(cwd, activeProfileName ? { name: activeProfileName } : undefined);
     name = config.name ?? name;
 
     // Hooks run on every tracked project; an unconfigured baseUrl must never fail one.

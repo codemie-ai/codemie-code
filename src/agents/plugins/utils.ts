@@ -25,6 +25,8 @@ function isConnectionRefused(err: unknown): boolean {
  * - POSTs { agentName, hookEvents } to /v1/analytics/hooks
  * - Returns true for an empty list or a 2xx response; false for a missing daemon, a thrown
  *   error, an abort, or a non-2xx status
+ * - `opts.undelivered.value` is set when the daemon certainly did not take the batch: no daemon state, a refused
+ *   connection, or a 401. A timeout, a reset or any other status leaves it false (the batch may be spooled).
  * - Fixed 3s abort timeout. Never throws, never affects the hook's exit code.
  */
 export async function forwardOtlpEventsToSpool(
@@ -62,7 +64,7 @@ export async function forwardOtlpEventsToSpool(
       });
       if (!response.ok) {
         logger.debug(`forwardOtlpEventsToSpool: daemon responded ${response.status}`);
-        // 401 is answered before anything is spooled (gateway key, or a daemon still awaiting its login), so nothing was received.
+        // 401 is answered before anything is spooled (gateway key, or a daemon still awaiting its login), so the daemon did not take the batch.
         if (response.status === 401 && opts?.undelivered) opts.undelivered.value = true;
       }
       return response.ok;

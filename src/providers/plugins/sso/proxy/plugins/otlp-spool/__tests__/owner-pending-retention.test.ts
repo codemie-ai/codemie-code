@@ -169,6 +169,18 @@ describe('owner-pending handover keeps the original age as an exact range', () =
     expect((await d.readStatus(SESSION))!.carriedAge!.hooks).toEqual([expect.objectContaining({ since: T0 })]);
   });
 
+  it.each([
+    ['an undelivered start the daemon never took', { undelivered: true as const }, 'daemon_undelivered_expired'],
+    ['an entry held for an unresolved owner', {}, 'owner_unresolved_expired'],
+  ])('expiry names its own loss: %s', async (_name, extra, reason) => {
+    const d = await daemon();
+    await holdAtT0(d, extra);
+    at(DAY + MIN);
+    await d.processPendingOwner(undefined, T0 + DAY + MIN); // no login at all: only the sweep runs
+    expect(await queued()).toBe(0);
+    expect((await d.readStatus(SESSION))!.stampLoss).toMatchObject({ reason, events: 1 });
+  });
+
   it.each(['session hold', 'endpoint mismatch'])('%s: at the carried deadline only the carried hook bytes are dropped; fresh hooks/logs/metrics keep their own windows', async (kind) => {
     const d = await daemon();
     await d.appendSpool(SESSION, 'hooks', rawLine(1), ['A'], { carriedSince: T0 }); // carried; evidence record missing / endpoint wrong
