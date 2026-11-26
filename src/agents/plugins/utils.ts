@@ -4,9 +4,17 @@ import { logger } from '../../utils/logger.js';
 
 const FORWARD_TIMEOUT_MS = 3_000;
 
+/**
+ * fetch reports a refused connection as `TypeError: fetch failed` whose `cause` is the socket error; for a name that resolves to
+ * several addresses (`localhost`) the cause is an `AggregateError` that carries the code itself and lists one error per address.
+ */
 function isConnectionRefused(err: unknown): boolean {
   const code = (error: unknown): unknown => (typeof error === 'object' && error !== null ? Reflect.get(error, 'code') : undefined);
-  return code(err) === 'ECONNREFUSED' || (err instanceof Error && code(err.cause) === 'ECONNREFUSED');
+  if (code(err) === 'ECONNREFUSED') return true;
+  const cause = err instanceof Error ? err.cause : undefined;
+  if (code(cause) === 'ECONNREFUSED') return true;
+  const each = cause instanceof AggregateError ? cause.errors : [];
+  return each.length > 0 && each.every((one) => code(one) === 'ECONNREFUSED');
 }
 
 /**
@@ -54,6 +62,8 @@ export async function forwardOtlpEventsToSpool(
       });
       if (!response.ok) {
         logger.debug(`forwardOtlpEventsToSpool: daemon responded ${response.status}`);
+        // 401 is answered before anything is spooled (gateway key, or a daemon still awaiting its login), so nothing was received.
+        if (response.status === 401 && opts?.undelivered) opts.undelivered.value = true;
       }
       return response.ok;
     } finally {

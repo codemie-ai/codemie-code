@@ -1293,6 +1293,7 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       });
 
       it('holds the exact built batch when the daemon was not reached, accepts it for the cursor, and records the session', async () => {
+        const { credentialFingerprint } = await import('@/providers/core/credential-owner.js');
         unreachable(true);
         await start();
 
@@ -1304,6 +1305,63 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
         expect(entry.events).toEqual(sent); // same bytes: hook-time facts and ids, nothing rebuilt
         expect(entry.fields).not.toHaveProperty('owner_hash');
         expect(readRecords()).toHaveLength(1); // evidence persisted at hook time
+        expect(finalize).toHaveBeenCalledWith(true);
+        // bound to the exact login that stamped the record, and marked so replay lands it behind live hooks of the session
+        const stamping = (await resolveHookCredentialsMock.mock.results[0].value) as import('@/providers/core/types.js').SSOCredentials;
+        expect(entry.fp).toBe(credentialFingerprint(stamping));
+        expect(entry.undelivered).toBe(true);
+        // the options keep the evidence marker the daemon needs and ask the transport to report an unreceived batch
+        expect(forwardToSpool.mock.calls[0][2]).toMatchObject({ evidenceV: 1, undelivered: { value: expect.any(Boolean) } });
+      });
+
+      it('round trip: the daemon replay accepts the held entry for the stamping login, once, with the hook-time batch, and the record is untouched', async () => {
+        unreachable(true);
+        (adapter as HoldAdapter).inputs = { routing: { routed: true, routing_proof: 'proven' }, collection_generation: 0 } as never; // a recorded scope, as Claude Code stamps
+        await start();
+        const sent = forwardToSpool.mock.calls[0][0] as Record<string, unknown>[];
+        const stamping = (await resolveHookCredentialsMock.mock.results[0].value) as import('@/providers/core/types.js').SSOCredentials;
+        const recordsBefore = readRecords();
+        expect(held()).toHaveLength(1);
+
+        const { processPendingOwner } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/owner-pending-replay.js');
+        const { streamFile } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/spool-paths.js');
+        await processPendingOwner(stamping);
+        await processPendingOwner(stamping); // a later tick finds nothing left to replay
+
+        expect(held()).toEqual([]);
+        const lines = readFileSync(streamFile('s1', 'hooks'), 'utf-8').trim().split('\n').map((l) => JSON.parse(l) as { agentName: string; hookEvent: string; evidence_v?: number });
+        const spooled = lines.map((l) => JSON.parse(l.hookEvent) as Record<string, unknown>);
+        expect(lines.every((l) => l.agentName === 'fake' && l.evidence_v === 1)).toBe(true);
+        expect(spooled.map((e) => e['event_id'])).toEqual(sent.map((e) => e['event_id'])); // each id once, in order
+        expect(spooled).toEqual(sent.map((e) => ({ ...e, user_email: 'dev@example.com', developer_name: 'dev@example.com', identity_source: 'jwt' }))); // hook-time facts kept
+        expect(readRecords()).toEqual(recordsBefore); // the session keeps the record its later hooks will find
+      });
+
+      it('names the event identity from the login the record was stamped with, resolving the login once', async () => {
+        resolveHookCredentialsMock.mockClear();
+        await start();
+        expect(resolveHookCredentialsMock).toHaveBeenCalledTimes(1);
+      });
+
+      it('an earlier attempt that may have been received keeps the batch out of the queue even when the retry is refused', async () => {
+        const calls: boolean[] = [false, true]; // first: timeout (may have been spooled), then the daemon refuses
+        forwardToSpool.mockImplementation((async (_e: unknown, _n: string, opts?: { undelivered?: { value: boolean } }) => {
+          if (opts?.undelivered) opts.undelivered.value = calls.shift() ?? true;
+          return false;
+        }) as never);
+        (adapter as FakeAdapter).evaluate = async () => ({ decision: 'forward', payload: [{ session_id: 's1', type: 'a' }], retryOnce: true, finalize });
+        await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
+        expect(forwardToSpool).toHaveBeenCalledTimes(2);
+        expect(held()).toEqual([]);
+        expect(finalize).toHaveBeenCalledWith(false);
+      });
+
+      it('holds once when every attempt was refused', async () => {
+        unreachable(true);
+        (adapter as FakeAdapter).evaluate = async () => ({ decision: 'forward', payload: [{ session_id: 's1', type: 'a' }], retryOnce: true, finalize });
+        await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
+        expect(forwardToSpool).toHaveBeenCalledTimes(2);
+        expect(held()).toHaveLength(1);
         expect(finalize).toHaveBeenCalledWith(true);
       });
 

@@ -9,6 +9,7 @@ import { resolveBranchStory } from './story-resolver.js';
 import { stampEvidence, type EvidenceInputs } from './evidence/stamp.js';
 import { frozenProfileOf, type EvidenceRecord } from './evidence/record-store.js';
 import { enqueuePendingOwner, type PendingFields } from './evidence/owner-pending.js';
+import type { SSOCredentials } from '@/providers/core/types.js';
 
 export type ForwardDecision<TBlockOutput = Record<string, unknown>> =
   | {
@@ -156,24 +157,13 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
 
         const context = await this.extractHookContext(hookInput);
         const batch = await this.prepareForward(context, decision, hookInput);
-        const hold = batch.stamped && this.holdsUntilDelivered(hookInput) ? batch.stamped : undefined;
-        const undelivered = { value: false };
-        const options = hold ? { ...batch.options, undelivered } : batch.options;
-        const args: Parameters<OtlpAdapterDeps['forwardOtlpEventsToSpool']> = options
-          ? [batch.events, this.name, options]
-          : [batch.events, this.name];
-        // One transport call site; retries reuse the same prepared bytes and event IDs.
-        const send = (): Promise<boolean> => forwardOtlpEventsToSpool(...args);
         if (batch.pendingStored) {
           accepted = true; // durable: finalize commits any source cursor, a retry would only duplicate
         } else if (batch.failure) {
           // Loss reporting is best-effort and never acknowledges source data.
-          if (batch.options?.evidenceLoss) await send().catch(() => false);
+          if (batch.options?.evidenceLoss) await forwardOtlpEventsToSpool(batch.events, this.name, batch.options).catch(() => false);
         } else {
-          accepted = await send();
-          if (!accepted && decision.retryOnce) accepted = await send();
-          // The daemon was certainly not reached: keep these exact events for the daemon to spool once it is up.
-          if (!accepted && hold && undelivered.value) accepted = await this.holdUndelivered(context, batch.events, hold);
+          accepted = await this.deliver(forwardOtlpEventsToSpool, context, batch, decision.retryOnce === true, hookInput);
         }
         if (!accepted && this.requiresSpoolAcceptance(hookInput)) {
           throw new AnalyticsSourceError(batch.failure ?? 'Local analytics spool did not accept the hook event batch');
@@ -190,6 +180,34 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     }
   }
 
+  /**
+   * The transport step: one send, one retry when the handler asks for it (same prepared bytes and event IDs). A batch whose
+   * loss would lose the whole session is held for the daemon only when every attempt was certainly not received (refused or
+   * no daemon): one attempt that may have reached it (timeout, reset, error status) means it may already be spooled.
+   */
+  private async deliver(
+    forward: OtlpAdapterDeps['forwardOtlpEventsToSpool'],
+    context: OtlpHookContext,
+    batch: PreparedForward,
+    retryOnce: boolean,
+    hookInput: TInput
+  ): Promise<boolean> {
+    const hold = batch.stamped && this.holdsUntilDelivered(hookInput) ? batch.stamped : undefined;
+    const undelivered = { value: false };
+    const options = hold ? { ...batch.options, undelivered } : batch.options;
+    let maybeReceived = false;
+    const send = async (): Promise<boolean> => {
+      undelivered.value = false;
+      const ok = await (options ? forward(batch.events, this.name, options) : forward(batch.events, this.name));
+      if (!ok && !undelivered.value) maybeReceived = true;
+      return ok;
+    };
+    let accepted = await send();
+    if (!accepted && retryOnce) accepted = await send();
+    if (!accepted && hold && !maybeReceived) accepted = await this.holdUndelivered(context, batch.events, hold);
+    return accepted;
+  }
+
   /** Prepare data or a loss report before the single transport step; no source cursor is committed here. */
   private async prepareForward(
     context: OtlpHookContext,
@@ -198,6 +216,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   ): Promise<PreparedForward> {
     let record: EvidenceRecord | undefined;
     let stamped: PreparedForward['stamped'];
+    let stampedCredentials: SSOCredentials | undefined;
     if (context.evidenceInputs) {
       const stamp = await stampEvidence(context, context.evidenceInputs, this.projectPolicy);
       if (!stamp.ok) {
@@ -215,11 +234,12 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         };
       }
       record = stamp.record;
-    stamped = { record: stamp.record, fp: stamp.fp };
+      stamped = { record: stamp.record, fp: stamp.fp };
+      stampedCredentials = stamp.credentials;
       if ((await this.recordGate(context, record)) === 'stop') return { events: [], failure: 'Session scope check stopped publication; hook event not enqueued' };
     }
     const [commonFields, agentFields] = await Promise.all([
-      this.resolveCommonFields(context, record),
+      this.resolveCommonFields(context, record, stampedCredentials),
       this.resolveAgentFields(hookInput),
     ]);
     const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(), commonFields, agentFields };
@@ -291,11 +311,14 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         fields: held,
         cwd: context.cwd,
         project_at_cwd: await resolveProjectAtCwd(context.cwd, held.profile, this.projectPolicy),
+        undelivered: true,
         events,
       });
       if (ok) logger.warn(`[${this.name}] daemon not reachable; ${events.length} event(s) held until it is up`);
+      else logger.warn(`[${this.name}] daemon not reachable and the ${events.length} event(s) could not be held (queue unavailable or full)`);
       return ok;
-    } catch {
+    } catch (error) {
+      logger.debug(`[${this.name}] holding undelivered events failed: ${error instanceof Error ? error.name : 'error'}`);
       return false;
     }
   }
@@ -439,10 +462,10 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     return hookTime.toISOString();
   }
 
-  private async resolveCommonFields(context: OtlpHookContext, record?: EvidenceRecord): Promise<CommonFields> {
+  private async resolveCommonFields(context: OtlpHookContext, record?: EvidenceRecord, stampedCredentials?: SSOCredentials): Promise<CommonFields> {
     const [repoFields, identityFields] = await Promise.all([
       resolveRepoFields(context),
-      resolveIdentityFields(context, record, this.projectPolicy),
+      resolveIdentityFields(context, record, this.projectPolicy, stampedCredentials),
     ]);
     return { ...repoFields, ...identityFields };
   }

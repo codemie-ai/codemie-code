@@ -6,7 +6,8 @@ const readRecordMock = vi.fn();
 const coldStartProfileMock = vi.fn();
 
 vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({ readState: readStateMock, readConnectionRecord: readRecordMock }));
-vi.mock('@/cli/commands/proxy/otlp-cold-start.js', () => ({ resolveColdStartProfile: coldStartProfileMock }));
+const workingDirProfileMock = vi.fn();
+vi.mock('@/cli/commands/proxy/otlp-cold-start.js', () => ({ resolveColdStartProfile: coldStartProfileMock, loadWorkingDirectoryProfile: workingDirProfileMock }));
 vi.mock('@/providers/plugins/sso/sso.auth.js', () => ({
   CodeMieSSO: class {
     getStoredCredentials = getStoredCredentialsMock;
@@ -64,6 +65,25 @@ describe('resolveHookCredentials', () => {
 
     await expect(resolveHookCredentials({ recordedProfile: true })).resolves.toMatchObject({ apiUrl: 'https://sync' });
     expect(coldStartProfileMock).toHaveBeenCalledWith('work');
+  });
+
+  it('with no daemon state and no connection record, names the login of the working directory profile the cold start would start on', async () => {
+    readStateMock.mockResolvedValue(null);
+    readRecordMock.mockResolvedValue(null);
+    workingDirProfileMock.mockResolvedValue({ name: 'work', codeMieUrl: 'https://sync', baseUrl: 'https://target' });
+    getStoredCredentialsMock.mockImplementation(async (url: string) => creds(url));
+
+    await expect(resolveHookCredentials({ recordedProfile: true })).resolves.toMatchObject({ apiUrl: 'https://sync' });
+    expect(coldStartProfileMock).not.toHaveBeenCalled();
+  });
+
+  it('with no connection record, a working directory profile without a baseUrl (no daemon would start) gives no credentials', async () => {
+    readStateMock.mockResolvedValue(null);
+    workingDirProfileMock.mockResolvedValue({ name: 'default', codeMieUrl: 'https://sync', baseUrl: ' ' });
+    getStoredCredentialsMock.mockImplementation(async (url: string) => creds(url));
+
+    await expect(resolveHookCredentials({ recordedProfile: true })).resolves.toBeNull();
+    expect(getStoredCredentialsMock).not.toHaveBeenCalled();
   });
 
   it('a sibling hook (no recordedProfile) never reads the recorded profile without daemon state', async () => {

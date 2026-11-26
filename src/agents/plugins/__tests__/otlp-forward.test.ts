@@ -111,6 +111,44 @@ describe('forwardOtlpEventsToSpool', () => {
     expect([noState.value, refused.value, reset.value, rejected.value, aborted.value]).toEqual([true, true, false, false, false]);
   });
 
+  it('EPMCDME-17854: a 401 (gateway key, or a daemon awaiting its login) is answered before anything is spooled, so the batch was not received', async () => {
+    const rejected = { value: false };
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 401 }));
+    await expect(forwardOtlpEventsToSpool([{ type: 'x' }], 'a', { undelivered: rejected })).resolves.toBe(false);
+    expect(rejected.value).toBe(true);
+  });
+
+  it('EPMCDME-17854: refusals of every address of a multi-address host count as refused; a mixed outcome does not', async () => {
+    const refusedAt = (code: string) => Object.assign(new Error('connect'), { code });
+    const aggregate = (errors: Error[], code?: string) => Object.assign(new AggregateError(errors, 'all failed'), code ? { code } : {});
+    const run = async (cause: Error): Promise<boolean> => {
+      const flag = { value: false };
+      fetchMock.mockRejectedValueOnce(Object.assign(new TypeError('fetch failed'), { cause }));
+      await forwardOtlpEventsToSpool([{ type: 'x' }], 'a', { undelivered: flag });
+      return flag.value;
+    };
+    expect(await run(aggregate([refusedAt('ECONNREFUSED'), refusedAt('ECONNREFUSED')], 'ECONNREFUSED'))).toBe(true); // Node 24 shape
+    expect(await run(aggregate([refusedAt('ECONNREFUSED'), refusedAt('ECONNREFUSED')]))).toBe(true); // code only on the members
+    expect(await run(aggregate([refusedAt('ECONNREFUSED'), refusedAt('ETIMEDOUT')]))).toBe(false);
+  });
+
+  it('EPMCDME-17854: the error real fetch raises for a closed local port is recognised as refused (127.0.0.1 and localhost)', async () => {
+    const { createServer } = await import('node:net');
+    const port = await new Promise<number>((resolve) => {
+      const server = createServer().listen(0, '127.0.0.1', () => {
+        const { port: free } = server.address() as { port: number };
+        server.close(() => resolve(free)); // closed again: nothing listens
+      });
+    });
+    vi.unstubAllGlobals(); // the real fetch
+    for (const host of ['127.0.0.1', 'localhost']) {
+      readStateMock.mockResolvedValueOnce({ url: `http://${host}:${port}`, gatewayKey: 'gw-key' });
+      const flag = { value: false };
+      await expect(forwardOtlpEventsToSpool([{ type: 'x' }], 'a', { undelivered: flag })).resolves.toBe(false);
+      expect(flag.value, host).toBe(true);
+    }
+  });
+
   it('aborts and returns false after the fixed 3s timeout', async () => {
     vi.useFakeTimers();
     fetchMock.mockImplementation((_url: string, init: RequestInit) => {

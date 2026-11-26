@@ -38,12 +38,17 @@ export async function resolveHookCredentials(opts: { recordedProfile?: boolean }
   }
 }
 
-/** The URLs the daemon of the recorded profile starts with (`config.codeMieUrl` for sync, `config.baseUrl` for the target). */
+/**
+ * The URLs the daemon of the profile the hook cold start uses starts with (`config.codeMieUrl` for sync, `config.baseUrl`
+ * for the target): the recorded profile, or with no connection record the working directory's profile, as the cold start does.
+ */
 async function urlsOfRecordedProfile(): Promise<{ syncCodeMieUrl?: string; targetUrl?: string } | null> {
   const record = await readConnectionRecord();
-  if (!record) return null;
   // Lazy: the cold start pulls in the whole connect machinery, which ordinary hooks never need.
-  const { resolveColdStartProfile } = await import('@/cli/commands/proxy/otlp-cold-start.js');
-  const { config } = await resolveColdStartProfile(record.profile);
-  return config ? { syncCodeMieUrl: config.codeMieUrl, targetUrl: config.baseUrl } : null;
+  const coldStart = await import('@/cli/commands/proxy/otlp-cold-start.js');
+  const config = record
+    ? (await coldStart.resolveColdStartProfile(record.profile)).config
+    : await coldStart.loadWorkingDirectoryProfile();
+  // A blank baseUrl starts no daemon, so there is no login to name.
+  return config?.baseUrl?.trim() ? { syncCodeMieUrl: config.codeMieUrl, targetUrl: config.baseUrl } : null;
 }
