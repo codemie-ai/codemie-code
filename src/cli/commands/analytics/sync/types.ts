@@ -32,6 +32,8 @@ export interface SyncSettings {
   includeExternal: IncludeExternalPolicy;
   at: string;
   lookbackDays?: number;
+  /** Full scheduler task name, stored only when it differs from the platform default. */
+  taskName?: string;
 }
 
 /** Raw flags accepted by `codemie analytics sync install`. */
@@ -46,6 +48,10 @@ export interface InstallOptions {
   at?: string;
   lookbackDays?: string;
   includeExternal?: string;
+  /** `--task-name`: full scheduler task name, used as-is on every platform. */
+  taskName?: string;
+  /** `--force`: overwrite an existing scheduler task that this tool does not own. */
+  force?: boolean;
 }
 
 export type SyncStatus = 'ok' | 'skip' | 'fail';

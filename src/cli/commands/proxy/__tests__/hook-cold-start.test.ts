@@ -161,4 +161,27 @@ describe('ensureOtlpProxy reaching spawnDaemon', () => {
     expect(record).not.toHaveProperty('clientType');
     expect(record).not.toHaveProperty('telemetryMode');
   });
+
+  it('looks up the credentials of the profile provider, not a hard-coded one', async () => {
+    const { ensureOtlpProxy } = await import('../otlp-cold-start.js');
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { getStoredPlatformCredentials } = await import('../../../../providers/core/codemie-auth-helpers.js');
+    const { logger } = await import('../../../../utils/logger.js');
+    // An unstubbed logger opens a log file under the temporary home; Windows cannot delete it while open.
+    for (const method of ['debug', 'status', 'warn', 'success', 'info'] as const) {
+      vi.spyOn(logger, method).mockImplementation(() => undefined);
+    }
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'work',
+      provider: 'custom-sso',
+      baseUrl: 'https://x.example.com/api',
+      codeMieUrl: 'https://x.example.com',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+
+    await ensureOtlpProxy(AGENT);
+
+    expect(getStoredPlatformCredentials).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'custom-sso' })
+    );
+  });
 });

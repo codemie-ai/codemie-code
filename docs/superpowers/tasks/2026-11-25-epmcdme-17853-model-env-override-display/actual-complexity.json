@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "generated": "2026-11-25T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 22,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 17,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Five areas touched: the ConfigLoader service (src/utils/config.ts records which keys .env added; src/env/types.ts), a new shared model-origin module (src/utils/model-origin.ts: origin tracking plus describeModel display text), the agent launch core (AgentCLI exports CODEMIE_MODEL_ENV_ORIGIN / CODEMIE_PROFILE_MODEL; BaseAgentAdapter renders the banner for every agent), the copilot-cli plugin and its bin/codemie-copilot.js launcher (saved --model pick), and the profile status CLI command (profile/index.ts, display.ts). Base L for 4+ components across layers with a new shared abstraction, bumped to XL because it touches core shared utilities."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Diffstat reports 17 files changed (1051 insertions, 256 deletions), which is the 16+ XXL band. About 5 are new (model-origin.ts and its test, copilot-cli.saved-model.ts and its test, model-override-parity.test.ts) and about 12 are modified, across src/utils, src/env, src/agents/core, src/agents/plugins/copilot-cli, src/cli/commands/profile, bin and .ai-run/guides. 7 of the 17 are test files and 1 is a guide, so the XXL score overstates the amount of production code."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "Second-highest group (M, tied with technical_risk and affected_layers). The goal (show the effective model and what it overrides) is clear, but the diff shows design decisions settled during the work: three origins (shell / dotenv / saved), treating a .env value as dotenv only while process.env still holds it, matching Windows env keys case-insensitively, and marking an override only when the model differs from the profile model."
+    },
+    {
+      "dimension": "calibration",
+      "reason": "Agrees with the nearest project example, l/profile-provider-decoupling (total 23, L), which has the same shape: an XL component scope across config, CLI and agent areas, and an XXL file count. This change scores lower on risk and layers because it has no persistence or data migration."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L to XL: touches core shared utilities (ConfigLoader in src/utils/config.ts, and BaseAgentAdapter's launch banner shared by all agents). The 'affects multiple workflows or agents' flag lands on the same BaseAgentAdapter change, so it was not counted twice."
+  ],
+  "split_recommendation": null
+}

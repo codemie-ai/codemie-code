@@ -10,7 +10,7 @@ How the `codemie proxy` and `codemie analytics` commands fit together, which one
 | Diagnosis | `codemie proxy doctor [--verbose] [--json]`, `codemie proxy clients [--json]` | `doctor` names what is wrong and the command that fixes it. `clients` lists every client and analytics connector: connected or not, config location, scope, and for an analytics client that is not connected the command that connects it. |
 | Clients | `codemie proxy connect --<target>`, `codemie proxy disconnect --<target>\|--all` | Point an application at the proxy (`--claude-desktop`, `--vscode`, `--vscode-claude-code`, `--codex-desktop`, `--omp`) or turn analytics on for every client of a vendor (`--claude-otlp`, `--copilot-otlp`). |
 | Collection controls | `codemie proxy analytics enable`, `disable`, `include`, `exclude`, `status` | Turn collection on or off everywhere (`enable`/`disable`) or for the current project (`include`/`exclude`) while the hooks stay installed. |
-| Consent | `codemie proxy analytics consent grant`, `revoke`, `list` | Allow or stop collection from work folders that are not part of a CodeMie project. |
+| Consent | `codemie proxy analytics consent grant`, `revoke`, `list`; `codemie proxy analytics resend` | Allow or stop collection from work folders that are not part of a CodeMie project. `resend` sends what was held before the consent was granted. |
 | Reports | `codemie analytics [--export] [-o] [--open] [--include-external <windows\|always\|never>]` | Read your own usage: sessions, tokens, cost, tools. |
 | Team sync | `codemie analytics sync bootstrap`, `install`, `status`, `run`, `uninstall` | Deliver this machine's reports one way to a team webhook and/or git repository on a daily schedule. |
 
@@ -75,10 +75,16 @@ Both scopes write the same file, your user-level `~/.claude/settings.json`; no r
 ### Grant work-folder consent
 
 ```bash
-codemie proxy analytics consent grant      # allow collection from the current folder
-codemie proxy analytics consent list       # review granted folders
-codemie proxy analytics consent revoke     # withdraw it
+codemie proxy analytics consent grant          # allow collection from the current repository
+codemie proxy analytics consent grant --all    # allow it in any repository
+codemie proxy analytics consent list           # review what is granted
+codemie proxy analytics consent revoke [--all] # withdraw it (--all: the any-repository consent only)
+codemie proxy analytics resend                 # send sessions held before the consent was granted
 ```
+
+`codemie proxy connect --claude-otlp --include-personal-subscriptions` records the consent while connecting: for this repository with `--scope project`, for any repository with `--scope user` (the default). Without the flag an interactive connect asks `Include analytics from personal Claude subscriptions in this repository?` (or `... in any repository?`) after `Enable Claude Code analytics?` is confirmed; `Decline` prints the command to enable it later. Answering yes records the consent right away, so no separate `consent grant` is needed afterwards. `proxy doctor` shows an `On hold:` / `Fix:` pair under `Unsent data` for sessions waiting for consent.
+
+A consent applies to sessions that start after it. Sessions already held for lack of consent are sent once you run `codemie proxy analytics resend`. It releases every held session of the signed-in account that a consent now covers: a folder consent for the folder the session started in or a parent of it, or `--all`. The proxy then sends their queued data on its next pass. Only the folder a session started in is checked: if the session also worked in other folders of the same project before `resend`, that data is sent too. Sessions recorded by an earlier version are covered only by `--all`. Held data is kept for 24 hours (`OTLP_HELD_RETENTION_MINUTES`); after that it is dropped and cannot be resent.
 
 ### Disconnect everything
 

@@ -20,13 +20,21 @@ import type { ConnectTargets, TargetResult } from './connect-orchestrator.js';
 const ANALYTICS_TARGET_FLAGS = ANALYTICS_AGGREGATES.map((aggregate) => aggregate.flag).join(' / ');
 
 /** `--scope` and `--yes` apply only to analytics connector targets: say so when neither is selected. */
-export function warnIgnoredAnalyticsFlags(targets: ConnectTargets, scope: AllowlistScope | undefined, yes: boolean): void {
+export function warnIgnoredAnalyticsFlags(
+  targets: ConnectTargets,
+  scope: AllowlistScope | undefined,
+  yes: boolean,
+  includePersonalSubscriptions = false,
+): void {
   const hasAnalyticsTarget = Boolean(targets.claudeCodeOtlp || targets.copilotChatOtlp || targets.copilotCliOtlp);
   if (scope && !hasAnalyticsTarget) {
     console.log(chalk.yellow(`Note: --scope has no effect without an analytics connector target (${ANALYTICS_TARGET_FLAGS}).`));
   }
   if (yes && !hasAnalyticsTarget) {
     console.log(chalk.yellow(`Note: --yes has no effect without an analytics connector target (${ANALYTICS_TARGET_FLAGS}).`));
+  }
+  if (includePersonalSubscriptions && !targets.claudeCodeOtlp) {
+    console.log(chalk.yellow('Note: --include-personal-subscriptions has no effect without --claude-otlp.'));
   }
 }
 

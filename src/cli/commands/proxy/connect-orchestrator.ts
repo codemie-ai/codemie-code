@@ -8,6 +8,7 @@
  */
 import chalk from 'chalk';
 import { ConfigLoader } from '../../../utils/config.js';
+import { resolveLoginUrl, resolveProfileCodeMieUrl } from '../../../providers/core/login-url.js';
 import { ProviderRegistry } from '../../../providers/index.js';
 import { displaySetupInstructions } from '../../../providers/integration/setup-ui.js';
 import {
@@ -61,7 +62,8 @@ import {
   selectCodexModel,
   writeCodexDesktopConfig,
 } from './connectors/codex-desktop.js';
-import { confirmClaudeCodeOtlp, runClaudeCodeOtlp, type ClaudeCodeOtlpDisplay } from './claude-code-otlp-flow.js';
+import { confirmClaudeCodeOtlp, runClaudeCodeOtlp, type ClaudeCodeOtlpAgreement, type ClaudeCodeOtlpDisplay } from './claude-code-otlp-flow.js';
+import { printEnableLaterHint, recordConnectConsent } from './connect-consent.js';
 import { writeCopilotChatOtlpConfig } from './connectors/copilot-chat-otlp.js';
 import { writeCopilotCliOtlpConfig } from './connectors/copilot-cli-otlp.js';
 import { isOmpExtensionInstalled, writeOmpExtension } from './connectors/omp.js';
@@ -146,6 +148,11 @@ export interface ConnectOptions {
    * non-interactive success path for the Claude Code analytics target.
    */
   yes?: boolean;
+  /**
+   * `--include-personal-subscriptions`: with Claude Code analytics, also record work consent (this repository for
+   * `--scope project`, every folder for `user`), so personal-subscription sessions are sent too.
+   */
+  includePersonalSubscriptions?: boolean;
   /** The analytics aggregates given; absent is none. */
   aggregates?: readonly AggregateId[];
   /**
@@ -411,14 +418,17 @@ export async function resolveSsoProxyConfig(
 export async function assertSsoCredentials(
   baseUrl: string,
   profileName: string,
-  codeMieUrl?: string
+  codeMieUrl?: string,
+  provider?: string
 ): Promise<void> {
   let loginUrl: string | null = null;
   try {
     const { getStoredPlatformCredentials } = await import('../../../providers/core/codemie-auth-helpers.js');
-    const creds = await getStoredPlatformCredentials({ provider: 'ai-run-sso', baseUrl, codeMieUrl });
+    const creds = await getStoredPlatformCredentials({ provider: provider ?? 'ai-run-sso', baseUrl, codeMieUrl });
     if (!creds) {
-      loginUrl = resolveProfileCodeMieUrl(baseUrl, codeMieUrl);
+      // Bare `profile login` targets the active profile; any other profile needs its own host.
+      const activeProfileName = await resolveActiveProfileName();
+      loginUrl = activeProfileName === profileName ? '' : ` --url ${resolveLoginUrl(baseUrl, codeMieUrl)}`;
     }
   } catch (err) {
     throw new ConfigurationError(`Failed to verify credentials: ${(err as Error).message}`);
@@ -426,8 +436,8 @@ export async function assertSsoCredentials(
   // Thrown outside the try so the missing-login error is never re-wrapped.
   if (loginUrl !== null) {
     throw new ConfigurationError(
-      `No SSO credentials found for profile '${profileName}'.\n` +
-      `  ${renderHint({ reason: 'Sign in first', command: `codemie profile login --url ${loginUrl}` })}`
+      `No active CodeMie session for profile '${profileName}'.\n` +
+      `  ${renderHint({ reason: 'Sign in first', command: `codemie profile login${loginUrl}` })}`
     );
   }
 }
@@ -437,10 +447,11 @@ export async function verifySsoCredentials(
   baseUrl: string,
   profileName: string,
   codeMieUrl?: string,
+  provider?: string,
   beforeExit?: () => void
 ): Promise<void> {
   try {
-    await assertSsoCredentials(baseUrl, profileName, codeMieUrl);
+    await assertSsoCredentials(baseUrl, profileName, codeMieUrl, provider);
   } catch (err) {
     beforeExit?.();
     const [firstLine, ...rest] = (err as Error).message.split('\n');
@@ -452,12 +463,12 @@ export async function verifySsoCredentials(
   }
 }
 
-function resolveProfileCodeMieUrl(baseUrl: string, codeMieUrl?: string): string {
-  const profileOrigin = new URL(baseUrl).origin;
-  if (codeMieUrl && new URL(codeMieUrl).origin === profileOrigin) {
-    return codeMieUrl;
+async function resolveActiveProfileName(): Promise<string | null> {
+  try {
+    return await ConfigLoader.getActiveProfileName(process.cwd());
+  } catch {
+    return null;
   }
-  return profileOrigin;
 }
 
 export function printProxyError(error: unknown, label: string): never {
@@ -1159,7 +1170,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     console.log(chalk.yellow('Note: --model has no effect without --codex-desktop.'));
   }
 
-  warnIgnoredAnalyticsFlags(targets, opts.scope, Boolean(opts.yes));
+  warnIgnoredAnalyticsFlags(targets, opts.scope, Boolean(opts.yes), Boolean(opts.includePersonalSubscriptions));
   // Coalesced only after the ignored-flag checks above, which need to see an omitted --scope.
   const scope: AllowlistScope = opts.scope ?? 'user';
 
@@ -1186,6 +1197,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   let config: Awaited<ReturnType<typeof ConfigLoader.load>>;
   let profile: string;
   let otlpDisplay: ClaudeCodeOtlpDisplay | undefined;
+  let agreement: ClaudeCodeOtlpAgreement | undefined;
   let projectBinding: ProjectBindingState | undefined;
   let settingsSwitch: ProviderSettingsSwitch | null = null;
   let scopeBaselines: ScopeBaselines;
@@ -1249,6 +1261,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       config.baseUrl,
       profile,
       config.codeMieUrl,
+      config.provider,
       () => printFailures(results)
     );
 
@@ -1263,6 +1276,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
         Boolean(opts.overwrite),
         Boolean(opts.yes),
         otlpDisplay,
+        Boolean(opts.includePersonalSubscriptions),
       ).catch((error: unknown) => failAggregateInvalidProjectList(error, members, results, () => {
         // The list is checked before the prompt opens, so the prompt never named the profile.
         if (confirmationWillBeShown) printProfileLine();
@@ -1270,6 +1284,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       // `false` is a decline or a cancelled prompt; a falsy `undefined` is the analytics failing on its own (an invalid
       // project list), which leaves the other clients to be configured.
       const declined = confirmed === false;
+      if (confirmed) agreement = confirmed;
       // The prompt printed the profile line; the route lines come after it. A declined run turns no analytics on and
       // routes nothing the aggregate set, so its skip and hint lines would describe something that does not happen.
       if (!declined) printClaudeRoutePlan(routePlan);
@@ -1367,6 +1382,11 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     const r = await runIfScopeUnchanged(target, scopeBaselines, analyticsWriters[target.key]);
     results.push(r);
     memberOk.set(target.key, r.ok);
+    // The consent is recorded only once Claude Code settings are written; a denied question leaves the way to grant it later.
+    if (target.key === 'claudeCodeOtlp' && r.ok && agreement) {
+      if (agreement.workConsent) results.push(await recordConnectConsent(scope));
+      else if (agreement.deniedQuestion) printEnableLaterHint(scope);
+    }
   }
   for (const member of notFound) {
     if (memberOk.get(member)) console.log(chalk.yellow(notInstalledLine(member)));

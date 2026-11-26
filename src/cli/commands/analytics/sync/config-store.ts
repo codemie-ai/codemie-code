@@ -17,6 +17,7 @@ import { SyncConfigError } from '@/utils/errors.js';
 import { writePrivateJson, writePrivateText } from './private-file.js';
 import { decodeWebhook } from './webhook-encoding.js';
 import { redactSecrets } from './redact.js';
+import { validateSchedulerName } from './scheduler/generators.js';
 import type { GitSettings, IncludeExternalPolicy, InstallOptions, SyncSettings } from './types.js';
 
 export const DEFAULT_LOOKBACK_DAYS = 7;
@@ -295,6 +296,7 @@ export function validateInstallOptions(options: InstallOptions): SyncSettings {
   const at = validateAt(options.at);
   const includeExternal = validateIncludeExternal(options.includeExternal);
   const lookbackDays = validateLookbackDays(options.lookbackDays);
+  const taskName = options.taskName === undefined ? undefined : validateSchedulerName(options.taskName.trim());
 
   return {
     ...(webhookUrl !== undefined && { webhookUrl }),
@@ -302,7 +304,8 @@ export function validateInstallOptions(options: InstallOptions): SyncSettings {
     format,
     includeExternal,
     at,
-    ...(lookbackDays !== undefined && { lookbackDays })
+    ...(lookbackDays !== undefined && { lookbackDays }),
+    ...(taskName !== undefined && { taskName })
   };
 }
 
@@ -384,6 +387,15 @@ export async function loadSyncSettings(path: string = getSyncSettingsPath()): Pr
 
   if (typeof stored.lookbackDays === 'number') {
     settings.lookbackDays = stored.lookbackDays;
+  }
+
+  if (stored.taskName !== undefined) {
+    try {
+      settings.taskName = validateSchedulerName(stored.taskName);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new SyncConfigError(`Sync settings at ${path} has an invalid taskName: ${reason}`);
+    }
   }
 
   return settings;
