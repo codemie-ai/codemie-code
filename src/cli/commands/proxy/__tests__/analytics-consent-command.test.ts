@@ -66,6 +66,18 @@ describe('consent grant / revoke / list actions', () => {
     expect(process.exitCode).toBe(0);
   });
 
+  // @case add-codemie-proxy-analytics-resend_TC_008
+  it("names resend in its own success output, in proxy doctor's no-consent fix text, and in its related-command list", async () => {
+    await run(['consent', 'grant', work, '--project', 'Proj-A', '--yes']);
+    expect(said(out)).toContain('Sessions already held for lack of consent: codemie proxy analytics resend');
+
+    const { HOLD_REASONS } = await import('../doctor/delivery-sections.js');
+    expect(HOLD_REASONS.work_consent_required.fix).toContain('codemie proxy analytics resend');
+
+    const { RELATED } = await import('@/cli/related-commands.js');
+    expect(RELATED['proxy analytics consent grant'].related.map((r) => r.path)).toContain('codemie proxy analytics resend');
+  });
+
   it('a project name the raw header cannot carry is refused with an explanation before any consent is saved', async () => {
     await run(['consent', 'grant', work, '--project', 'Проект', '--yes']);
     expect(process.exitCode).toBe(1);
