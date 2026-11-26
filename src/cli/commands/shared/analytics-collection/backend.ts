@@ -12,7 +12,7 @@ import type { AnalyticsCollection } from './types.js';
 
 /**
  * The backend mode's collection: hooks under `BackendPolicy`, the OTLP proxy as the launcher, the report as the
- * export source, no install steps of its own, and the proxy's own doctor, start and restart.
+ * export source, no install steps and no removal of its own, and the proxy's own doctor, start and restart.
  */
 export function backendCollection(): AnalyticsCollection {
   return {
@@ -24,7 +24,10 @@ export function backendCollection(): AnalyticsCollection {
       settingsExtras: () => ({}),
       conclude: () => ({ summary: [] }),
     },
-    teardown: (removeInstall) => removeInstall(),
+    teardown: async (removeInstall) => {
+      await removeInstall();
+      return false;
+    },
     statusLines: () => [],
     doctor: backendDoctorPlan,
     guardProxyCommand: () => undefined,

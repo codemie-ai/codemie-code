@@ -46,7 +46,10 @@ function makeDeps(overrides: Partial<UninstallDeps> = {}): Harness {
     print: (line: string): void => {
       printed.push(line);
     },
-    teardown: (removeInstall) => removeInstall(),
+    teardown: async (removeInstall) => {
+      await removeInstall();
+      return false;
+    },
     ...overrides,
   };
 
@@ -177,6 +180,7 @@ describe('runUninstall — the mode\'s teardown', () => {
         expect(deleteSettings).not.toHaveBeenCalled();
         await removeInstall();
         events.push('teardown: after');
+        return false;
       },
     });
     unregister.mockImplementation(async () => {
@@ -192,6 +196,27 @@ describe('runUninstall — the mode\'s teardown', () => {
 
     expect(code).toBe(0);
     expect(events).toEqual(['teardown: before', 'unregister', 'delete settings', 'teardown: after']);
+  });
+
+  it.each([
+    [true, false, ['Analytics sync uninstalled.', '  The last-sent markers (webhook and git) and the run log were kept.']],
+    [false, false, ['Nothing to remove: analytics sync is not installed.']],
+    [true, true, ['Analytics sync uninstalled.', '  The OS job and the sync settings were removed.', '  The last-sent markers (webhook and git) and the run log were kept.']],
+  ])('a teardown that took something away: %s, a job: %s, no settings and no working copy → its lines', async (tookAway, job, lines) => {
+    const { deps, printed } = makeDeps({
+      schedulerFor: () => schedulerReturning(job),
+      deleteSettings: vi.fn(async () => false),
+      removeWorkingCopy: vi.fn(async () => false),
+      teardown: async (removeInstall) => {
+        await removeInstall();
+        return tookAway;
+      },
+    });
+
+    const code = await runUninstall(deps);
+
+    expect(code).toBe(0);
+    expect(printed).toEqual(lines);
   });
 
   it('a teardown that throws before the removal exits 1 and leaves the job and the settings', async () => {

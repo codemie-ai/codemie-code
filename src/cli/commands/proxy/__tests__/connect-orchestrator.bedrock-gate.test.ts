@@ -59,6 +59,16 @@ vi.mock('../connectors/vscode.js', async (importOriginal) => ({
   writeVsCodeLanguageModelsConfig: vi.fn(),
 }));
 vi.mock('../connectors/omp.js', () => ({ writeOmpExtension: vi.fn() }));
+vi.mock('../connectors/copilot-chat-otlp.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../connectors/copilot-chat-otlp.js')>()),
+  writeCopilotChatOtlpConfig: vi.fn().mockResolvedValue({
+    settingsPath: '/mock/vscode/settings.json', hookFilePath: '/mock/vscode/hooks.json', hookEvents: 8, allowlist: [],
+  }),
+}));
+vi.mock('../connectors/copilot-cli-otlp.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../connectors/copilot-cli-otlp.js')>()),
+  writeCopilotCliOtlpConfig: vi.fn().mockResolvedValue({ hookFilePath: '/mock/copilot/hooks.json', hookEvents: 8, allowlist: [] }),
+}));
 vi.mock('../connectors/vscode-claude-code.js', () => ({
   writeVsCodeClaudeCodeConfig: vi.fn(),
   getVsCodeClaudeCodeSettingsPath: vi.fn((insiders?: boolean) =>

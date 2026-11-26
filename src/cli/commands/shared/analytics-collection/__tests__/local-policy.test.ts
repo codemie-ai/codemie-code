@@ -25,20 +25,18 @@ describe('LocalPolicy', () => {
 
   describe('admit', () => {
     it.each([
-      ['not allowed, launched', false, true, 'continue'],
-      ['not allowed, not launched', false, false, 'stop'],
-      ['allowed, not launched', true, false, 'continue'],
-      ['allowed, launched', true, true, 'continue'],
-    ] as const)('%s → %s, the adapter gate never run', async (_case, allowed, launched, expected) => {
-      await expect(new LocalPolicy(allowed).admit('sid-1', gate, () => launched)).resolves.toBe(expected);
+      ['allowed', true, 'continue'],
+      ['not allowed', false, 'stop'],
+    ] as const)('%s → %s, the adapter gate never run', async (_case, allowed, expected) => {
+      await expect(new LocalPolicy(allowed).admit('sid-1', gate)).resolves.toBe(expected);
       expect(gate).not.toHaveBeenCalled();
     });
 
-    it('an excluded session stops under always and when launched', async () => {
+    it('an excluded session stops under always', async () => {
       await markSessionExcluded('sid-1');
 
-      await expect(new LocalPolicy(true).admit('sid-1', gate, () => true)).resolves.toBe('stop');
-      await expect(new LocalPolicy(true).admit('sid-2', gate, () => true)).resolves.toBe('continue');
+      await expect(new LocalPolicy(true).admit('sid-1', gate)).resolves.toBe('stop');
+      await expect(new LocalPolicy(true).admit('sid-2', gate)).resolves.toBe('continue');
       expect(gate).not.toHaveBeenCalled();
     });
   });

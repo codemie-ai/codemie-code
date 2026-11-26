@@ -1058,10 +1058,12 @@ starts the local proxy and writes the hooks of Claude Code, Copilot CLI and Copi
 finds them, with no sign-in; the job then delivers `codemie-analytics-<email slug>-<UTC date>.otlp.jsonl.gz` from
 `~/.codemie/analytics/sessions/`, cut into `.part-<k>-of-<n>.otlp.jsonl.gz` files no larger than 70 MB when one
 would be larger, beside the JSON report, which it goes on delivering as on any other machine. When it finds none of the three clients it registers the job without the mode, says so in its summary (`Local mode: not turned on — no supported client could be set up …; the JSON report is delivered`) and the machine delivers the JSON report alone; on a machine that is local already such an install fails and changes nothing. On a machine with a profile it prints
-`Local analytics mode not turned on: this machine has a CodeMie CLI profile (<names>).` and works as
-above. `status` adds `Mode: local — delivers the OTLP files of <the analytics folder> beside the JSON report` (the folder by its real path, `~/.codemie/analytics/sessions` unless `CODEMIE_HOME` moves it);
-`uninstall` also removes the hooks, the local proxy, the local spool and the exclusion marks, and
-keeps the analytics folder. See
+`Local analytics mode not turned on: this machine has a CodeMie CLI profile (<names>). To turn it on, delete the profile and run this command again.` and works as
+above; on a machine that is local already and has a profile or a CodeMie proxy with an upstream by then it ends ``Install failed: This machine runs the local analytics mode and has a CodeMie CLI profile (<names>). Delete the profile, or run `codemie analytics sync uninstall` to leave the local mode.`` (the proxy's own text for a proxy) and changes nothing. `status` adds `Mode: local — delivers the OTLP files of <the analytics folder> beside the JSON report` (the folder by its real path, `~/.codemie/analytics/sessions` unless `CODEMIE_HOME` moves it);
+`uninstall` also removes the hooks, the local proxy and the local spool, then the job and the
+settings, and the exclusion marks last, and keeps the analytics folder; it removes them as well on
+a machine with no profile whose settings no longer say `local`, when something of the local mode
+is still there. See
 [ANALYTICS-SYNC.md](ANALYTICS-SYNC.md#local-analytics-mode).
 
 See [ANALYTICS-REPORT.md](ANALYTICS-REPORT.md#scheduled-delivery-analytics-sync) for the

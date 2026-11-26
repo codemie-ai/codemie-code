@@ -170,6 +170,18 @@ describe('sweepToFolder', () => {
     expect(spoolFilesOf('s1')).toEqual([]);
   });
 
+  it('moves a snake_case telemetry line of a session with hook events, with its line id', async () => {
+    const snake = JSON.stringify({ resource_logs: [{ resource: { attributes: [] }, scope_logs: [] }] });
+    await (await modules()).appendSpool('s1', 'logsJson', snake + '\n');
+    await writeSession('s1', { hooks: EVENTS('s1') });
+    past();
+
+    await (await modules()).sweepToFolder();
+
+    const [line] = linesWithIds('s1.otel_logs.jsonl');
+    expect(line).toHaveProperty('resource_logs');
+  });
+
   it('a throw after the hooks append, then a second sweep → the files of a clean move, byte for byte', async () => {
     const clean = await cleanMove();
     await writeSession('s1', { hooks: EVENTS('s1'), logs: true, metrics: true, traces: true });

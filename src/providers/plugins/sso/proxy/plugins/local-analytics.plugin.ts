@@ -1,7 +1,7 @@
 /**
  * The analytics intake of the local daemon: hook batches and OTLP exports land in the local spool, with no project
- * rule, no stamp and nothing sent; at the start and every sweep interval the sessions past their grace move into the
- * analytics folder.
+ * rule, no stamp and nothing sent; at the start and every sweep interval a Copilot CLI session whose end hook never
+ * came gets the end its transcript holds, then the sessions past their grace move into the analytics folder.
  */
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { ProxyPlugin, ProxyInterceptor } from './types.js';
@@ -10,11 +10,16 @@ import type { ProxyHTTPClient } from '../proxy-http-client.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { createOtlpIntake } from './otlp-intake.js';
-import { useSpoolRoot } from './otlp-spool/spool-paths.js';
+import { listSessionIds, useSpoolRoot } from './otlp-spool/spool-paths.js';
 import { localSpoolRoot } from './otlp-spool/analytics-folder-paths.js';
 import { sweepToFolder } from './otlp-spool/analytics-folder.js';
 import { markSessionEnded } from './otlp-spool/session-status.js';
-import { SESSION_END_TYPE, scheduleCopilotUsageEnrichment } from './otlp-spool/copilot-usage-enrichment.js';
+import {
+  SESSION_END_TYPE,
+  lateSessionEndSkip,
+  recoverMissingSessionEnds,
+  scheduleCopilotUsageEnrichment,
+} from './otlp-spool/copilot-usage-enrichment.js';
 import { sweepIntervalMs } from './otlp-spool/spool-config.js';
 
 class LocalAnalyticsInterceptor implements ProxyInterceptor {
@@ -23,6 +28,8 @@ class LocalAnalyticsInterceptor implements ProxyInterceptor {
   private sweepHandle?: NodeJS.Timeout;
   private readonly intake = createOtlpIntake({
     projectNamesOf: () => undefined,
+    // A late end hook of a Copilot CLI session whose end the sweep already recovered is accepted and not written.
+    skipHooksWrite: (sessionId, agentName, batchEvents) => lateSessionEndSkip(agentName, sessionId, batchEvents),
     afterHooksWrite: async (sessionId, agentName, batchEvents) => {
       // Copilot writes its token rollup only after the sessionEnd hook exits: read it from here.
       scheduleCopilotUsageEnrichment(agentName, batchEvents);
@@ -49,6 +56,7 @@ class LocalAnalyticsInterceptor implements ProxyInterceptor {
 
   private async runSweep(): Promise<void> {
     try {
+      await recoverMissingSessionEnds(await listSessionIds());
       await sweepToFolder();
     } catch (err) {
       logger.debug('[local-analytics] sweep error', ...sanitizeLogArgs({ err: err instanceof Error ? err.message : String(err) }));

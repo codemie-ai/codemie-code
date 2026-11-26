@@ -19,6 +19,8 @@ export interface DoctorRemedies {
   start: string;
   /** Restarts a running daemon. */
   restart: string;
+  /** The words that end an advice to set a connector up again. */
+  reconnect: string;
 }
 
 export interface DoctorPlan {

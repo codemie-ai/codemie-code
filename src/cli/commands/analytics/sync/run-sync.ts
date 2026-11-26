@@ -18,9 +18,10 @@
  *   `<ISO> ok sent <name> <bytes> target=<id>` (one file), `<ISO> ok sent <n> files <total bytes> target=<id>`
  *   `<ISO> skip <reason> target=<id>`
  *   `<ISO> fail <setup|export|send> <redacted detail> target=<id>`
- * An `ok sent` and a `skip` line may each carry ` (warning: <what>)` once or twice before ` target=<id>`: the build's
- * `warning` (a part of the run not built for a reason that may pass), then its `leftOut` (sessions no run can build);
- * an `ok sent` line may add the marker's own warning after them.
+ * An `ok sent` line may carry ` (warning: <what>)` once or twice before ` target=<id>`: the build's `warning` (a part
+ * of the run not built for a reason that may pass), then its `leftOut` (sessions no run can build), then the marker's
+ * own warning. A `skip` line carries the `leftOut` note alone: a build with no file and a `warning` is a `fail export`
+ * line with that warning's text.
  * A setup failure resolved before any target is chosen (no settings file, no configured
  * target, no resolvable identity) carries no ` target=<id>` suffix and counts for every
  * target in `status`; a target whose own marker cannot be read fails `setup` with its
@@ -153,8 +154,13 @@ async function runTarget(
   // Both are named on the line: a `warning` holds the marker, a `leftOut` (sessions no run can build) does not.
   const buildWarning = reports?.warning === undefined ? '' : ` (warning: ${reports.warning})`;
   const leftOutWarning = reports?.leftOut === undefined ? '' : ` (warning: ${reports.leftOut})`;
+  // No file and a `warning`: the build failed to make what it had to send.
+  if (reports !== null && reports.length === 0 && reports.warning !== undefined) {
+    await emit(deps, now, 'fail', `export ${reports.warning}${leftOutWarning}`, target);
+    return true;
+  }
   if (reports === null || reports.length === 0) {
-    await emit(deps, now, 'skip', `no sessions in window ${window.label}${buildWarning}${leftOutWarning}`, target);
+    await emit(deps, now, 'skip', `no sessions in window ${window.label}${leftOutWarning}`, target);
     return false;
   }
 

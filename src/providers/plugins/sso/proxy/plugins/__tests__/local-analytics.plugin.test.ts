@@ -1,10 +1,12 @@
 /**
  * The local daemon's analytics intake: hook batches and OTLP exports into the local spool with no project rule and no
- * stamp loss, the end of a session marked at its hook, and the sweep into the analytics folder on its own timer.
+ * stamp loss, the end of a session marked at its hook, the recovered end of a Copilot CLI session whose end hook never
+ * came, and the sweep into the analytics folder on its own timer.
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'http';
@@ -12,10 +14,26 @@ import type { ProxyContext } from '../../proxy-types.js';
 import type { ProxyHTTPClient } from '../../proxy-http-client.js';
 
 const scheduleMock = vi.fn();
-vi.mock('../otlp-spool/copilot-usage-enrichment.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../otlp-spool/copilot-usage-enrichment.js')>()),
-  scheduleCopilotUsageEnrichment: scheduleMock,
-}));
+/** Each recovery pass a sweep runs, so a test can wait for the one its start began. */
+const recoveries: Promise<void>[] = [];
+/**
+ * Registered again for each test: a module `vi.mock` stands in for outlives `vi.resetModules`, and its own imports
+ * (the spool root the plugin points at the local spool) would stay those of the first test.
+ */
+function mockEnrichment(): void {
+  vi.doMock('../otlp-spool/copilot-usage-enrichment.js', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../otlp-spool/copilot-usage-enrichment.js')>();
+    return {
+      ...actual,
+      scheduleCopilotUsageEnrichment: scheduleMock,
+      recoverMissingSessionEnds: (...args: Parameters<typeof actual.recoverMissingSessionEnds>) => {
+        const pass = actual.recoverMissingSessionEnds(...args);
+        recoveries.push(pass);
+        return pass;
+      },
+    };
+  });
+}
 
 const MINUTE = 60_000;
 let home: string;
@@ -63,13 +81,20 @@ const SID = '11111111-2222-4333-8444-555555555555';
 const localSpool = () => join(home, 'analytics', 'spool');
 const status = (sessionId = SID) => JSON.parse(readFileSync(join(localSpool(), `${sessionId}.status`), 'utf-8')) as Record<string, unknown>;
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetModules();
+  mockEnrichment();
   home = mkdtempSync(join(tmpdir(), 'local-analytics-'));
   vi.stubEnv('CODEMIE_HOME', home);
+  // The recovery reads Copilot's own folder under the user's home: the temp directory stands for it.
+  vi.stubEnv('HOME', home);
+  vi.stubEnv('USERPROFILE', home);
+  vi.stubEnv('COPILOT_HOME', undefined);
   vi.stubGlobal('fetch', fetchMock);
   fetchMock.mockReset();
   scheduleMock.mockReset();
+  recoveries.length = 0;
+  (await import('../otlp-spool/copilot-usage-enrichment.js')).resetScheduledForTests();
 });
 
 afterEach(async () => {
@@ -307,6 +332,95 @@ describe('LocalAnalyticsPlugin', () => {
 
       expect(readdirSync(localSpool()).filter((f) => f.endsWith('.ndjson'))).toEqual([`${B}.otel_logs.ndjson`]);
       expect(readFileSync(join(localSpool(), `${B}.otel_logs.ndjson`), 'utf-8')).toBe(JSON.stringify(body) + '\n');
+    });
+  });
+
+  describe('a Copilot CLI session whose end hook never came', () => {
+    let session: string;
+    const T0 = Date.parse('2026-10-20T06:25:00.000Z');
+    const at = (ms: number): string => new Date(T0 + ms).toISOString();
+    const identity = { developer_name: 'dev@example.com', platform: 'copilot-cli', entrypoint: 'native' };
+    const hook = (type: string, ms: number) => ({ type, session_id: session, timestamp: at(ms), event_id: `${type}:${ms}`, ...identity });
+    const line = (type: string, ms: number, data: Record<string, unknown>): string => JSON.stringify({ type, timestamp: at(ms), data });
+    const hooksFile = () => join(localSpool(), `${session}.hooks.ndjson`);
+    const spooled = (): Record<string, unknown>[] =>
+      readFileSync(hooksFile(), 'utf-8').split('\n').filter(Boolean).map((l) => JSON.parse(JSON.parse(l).hookEvent) as Record<string, unknown>);
+    const ends = () => spooled().filter((event) => event['type'] === 'agent.session.end');
+
+    /** Copilot's transcript of one finished run, its file aged past the recovery's settle time. */
+    function writeTranscript(): void {
+      const dir = join(home, '.copilot', 'session-state', session);
+      mkdirSync(dir, { recursive: true });
+      const file = join(dir, 'events.jsonl');
+      writeFileSync(file, [
+        line('session.start', 0, { startTime: at(0), copilotVersion: '1.0.92' }),
+        line('session.shutdown', 5_000, {
+          modelMetrics: { 'gpt-6-luna': { requests: { count: 1 }, usage: { inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 } } },
+        }),
+      ].join('\n') + '\n');
+      const aged = new Date(Date.now() - 60_000);
+      utimesSync(file, aged, aged);
+    }
+
+    /** A start of the proxy, its sweep's recovery and the usage pass that recovery begins, waited for. */
+    async function sweep() {
+      const run = await started();
+      await vi.waitFor(() => expect(recoveries).toHaveLength(1));
+      await recoveries.splice(0)[0];
+      // The limit guards a hung usage pass; the pass itself is real file work.
+      await vi.waitFor(() => expect(spooled().some((event) => event['type'] === 'agent.session.summary')).toBe(true), { timeout: 10_000 });
+      return run;
+    }
+
+    beforeEach(() => {
+      session = randomUUID();
+    });
+
+    it('a sweep writes the end its transcript holds; a later end hook is answered 202 and not written again', async () => {
+      const first = await started();
+      await vi.waitFor(() => expect(recoveries).toHaveLength(1));
+      await recoveries.splice(0)[0];
+      await first.post('/v1/analytics/hooks', { agentName: 'copilot-cli-otlp', hookEvents: [hook('agent.session.start', 0)] });
+      await first.interceptor.onProxyStop?.();
+      writeTranscript();
+
+      const second = await sweep();
+      expect(ends()).toHaveLength(1);
+
+      const { res } = await second.post('/v1/analytics/hooks', { agentName: 'copilot-cli-otlp', hookEvents: [hook('agent.session.end', 4_900)] });
+      await second.interceptor.onProxyStop?.();
+      expect(res.statusCode).toBe(202);
+      expect(ends()).toHaveLength(1);
+    });
+
+    it('edge: a second sweep over the same session still holds one end', async () => {
+      const first = await started();
+      await vi.waitFor(() => expect(recoveries).toHaveLength(1));
+      await recoveries.splice(0)[0];
+      await first.post('/v1/analytics/hooks', { agentName: 'copilot-cli-otlp', hookEvents: [hook('agent.session.start', 0)] });
+      await first.interceptor.onProxyStop?.();
+      writeTranscript();
+      await (await sweep()).interceptor.onProxyStop?.();
+
+      const third = await sweep();
+      await third.interceptor.onProxyStop?.();
+      expect(ends()).toHaveLength(1);
+    });
+
+    it('a session with no Copilot transcript: its spool untouched by the recovery', async () => {
+      const first = await started();
+      await vi.waitFor(() => expect(recoveries).toHaveLength(1));
+      await recoveries.splice(0)[0];
+      await first.post('/v1/analytics/hooks', { agentName: 'copilot-cli-otlp', hookEvents: [hook('agent.session.start', 0)] });
+      await first.interceptor.onProxyStop?.();
+      const before = readFileSync(hooksFile(), 'utf-8');
+
+      const second = await started();
+      await vi.waitFor(() => expect(recoveries).toHaveLength(1));
+      await recoveries.splice(0)[0];
+      await second.interceptor.onProxyStop?.();
+
+      expect(readFileSync(hooksFile(), 'utf-8')).toBe(before);
     });
   });
 

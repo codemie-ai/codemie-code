@@ -34,7 +34,7 @@ const RESERVED_KEYS = new Set([EVENT_TYPE_KEY, USER_EMAIL_KEY, 'session.id', 'pr
 const MAX_NESTING = 16;
 const INT64_MIN = -(2 ** 63);
 const INT64_LIMIT = 2 ** 63;
-const EXPORT_KEYS = ['resourceLogs', 'resourceMetrics', 'resourceSpans'] as const;
+const EXPORT_KEYS = ['resourceLogs', 'resourceMetrics', 'resourceSpans', 'resource_logs', 'resource_metrics', 'resource_spans'] as const;
 
 /** The envelope the proxy writes into a spool hooks file per event. */
 interface HookEnvelope {
@@ -132,8 +132,8 @@ export function encodeHookRecord(
 }
 
 /**
- * Appends `codemie.line_id` to every resource of one OTLP JSON export request line; `null` for a
- * line that does not parse or is not an export request.
+ * Appends `codemie.line_id` to every resource of one OTLP JSON export request line, camelCase or snake_case; `null`
+ * for a line that does not parse or is not an export request.
  */
 export function addLineId(line: string, lineId: string): string | null {
   let parsed: unknown;

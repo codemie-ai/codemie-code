@@ -120,11 +120,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     // The policy decides whether the adapter's per-hook session transition check (stop markers, folder / consent /
     // generation changes) runs: the backend policy runs it and answers what it answered, a deferred decision included;
     // the local mode's policy never does. Adapters without one continue.
-    const transition = await this.policy.admit(
-      this.sessionIdOf(hookInput),
-      () => this.transitionGate(hookInput),
-      () => this.launchedByCodemie(hookInput)
-    );
+    const transition = await this.policy.admit(this.sessionIdOf(hookInput), () => this.transitionGate(hookInput));
     if (transition === 'stop') return;
 
     try {
@@ -311,11 +307,6 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   /** The session id this adapter's events carry for the hook; none for an adapter that does not name one. */
   protected sessionIdOf(_input: TInput): string | undefined {
     return undefined;
-  }
-
-  /** Whether CodeMie launched the hook's session; an adapter that cannot tell answers false. */
-  protected launchedByCodemie(_input: TInput): boolean {
-    return false;
   }
 
   /** Enforcement adapters opt in; other adapters retain commit-after-send retry behavior. */

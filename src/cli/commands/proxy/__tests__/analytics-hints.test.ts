@@ -132,7 +132,7 @@ describe('adviceForReason', () => {
       const { adviceForReason } = await import('../analytics-hints.js');
       const advice = adviceForReason(id, 'scope-corrupt', '/work/a', BACKEND_REMEDIES);
       expect(advice?.description).toMatch(/corrupt/);
-      expect(advice?.action).toMatch(/fix or delete/i);
+      expect(advice?.action).toBe('fix or delete ~/.codemie/copilot-connectors.json, then reconnect');
     });
 
     it('preferences-corrupt is recognised', async () => {
@@ -153,5 +153,14 @@ describe('adviceForReason with the local mode\'s remedies', () => {
 
     expect(adviceForReason(CLAUDE, 'hooks-not-installed', '/work/a', LOCAL_REMEDIES)?.command).toBe('codemie analytics sync install');
     expect(texts.filter((text) => /proxy (connect|disconnect)/.test(text))).toEqual([]);
+    expect(texts.filter((text) => /reconnect/.test(text))).toEqual([]);
+  });
+
+  it.each([CLI, CHAT])('%s scope-corrupt names the install as the way to set the connector up again', async (id) => {
+    const { adviceForReason } = await import('../analytics-hints.js');
+    const { LOCAL_REMEDIES } = await import('../../shared/analytics-collection/local-doctor.js');
+
+    expect(adviceForReason(id, 'scope-corrupt', '/work/a', LOCAL_REMEDIES)?.action)
+      .toBe('fix or delete ~/.codemie/copilot-connectors.json, then run `codemie analytics sync install`');
   });
 });

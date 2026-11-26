@@ -76,7 +76,7 @@ function copilotAdvice(connectorId: string, reason: string, path: string, remedi
     case 'scope-corrupt':
       return {
         description: 'the connector scope config is corrupt',
-        action: 'fix or delete ~/.codemie/copilot-connectors.json, then reconnect',
+        action: `fix or delete ~/.codemie/copilot-connectors.json, then ${remedies.reconnect}`,
       };
     case 'preferences-corrupt':
       return {

@@ -28,13 +28,6 @@ vi.mock('../../../../cli/commands/proxy/otlp-cold-start.js', () => ({
   ensureOtlpProxy: ensureOtlpProxyMock,
 }));
 
-const ensureLocalOtlpProxyMock = vi.hoisted(() => vi.fn());
-vi.mock('../../../../cli/commands/proxy/local-daemon.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../../../cli/commands/proxy/local-daemon.js')>()),
-  ensureLocalOtlpProxy: ensureLocalOtlpProxyMock,
-}));
-
-import { readFile } from 'fs/promises';
 import { ClaudePluginMetadata } from '../claude.plugin.js';
 
 describe('ClaudePluginMetadata.lifecycle.beforeRun — pre-spawn OTLP endpoint refresh', () => {
@@ -78,30 +71,6 @@ describe('ClaudePluginMetadata.lifecycle.beforeRun — pre-spawn OTLP endpoint r
     await runBeforeRun({}, 'claude-acp');
 
     expect(ensureOtlpProxyMock).toHaveBeenCalledWith('claude-acp');
-  });
-
-  it('in the local mode starts the local proxy for the launching agent, not the backend one', async () => {
-    isClaudeCodeOtlpConnectedMock.mockResolvedValue(true);
-    ensureLocalOtlpProxyMock.mockResolvedValue(undefined);
-    const settings = JSON.stringify({
-      webhookUrl: 'https://example.invalid/hook?sig=FAKE',
-      format: 'json',
-      includeExternal: 'never',
-      at: '03:00',
-      local: true,
-      localJob: { node: '/usr/bin/node', entry: '/opt/codemie/bin/codemie.js' },
-    });
-    // fs/promises is mocked whole: the sync settings are the one file this launch reads.
-    vi.mocked(readFile).mockImplementation((async (path: unknown) =>
-      String(path).endsWith('analytics-sync.json') ? settings : undefined) as never);
-    try {
-      await runBeforeRun({}, 'claude-acp');
-    } finally {
-      vi.mocked(readFile).mockReset();
-    }
-
-    expect(ensureLocalOtlpProxyMock).toHaveBeenCalledWith(expect.any(Function), 'claude-acp', undefined);
-    expect(ensureOtlpProxyMock).not.toHaveBeenCalled();
   });
 
   it('never starts the proxy daemon when not connected', async () => {

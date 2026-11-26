@@ -892,15 +892,11 @@ export async function hasClaudeCodeOtlpHooks(): Promise<boolean> {
 /**
  * Whether `~/.claude/settings.json` holds what only CodeMie writes: its hooks, or its telemetry endpoint with the
  * header pair. The fixed telemetry values (`CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_LOGS_EXPORTER=otlp`, …) are not
- * asked: a user's own telemetry holds the same ones. No settings or unreadable ones → false. Never throws, writes nothing.
+ * asked: a user's own telemetry holds the same ones. No settings file → false. A file that cannot be read or does not
+ * parse → the reader's `ConfigurationError`. Writes nothing.
  */
 export async function hasClaudeCodeOtlpEntries(): Promise<boolean> {
-  let existing: ClaudeSettings;
-  try {
-    existing = await readSettingsFile(getClaudeSettingsPath());
-  } catch {
-    return false;
-  }
+  const existing = await readSettingsFile(getClaudeSettingsPath());
   const env = existing.env ?? {};
   return stripCodemieManagedContent(existing).removedHookCommands
     || isCodemieOwnedEnvValue('OTEL_EXPORTER_OTLP_ENDPOINT', env.OTEL_EXPORTER_OTLP_ENDPOINT, env);

@@ -22,9 +22,10 @@
  * Every positional value reaches git after `--` or behind a fixed prefix (`origin/`,
  * `HEAD:`, `refs/heads/`), so none can be parsed as an option.
  *
- * `deliver`/`testPush` write under the target's slug folder, stage only that folder
- * (`git add --`), skip the commit entirely when nothing changed (`git diff --cached
- * --quiet` exits 0), and otherwise commit with `-c user.email=<email> -c user.name=<email>`
+ * `deliver`/`testPush` write under the target's slug folder, stage only the files they wrote,
+ * by path and with ignore rules overridden (`git add -f --`), skip the commit entirely when
+ * nothing changed (`git diff --cached --quiet` exits 0), and otherwise commit with
+ * `-c user.email=<email> -c user.name=<email>`
  * (so the shared working copy never depends on a locally configured git identity), with
  * commit signing off, hooks disabled and `--no-verify`, so the unattended job never blocks
  * on a signing prompt or a user's global hook, before pushing (also `--no-verify`). A push
@@ -89,15 +90,17 @@ export class GitTarget {
 
     const absFolder = this.absoluteFolder(relFolder);
     await mkdir(absFolder, { recursive: true });
+    const paths: string[] = [];
     for (const report of reports) {
       await writeFile(join(absFolder, report.fileName), report.bytes);
+      paths.push(`${relFolder}/${report.fileName}`);
     }
 
     const message =
       reports.length === 1
         ? `analytics sync: ${relFolder}/${reports[0].fileName}`
         : `analytics sync: ${relFolder} (${reports.length} files)`;
-    await this.commitAndPush(branch, relFolder, message);
+    await this.commitAndPush(branch, relFolder, paths, message);
   }
 
   /** Commits and pushes `<git-path>/<slug>/.codemie-sync-check`, used by `install` to prove
@@ -111,7 +114,12 @@ export class GitTarget {
     await mkdir(absFolder, { recursive: true });
     await writeFile(join(absFolder, CHECK_FILE_NAME), new Date().toISOString());
 
-    await this.commitAndPush(branch, relFolder, 'analytics sync: connectivity check');
+    await this.commitAndPush(
+      branch,
+      relFolder,
+      [`${relFolder}/${CHECK_FILE_NAME}`],
+      'analytics sync: connectivity check'
+    );
   }
 
   private slugFolder(): string {
@@ -243,8 +251,10 @@ export class GitTarget {
     );
   }
 
-  private async commitAndPush(branch: string, relFolder: string, message: string): Promise<void> {
-    await this.run(['add', '--', relFolder], { cwd: this.dir });
+  /** Stages `paths` (relative to the working copy) with `-f`, so an ignore rule of the target
+   * repository never leaves a written file out of the commit. */
+  private async commitAndPush(branch: string, relFolder: string, paths: string[], message: string): Promise<void> {
+    await this.run(['add', '-f', '--', ...paths], { cwd: this.dir });
 
     if (!(await this.hasStagedChanges(relFolder))) {
       logger.debug(`[sync:git] nothing to commit for ${relFolder}`);

@@ -276,6 +276,7 @@ export async function writeCopilotChatOtlpConfig(
     );
   }
 
+  const hadHookFile = existsSync(hookFilePath);
   await writeAtomically(hookFilePath, `${JSON.stringify(buildHookFileContent(resolveAbsoluteHookCommand()), null, 2)}\n`);
 
   let nextText: string;
@@ -293,6 +294,15 @@ export async function writeCopilotChatOtlpConfig(
   try {
     await writeAtomically(settingsPath, nextText);
   } catch (error) {
+    // A hook file no settings entry names is never loaded; one this call made goes with the failed write.
+    if (!hadHookFile) {
+      await removeFileThroughLink(hookFilePath).catch((removeError: unknown) =>
+        logger.warn(
+          '[proxy] Could not remove the Copilot Chat hook file after a failed VS Code settings write',
+          ...sanitizeLogArgs({ hookFilePath, error: removeError instanceof Error ? removeError.message : String(removeError) })
+        )
+      );
+    }
     throw new ConfigurationError(
       `Failed to update VS Code settings at ${settingsPath}: ` +
       `${error instanceof Error ? error.message : String(error)}`
@@ -349,19 +359,23 @@ export async function removeCopilotChatOtlpConfig(
     // Last tracked project removed: fall through to full removal below.
   }
 
-  if (!existsSync(settingsPath)) {
+  // A hook file with no entry in VS Code's settings: removed, with the scope record turned off.
+  const removeHookFileOnly = async (reason: string): Promise<RemoveCopilotChatOtlpResult> => {
+    const hadHookFile = existsSync(hookFilePath);
+    if (hadHookFile) await removeFileThroughLink(hookFilePath);
     await writeCopilotConnectorScope(COPILOT_CHAT_OTLP_AGENT_NAME, { enabled: false });
-    return { removed: false, mode: 'noop', settingsPath, reason: 'no VS Code settings file found' };
-  }
+    if (!hadHookFile) return { removed: false, mode: 'noop', settingsPath, reason };
+    logger.info('[proxy] Removed Copilot Chat analytics hook file', ...sanitizeLogArgs({ hookFilePath }));
+    return { removed: true, mode: 'full', settingsPath };
+  };
+
+  if (!existsSync(settingsPath)) return removeHookFileOnly('no VS Code settings file found');
 
   const { settings, raw } = await readSettings(settingsPath);
   const codemieKeys = codemieHookFileLocationKeys();
   const hadEntry = hasCodemieHookFileLocation(settings);
 
-  if (!hadEntry) {
-    await writeCopilotConnectorScope(COPILOT_CHAT_OTLP_AGENT_NAME, { enabled: false });
-    return { removed: false, mode: 'noop', settingsPath, reason: 'no CodeMie entries found' };
-  }
+  if (!hadEntry) return removeHookFileOnly('no CodeMie entries found');
 
   const remainingLocations = removeHookFileLocations(settings[HOOK_FILE_LOCATIONS_KEY], codemieKeys);
   const formattingOptions = detectFormattingOptions(raw);

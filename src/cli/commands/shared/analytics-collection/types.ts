@@ -43,8 +43,11 @@ export interface AnalyticsCollection {
   /** The files the daily sync delivers. */
   exportSource(): ExportSource;
   install: InstallPlan;
-  /** The mode's own removal around the uninstall's: it calls `removeInstall` once. */
-  teardown(removeInstall: () => Promise<void>): Promise<void>;
+  /**
+   * The mode's own removal around the uninstall's: it calls `removeInstall` once, and answers whether its own removal
+   * took anything away.
+   */
+  teardown(removeInstall: () => Promise<void>): Promise<boolean>;
   /** The lines `sync status` prints after its first line. */
   statusLines(): string[];
   doctor: DoctorPlan;

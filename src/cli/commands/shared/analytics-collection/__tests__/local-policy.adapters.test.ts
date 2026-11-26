@@ -173,9 +173,6 @@ class FakeAdapter extends OtlpAgentAdapter<FakeInput> {
   protected override sessionIdOf(input: FakeInput): string {
     return input.sessionId;
   }
-  protected override launchedByCodemie(): boolean {
-    return false;
-  }
   protected override requiresSpoolAcceptance(input: FakeInput): boolean {
     return input.enforced === true;
   }
@@ -246,14 +243,6 @@ describe('Claude Code with LocalPolicy', () => {
 
     expect(ssoCalls).toEqual([]);
     expect(forwardedSessions()).toEqual(['cc-1']);
-  });
-
-  it('edge: CODEMIE_SESSION_ID set under never → written', async () => {
-    vi.stubEnv('CODEMIE_SESSION_ID', 'managed-1');
-
-    await new ClaudeCodeOtlpPlugin().processOtlpEvent(claudeHook({ session_id: 'cc-managed' }), deps(false));
-
-    expect(forwardedSessions()).toEqual(['cc-managed']);
   });
 
   it('unreadable preferences leave no mark', async () => {

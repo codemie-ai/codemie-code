@@ -72,6 +72,9 @@ beforeEach(() => {
   outDir = mkdtempSync(join(tmpdir(), 'copilot-rep-out-'));
   process.env.CODEMIE_HOME = codemieHome;
   process.env.COPILOT_HOME = copilotHome;
+  // The report reads the native agents' logs under the home: a scratch one, never the developer's.
+  vi.stubEnv('HOME', outDir);
+  vi.stubEnv('USERPROFILE', outDir);
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
   vi.spyOn(ConfigLoader, 'loadMultiProviderConfig').mockResolvedValue({ userEmail: 'dev@example.com' } as never);
@@ -98,6 +101,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   for (const [key, value] of [['CODEMIE_HOME', saved.codemie], ['COPILOT_HOME', saved.copilot]] as const) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;

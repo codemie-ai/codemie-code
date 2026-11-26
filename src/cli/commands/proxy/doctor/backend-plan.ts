@@ -20,6 +20,7 @@ export const BACKEND_REMEDIES: DoctorRemedies = {
   connectAnalytics: `${connect(CLAUDE_OTLP_FLAG)} (or ${COPILOT_OTLP_FLAG})`,
   start: 'codemie proxy start',
   restart: 'codemie proxy restart',
+  reconnect: 'reconnect',
 };
 
 /** Delivery health of the running daemon, or `null` when it is stopped. */

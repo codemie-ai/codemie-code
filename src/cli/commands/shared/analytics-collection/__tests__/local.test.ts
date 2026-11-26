@@ -24,6 +24,18 @@ vi.mock('@/utils/processes.js', async (importOriginal) => {
     getCommandPath: vi.fn(async () => null),
   };
 });
+/** A path whose removal fails, as a folder another process holds open would. */
+const rmFailure = vi.hoisted(() => ({ path: undefined as string | undefined }));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    rm: async (...args: Parameters<typeof actual.rm>) => {
+      if (args[0] === rmFailure.path) throw Object.assign(new Error(`EBUSY: resource busy or locked, rm '${String(args[0])}'`), { code: 'EBUSY' });
+      return actual.rm(...args);
+    },
+  };
+});
 vi.mock('@/utils/cli-updater.js', async (importOriginal) => {
   const { OWN_VERSION } = await import('./stand.js');
   return {
@@ -49,6 +61,7 @@ beforeEach(() => {
   home = setUpHome();
   vi.resetModules();
   vi.clearAllMocks();
+  rmFailure.path = undefined;
   writeFileSync(join(home, 'analytics-sync.json'), JSON.stringify(SETTINGS));
   log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 });
@@ -263,8 +276,8 @@ describe('localCollection', () => {
     const never = (await collection({ ...SETTINGS, includeExternal: 'never' })).hookPolicy();
 
     expect(always).toBeInstanceOf(LocalPolicy);
-    expect(await always.admit('s-1', gate, () => false)).toBe('continue');
-    expect(await never.admit('s-1', gate, () => false)).toBe('stop');
+    expect(await always.admit('s-1', gate)).toBe('continue');
+    expect(await never.admit('s-1', gate)).toBe('stop');
   });
 
   it('prints the mode as the status line of sync status, naming the analytics folder under CODEMIE_HOME', async () => {
@@ -341,7 +354,7 @@ describe('localCollection.teardown', () => {
     await writeCopilotCliOtlpConfig({ keepProjectList: true });
   }
 
-  it('removes the hooks, then under the daemon lock stops the local daemon, resolves the moves, removes the spool and the marks, and the install last', async () => {
+  it('removes the hooks, then under the daemon lock stops the local daemon, resolves the moves, removes the spool, the install and the marks last', async () => {
     const daemon = await writeLiveState(home, { mode: 'local' });
     mkdirSync(join(home, '.claude'), { recursive: true });
     writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify({ model: 'opus' }));
@@ -410,8 +423,9 @@ describe('localCollection.teardown', () => {
       marker: false,
       folderFile: 'abc\n',
       spool: false,
-      excluded: false,
+      excluded: true,
     });
+    expect(existsSync(join(home, 'analytics', 'excluded'))).toBe(false);
     expect(await spawnedArgs()).toEqual([]);
     expect(existsSync(join(folder, 's1.hooks.jsonl'))).toBe(true);
     const claude = JSON.parse(readFileSync(join(home, '.claude', 'settings.json'), 'utf-8'));
@@ -510,6 +524,102 @@ describe('localCollection.teardown', () => {
 
     const settings = JSON.parse(readFileSync(getVsCodeChatSettingsPath(), 'utf-8')) as Record<string, unknown>;
     expect(settings['chat.hookFilesLocations']).toBeUndefined();
+  });
+
+  it('removes the Copilot Chat hook file an install that skipped Copilot Chat left, and a second run takes nothing', async () => {
+    const { getCopilotChatHookFilePath, getVsCodeChatSettingsPath } = await import(
+      '../../../proxy/connectors/copilot-chat-otlp.js'
+    );
+    const { writeCopilotConnectorScope } = await import('@/agents/core/copilot-connector-scope.js');
+    const hookFile = getCopilotChatHookFilePath();
+    mkdirSync(join(hookFile, '..'), { recursive: true });
+    writeFileSync(hookFile, JSON.stringify({ hooks: { SessionStart: [{ type: 'command', command: 'codemie hook' }] } }));
+    await writeCopilotConnectorScope('copilot-chat-otlp', { enabled: false });
+    mkdirSync(join(getVsCodeChatSettingsPath(), '..'), { recursive: true });
+    writeFileSync(getVsCodeChatSettingsPath(), '{}');
+    const local = await collection();
+
+    expect(await local.teardown(async () => undefined)).toBe(true);
+    expect(existsSync(hookFile)).toBe(false);
+
+    expect(await local.teardown(async () => undefined)).toBe(false);
+  });
+
+  /** A live local daemon, a session in the local spool and an exclusion mark. */
+  async function localLeftovers(): Promise<number> {
+    const daemon = await writeLiveState(home, { mode: 'local' });
+    mkdirSync(join(home, 'analytics', 'spool'), { recursive: true });
+    writeFileSync(join(home, 'analytics', 'spool', 's1.hooks.ndjson'), 'x\n');
+    mkdirSync(join(home, 'analytics', 'excluded'), { recursive: true });
+    writeFileSync(join(home, 'analytics', 'excluded', 's2'), '');
+    return daemon;
+  }
+
+  it('rejects on Claude Code settings that do not parse, before the daemon lock: the daemon, the spool, the marks and the settings stay', async () => {
+    const daemon = await localLeftovers();
+    mkdirSync(join(home, '.claude'), { recursive: true });
+    writeFileSync(join(home, '.claude', 'settings.json'), '{ not json');
+    const { ConfigurationError } = await import('@/utils/errors.js');
+    const removeInstall = vi.fn(async () => undefined);
+
+    await expect((await collection()).teardown(removeInstall)).rejects.toThrow(ConfigurationError);
+
+    expect(isPidAlive(daemon)).toBe(true);
+    expect(existsSync(join(home, 'analytics', 'spool', 's1.hooks.ndjson'))).toBe(true);
+    expect(existsSync(join(home, 'analytics', 'excluded', 's2'))).toBe(true);
+    expect(existsSync(join(home, 'analytics-sync.json'))).toBe(true);
+    expect(removeInstall).not.toHaveBeenCalled();
+  });
+
+  it('keeps the marks when the removal throws, the spool gone, and a second run removes them', async () => {
+    await localLeftovers();
+    const local = await collection();
+
+    await expect(local.teardown(async () => {
+      throw new Error('job not removed');
+    })).rejects.toThrow('job not removed');
+
+    expect(existsSync(join(home, 'analytics', 'excluded', 's2'))).toBe(true);
+    expect(existsSync(join(home, 'analytics', 'spool'))).toBe(false);
+
+    await local.teardown(async () => undefined);
+    expect(existsSync(join(home, 'analytics', 'excluded'))).toBe(false);
+  });
+
+  it('resolves when the marks cannot be removed after the removal ran', async () => {
+    await localLeftovers();
+    rmFailure.path = join(home, 'analytics', 'excluded');
+    const removeInstall = vi.fn(async () => undefined);
+
+    await expect((await collection()).teardown(removeInstall)).resolves.toBe(true);
+
+    expect(removeInstall).toHaveBeenCalledOnce();
+    expect(existsSync(join(home, 'analytics', 'excluded', 's2'))).toBe(true);
+  });
+
+  it.each([
+    [
+      "Claude Code's entries",
+      async () => {
+        // The entries name a running daemon's port; that daemon's state is gone before the teardown.
+        await writeLiveState(home, { mode: 'local' });
+        mkdirSync(join(home, '.claude'), { recursive: true });
+        const { writeClaudeCodeOtlpConfig } = await import('../../../proxy/connectors/claude-code-otlp.js');
+        await writeClaudeCodeOtlpConfig({ promptStatus: null, keepProjectList: true });
+        rmSync(stateFile(home));
+      },
+    ],
+    ['a live local daemon', async () => void (await writeLiveState(home, { mode: 'local' }))],
+    ['the local spool', async () => mkdirSync(join(home, 'analytics', 'spool'), { recursive: true })],
+    ['the exclusion marks', async () => mkdirSync(join(home, 'analytics', 'excluded'), { recursive: true })],
+  ])('says it took something away when it removed %s', async (_name, stage) => {
+    await stage();
+
+    expect(await (await collection()).teardown(async () => undefined)).toBe(true);
+  });
+
+  it('says it took nothing away on a home with no entries, no local daemon, no spool and no marks', async () => {
+    expect(await (await collection()).teardown(async () => undefined)).toBe(false);
   });
 
   it('leaves a live daemon that is not the local one running', async () => {

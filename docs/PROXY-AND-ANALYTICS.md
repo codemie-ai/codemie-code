@@ -54,7 +54,7 @@ codemie proxy doctor --verbose
 
 `doctor` prints one heading per section — Daemon, Authentication and upstream, Clients, Analytics connectors, Analytics delivery, Claude Desktop collection, Environment — each with at least one line (`ok` or `info` when there is nothing to report), the command that fixes each finding, and a closing count such as `2 warnings, 0 errors`. It exits 1 only on an error. `--json` carries every section for scripts.
 
-On a machine in the local mode there is no Authentication and upstream and no Analytics delivery section; a `Local analytics` section shows the analytics folder (its sessions and the newest one), the scheduled job and the last delivery per target. A stopped proxy is started by `codemie proxy start` or by the next Claude Code or Copilot event. With `--include-external never` a machine where no session is started through CodeMie gathers nothing.
+On a machine in the local mode there is no Authentication and upstream and no Analytics delivery section; a `Local analytics` section shows the analytics folder (its sessions and the newest one), the scheduled job and the last delivery per target. A stopped proxy is started by `codemie proxy start` or by the next Claude Code or Copilot event. With `--include-external never` the local mode gathers nothing.
 
 ### Exclude and re-include a project
 

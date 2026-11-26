@@ -3,8 +3,11 @@
  * which moves every finished session into `~/.codemie/analytics/sessions`, and the daily sync delivers the OTLP files
  * of that folder beside the JSON report every machine delivers.
  */
+import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { ConfigurationError } from '@/utils/errors.js';
+import { logger } from '@/utils/logger.js';
+import { sanitizeLogArgs } from '@/utils/security.js';
 import { excludedSessionsRoot } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/analytics-exclusion-mark.js';
 import { resolveMarkers } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/analytics-folder.js';
 import { localSpoolRoot } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/analytics-folder-paths.js';
@@ -39,6 +42,14 @@ async function installed(): Promise<boolean> {
   return (await loadSyncSettings())?.local === true;
 }
 
+/**
+ * Whether this machine holds a trace the local mode alone makes: a daemon state that says `local` (its daemon alive or
+ * not), the local spool, or the exclusion marks. The analytics folder is none: it stays after an uninstall.
+ */
+export async function hasLocalModeTrace(): Promise<boolean> {
+  return (await readState())?.mode === 'local' || existsSync(localSpoolRoot()) || existsSync(excludedSessionsRoot());
+}
+
 function printRunning(state: DaemonState): void {
   console.log(`The local analytics proxy is running on ${state.url}.`);
 }
@@ -46,21 +57,38 @@ function printRunning(state: DaemonState): void {
 /**
  * The teardown of `sync uninstall`: each client holding any of CodeMie's own entries is cleared first — a client with
  * none of them is not touched; then, in one hold of the daemon lock, the local daemon stopped, half-done moves undone,
- * the local spool and the exclusion marks removed, and the uninstall's own removal last, so no hook sees a stopped
- * daemon while `local` is still set. The analytics folder stays.
+ * the local spool removed, the uninstall's own removal, so no hook sees a stopped daemon while `local` is still set,
+ * and the exclusion marks last, so a failed step before them leaves no excluded session to be gathered again. A
+ * failure to remove the marks is logged: by then the job and the settings are gone. The analytics folder stays.
+ * Answers whether it took anything away: a client's entries, a live local daemon, the local spool or the marks.
  */
-async function teardown(removeInstall: () => Promise<void>): Promise<void> {
+async function teardown(removeInstall: () => Promise<void>): Promise<boolean> {
+  let tookAway = false;
   for (const client of LOCAL_CLIENTS) {
-    if (await client.hasEntries()) await client.remove();
+    if (await client.hasEntries()) {
+      await client.remove();
+      tookAway = true;
+    }
   }
   await withDaemonLock(DAEMON_LOCK_COMMAND_BUDGET_MS, async () => {
     const state = await readState();
-    if (state?.mode === 'local' && (await isDaemonAlive(state))) await stopDaemon();
+    if (state?.mode === 'local' && (await isDaemonAlive(state))) {
+      await stopDaemon();
+      tookAway = true;
+    }
     await resolveMarkers();
+    if (existsSync(localSpoolRoot())) tookAway = true;
     await rm(localSpoolRoot(), { recursive: true, force: true });
-    await rm(excludedSessionsRoot(), { recursive: true, force: true });
     await removeInstall();
+    if (existsSync(excludedSessionsRoot())) tookAway = true;
+    await rm(excludedSessionsRoot(), { recursive: true, force: true }).catch((error: unknown) =>
+      logger.warn(
+        '[local] exclusion marks not removed',
+        ...sanitizeLogArgs({ path: excludedSessionsRoot(), err: error instanceof Error ? error.message : String(error) })
+      )
+    );
   });
+  return tookAway;
 }
 
 /**

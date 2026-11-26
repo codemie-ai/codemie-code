@@ -271,40 +271,6 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent', () => {
       await expect(byFilter()).resolves.toBe(false);
     });
   });
-
-  describe('launchedByCodemie', () => {
-    async function launched(): Promise<boolean | undefined> {
-      let seen: boolean | undefined;
-      class RecordingPolicy extends BackendPolicy {
-        override async admit(_sessionId: string | undefined, _gate: () => Promise<'continue' | 'stop'>, isLaunched?: () => boolean): Promise<'stop'> {
-          seen = isLaunched?.();
-          return 'stop';
-        }
-      }
-      await plugin.processOtlpEvent(event('Stop'), { policy: new RecordingPolicy(), ensureOtlpProxy, forwardOtlpEventsToSpool });
-      return seen;
-    }
-
-    beforeEach(() => {
-      vi.mocked(isProjectTracked).mockResolvedValue(true);
-    });
-
-    afterEach(() => {
-      vi.unstubAllEnvs();
-    });
-
-    it('is true with CODEMIE_SESSION_ID', async () => {
-      vi.stubEnv('CODEMIE_SESSION_ID', 'managed-1');
-
-      await expect(launched()).resolves.toBe(true);
-    });
-
-    it('is false without CODEMIE_SESSION_ID', async () => {
-      vi.stubEnv('CODEMIE_SESSION_ID', '');
-
-      await expect(launched()).resolves.toBe(false);
-    });
-  });
 });
 
 describe('ClaudeCodeOtlpPlugin hook-time enrichment', () => {

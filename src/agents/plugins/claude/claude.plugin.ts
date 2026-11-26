@@ -28,6 +28,7 @@ import {
   detectInstallationMethod,
   type InstallationMethod,
 } from '../../../utils/installation-detector.js';
+import { ensureOtlpProxy } from '../../../cli/commands/proxy/otlp-cold-start.js';
 import { isClaudeCodeOtlpConnected } from '../../../cli/commands/proxy/connectors/claude-code-otlp-endpoint.js';
 
 // Module-level flag to track statusline management within a session.
@@ -621,15 +622,13 @@ export const ClaudePluginMetadata: AgentMetadata = {
       // never fail the launch. this.metadata.name (not the OTLP adapter's own
       // 'claude-code-otlp' name) names the launching client — 'claude' or
       // 'claude-acp' — and reaches neither the daemon nor the connection record.
-      // Bounded by PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS: the launcher's SSO/daemon
+      // Bounded by PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS: ensureOtlpProxy's SSO/daemon
       // checks have no timeout of their own and must not stall this synchronous path.
       if (await isClaudeCodeOtlpConnected()) {
         const timeoutMessage = `pre-spawn OTLP endpoint refresh timed out after ${PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS}ms`;
         try {
           await withTimeout(
-            import('@/cli/commands/shared/analytics-collection/resolve.js')
-              .then(({ resolveCollection }) => resolveCollection())
-              .then((collection) => collection.launcher(this.metadata.name)),
+            ensureOtlpProxy(this.metadata.name),
             PRE_SPAWN_OTLP_REFRESH_TIMEOUT_MS,
             timeoutMessage
           );

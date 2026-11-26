@@ -112,7 +112,7 @@ describe('GitTarget', () => {
     expect(calls[1].args).toEqual(['clone', '--depth', '1', '--', REPO_URL, dir]);
     expect(calls[1].opts.network).toBe(true);
     expect(calls[2].args).toEqual(['symbolic-ref', '--short', 'HEAD']);
-    expect(calls[3].args).toEqual(['add', '--', SLUG]);
+    expect(calls[3].args).toEqual(['add', '-f', '--', `${SLUG}/${report().fileName}`]);
     expect(calls[4].args).toEqual(['diff', '--cached', '--quiet', '--', SLUG]);
     const commitCall = calls[5];
     expect(commitCall.args).toEqual([
@@ -157,7 +157,7 @@ describe('GitTarget', () => {
 
     expect(calls[1].args).toEqual(['clone', '--depth', '1', '--branch', 'develop', '--', REPO_URL, dir]);
     expect(calls.some((c) => c.sub[0] === 'symbolic-ref')).toBe(false);
-    expect(calls[2].args).toEqual(['add', '--', relFolder]);
+    expect(calls[2].args).toEqual(['add', '-f', '--', `${relFolder}/${report().fileName}`]);
     expect(calls[5].args).toEqual(['push', '--no-verify', 'origin', 'HEAD:develop']);
 
     const written = await readFile(join(dir, 'team', 'reports', SLUG, report().fileName), 'utf-8');
@@ -364,7 +364,7 @@ describe('GitTarget', () => {
     const target = new GitTarget(gitSettings, EMAIL, run, dir);
     await target.testPush();
 
-    expect(calls.some((c) => c.sub[0] === 'add' && c.sub[2] === SLUG)).toBe(true);
+    expect(calls.find((c) => c.sub[0] === 'add')?.args).toEqual(['add', '-f', '--', `${SLUG}/.codemie-sync-check`]);
     expect(calls.some((c) => c.sub[0] === 'push')).toBe(true);
 
     const written = await readFile(join(dir, SLUG, '.codemie-sync-check'), 'utf-8');
@@ -505,6 +505,9 @@ describe('GitTarget', () => {
 
     await new GitTarget(gitSettings, EMAIL, run, dir).deliver(names.map((name) => report(name)));
 
+    expect(calls.filter((c) => c.sub[0] === 'add').map((c) => c.args)).toEqual([
+      ['add', '-f', '--', ...names.map((name) => `${SLUG}/${name}`)],
+    ]);
     expect(calls.filter((c) => c.sub[0] === 'commit').map((c) => c.sub)).toEqual([
       ['commit', '--no-verify', '-m', `analytics sync: ${SLUG} (3 files)`],
     ]);

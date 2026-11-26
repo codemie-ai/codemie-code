@@ -19,13 +19,12 @@ describe('BackendPolicy', () => {
     await rm(home, { recursive: true, force: true });
   });
 
-  it('answers the gate it is given and never asks whether CodeMie launched the session', async () => {
-    const launched = vi.fn(() => true);
+  it('answers the gate it is given', async () => {
     const policy = new BackendPolicy();
 
-    await expect(policy.admit('s1', async () => 'stop', launched)).resolves.toBe('stop');
-    await expect(policy.admit(undefined, async () => 'continue', launched)).resolves.toBe('continue');
-    expect(launched).not.toHaveBeenCalled();
+    await expect(policy.admit('s1', async () => 'stop')).resolves.toBe('stop');
+    await expect(policy.admit(undefined, async () => 'continue')).resolves.toBe('continue');
+    await expect(policy.admit('s1', async () => 'retry-after-proxy-start')).resolves.toBe('retry-after-proxy-start');
   });
 
   it('builds the evidence inputs it is given', async () => {

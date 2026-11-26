@@ -2,8 +2,9 @@
  * Webhook delivery target for `codemie analytics sync`.
  *
  * POSTs each file of the analytics export as a single JSON attachment, one request per file in
- * order, to a configured HTTPS webhook URL (no per-target grouping, no retry); the first file that
- * fails stops the delivery. Any 2xx response resolves; a file above {@link MAX_EXPORT_BYTES} throws
+ * order, to a configured HTTPS webhook URL (no per-target grouping, no retry); a file that fails
+ * does not stop the ones after it, and after the last file the delivery throws the first error it
+ * met, each later one logged at debug level. Any 2xx response resolves; a file above {@link MAX_EXPORT_BYTES} throws
  * `ExportTooLargeError` before its network call; a POST that takes longer than {@link WEBHOOK_TIMEOUT_MS} is aborted;
  * a redirect response or a non-2xx response or a `fetchImpl`
  * rejection becomes a `SyncDeliveryError` with a redacted message (the signed URL query
@@ -15,6 +16,7 @@
  */
 
 import { ExportTooLargeError, SyncDeliveryError } from '../../../../../utils/errors.js';
+import { logger } from '../../../../../utils/logger.js';
 import { errorMessage } from '../redact.js';
 import type { SyncReport } from '../types.js';
 
@@ -43,11 +45,23 @@ export class WebhookTarget {
     private readonly timeoutMs: number = WEBHOOK_TIMEOUT_MS
   ) {}
 
-  /** Posts `reports` in order and stops at the first that fails. */
+  /** Posts every one of `reports` in order; throws the first error met once the last file was attempted. */
   async deliver(reports: SyncReport[]): Promise<void> {
+    let first: unknown;
+    let failed = false;
     for (const report of reports) {
-      await this.post(report);
+      try {
+        await this.post(report);
+      } catch (err) {
+        if (failed) {
+          logger.debug(`[sync:webhook] ${report.fileName} not delivered: ${errorMessage(err)}`);
+        } else {
+          first = err;
+          failed = true;
+        }
+      }
     }
+    if (failed) throw first;
   }
 
   private async post(report: SyncReport): Promise<void> {

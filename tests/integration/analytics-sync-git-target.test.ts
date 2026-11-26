@@ -195,4 +195,30 @@ describe('GitTarget integration (local bare repos)', () => {
     const verifyDir = cloneForVerification();
     expect(readFileSync(join(verifyDir, 'frank-example-com', 'second.report.json'), 'utf-8')).toBe('{"n":2}');
   }, 30_000);
+
+  it('pushes a file the target repository ignores alongside the report', async () => {
+    const seedDir = join(root, 'seed');
+    writeFileSync(join(seedDir, '.gitignore'), '*.gz\n');
+    git(['add', '-A'], seedDir);
+    git(['-c', 'user.name=seed', '-c', 'user.email=seed@example.com', 'commit', '-m', 'ignore gz'], seedDir);
+    git(['push', 'origin', 'HEAD:main'], seedDir);
+
+    const reportFile = report('gina');
+    const otlpFile: SyncReport = { fileName: 'gina.otlp.jsonl.gz', bytes: Buffer.from('otlp', 'utf-8') };
+    await new GitTarget({ repoUrl }, 'gina@example.com', createGitRunner(), join(root, 'gina-work')).deliver([
+      otlpFile,
+      reportFile,
+    ]);
+
+    const verifyDir = cloneForVerification();
+    const tracked = execFileSync('git', ['ls-files', '--', 'gina-example-com'], { cwd: verifyDir })
+      .toString()
+      .trim()
+      .split('\n')
+      .sort();
+    expect(tracked).toEqual([
+      'gina-example-com/codemie-analytics-gina-example-com-2026-11-03.report.json',
+      'gina-example-com/gina.otlp.jsonl.gz',
+    ]);
+  }, 30_000);
 });

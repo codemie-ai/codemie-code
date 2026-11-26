@@ -81,7 +81,7 @@ Whatever you chose, the last steps are:
 
 - **External sessions**: `never` (recommended), `always` or `windows`. See
   [Platform notes](#platform-notes), and [Reference](#reference-settings-and-files) for what
-  `never` means on a machine where no session is started through CodeMie.
+  `never` means in the local mode.
 - **Lookback**: the CLI default (7 days today, which follows CLI updates) or a fixed
   1–30 days.
 - **Developer command**: one line to share with your team:
@@ -150,11 +150,14 @@ runs on the next wake. It updates along with the CLI, so you don't need to come 
 
 **What install does depends on the machine.**
 
-- The CodeMie CLI config (`~/.codemie/codemie-cli.config.json`) holds a profile, of CodeMie or of
-  any other provider: install works as described above and the job delivers the JSON report. It
-  prints `Local analytics mode not turned on: this machine has a CodeMie CLI profile (<names>).`
-  A CodeMie proxy running with an upstream has the same effect: `… a CodeMie proxy is running on
-  this machine (<its URL>).`
+- The CodeMie CLI config (`~/.codemie/codemie-cli.config.json`) holds a profile: install works as
+  described above and the job delivers the JSON report. It prints `Local analytics mode not turned
+  on: this machine has a CodeMie CLI profile (<names>). To turn it on, delete the profile and run
+  this command again.` A CodeMie proxy running with an upstream has the same effect: ``Local
+  analytics mode not turned on: a CodeMie proxy is running on this machine (<its URL>), started
+  from a project's own CodeMie config. To turn it on, delete that project's profile (run `codemie
+  profile delete` in the project), stop the proxy (`codemie proxy stop`) and run this command
+  again.``
 - The config holds no profile, or there is none: install turns on the
   [local analytics mode](#local-analytics-mode). Before it registers the job it writes the
   settings with `local: true`, starts the local proxy, and writes the hooks of each client it finds
@@ -166,8 +169,12 @@ runs on the next wake. It updates along with the CLI, so you don't need to come 
   mode on once a supported client is there. On a machine that is local already such an install
   fails, and leaves the mode, the job and the settings as they were. No sign-in is asked for.
 
-A machine that is local stays local on a re-install, even after a profile was added; a config file
-that exists and is not valid JSON stops install before it changes anything.
+The check for a profile and for a proxy with an upstream comes first on every install. A machine
+that is local already and passes it installs as before. One that has a profile or such a proxy by
+then ends ``Install failed: This machine runs the local analytics mode and has a CodeMie CLI profile
+(<names>). Delete the profile, or run `codemie analytics sync uninstall` to leave the local mode.``
+(for a proxy, the same with the proxy's own text) and changes nothing. A config file that exists
+and is not valid JSON stops install before it changes anything.
 
 ### Delivering to a git repository
 
@@ -304,22 +311,33 @@ to run twice.
 
 On a machine in the local mode it also removes, in this order: the hooks of Claude Code,
 Copilot CLI and Copilot Chat; then, holding the daemon lock, the local proxy, the moves into the
-folder left half-done, the local spool (`~/.codemie/analytics/spool/`, with the sessions not yet
-moved) and the exclusion marks (`~/.codemie/analytics/excluded/`); the job and the settings last.
+folder left half-done and the local spool (`~/.codemie/analytics/spool/`, with the sessions not yet
+moved); then the job and the settings; and the exclusion marks (`~/.codemie/analytics/excluded/`)
+last. It removes the same on a machine whose settings no longer say `local` — replaced or removed
+by hand — when the machine has no CodeMie CLI profile, no CodeMie proxy running with an upstream,
+and still holds something of the local mode: its proxy's state, the local spool or the exclusion
+marks.
 A session still in its grace in the local spool has not been moved into the folder yet and is
 never delivered.
 A client that holds nothing only CodeMie writes is not touched: for Claude Code that is CodeMie's hooks, or CodeMie's telemetry endpoint with its header — telemetry settings of your own stay as they are. A client set up before the install
-loses its CodeMie hooks too, since the install rewrote them to the local proxy; on a machine with a
-profile `codemie proxy connect` sets it up again.
+loses its CodeMie hooks too, since the install rewrote them to the local proxy.
+A Claude Code settings file that cannot be read or does not parse stops the uninstall before
+anything is removed: `Uninstall failed: …`, exit 1, the settings kept.
 A step that fails stops the uninstall with exit 1 and the settings kept, so the local mode stays in
 place and `uninstall` can be run again. The clients' hooks are already removed by then, so nothing
 is gathered until `uninstall` is run again and finishes, or `sync install` is run again and writes
-them back.
+them back. A failure to remove the exclusion marks is logged and does not fail the uninstall: the
+job and the settings are gone by then.
 
 - Hooks left by a CLI of an earlier version are removed with `codemie proxy disconnect --all`.
 - A settings file that does not load stops `uninstall` before it removes anything. Fix or remove
-  `~/.codemie/analytics-sync.json`, then run `codemie proxy disconnect --all` and
-  `codemie proxy stop`, and remove `~/.codemie/analytics/spool` and `~/.codemie/analytics/excluded`.
+  `~/.codemie/analytics-sync.json` and run `uninstall` again.
+- A job installed under a name of its own (`--task-name`) is not found once its settings are gone:
+  run `codemie analytics sync install --task-name <name> --force`, then `uninstall`.
+- Settings that no longer say `local` on a machine with nothing of the local mode left to tell it
+  by — its proxy stopped with `codemie proxy stop` and no session in the local spool: `uninstall`
+  removes the job and the settings alone. Run `codemie analytics sync install` again, then
+  `uninstall`.
 
 What stays:
 
@@ -343,10 +361,10 @@ Each run appends one line per delivery target to `~/.codemie/logs/analytics-sync
 | `ok sent … (warning: JSON report not built, the marker stays and the next run tries it again: …) target=…` | Local mode: the JSON report could not be built, and the target accepted the OTLP files alone. The last-sent marker stays. | The detail names the cause; run `codemie analytics --last 1d` by hand to see it. The next run sends the OTLP files again — a reader keeps one copy of a line by its id — and tries the report again. |
 | `ok sent … (warning: OTLP files built without <n> session(s), the marker stays and the next run tries them again: <session> (<error>), …) target=…` | Local mode: the files of the named sessions could not be read; the other sessions were delivered. The last-sent marker stays. | The detail names the first three sessions and why. The next run tries them again; a file that can never be read holds the marker until it is removed from the analytics folder. |
 | `ok sent … (warning: OTLP files built without <n> session(s): <session> (Export size … exceeds limit …), …) target=…` | Local mode: each named session holds a single line whose gzip alone is above 70 MB, which no run can deliver; the other sessions were delivered and the marker moved. | Nothing delivers those sessions. See [Export size limit](#export-size-limit). |
-| `skip no sessions in window … target=…` | There were no CodeMie sessions in the window. In the local mode: neither the JSON report nor `~/.codemie/analytics/sessions/` has a session in the window. In the local mode the line can carry the two `(warning: OTLP files built without …)` notes of the rows above, when the only sessions of the window were left out. | Nothing. Nothing was sent, a `skip` moves no marker, and the next run covers this period too. In the local mode, see [Limitations](#limitations) for why a session may be missing. |
+| `skip no sessions in window … target=…` | There were no CodeMie sessions in the window. In the local mode: neither the JSON report nor `~/.codemie/analytics/sessions/` has a session in the window. In the local mode the line can carry the note `(warning: OTLP files built without <n> session(s): <session> (Export size … exceeds limit …), …)` of the row above, when the only sessions of the window were ones no run can deliver. | Nothing. Nothing was sent, a `skip` moves no marker, and the next run covers this period too. In the local mode, see [Limitations](#limitations) for why a session may be missing. |
 | `fail setup No sync identity configured …` | No email in the CodeMie CLI config or in git. | Run `codemie profile login`, or `git config --global user.email you@example.com`, then run install again. |
 | `fail setup No sync target configured …` | This machine has nowhere to send to. | Run the install command again. |
-| `fail export …` | The report could not be built, or it is above the 70 MB limit. In the local mode a report that cannot be built fails the run only when the analytics folder has no OTLP file to deliver, and an analytics folder that cannot be read fails it only when the window has no JSON report. | For the JSON report, run `codemie analytics --last 1d` by hand to see why. In the local mode the line's detail names the cause. See [Export size limit](#export-size-limit). |
+| `fail export …` | The report could not be built, or it is above the 70 MB limit. In the local mode a report that cannot be built fails the run only when the analytics folder has no OTLP file to deliver, and an analytics folder that cannot be read fails it only when the window has no JSON report. A run that built no file at all while a session's files could not be read is a `fail export` too, and its line carries that warning. | For the JSON report, run `codemie analytics --last 1d` by hand to see why. In the local mode the line's detail names the cause. See [Export size limit](#export-size-limit). |
 | `fail send … target=webhook` | The webhook refused the request, or the network failed. | The next run retries the whole gap. If it keeps failing, the flow may be off or its URL rotated; ask your team lead. |
 | `fail send … target=git` | The push failed. | Check `git push` works from this machine without a prompt. For an unknown SSH host key, run `ssh -T <host>` once. |
 
@@ -368,8 +386,8 @@ flow _starts_, not when it has saved anything. A failure after that shows only i
 run history, which the flow owner can see.
 
 **Local mode: nothing in the folder?** Run `codemie proxy doctor`; its `Local analytics` group
-shows the folder, the job and the last delivery per target. With `--include-external never` a
-machine where no session is started through CodeMie gathers nothing (see
+shows the folder, the job and the last delivery per target. With `--include-external never` the
+local mode gathers nothing (see
 [Reference](#reference-settings-and-files)). A session moves into the folder only 15 minutes
 after it ends (60 minutes after its last event when no end came).
 
@@ -389,8 +407,9 @@ trigger allows **Anyone**, and that you copied the whole URL.
 4. **Skip** a target without sending, and without moving its marker, when the window has no
    sessions.
 5. **Deliver**: one HTTPS POST to the webhook (5-minute timeout, no redirects), and/or a
-   commit and push to the repository. In the local mode: one POST per file, and all the files in
-   one commit and one push.
+   commit and push to the repository. In the local mode: one POST per file — every file is
+   attempted, a file that fails does not stop the ones after it, and the target fails after the
+   last — and all the files in one commit and one push.
 6. **Record** the run's start time in that target's marker, only after it accepted the file — in
    the local mode, every file of the run; a failure at any file leaves the marker, and the next run
    sends the window again.
@@ -469,7 +488,9 @@ In the local mode the run delivers, beside the report under that name,
 `codemie-analytics-<lowercased email slug>-<UTC date>.otlp.jsonl.gz`: one gzip stream, no archive.
 When the run's lines do not fit in 70 MB they are cut at a line into
 `codemie-analytics-<lowercased email slug>-<UTC date>.part-<k>-of-<n>.otlp.jsonl.gz`
-(`part-01-of-03`), each a gzip stream of whole lines by itself, read in any order.
+(`part-01-of-03`), each a gzip stream of whole lines by itself, read in any order. After a repeated
+run of a UTC day whose lines are cut differently, the parts of the earlier cut lie beside the new
+ones: a reader takes every file and keeps one copy of a line by its id.
 Unpacked, every line is one OTLP JSON export request (`resourceLogs`, `resourceMetrics` or
 `resourceSpans`); the hook events are OTLP log records. Every `resource` carries the attribute
 `codemie.line_id` = `<the session file's name in the folder>:<the first 32 hex digits of the SHA-256
@@ -532,8 +553,8 @@ no profile where it finds a supported client, and installs the JSON report alone
 **The developer** runs that line, `codemie analytics sync install …`. On a machine with no
 profile it:
 
-1. decides the mode: the settings already hold `local: true`, or the global CLI config holds no
-   profile and no CodeMie proxy runs with an upstream;
+1. decides the mode: the global CLI config holds no profile and no CodeMie proxy runs with an
+   upstream — checked first, also on a machine whose settings already hold `local: true`;
 2. creates the analytics folder `~/.codemie/analytics/sessions/` when it is absent, then writes
    `~/.codemie/analytics-sync.json` with the targets, the options and `local: true`;
 3. starts the local proxy (`codemie proxy` in `--mode local`, on port 4001 or a free one), or
@@ -554,7 +575,9 @@ there. On a machine that is local already such an install fails instead and leav
 job and the settings as they were.
 
 A step that fails undoes the steps before it, last first. A client whose settings already send
-its telemetry elsewhere is skipped, and the summary says why.
+its telemetry elsewhere is skipped, and the summary says why. So is a client whose files cannot be
+written (`its files could not be written (<code>)`), and Claude Code when its settings file cannot
+be read or does not parse.
 
 **What then runs by itself:**
 
@@ -563,7 +586,9 @@ its telemetry elsewhere is skipped, and the summary says why.
 - Claude Code's own exporter posts its logs, metrics and traces to the local proxy;
 - the local proxy writes each session to `~/.codemie/analytics/spool/` and, every 15 minutes,
   moves the sessions that are done into `~/.codemie/analytics/sessions/`: 15 minutes after a
-  session ends, or 60 minutes after its last event when no end came (Copilot Chat sends none);
+  session ends, or 60 minutes after its last event when no end came (Copilot Chat sends none); a
+  Copilot CLI session whose `sessionEnd` never came gets its end and final totals from its
+  transcript before the sweep;
 - the daily job, `codemie analytics sync run --scheduled`, delivers the `.otlp.jsonl.gz` of the
   window, cut into files no larger than 70 MB when one would be larger, and the JSON report after
   them.
@@ -614,9 +639,8 @@ the project's source, the contract and the consent.
 With no CodeMie login a line's `user_email` is empty; a hook event still names the developer in
 `developer_name` — the git `user.email` or `user.name`, else the CLI config's email or the OS
 user — and the file's name does through the email slug. A session's telemetry
-travels whole with its hook events, so the part of a session resumed outside the policy (a
-session started through CodeMie and resumed directly under `never`) is in the file: OTLP carries
-no working directory. A session that fires a hook while your filters leave it out — analytics
+travels whole with its hook events, so the part of a session resumed outside the policy is in the
+file: OTLP carries no working directory. A session that fires a hook while your filters leave it out — analytics
 switched off, an excluded project, a project outside the tracked list — is not gathered from
 then on, a return to a tracked folder and `proxy analytics enable` / `include` included; what
 was moved before stays. A Claude Code settings file that cannot be read or does not parse, a project list in it
@@ -628,12 +652,8 @@ file is no larger than 70 MB: a larger run is cut into several (see [Export size
 
 - **The clients.** The OTLP files hold Claude Code, Copilot CLI and Copilot Chat. Codex, Gemini
   and Pi are not in them; they reach the lead in the JSON report, delivered beside them.
-- **The default `never`.** On a machine where no session is started through CodeMie it gathers
-  nothing; the team lead chooses `always` in `bootstrap` for sessions started directly. A session
-  counts as started through CodeMie when its hook's environment holds the session id a CodeMie
-  launcher sets: a client started by hand from a terminal opened inside such a session counts as
-  launched and is gathered under `never` too. On a machine with no profile that needs a profile
-  added after the install.
+- **The default `never`.** In the local mode it gathers nothing; the team lead chooses `always`
+  in `bootstrap`, or `windows` to gather on Windows alone.
 - **A changed `--include-external`.** The answer applies when a session is gathered: a session
   stored under an earlier answer stays in the folder and is delivered while it is in a run's window.
 - **Nothing before the install.** Only events from the install on are gathered. A session already
@@ -657,11 +677,12 @@ file is no larger than 70 MB: a larger run is cut into several (see [Export size
   writes the clients' settings there and never refuses in the mode. It is named for a routed VS Code
   extension or a project list as well, which the mode has no command of its own for.
 - **Settings that do not load.** A `~/.codemie/analytics-sync.json` that cannot be read or is not valid
-  is taken as no local mode: the hooks and the proxy commands act as on a machine without it — where
-  there is no profile, nothing is gathered; where `codemie setup` was run since the install, the
-  machine works as any machine with a setup and its hooks send to the profile's backend — and
-  `sync status` and `sync uninstall` stop on the file.
-  Mend or remove it and run `sync install` again; [uninstall](#uninstall) names what to remove by hand.
+  is taken as no local mode: Claude Code's hooks gather nothing, while a hook of Copilot CLI or
+  Copilot Chat is still stored by the running local proxy and its session moved into the folder,
+  under your own folder filters and without the lead's `--include-external` — until the file is
+  mended or `sync install` runs again. `sync status` and `sync uninstall` stop on the file.
+  Mend or remove it and run `sync install` again; with a job installed under a name of its own
+  (`--task-name`) that install asks for `--force`.
 - **The job** runs the Node and the CLI it was installed with.
 - **Nothing stored is removed by itself**, `sync uninstall` included: the folder grows by every
   session and stays until you delete it.
@@ -673,10 +694,8 @@ file is no larger than 70 MB: a larger run is cut into several (see [Export size
 - **Two CLI versions on one machine.** A Copilot CLI or Copilot Chat hook of a CLI before the
   local mode (where the CLI the hooks name was replaced by an earlier version) posts to the live
   local proxy, which stores its events with no `--include-external` applied; each such hook writes
-  `~/.codemie/proxy-connection.json` with an empty profile, which `uninstall` leaves; with the
-  local proxy down, in a folder whose project `.codemie` config has a `baseUrl`, it starts a
-  CodeMie proxy on that profile, which the next hook of this release replaces. Claude Code's hooks
-  of such a CLI gather nothing.
+  `~/.codemie/proxy-connection.json` with an empty profile, which `uninstall` leaves. Claude
+  Code's hooks of such a CLI gather nothing.
 
 ## Platform notes
 
@@ -778,10 +797,10 @@ only configuration. Every path below is under the CodeMie home, `~/.codemie` by 
 | `logs/analytics-sync.launchd.log` | macOS only | launchd's own stdout/stderr |
 | `analytics-sync-bootstrap.json` | `sync bootstrap` (team leads only) | saved wizard answers: chosen targets, the webhook URL and the git repository, branch and path (mode 600) |
 
-`--include-external` decides which sessions are gathered: `never` the sessions CodeMie launched
-(`codemie claude`, `codemie copilot`), `always` every session, `windows` every session on Windows
-and the launched ones elsewhere. On a machine where no session is started through CodeMie,
-`never` gathers nothing, in the local mode as in the JSON report.
+`--include-external` decides which sessions are gathered. For the JSON report: `never` the
+sessions CodeMie launched (`codemie claude`, `codemie copilot`), `always` every session, `windows`
+every session on Windows and the launched ones elsewhere. In the local mode: `never` gathers
+nothing, `always` every session, `windows` every session on Windows and nothing elsewhere.
 
 Commands and every option: [COMMANDS.md](COMMANDS.md#team-lead-setup-analytics-sync-bootstrap).
 Delivery contract and per-platform scheduler detail:

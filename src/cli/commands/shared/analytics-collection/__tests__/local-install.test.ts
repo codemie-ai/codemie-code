@@ -304,6 +304,30 @@ describe('localInstallPlan', () => {
     expect(printed.join('\n')).toContain('Clients set up:   Claude Code, Copilot CLI');
   });
 
+  it('Copilot Chat skipped for a VS Code settings write that fails leaves no hook file', async () => {
+    copilotCliInstalled();
+    vi.doMock('fs/promises', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('fs/promises')>();
+      return {
+        ...actual,
+        rename: async (from: string, to: string) => {
+          if (to.endsWith(join('User', 'settings.json'))) throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+          return actual.rename(from, to);
+        },
+      };
+    });
+    try {
+      await vsCodeInstalled({});
+      const { code, printed } = await install(await localPlan());
+
+      expect(code).toBe(0);
+      expect(printed.join('\n')).toContain('Skipped:          Copilot Chat — Failed to update VS Code settings at ');
+      expect(existsSync(join(home, 'hooks', 'copilot-chat-hooks.json'))).toBe(false);
+    } finally {
+      vi.doUnmock('fs/promises');
+    }
+  });
+
   it('the Claude Code env conflict is skipped, its note naming the keys and no --overwrite', async () => {
     claudeCodeInstalled();
     copilotCliInstalled();
@@ -394,6 +418,16 @@ describe('localInstallPlan', () => {
     expect(printed).toContain(NO_CLIENT_FAILURE);
     expect(job.register).not.toHaveBeenCalled();
     expect(readFileSync(settingsPath(), 'utf-8')).toBe('{ not json');
+  });
+
+  it('a sync settings file that does not load, no profile and a supported client: the file replaced with local: true', async () => {
+    writeFileSync(settingsPath(), '{ not json');
+    claudeCodeInstalled();
+
+    const { code } = await install(await resolvedPlan());
+
+    expect(code).toBe(0);
+    expect(JSON.parse(readFileSync(settingsPath(), 'utf-8'))).toMatchObject({ local: true });
   });
 
   it('a sync settings file that cannot be read, no profile and no client fails the install, not the process', async () => {
@@ -580,15 +614,51 @@ describe('localInstallPlan', () => {
     mkdirSync(`${getCopilotConnectorsConfigPath()}.${process.pid}.tmp`, { recursive: true });
   }
 
-  it('a Copilot CLI writer that fails after its hook file, on a client not set up before, takes the hook file back', async () => {
+  it('a Copilot CLI writer that fails after its hook file, on a client not set up before, is skipped and takes the hook file back', async () => {
+    claudeCodeInstalled();
     copilotCliInstalled();
     await copilotScopeUnwritable();
     const { getCopilotCliHookFilePath } = await import('../../../proxy/connectors/copilot-cli-otlp.js');
 
-    const { code } = await install(await localPlan());
+    const { code, printed } = await install(await localPlan());
 
-    expect(code).toBe(1);
+    expect(code).toBe(0);
+    expect(printed).toContain('  Skipped:          Copilot CLI — its files could not be written (EISDIR)');
+    expect(printed).toContain('  Clients set up:   Claude Code');
     expect(existsSync(getCopilotCliHookFilePath())).toBe(false);
+  });
+
+  it('a Claude Code settings file that does not parse skips the client with the reader\'s reason, the file untouched', async () => {
+    claudeCodeInstalled();
+    copilotCliInstalled();
+    touch(claudeSettingsPath());
+    writeFileSync(claudeSettingsPath(), '{ not json');
+
+    const { code, printed } = await install(await localPlan());
+
+    expect(code).toBe(0);
+    expect(printed).toContain(`  Skipped:          Claude Code — Claude Code settings at ${claudeSettingsPath()} is not valid JSON and was not changed.`);
+    expect(printed).toContain('  Clients set up:   Copilot CLI');
+    expect(readFileSync(claudeSettingsPath(), 'utf-8')).toBe('{ not json');
+  });
+
+  it('a writer failing with an error that has a code and no errno fails the install', async () => {
+    copilotCliInstalled();
+    vi.doMock('../../../proxy/connectors/copilot-cli-otlp.js', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('../../../proxy/connectors/copilot-cli-otlp.js')>()),
+      writeCopilotCliOtlpConfig: async () => {
+        throw Object.assign(new Error('not a system error'), { code: 'ERR_INVALID_STATE' });
+      },
+    }));
+
+    try {
+      const { code, printed } = await install(await localPlan());
+
+      expect(code).toBe(1);
+      expect(printed.join('\n')).not.toContain('Skipped:');
+    } finally {
+      vi.doUnmock('../../../proxy/connectors/copilot-cli-otlp.js');
+    }
   });
 
   it('a Copilot CLI connectors config that does not parse skips the client and takes its hook file back', async () => {
@@ -623,16 +693,19 @@ describe('localInstallPlan', () => {
     expect(existsSync(getCopilotCliHookFilePath())).toBe(true);
   });
 
-  it('a Copilot CLI writer that fails after its hook file, on a client set up before, leaves its entries', async () => {
+  it('a Copilot CLI writer that fails after its hook file, on a client set up before, is skipped and leaves its entries', async () => {
     copilotCliInstalled();
     expect((await install(await localPlan())).code).toBe(0);
+    claudeCodeInstalled();
     await copilotScopeUnwritable();
     const { getCopilotCliHookFilePath } = await import('../../../proxy/connectors/copilot-cli-otlp.js');
     const { readCopilotConnectorScope } = await import('@/agents/core/copilot-connector-scope.js');
 
-    const { code } = await install(await localPlan());
+    const { code, printed } = await install(await localPlan());
 
-    expect(code).toBe(1);
+    expect(code).toBe(0);
+    expect(printed).toContain('  Skipped:          Copilot CLI — its files could not be written (EISDIR)');
+    expect(printed).toContain('  Clients set up:   Claude Code');
     expect(existsSync(getCopilotCliHookFilePath())).toBe(true);
     expect(await readCopilotConnectorScope('copilot-cli-otlp')).toEqual({ kind: 'ok', value: { enabled: true, scope: 'user' } });
   });

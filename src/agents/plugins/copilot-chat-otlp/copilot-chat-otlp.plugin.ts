@@ -73,11 +73,6 @@ export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput
     return typeof hookInput.session_id === 'string' ? hookInput.session_id : undefined;
   }
 
-  /** VS Code starts Copilot Chat itself: CodeMie never launches its session. */
-  protected override launchedByCodemie(): boolean {
-    return false;
-  }
-
   protected async onUntrackedHook(hookInput: CopilotChatHookInput): Promise<void> {
     if (!ENFORCED_EVENTS.has(hookInput.hook_event_name)) {
       return;

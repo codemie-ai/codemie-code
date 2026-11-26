@@ -121,23 +121,54 @@ describe('WebhookTarget', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('posts several files one request each, in order, and stops at the first that fails', async () => {
-    const posted: string[] = [];
-    const fetchImpl = vi.fn(async (_url: string, init: { body: string }) => {
-      const name = JSON.parse(init.body).attachments[0].name as string;
-      posted.push(name);
-      return { ok: name !== 'b.gz', status: name === 'b.gz' ? 500 : 200 };
-    });
-    const target = new WebhookTarget('https://example.invalid/hook?sig=FAKE', fetchImpl as never);
+  describe('several files', () => {
     const file = (fileName: string) => ({ fileName, bytes: Buffer.from(fileName), contentType: 'application/gzip' });
 
-    await target.deliver([file('a.gz'), file('c.gz')]);
-    expect(posted).toEqual(['a.gz', 'c.gz']);
+    /** A webhook answering `statuses[name]` for a file of that name, 200 for any other. */
+    function webhook(statuses: Record<string, number>) {
+      const posted: string[] = [];
+      const fetchImpl = vi.fn(async (_url: string, init: { body: string }) => {
+        const name = JSON.parse(init.body).attachments[0].name as string;
+        posted.push(name);
+        const status = statuses[name] ?? 200;
+        return { ok: status === 200, status };
+      });
+      return { posted, target: new WebhookTarget('https://example.invalid/hook?sig=FAKE', fetchImpl as never) };
+    }
 
-    posted.length = 0;
-    await expect(target.deliver([file('a.gz'), file('b.gz'), file('c.gz')])).rejects.toSatisfy(
-      (err: unknown) => err instanceof SyncDeliveryError && err.status === 500
-    );
-    expect(posted).toEqual(['a.gz', 'b.gz']);
+    it('posts one request each, in order', async () => {
+      const { posted, target } = webhook({});
+
+      await target.deliver([file('a.gz'), file('c.gz')]);
+      expect(posted).toEqual(['a.gz', 'c.gz']);
+    });
+
+    it('the second failing: all three posted in order, the second error thrown', async () => {
+      const { posted, target } = webhook({ 'b.gz': 500 });
+
+      await expect(target.deliver([file('a.gz'), file('b.gz'), file('c.gz')])).rejects.toSatisfy(
+        (err: unknown) => err instanceof SyncDeliveryError && err.status === 500
+      );
+      expect(posted).toEqual(['a.gz', 'b.gz', 'c.gz']);
+    });
+
+    it('edge: the first and the third failing: the first one\'s error', async () => {
+      const { posted, target } = webhook({ 'a.gz': 502, 'c.gz': 503 });
+
+      await expect(target.deliver([file('a.gz'), file('b.gz'), file('c.gz')])).rejects.toSatisfy(
+        (err: unknown) => err instanceof SyncDeliveryError && err.status === 502
+      );
+      expect(posted).toEqual(['a.gz', 'b.gz', 'c.gz']);
+    });
+
+    it('edge: a file above the cap between two others: no request for it, the other two posted, ExportTooLargeError', async () => {
+      const { posted, target } = webhook({});
+      const big = { fileName: 'big.gz', bytes: Buffer.alloc(MAX_EXPORT_BYTES + 1), contentType: 'application/gzip' };
+
+      await expect(target.deliver([file('a.gz'), big, file('c.gz')])).rejects.toSatisfy(
+        (err: unknown) => err instanceof ExportTooLargeError
+      );
+      expect(posted).toEqual(['a.gz', 'c.gz']);
+    });
   });
 });

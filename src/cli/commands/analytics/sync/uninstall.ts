@@ -38,18 +38,20 @@ export interface UninstallDeps {
    * meaningful), then `rm(gitWorkingCopyPath(), { recursive: true, force: true })`. */
   removeWorkingCopy(): Promise<boolean>;
   print(line: string): void;
-  /** The mode's own removal around the uninstall's: it calls the given removal once. */
-  teardown(removeInstall: () => Promise<void>): Promise<void>;
+  /** The mode's own removal around the uninstall's: it calls the given removal once, and answers whether its own
+   * removal took anything away. */
+  teardown(removeInstall: () => Promise<void>): Promise<boolean>;
 }
 
 export async function runUninstall(deps: UninstallDeps): Promise<number> {
   let unregistered = false;
   let deleted = false;
   let workingCopyRemoved: boolean;
+  let tornDown: boolean;
   try {
     const settings = await deps.loadSettings();
     const name = resolveSchedulerName(settings ?? {}, process.platform);
-    await deps.teardown(async () => {
+    tornDown = await deps.teardown(async () => {
       unregistered = await deps.schedulerFor(name).unregister();
       deleted = await deps.deleteSettings();
     });
@@ -61,13 +63,15 @@ export async function runUninstall(deps: UninstallDeps): Promise<number> {
     return 1;
   }
 
-  if (!unregistered && !deleted && !workingCopyRemoved) {
+  if (!unregistered && !deleted && !workingCopyRemoved && !tornDown) {
     deps.print('Nothing to remove: analytics sync is not installed.');
     return 0;
   }
 
   deps.print('Analytics sync uninstalled.');
-  deps.print('  The OS job and the sync settings were removed.');
+  if (unregistered || deleted) {
+    deps.print('  The OS job and the sync settings were removed.');
+  }
   if (workingCopyRemoved) {
     deps.print('  The local git working copy was removed.');
   }

@@ -1871,10 +1871,10 @@ describe('claude-code-otlp connector', () => {
       expect(await hasClaudeCodeOtlpEntries()).toBe(false);
     });
 
-    it('is false for a settings file that does not parse', async () => {
+    it('rejects with a ConfigurationError for a settings file that does not parse', async () => {
       await writeSettings('{ "env": ');
 
-      expect(await hasClaudeCodeOtlpEntries()).toBe(false);
+      await expect(hasClaudeCodeOtlpEntries()).rejects.toBeInstanceOf(ConfigurationError);
     });
   });
 

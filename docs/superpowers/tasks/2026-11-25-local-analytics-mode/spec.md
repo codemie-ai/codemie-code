@@ -16,7 +16,7 @@ that data on a machine that has no login at all.
   bytes fails the run (`sync/targets/webhook-target.ts:21,47`).
 - `--include-external` defaults to `never` (`sync/config-store.ts:29`); a session CodeMie did not launch is left out of the
   report (`sources/sessions-source.ts:21`). With no profile no CodeMie launcher starts a client
-  (`src/agents/core/AgentCLI.ts:300-322`).
+  (`src/agents/core/AgentCLI.ts:343-348`).
 - `proxy connect` needs an SSO profile and a stored login (`src/cli/commands/proxy/connect-orchestrator.ts:226-323`); with no
   login Claude Code's hook writes no event (`src/agents/core/evidence/stamp.ts:122-125`). The proxy's intake checks its
   gateway key alone (`src/providers/plugins/sso/proxy/plugins/otlp.plugin.ts:233-400`).
@@ -31,15 +31,17 @@ that data on a machine that has no login at all.
 
 - **Turning it on.** The lead's command is unchanged. On a machine whose CLI config holds no profile, `sync install` marks
   the local mode in `~/.codemie/analytics-sync.json`, starts a proxy with no upstream, writes the hooks and telemetry settings of the clients found on the machine
-  among Claude Code, Copilot CLI and Copilot Chat, and registers the daily job. A client whose settings cannot be written —
-  one that already sends telemetry elsewhere — is skipped and listed; with no client written the install undoes what it created for the mode, registers the job
+  among Claude Code, Copilot CLI and Copilot Chat, and registers the daily job. A client that cannot be set up —
+  one that already sends telemetry elsewhere, one whose files cannot be written, Claude Code when its settings file cannot be
+  read or does not parse — is skipped and listed; with no client written the install undoes what it created for the mode, registers the job
   without it and says so in its summary — the machine delivers the JSON report alone; on a machine already local such an
-  install fails and what this run created is undone. A machine already local stays local on a re-install. On any other machine with a profile, or
+  install fails and what this run created is undone. The check for a profile and for a proxy with an upstream comes first on every
+  install: a machine already local that has one by then ends `Install failed: …` and nothing changes. On any other machine with a profile, or
   with a CodeMie proxy running, the install works as today and says in one line why the local mode is off.
 - **Collecting.** The local proxy keeps a spool of its own (`~/.codemie/analytics/spool/`), reads no credentials and sends
   nothing; the hooks run with no sign-in check, no evidence
   record and no session gate. A session is collected when `--include-external` allows it; a developer's folder filters and
-  `proxy analytics exclude` apply on top. With `never` a machine with no CodeMie launcher collects nothing. A session that
+  `proxy analytics exclude` apply on top. With `never` the local mode collects nothing. A session that
   fires a hook in a folder the filters leave out is not collected from that hook on — a return to a tracked folder
   included — and what of it is still in the spool is dropped. A Claude Code settings file that cannot be read or does not parse, a project filter in it that is not a list of absolute paths, or a hook that names no folder while that filter is not empty is not a filter: that hook is not collected, no mark is left, and the session goes on once the file reads again. Copilot's block
   stays: it comes only when the hook could not bring the proxy up.
@@ -62,7 +64,10 @@ that data on a machine that has no login at all.
   name `sync install` in their hints; `sync status` names the mode. `proxy start` and `proxy restart` start and restart the local
   proxy and refuse a `--profile`; `proxy connect` and `disconnect` refuse and name `sync uninstall`; `proxy stop` works and the
   next event starts the proxy again. `sync uninstall` removes
-  the hooks, stops the proxy, removes the local spool with the sessions not yet moved, and leaves the folder; when a step
+  the hooks, stops the proxy, removes the local spool with the sessions not yet moved, then the job and the settings, and
+  the exclusion marks last, and leaves the folder; it removes the same on a machine with no profile and no proxy with an
+  upstream whose settings no longer say `local`, when a trace of the mode is there — its proxy's state, the local spool or
+  the exclusion marks; when a step
   of it fails the settings of the local mode stay and the uninstall can be run again — the hooks it had already removed
   stay removed until then. It removes CodeMie's own entries of a client wherever they are in place, those of a client set
   up before the install included — the install rewrote them to the local proxy; a client that holds none of CodeMie's
@@ -80,8 +85,8 @@ No command and no flag is new. What changes is what three of them do on a machin
 | `codemie analytics sync bootstrap` | A guided setup, unchanged. Asks where developers' machines deliver: a Teams webhook, a git repository, or both. For the webhook: takes the Teams channel and the SharePoint folder, writes `codemie-analytics-flow.zip` for Power Automate, takes the flow's trigger URL and test-sends a small `setup-check-<stamp>.json` to it. For git: takes the repository, an optional branch and path, and test-pushes a placeholder file from a temporary working copy. Then asks `--include-external` (`never` by default, `always`, `windows`), the lookback (7 days by default, 1–30) and an optional name of the daily job, and prints one `sync install` line. It installs nothing on the lead's machine and starts no proxy. |
 | the printed line, shared with the team | `codemie analytics sync install --webhook-b64 <…> [--git-repo <url> --git-branch <b> --git-path <p>] [--at HH:MM] [--lookback-days N] --include-external <policy> [--task-name "<name>"]`. The webhook in it is a secret: anyone holding the line can post into the folder. |
 
-With `--include-external never` a machine with no CodeMie launcher gathers nothing; a team whose developers start `claude` or
-`copilot` directly needs `always`.
+With `--include-external never` the local mode gathers nothing; a team on the local mode needs `always`, or `windows` to
+gather on Windows alone.
 
 ### A developer — once
 
@@ -91,8 +96,8 @@ With `--include-external never` a machine with no CodeMie launcher gathers nothi
    once on a terminal. Runs its checks before changing anything; for a git target, a test push to the repository with the
    developer's own credentials.
 2. Decides the mode, once: the machine is local when its CLI config holds no profile and no CodeMie proxy with an upstream
-   is running; a machine already local stays local. Otherwise the local mode stays off, one line says why, and only step 6
-   runs — as today.
+   is running — checked first, also on a machine already local, which ends with a failure and no change when it has a
+   profile or such a proxy by then. Otherwise the local mode stays off, one line says why, and only step 6 runs — as today.
 3. Writes `~/.codemie/analytics-sync.json` (mode 0600) with the targets and `local: true`.
 4. Starts the local proxy: a detached Node process of the CLI, `proxy-daemon --mode local`, on `127.0.0.1:4001` or a free
    port; its pid, port and key go to `~/.codemie/proxy-daemon.json`. It has no upstream and reads no credentials.
@@ -104,8 +109,8 @@ With `--include-external never` a machine with no CodeMie launcher gathers nothi
      `~/.codemie/copilot-connectors.json`;
    - Copilot Chat — `~/.codemie/hooks/copilot-chat-hooks.json` (8 hooks), `chat.hookFilesLocations` in VS Code's user
      `settings.json`, and its record.
-   A client that is not installed is listed as such; one whose settings already send telemetry elsewhere is skipped and
-   listed; with no client set up the install undoes steps 2–5 and goes on without the local mode — step 6 registers the
+   A client that is not installed is listed as such; one whose settings already send telemetry elsewhere, one whose files
+   cannot be written, and Claude Code when its settings file cannot be read or does not parse are skipped and listed; with no client set up the install undoes steps 2–5 and goes on without the local mode — step 6 registers the
    job, the settings hold no `local`, and the summary says the local mode is not turned on; on a machine already local
    it fails and undoes what it created.
 6. Registers the daily job of the OS at `--at` (03:00 by default) — a launchd agent on macOS, a systemd user timer on Linux,
@@ -131,7 +136,7 @@ With `--include-external never` a machine with no CodeMie launcher gathers nothi
 | `codemie proxy stop` | Stops the proxy; the next client event starts it again. |
 | `codemie proxy start` / `restart` | Start the local proxy (or say it is running), stop it and start it again; `--port` is honoured when `proxy start` starts the proxy, one already running stays on its port and is named with its URL; a `--profile` is refused. |
 | `codemie proxy connect` / `disconnect` | Refuse, and name `codemie analytics sync uninstall`. |
-| `codemie analytics sync uninstall` | Removes the clients' CodeMie hooks and telemetry settings wherever they are in place, stops the proxy, removes the local spool, the job and the settings; leaves `~/.codemie/analytics/sessions/`. A step that fails stops it with the settings of the local mode in place; the hooks it had already removed stay removed until it is run again. |
+| `codemie analytics sync uninstall` | Removes the clients' CodeMie hooks and telemetry settings wherever they are in place, stops the proxy, removes the local spool, the job and the settings, the exclusion marks last; leaves `~/.codemie/analytics/sessions/`. With no profile and no proxy with an upstream it does the same over settings that no longer say `local` when a trace of the mode is there. A step that fails stops it with the settings of the local mode in place; the hooks it had already removed stay removed until it is run again. |
 
 ## The local proxy: start, restart, stop
 
@@ -180,7 +185,7 @@ hook event line                  one OTLP LogsData: resource service.name=codemi
 - AC2: Given a machine with a profile and no local mode, when `sync install` runs, then the local mode stays off, one line
   names the profiles, and the run delivers the JSON report. (story AC12)
 - AC3 (negative): Given a machine already in the local mode and a profile added since, when `sync install` runs again, then
-  it stays local. (story AC13, AC16)
+  it ends `Install failed: …`, naming the profile and `sync uninstall`, and changes nothing. (story AC13)
 - AC4: Given the local mode with `--include-external always` and a Claude Code session started directly, when the session
   has ended and its grace and the next sweep have passed, then its four files are in the folder, every line is OTLP JSON
   whose `codemie.line_id` is its file name and the first 32 hex digits of the SHA-256 of the line as the spool held it, and no request left the machine. (story AC1, AC2, AC5)
@@ -206,13 +211,15 @@ hook event line                  one OTLP LogsData: resource service.name=codemi
   port; a `--profile` given to either is refused; when `proxy connect` or `disconnect` runs, then it refuses and names
   `codemie analytics sync uninstall`. (story AC15)
 - AC13: Given the local mode, when `sync uninstall` runs, then the hooks are removed, the proxy is stopped, the local spool
-  is gone, the job and the settings are gone, and the folder is as it was; when a step of it fails, the settings stay. (story AC16)
+  is gone, the job and the settings are gone, the exclusion marks last, and the folder is as it was; when a step of it fails,
+  the settings stay; with no profile and no proxy with an upstream the same holds over settings that no longer say `local`
+  when a trace of the mode is there. (story AC16)
 - AC14: Given `codemie analytics --export json`, then the file is written as before and one deprecation line goes to stderr;
   none from a hook or the scheduled run. (story AC14)
 - AC15: Given a machine not in the local mode, then its hooks, proxy, `sync` and `doctor` write, send and print what they
   did before this change, the line of AC2 and the notice of AC14 apart. (story AC12, NG1)
 - AC16: Given the docs, then `docs/ANALYTICS-SYNC.md` says what the delivered file holds and does not hold, which clients it
-  covers, and what `never` means on a machine with no CodeMie launcher. (story AC19)
+  covers, and what `never` means in the local mode. (story AC19)
 - AC17: Given the lead's `sync bootstrap`, then its questions, its flags and the line it prints are what they were before
   this change. (story AC9)
 - AC18: Given a machine where `sync install` ran before this change, when the CLI is upgraded, then its job delivers the
@@ -240,10 +247,7 @@ hook event line                  one OTLP LogsData: resource service.name=codemi
 - One mode per machine over both at once: two spools and two proxies for a case nobody asked for.
 - The lead's existing command over a new flag: it already decides the targets, the time, the window and the sessions.
 - D3: The mode chosen once per process, the code below receiving that mode's implementation, over "if local" branches.
-  The modes are told apart at the entry of the command; an agent launcher, with no command entry of its own for the
-  analytics, tells them at the one place that needs it, before it spawns the client
-  (`src/agents/plugins/claude/claude.plugin.ts`), since carrying the collection through the launcher every agent shares
-  would change all of them for one caller. Nothing below branches on this process's mode. A check of another process's
+  The modes are told apart at the entry of the command. Nothing below branches on this process's mode. A check of another process's
   state is no such branch: the backend cold start does not adopt a local-mode daemon
   (`src/cli/commands/proxy/otlp-cold-start.ts`), as it reads that daemon's version.
 - The CLI's own proxy receiving and not sending over a third-party OpenTelemetry Collector on every machine.
@@ -253,7 +257,7 @@ hook event line                  one OTLP LogsData: resource service.name=codemi
 - A gzip stream of whole lines per file over a tar or a zip: each file is read by itself, nothing to unpack into files.
 - `.jsonl` for all four files over the spool's names: the name is part of every line id and is kept for good.
 - No cleanup of the folder over a retention: the sessions store under `~/.codemie` is not cleaned by itself either.
-- D2: `--include-external` as the lead set it over collecting everything on a machine with no launcher.
+- D2: `--include-external` as the lead set it over collecting everything in the local mode.
 - A session stopped at its first hook in an excluded folder over gathered whole: the filters are the developer's only
   protection in the local mode, and a `cd` would undo them.
 - No project rule in the local mode over a project name from the folder or git: every event carries the remote.
@@ -273,15 +277,13 @@ hook event line                  one OTLP LogsData: resource service.name=codemi
   marker, and with nothing left to deliver it fails with `fail export`. A session with a single line whose gzip alone is
   above 70 MB can be built by no run: it is left out whole, named in the log line, and does not hold the marker. A
   target's marker moves only after it accepted every file of a run whose log line carries no `the marker stays` warning.
-- D15: A session counts as launched when the hook's environment holds the session id a CodeMie launcher sets, as in every
-  mode: a client started by hand from a terminal opened inside a launched session is gathered under `never` too; on a
-  machine with no profile this needs a profile added after the install.
 - D16: The hints of `proxy doctor` and of the clients' list name `codemie analytics sync install` where another machine is
   told `proxy connect` or `disconnect`: it is the one command that writes the clients' settings there and never refuses
   in the mode, and it is named for a routed VS Code extension or a project list too, which have no command of their own.
-- D17: Sync settings that no longer load are taken as no local mode: the hooks and the proxy commands act as on any
-  machine without it — nothing is gathered with no profile, and after `codemie setup` the hooks send to the profile's
-  backend; `sync status` and `sync uninstall` stop on the file until it is mended or `sync install` runs again.
+- D17: Sync settings that no longer load are taken as no local mode: Claude Code's hooks gather nothing, while a hook of
+  Copilot CLI or Copilot Chat is still stored by the running local proxy and its session moved into the folder, under the
+  developer's own folder filters and without the lead's `--include-external`; `sync status` and `sync uninstall` stop on
+  the file until it is mended or `sync install` runs again (`--force` with a job name of its own).
 - D18: A hook of a local machine replaces another CodeMie proxy it finds running with the local one: a machine is in one
   mode, this release starts no other proxy there, and one left running would take the hook events to a backend.
 - D19: The exclusion marks, and a session whose move into the folder was interrupted in a way the proxy cannot continue,
@@ -301,8 +303,7 @@ hook event line                  one OTLP LogsData: resource service.name=codemi
 
 - **Clients.** The OTLP files hold Claude Code, Copilot CLI and Copilot Chat. Codex, Gemini and Pi are not in them; they
   reach the lead in the JSON report, which a machine in the local mode delivers beside the OTLP files.
-- **The default gathers nothing.** With `--include-external never` only sessions started by a CodeMie launcher are gathered,
-  and a machine with no profile has none. No command warns of it.
+- **The default gathers nothing.** With `--include-external never` the local mode gathers nothing. No command warns of it.
 - **From the install on.** Sessions that ended before `sync install` are not gathered; the JSON report holds them, from the logs.
 - **A session is delivered late.** It reaches the folder 15 minutes after its end, or 60 after its last write — always 60
   for Copilot Chat — at the next 15-minute sweep, and the file at the next daily run. A session open for days is absent
@@ -328,8 +329,7 @@ hook event line                  one OTLP LogsData: resource service.name=codemi
 - **Filters.** A session that fires a hook in an excluded folder is dropped from then on and never gathered again, a
   resume in a tracked folder included; what of it was already moved into the folder stays. A Claude Code settings file that cannot be read or does not parse, a project filter in it that is not a list of absolute paths, or a hook that names no folder while that filter is not empty is not a filter: that hook is not collected, no mark is left, and the session goes on once the file reads again. Telemetry carries no folder: of
   a session never excluded it travels whole.
-- **One mode per machine.** A machine in the local mode cannot connect the CodeMie proxy until `sync uninstall`; a profile
-  added later does not switch it.
+- **One mode per machine.** A machine in the local mode cannot connect the CodeMie proxy until `sync uninstall`.
 - **The job.** It runs when the machine is on: a run missed while asleep is caught up at the next wake; after a power-off
   it is caught up on Linux and Windows (there only while the user is logged on), and on macOS that is not verified. It runs the Node and the CLI found at install; after a Node switch or a CLI reinstall elsewhere it
   fails until `sync install` is run again, and `proxy doctor` says so.

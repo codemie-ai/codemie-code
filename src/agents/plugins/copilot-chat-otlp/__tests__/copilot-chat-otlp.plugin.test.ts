@@ -421,23 +421,4 @@ describe('CopilotChatOtlpPlugin', () => {
       await expect(untracked(hookInput({ hook_event_name: 'Stop' }))).resolves.toMatchObject({ byFilter: false });
     });
   });
-
-  it('launchedByCodemie is false, CODEMIE_SESSION_ID set or not', async () => {
-    const seen: boolean[] = [];
-    class RecordingPolicy extends BackendPolicy {
-      override async admit(_sessionId: string | undefined, _gate: () => Promise<'continue' | 'stop'>, isLaunched?: () => boolean): Promise<'stop'> {
-        seen.push(isLaunched?.() ?? true);
-        return 'stop';
-      }
-    }
-    const deps = { policy: new RecordingPolicy(), ensureOtlpProxy, forwardOtlpEventsToSpool };
-
-    vi.stubEnv('CODEMIE_SESSION_ID', 'managed-1');
-    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'Stop' }), deps);
-    vi.stubEnv('CODEMIE_SESSION_ID', '');
-    await plugin.processOtlpEvent(hookInput({ hook_event_name: 'Stop' }), deps);
-    vi.unstubAllEnvs();
-
-    expect(seen).toEqual([false, false]);
-  });
 });

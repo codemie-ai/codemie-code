@@ -121,11 +121,21 @@ export const LOCAL_CLIENTS: readonly LocalClient[] = [
   },
 ];
 
+/** A Node system error of the filesystem (`EACCES`, `EPERM`, `EBUSY`, `EROFS`, …): its `code`, else null. */
+function systemErrorCode(error: unknown): string | null {
+  if (typeof error !== 'object' || error === null) return null;
+  const { code, errno, syscall } = error as { code?: unknown; errno?: unknown; syscall?: unknown };
+  return typeof code === 'string' && typeof errno === 'number' && typeof syscall === 'string' ? code : null;
+}
+
 /**
- * A client's step: `absent` when the client is not on this machine. When the writer throws, its remover takes back
- * what this write left: only when none of CodeMie's own entries of the client was in place before the write and some
- * is in place after it (a failed removal is logged and changes neither the outcome nor the error); then a
- * `ConfigurationError` is `skipped` with the writer's reason, and any other error fails the install. The undo removes
+ * A client's step: `absent` when the client is not on this machine; `skipped`, with no write attempted, when asking
+ * for the client's entries before the write throws a `ConfigurationError` (a file that cannot be read or does not
+ * parse). When the writer throws, its remover takes back what this write left: only when none of CodeMie's own
+ * entries of the client was in place before the write and some is in place after it (a failed removal is logged and
+ * changes neither the outcome nor the error); then the write's error decides: a `ConfigurationError` is `skipped`
+ * with the writer's reason, a Node system error (a numeric `errno` and a string `syscall` beside its `code`) is
+ * `skipped` with `its files could not be written (<code>)`, and any other error fails the install. The undo removes
  * the client's entries only when CodeMie had not set the client up before this step.
  */
 function clientStep(spec: LocalClient): InstallStep {
@@ -135,7 +145,13 @@ function clientStep(spec: LocalClient): InstallStep {
     async apply(): Promise<StepOutcome> {
       if (!(await isMemberFound(spec.member, { insiders: false }))) return { name: spec.name, state: 'absent' };
       const before = await spec.setUp();
-      const entriesBefore = await spec.hasEntries();
+      let entriesBefore: boolean;
+      try {
+        entriesBefore = await spec.hasEntries();
+      } catch (error) {
+        if (error instanceof ConfigurationError) return { name: spec.name, state: 'skipped', note: skipNote(error) };
+        throw error;
+      }
       try {
         await spec.write();
       } catch (error) {
@@ -150,6 +166,8 @@ function clientStep(spec: LocalClient): InstallStep {
           );
         }
         if (error instanceof ConfigurationError) return { name: spec.name, state: 'skipped', note: skipNote(error) };
+        const code = systemErrorCode(error);
+        if (code !== null) return { name: spec.name, state: 'skipped', note: `its files could not be written (${code})` };
         throw error;
       }
       added = !before;

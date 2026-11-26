@@ -202,6 +202,29 @@ describe('addLineId', () => {
     });
   });
 
+  it('adds the id to every resource of a snake_case export', () => {
+    const line = JSON.stringify({
+      resource_logs: [
+        { resource: { attributes: [{ key: 'service.name', value: { stringValue: 'claude-code' } }] }, scope_logs: [] },
+        { scope_logs: [] },
+      ],
+    });
+    expect(JSON.parse(addLineId(line, 'f.jsonl:0')!)).toEqual({
+      resource_logs: [
+        {
+          resource: {
+            attributes: [
+              { key: 'service.name', value: { stringValue: 'claude-code' } },
+              { key: 'codemie.line_id', value: { stringValue: 'f.jsonl:0' } },
+            ],
+          },
+          scope_logs: [],
+        },
+        { scope_logs: [], resource: { attributes: [{ key: 'codemie.line_id', value: { stringValue: 'f.jsonl:0' } }] } },
+      ],
+    });
+  });
+
   it('answers null for a line that does not parse', () => {
     expect(addLineId('not json', 'f.jsonl:0')).toBeNull();
   });

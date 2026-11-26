@@ -703,28 +703,29 @@ describe('runSync', () => {
       expect(writeMarker).not.toHaveBeenCalled();
     });
 
-    it('a source answering no file with a warning: the skip line carries it, nothing delivered, the marker untouched', async () => {
+    it('a source answering no file with a warning: the target fails export with it, nothing delivered, the marker untouched', async () => {
       const writeMarker = vi.fn(async () => {});
       const deliver = vi.fn(async () => {});
       const { deps, logged } = makeDeps({ exportSource: { build: async () => Object.assign([], { warning: 'W' }) }, writeMarker, deliver });
 
-      expect(await runSync(deps)).toBe(0);
-      expect(logged).toEqual([`${NOW.toISOString()} skip no sessions in window 2026-10-22-to-2026-10-29 (warning: W) target=webhook`]);
+      expect(await runSync(deps)).toBe(1);
+      expect(logged).toEqual([`${NOW.toISOString()} fail export W target=webhook`]);
       expect(deliver).not.toHaveBeenCalled();
       expect(writeMarker).not.toHaveBeenCalled();
     });
 
-    it('a source answering no file with a warning and sessions left out: both on the skip line, warning first', async () => {
+    it('a source answering no file with a warning and sessions left out: fail export with the warning, then the left-out note', async () => {
       const writeMarker = vi.fn(async () => {});
+      const deliver = vi.fn(async () => {});
       const { deps, logged } = makeDeps({
-        exportSource: { build: async () => Object.assign([], { warning: 'W', leftOut: 'X' }) },
+        exportSource: { build: async () => Object.assign([], { warning: 'W', leftOut: 'L' }) },
         writeMarker,
+        deliver,
       });
 
-      expect(await runSync(deps)).toBe(0);
-      expect(logged).toEqual([
-        `${NOW.toISOString()} skip no sessions in window 2026-10-22-to-2026-10-29 (warning: W) (warning: X) target=webhook`,
-      ]);
+      expect(await runSync(deps)).toBe(1);
+      expect(logged).toEqual([`${NOW.toISOString()} fail export W (warning: L) target=webhook`]);
+      expect(deliver).not.toHaveBeenCalled();
       expect(writeMarker).not.toHaveBeenCalled();
     });
 
@@ -788,11 +789,11 @@ describe('runSync', () => {
         expect(logged).toEqual([`${NOW.toISOString()} ok sent 3 files 60 target=webhook`]);
       });
 
-      it('the second request failing fails send, keeps the marker and never makes the third', async () => {
+      it('the second request failing still makes the third, fails send and keeps the marker', async () => {
         const { deps, logged, events } = webhookHarness(PARTS[1].fileName);
 
         expect(await runSync(deps)).toBe(1);
-        expect(events).toEqual([`post ${PARTS[0].fileName}`, `post ${PARTS[1].fileName}`]);
+        expect(events).toEqual(PARTS.map((part) => `post ${part.fileName}`));
         expect(logged).toHaveLength(1);
         expect(logged[0]).toMatch(/ fail send .* target=webhook$/);
       });

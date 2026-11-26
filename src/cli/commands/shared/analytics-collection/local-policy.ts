@@ -1,7 +1,6 @@
 /**
  * The hooks' decisions in the local mode: no sign-in, no evidence stamp; a session is gathered when the
- * `--include-external` answer allows it or CodeMie launched it, and never once it fired a hook in a folder the
- * developer's filters leave out.
+ * `--include-external` answer allows it, and never once it fired a hook in a folder the developer's filters leave out.
  */
 import type { CollectionPolicy } from '@/agents/core/types.js';
 import {
@@ -16,11 +15,10 @@ export class LocalPolicy implements CollectionPolicy {
   /** The adapter's own gate is never run: a stop writes nothing and starts no daemon. */
   async admit(
     sessionId: string | undefined,
-    _gate: () => Promise<'continue' | 'stop' | 'retry-after-proxy-start'>,
-    launched: () => boolean
+    _gate: () => Promise<'continue' | 'stop' | 'retry-after-proxy-start'>
   ): Promise<'continue' | 'stop'> {
     if (await isSessionExcluded(sessionId)) return 'stop';
-    return this.includeExternalNow || launched() ? 'continue' : 'stop';
+    return this.includeExternalNow ? 'continue' : 'stop';
   }
 
   /** No evidence inputs: nothing is stamped, held for an owner or checked against a record. */

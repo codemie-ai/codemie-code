@@ -31,6 +31,7 @@ export const LOCAL_REMEDIES: DoctorRemedies = {
   connectAnalytics: INSTALL_COMMAND,
   start: 'codemie proxy start, or the next Claude Code or Copilot event starts it',
   restart: 'codemie proxy restart',
+  reconnect: `run \`${INSTALL_COMMAND}\``,
 };
 
 const BACKEND_ONLY_IDS: readonly string[] = ['auth', 'upstream', 'delivery'];

@@ -558,7 +558,7 @@ webhook, or missing settings/identity are all logged and failed without moving t
 so the next run covers the same sessions. In the local mode the output is the
 `.otlp.jsonl.gz` of the sessions written to the analytics folder inside the window, cut into
 files no larger than 70 MB, followed by the JSON report, sent one request per file; the marker moves only after the target
-accepted every file of a run whose log line carries no `the marker stays` warning. A report above the ceiling fails the export there too, after the OTLP files were taken. A part of the run that cannot be built does not hold the rest back: with a JSON report that cannot be built, an analytics folder that cannot be read, or a session whose file cannot be read, the run delivers the rest with a warning in its log line and leaves the marker. A session with a single line whose gzip alone is above the ceiling is left out whole and named in the log line, and the marker moves. A run where the report cannot be built and the folder has no file to deliver, or the folder cannot be read and the window has no report, fails with `fail export`. There is no retry — the rolling window self-heals
+accepted every file of a run whose log line carries no `the marker stays` warning. A report above the ceiling fails the export there too, after the OTLP files were taken. A part of the run that cannot be built does not hold the rest back: with a JSON report that cannot be built, an analytics folder that cannot be read, or a session whose file cannot be read, the run delivers the rest with a warning in its log line and leaves the marker. A session with a single line whose gzip alone is above the ceiling is left out whole and named in the log line, and the marker moves. A run that built no file at all while a session's files could not be read fails as an export, with that warning in its line. A run where the report cannot be built and the folder has no file to deliver, or the folder cannot be read and the window has no report, fails with `fail export`. There is no retry — the rolling window self-heals
 on the next scheduled run. `run` with nothing installed fails with the install command and
 sends nothing.
 
@@ -574,7 +574,7 @@ redacted:
 
 `setup` covers missing/invalid settings and identity errors; `export` covers a report-build
 failure or the 70 MB ceiling (the detail carries the size; in the local mode also an analytics folder that could not be read when the window has no
-report); `send` covers any other webhook
+report, and a run that built no file at all while a session's files could not be read); `send` covers any other webhook
 delivery failure. `run` exits non-zero on `fail`, zero on `ok`/`skip`, and never throws.
 
 ### `status`
@@ -594,9 +594,12 @@ Removes the OS job and the settings file holding the webhook. The last-sent mark
 run log are kept, so a later re-install does not re-send or duplicate what was already
 delivered. Running `uninstall` again (or on a machine where nothing is installed) reports
 "nothing to remove" and exits 0. In the local mode it first removes the clients' hooks, then,
-under the daemon lock, stops the local proxy, removes `~/.codemie/analytics/spool/` and
-`~/.codemie/analytics/excluded/`, and removes the job and the settings last; a step that fails
-keeps the settings and exits 1. The analytics folder stays.
+under the daemon lock, stops the local proxy and removes `~/.codemie/analytics/spool/`, then removes
+the job and the settings, and `~/.codemie/analytics/excluded/` last; a step that fails
+keeps the settings and exits 1. It removes the same on a machine with no CodeMie CLI profile and no
+CodeMie proxy running with an upstream whose settings no longer say `local`, when something of the
+local mode is still there (its proxy's state, the local spool or the exclusion marks). The analytics
+folder stays.
 
 ### Taking over the standalone collector
 

@@ -189,10 +189,6 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
     return input.sessionId;
   }
 
-  protected override launchedByCodemie(input: CopilotCliHookInput): boolean {
-    return isManagedSession(input.sessionId);
-  }
-
   protected async resolveAgentFields(input: CopilotCliHookInput): Promise<Record<string, unknown>> {
     const sessionDir = join(getCopilotSessionStateRoot(), input.sessionId);
     const manifest = readWorkspaceManifest(sessionDir);

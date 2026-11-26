@@ -66,7 +66,6 @@ import { ProviderRegistry } from '@/providers/index.js';
 import type { EvidenceInputs } from '@/agents/core/evidence/stamp.js';
 import {
   fundingRoute,
-  launchMode,
   localProxyCandidate,
   oauthAccountPays,
   routedViaCodemie,
@@ -185,10 +184,6 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
 
   protected override sessionIdOf(hookInput: HookInput): string | undefined {
     return hookInput.session_id;
-  }
-
-  protected override launchedByCodemie(): boolean {
-    return launchMode(process.env) === 'managed';
   }
 
   /** The one-shot user notice of this hook, printed once at the end (or merged into a block answer). */

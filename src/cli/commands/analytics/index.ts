@@ -272,8 +272,8 @@ function createSyncUninstallCommand(): Command {
     )
     .action(async () => {
       const { runUninstall, createRealUninstallDeps } = await import('./sync/uninstall.js');
-      const { resolveCollection } = await import('../shared/analytics-collection/resolve.js');
-      const collection = await resolveCollection();
+      const { resolveUninstallCollection } = await import('../shared/analytics-collection/resolve.js');
+      const collection = await resolveUninstallCollection();
       process.exitCode = await runUninstall(createRealUninstallDeps((removeInstall) => collection.teardown(removeInstall)));
     });
 }
