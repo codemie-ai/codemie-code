@@ -62,6 +62,20 @@ describe('proxy connect — unified command, deprecated flags and removed aliase
     );
   });
 
+  it('unified connect passes --install-client and --yes through to connectTargets', async () => {
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(
+      ['connect', '--claude-desktop', '--install-client', '--yes'],
+      { from: 'user' }
+    );
+
+    expect(connectTargets).toHaveBeenCalledWith(
+      expect.objectContaining({ installClient: true, yes: true })
+    );
+  });
+
   it('leaves an omitted --scope undefined so the orchestrator can detect it', async () => {
     const { connectTargets } = await import('../connect-orchestrator.js');
     const { createProxyCommand } = await import('../index.js');

@@ -175,6 +175,7 @@ interface UnifiedConnectOptions extends AggregateOptions {
   force?: boolean;
   includePersonalSubscriptions?: boolean;
   insiders?: boolean;
+  installClient?: boolean;
   model?: string;
   omp?: boolean;
   overwrite?: boolean;
@@ -343,7 +344,8 @@ export function createProxyCommand(): Command {
     .option('--overwrite', 'Replace client config CodeMie did not write (another Codex provider, a foreign oh-my-pi extension, conflicting Claude Code settings, an invalid project list)')
     .addOption(deprecatedOption(CONNECT_FORCE_DEPRECATION, '--force', 'Same as --overwrite plus a daemon restart (codemie proxy restart)'))
     .option('--verbose', 'Show detailed connection info (URLs, config paths) for debugging')
-    .option('--insiders', 'Target VS Code Insiders (applies to --vscode / --vscode-claude-code)');
+    .option('--insiders', 'Target VS Code Insiders (applies to --vscode / --vscode-claude-code)')
+    .option('--install-client', 'Download and install the app if missing (macOS)');
   addConnectorFlags(connect, CONNECT_CONNECTOR_FLAGS)
     .addOption(
       new Option(
@@ -354,7 +356,7 @@ export function createProxyCommand(): Command {
     )
     .option(
       '--yes',
-      `Skip the confirmation prompts (required when non-interactive; applies to ${AGGREGATE_FLAGS.join(' / ')})`,
+      `Skip the confirmation prompts (required when non-interactive; applies to ${AGGREGATE_FLAGS.join(' / ')} and --install-client)`,
     )
     .addOption(deprecatedOption(CONNECT_SILENT_DEPRECATION, '--silent', 'Same as --yes'))
     .option(
@@ -385,6 +387,7 @@ export function createProxyCommand(): Command {
         model: opts.model,
         // Left undefined when omitted: the orchestrator coalesces it, and an aggregate's member then keeps its project list.
         scope: opts.scope,
+        installClient: Boolean(opts.installClient),
         yes: Boolean(opts.yes || opts.silent),
         includePersonalSubscriptions: Boolean(opts.includePersonalSubscriptions),
         aggregates: aggregatesGiven(opts),

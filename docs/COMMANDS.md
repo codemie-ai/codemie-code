@@ -92,6 +92,7 @@ codemie proxy status             # Show daemon status
 codemie proxy connect --vscode   # Configure VS Code BYOK to use the local proxy
 codemie proxy connect --claude-desktop    # Configure Claude Desktop (3P) to use the local proxy
 codemie proxy connect --codex-desktop     # Configure the Codex desktop app to use the local proxy
+codemie proxy connect --claude-desktop --install-client [--yes]  # Install the app first if missing (macOS only)
 codemie proxy disconnect --claude-desktop       # Remove the CodeMie gateway config from Claude Desktop
 codemie proxy disconnect --vscode          # Remove the CodeMie provider from VS Code BYOK (your own models stay)
 codemie proxy disconnect --vscode-claude-code   # Remove the CodeMie env vars from the VS Code Claude Code extension
@@ -353,6 +354,7 @@ Point the Codex desktop app — Codex as it ships inside the ChatGPT desktop app
 codemie proxy connect --codex-desktop
 codemie proxy connect --codex-desktop --profile work
 codemie proxy connect --codex-desktop --model gpt-5-codex
+codemie proxy connect --codex-desktop --install-client --yes   # macOS: install the app first if missing
 ```
 
 The app embeds the same Codex core as the Codex CLI and reads the same user-level `~/.codex/config.toml`, so the connector configures it by writing that file. It splices in a CodeMie-managed block delimited by sentinel comments: a header region at the top of the file holding `model_provider` and `model`, and a `[model_providers.codemie]` table at the end holding the proxy `base_url`, `wire_api = "responses"`, and a static `Authorization` header carrying Codex desktop's own key (`codemie-proxy.codex-desktop`). Everything outside those two regions — including your comments, key order and formatting — is preserved byte for byte.

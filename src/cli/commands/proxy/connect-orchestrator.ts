@@ -49,6 +49,8 @@ import { fetchManagedMcpServers } from './connectors/managed-mcp-remote.js';
 import { getVsCodeClaudeCodeSettingsPath, writeVsCodeClaudeCodeConfig } from './connectors/vscode-claude-code.js';
 import { writeVsCodeLanguageModelsConfig, type ConnectorGateway } from './connectors/vscode.js';
 import { checkProxyHealth } from './health-check.js';
+import { ClientInstallError } from './client-install.js';
+import { assertInstallClientSupported, ensureClientsInstalled } from './client-install-step.js';
 import { decideDesktopRoute, decideVsCodeRoute } from './claude-client-config-state.js';
 import { readConfiguredOtlpPort } from './connectors/claude-code-otlp-endpoint.js';
 import {
@@ -158,6 +160,8 @@ export interface ConnectOptions {
    * aggregate: they are routed through the proxy whatever they are configured with. Absent is none typed.
    */
   explicitRoutes?: ExplicitRoutes;
+  /** Download and install missing client apps first (macOS only). */
+  installClient?: boolean;
 }
 
 /** The Claude clients whose route through the proxy was asked for by their own flag. */
@@ -473,6 +477,9 @@ export function printProxyError(error: unknown, label: string): never {
 
   if (error instanceof ConfigurationError) {
     console.error(chalk.red(`✗ ${error.message}`));
+  } else if (error instanceof ClientInstallError) {
+    console.error(chalk.red(`✗ ${error.message}`));
+    console.error(`Download page: ${error.downloadPage}`);
   } else {
     console.error(formatErrorForUser(context, { showSystem: false }));
   }
@@ -548,6 +555,7 @@ export const CONNECT_TARGET_LIST = [
     ['--vscode-claude-code', 'VS Code Claude Code extension'],
     ['--codex-desktop', 'Codex desktop app (writes ~/.codex/config.toml)'],
     ['--omp', 'oh-my-pi (installs a live CodeMie model catalog extension)'],
+    ['--install-client', 'Download and install the selected app first if missing (macOS)'],
     ...aggregateListRows((a) => a.connectListLine),
   ]),
   '',
@@ -558,6 +566,7 @@ export const CONNECT_TARGET_LIST = [
   '  codemie proxy connect --claude-desktop',
   '  codemie proxy connect --codex-desktop',
   '  codemie proxy connect --omp',
+  '  codemie proxy connect --claude-desktop --install-client --yes',
   '  codemie proxy connect --vscode --vscode-claude-code',
   '  codemie proxy connect --claude-desktop --vscode --insiders',
   ...aggregateConnectExamples(),
@@ -948,7 +957,7 @@ async function runCodexDesktop(
             reason: 'Could not find the ChatGPT desktop app (which ships Codex). Looked in: ' +
               candidates.join(', ') +
               (process.platform === 'win32' ? '. Also queried the current user\'s OpenAI.Codex MSIX package' : ''),
-            action: 'install it, or re-run with --overwrite to write the config anyway',
+            action: 'install it (or re-run with --install-client on macOS), or re-run with --overwrite to write the config anyway',
           })
       );
     }
@@ -1193,6 +1202,10 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   let settingsSwitch: ProviderSettingsSwitch | null = null;
   let scopeBaselines: ScopeBaselines;
   try {
+    if (opts.installClient) {
+      assertInstallClientSupported({ yes: opts.yes, insiders: opts.insiders });
+    }
+
     // Pre-lock phase: the scope confirmation runs before SSO, the daemon or any config is touched,
     // and sees the raw (possibly omitted) --scope.
     const baselines = await confirmScopeDrops(activeTargets, opts.scope, Boolean(opts.yes), keptLists);
@@ -1294,6 +1307,13 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       syncRegisteredSkills(profile, cwd),
       syncPluginSkills(),
     ]);
+
+    if (
+      opts.installClient &&
+      (await ensureClientsInstalled(activeTargets, { yes: opts.yes, insiders: opts.insiders })) === 'cancelled'
+    ) {
+      return;
+    }
 
     // The record is written after wiring succeeds (below), not at spawn time; the lock is
     // released before the targets are written.
