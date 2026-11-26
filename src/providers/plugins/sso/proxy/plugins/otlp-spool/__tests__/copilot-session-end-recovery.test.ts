@@ -150,6 +150,27 @@ describe('recoverMissingSessionEnds', () => {
     expect(events.filter((e) => e['tool_name'] === 'read_agent' && e['type'] === 'agent.tool.start')).toHaveLength(2);
   });
 
+  it('recovers a recreated spool without replaying a run that was already swept', async () => {
+    await spool([hook('agent.prompt.submit', 60_001)]);
+    await writeTranscript([
+      ...runLines(0, 5_000),
+      line('session.resume', 60_000, {}),
+      ...runLines(60_000, 65_000).slice(1),
+    ]);
+
+    await recover();
+
+    const events = await spooled();
+    expect(events.filter((event) => event['type'] === 'agent.session.end').map((event) => event['timestamp'])).toEqual([at(65_000)]);
+    expect(events.filter((event) => event['type'] === 'agent.session.summary')).toMatchObject([
+      { is_final: true, ended_at: at(65_000) },
+    ]);
+    expect(toolIds(events, 'agent.tool.end')).toContain('ra-1-60000');
+    expect(await appendHook(hook('agent.session.end', 64_900))).toBe(false);
+    await recoverMissingSessionEnds([SID], () => NOW);
+    expect(await spooled()).toEqual(events);
+  });
+
   it('adds nothing on the normal path: a delivered sessionEnd already started the enrichment', async () => {
     await spool([hook('agent.session.start', 0), hook('agent.session.end', 4_000)]);
     await writeTranscript(runLines(0, 5_000));
