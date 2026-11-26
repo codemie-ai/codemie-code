@@ -53,6 +53,15 @@ export async function markOwnerlessSessionStart(sessionId: string, now: number =
   }
 }
 
+/**
+ * Removes the marker once the session has its record: it admits the session's first record only, so a later change of
+ * account or API URL cannot create a second one. Never throws.
+ */
+export async function clearOwnerlessSessionStart(sessionId: string): Promise<void> {
+  if (!sessionId) return;
+  await unlink(join(ownerlessSessionDir(), markerName(sessionId))).catch(() => undefined);
+}
+
 /** Whether this session began without an owner and the marker has not expired. Never throws. */
 export async function hasOwnerlessSessionStart(sessionId: string, now: number = Date.now()): Promise<boolean> {
   if (!sessionId) return false;

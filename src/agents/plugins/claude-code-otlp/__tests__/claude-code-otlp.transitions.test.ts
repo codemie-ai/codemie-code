@@ -9,11 +9,13 @@ const projectMock = vi.fn();
 const prefsMock = vi.fn();
 const authGateMock = vi.fn();
 const authProfileMock = vi.fn();
+const credsMock = vi.fn();
 
 vi.mock('@/agents/core/evidence/hook-identity.js', () => ({ currentEvidenceIdentity: identityMock }));
 vi.mock('../claude-code-otlp.gate.js', () => ({ evaluateClaudeAnalyticsGate: gateMock }));
 vi.mock('@/providers/plugins/sso/sso.auth-gate.js', () => ({ ensureCodeMieSsoAuthOrWait: authGateMock }));
 vi.mock('@/agents/core/hook-auth-profile.js', () => ({ resolveHookAuthProfile: authProfileMock }));
+vi.mock('@/agents/core/hook-credentials.js', () => ({ resolveHookCredentials: credsMock }));
 vi.mock('@/agents/core/event-fields/identity-fields.js', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   resolveProjectAtCwd: projectMock,
@@ -66,6 +68,8 @@ beforeEach(() => {
   });
   authGateMock.mockClear();
   authGateMock.mockResolvedValue({ ok: true });
+  credsMock.mockReset();
+  credsMock.mockResolvedValue(null); // signed out unless a test signs in
   logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 });
 afterEach(async () => {
@@ -255,20 +259,48 @@ describe('hook-side transitions', () => {
       try { return readdirSync(join(home, 'analytics', 'state', 'ownerless-sessions')); } catch { return []; }
     };
 
-    it('a session that started signed out continues its first prompt after sign-in, then keeps going once its record exists', async () => {
-      const t = await setup();
+    // End-to-end helpers: the real stamp, record store and forwarder call; only identity, credentials and auth are faked.
+    const token = (email: string) => `h.${Buffer.from(JSON.stringify({ email })).toString('base64url')}.s`;
+    const signInAs = async (email: string) => {
+      const { apiIdentity, ownerHash } = await import('@/agents/core/evidence/api-identity.js');
+      credsMock.mockResolvedValue({ cookies: { codemie_access_token: token(email) }, apiUrl: api, timestamp: 0 });
+      const id = { api_identity: apiIdentity(api), owner_hash: ownerHash(email) };
+      identityMock.mockResolvedValue(id);
+      projectMock.mockResolvedValue(''); // the real stamp records no project for this folder; the live check must agree
+      return id;
+    };
+    const runHook = async (over: Record<string, unknown> = {}) => {
+      const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
+      const deps = { ensureOtlpProxy: vi.fn(), forwardOtlpEventsToSpool: vi.fn().mockResolvedValue(true) };
+      await new ClaudeCodeOtlpPlugin().processOtlpEvent(JSON.stringify(hook(over)), deps as never); // a hook is its own process
+      return deps;
+    };
+    const forwardedSessions = (deps: Awaited<ReturnType<typeof runHook>>) =>
+      deps.forwardOtlpEventsToSpool.mock.calls.flatMap((c) => (c[0] as { session_id: string }[]).map((e) => e.session_id));
+    const recordOf = async (id: { api_identity: string; owner_hash: string }, session = 's1') => {
+      const rs = await import('@/agents/core/evidence/record-store.js');
+      return rs.readRecord(rs.recordKey(id.api_identity, id.owner_hash, session));
+    };
+
+    it('a session that started signed out: the first prompt after sign-in is forwarded and makes the record, the next is judged on it', async () => {
       identityMock.mockResolvedValue(null);
-      expect(await t.gate(hook({ hook_event_name: 'SessionStart', source: 'startup' }))).toBe('continue');
+      const start = await runHook({ hook_event_name: 'SessionStart', source: 'startup' });
+      expect(forwardedSessions(start)).toEqual([]); // no owner yet: nothing to stamp
       expect(ownerlessMarkers()).toHaveLength(1);
 
-      identityMock.mockResolvedValueOnce(null).mockResolvedValueOnce(signedIn); // sign-in restores the owner during the prompt's auth wait
-      expect(await t.gate(hook())).toBe('continue');
-      expect(authGateMock).toHaveBeenCalledTimes(1);
-      expect(await t.sm.isStopped(t.key())).toBe(false);
+      const id = await signInAs('dev@example.com'); // sign-in during the prompt's auth wait restores the owner
+      identityMock.mockReset();
+      identityMock.mockResolvedValueOnce(null).mockResolvedValue(id); // the gate read the owner before the sign-in
+      const first = await runHook();
+      expect(forwardedSessions(first)).toContain('s1');
+      const made = await recordOf(id); // made by the forwarded prompt, not written by the test
+      expect(made?.kind).toBe('existing');
+      expect(ownerlessMarkers()).toHaveLength(0); // the marker admitted this one record and is gone
 
-      await t.record(); // what the stamp writes for the forwarded prompt
-      identityMock.mockResolvedValue(signedIn);
-      expect(await t.gate(hook())).toBe('continue'); // the next prompt is judged on the record
+      const second = await runHook();
+      expect(forwardedSessions(second)).toContain('s1');
+      const again = await recordOf(id);
+      expect(again && 'record' in again && again.record.created).toBe(made && 'record' in made && made.record.created); // the same record
     });
 
     it('a resumed session with no record stays stopped after sign-in, as it would for a signed-in user', async () => {
@@ -296,36 +328,55 @@ describe('hook-side transitions', () => {
       expect(identityMock).toHaveBeenCalledTimes(2);
     });
 
-    it('a failed owner lookup right after sign-in does not drop the first prompt of a session that started signed out', async () => {
-      const t = await setup();
+    it('a failed owner lookup after sign-in holds the first prompt for its owner, and the record exists once the owner resolves', async () => {
       identityMock.mockResolvedValue(null);
-      await t.gate(hook({ hook_event_name: 'SessionStart', source: 'startup' }));
+      await runHook({ hook_event_name: 'SessionStart', source: 'startup' });
 
-      // /v1/user failed once and is remembered for the cooldown: the owner is still unknown after sign-in
-      expect(await t.gate(hook())).toBe('continue');
-      expect(await t.gate(hook())).toBe('continue');
+      // signed in, but /v1/user failed: credentials without an owner
+      credsMock.mockResolvedValue({ cookies: { _oauth2_proxy: 'cookie' }, apiUrl: api, timestamp: 0 });
+      const held = await runHook();
+      expect(forwardedSessions(held)).toEqual([]); // not sent: it waits for its owner
+      const pending = await import('@/agents/core/evidence/owner-pending.js');
+      expect(await pending.hasPendingOwnerSession('s1')).toBe(true);
+      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('paused for this session')); // not silently stopped
 
-      identityMock.mockResolvedValue(signedIn); // the cooldown ends and the owner resolves
-      expect(await t.gate(hook())).toBe('continue'); // the stamp creates the record on this prompt
-      expect(await t.sm.isStopped(t.key())).toBe(false);
+      const id = await signInAs('dev@example.com'); // the lookup now succeeds
+      expect(await recordOf(id)).toBeUndefined();
+      const next = await runHook();
+      expect(forwardedSessions(next)).toContain('s1');
+      expect(await recordOf(id)).toBeDefined(); // made by the forwarded prompt
     });
 
-    it("lets the new session's first prompt reach the forwarder while the resumed session's does not", async () => {
-      const t = await setup();
+    it("the new session's prompt is forwarded while a resumed session's is not and leaves no record", async () => {
       identityMock.mockResolvedValue(null);
-      await t.gate(hook({ hook_event_name: 'SessionStart', source: 'startup' }));
-      await t.gate(hook({ hook_event_name: 'SessionStart', source: 'resume', session_id: 'resumed' }));
-      identityMock.mockResolvedValue(signedIn);
-      const deps = { ensureOtlpProxy: vi.fn(), forwardOtlpEventsToSpool: vi.fn().mockResolvedValue(true) };
+      await runHook({ hook_event_name: 'SessionStart', source: 'startup' });
+      await runHook({ hook_event_name: 'SessionStart', source: 'resume', session_id: 'resumed' });
+      const id = await signInAs('dev@example.com');
 
-      await t.plugin.processOtlpEvent(JSON.stringify(hook({ session_id: 'resumed' })), deps as never);
-      expect(deps.ensureOtlpProxy).not.toHaveBeenCalled();
-      expect(deps.forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+      const resumed = await runHook({ session_id: 'resumed' });
+      expect(forwardedSessions(resumed)).toEqual([]);
+      expect(resumed.ensureOtlpProxy).not.toHaveBeenCalled();
+      expect(await recordOf(id, 'resumed')).toBeUndefined();
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('paused for this session'));
 
-      logSpy.mockClear();
-      await t.plugin.processOtlpEvent(JSON.stringify(hook()), deps as never);
-      expect(deps.ensureOtlpProxy).toHaveBeenCalled(); // the gate let the new session's prompt through to the forwarder
+      const fresh = await runHook();
+      expect(forwardedSessions(fresh)).toContain('s1');
+      expect(await recordOf(id)).toBeDefined();
+    });
+
+    it('the marker admits only the first record: a later change of account cannot create a second one mid-session', async () => {
+      identityMock.mockResolvedValue(null);
+      await runHook({ hook_event_name: 'SessionStart', source: 'startup' });
+      const a = await signInAs('a@example.com');
+      await runHook();
+      expect(await recordOf(a)).toBeDefined();
+      expect(ownerlessMarkers()).toHaveLength(0);
+
+      const b = await signInAs('b@example.com'); // another account within the 24 h marker lifetime
+      const other = await runHook();
+      expect(forwardedSessions(other)).toEqual([]);
+      expect(await recordOf(b)).toBeUndefined(); // no second record
+      expect(await recordOf(a)).toBeDefined(); // the first is untouched
     });
 
     it('an ownerless-start marker expires, so an old marker no longer opens a session', async () => {

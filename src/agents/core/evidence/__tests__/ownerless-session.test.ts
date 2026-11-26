@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   OWNERLESS_SESSION_TTL_MS,
+  clearOwnerlessSessionStart,
   hasOwnerlessSessionStart,
   markOwnerlessSessionStart,
   ownerlessSessionDir,
@@ -59,6 +60,17 @@ describe('ownerless-session marker', () => {
     await markOwnerlessSessionStart('new', t0 + OWNERLESS_SESSION_TTL_MS + 60_000);
     expect(readdirSync(ownerlessSessionDir())).toHaveLength(1);
     expect(await hasOwnerlessSessionStart('new')).toBe(true);
+  });
+
+  it('clearing removes only that session\'s marker and is harmless when there is none', async () => {
+    await clearOwnerlessSessionStart('never-marked');
+    await markOwnerlessSessionStart('s1');
+    await markOwnerlessSessionStart('s2');
+    await clearOwnerlessSessionStart('s1');
+    expect(await hasOwnerlessSessionStart('s1')).toBe(false);
+    expect(await hasOwnerlessSessionStart('s2')).toBe(true);
+    await clearOwnerlessSessionStart('');
+    expect(await hasOwnerlessSessionStart('s2')).toBe(true);
   });
 
   it('an empty session id is never marked or found', async () => {

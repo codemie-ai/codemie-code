@@ -46,7 +46,7 @@ import { hasRecordForSession, readRecord, recordKey, type EvidenceRecord } from 
 import { isStopped, takeNotice, writeStop, type StopReason } from '@/agents/core/evidence/stop-marker.js';
 import { scopeViolation } from '@/agents/core/evidence/session-scope.js';
 import { hasPendingOwnerSession } from '@/agents/core/evidence/owner-pending.js';
-import { hasOwnerlessSessionStart, markOwnerlessSessionStart } from '@/agents/core/evidence/ownerless-session.js';
+import { clearOwnerlessSessionStart, hasOwnerlessSessionStart, markOwnerlessSessionStart } from '@/agents/core/evidence/ownerless-session.js';
 import type { OtlpAdapterDeps } from '@/agents/core/types.js';
 import {
   buildSessionEnvEvent,
@@ -291,6 +291,8 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
    * may then name an existing session. Re-run the same checks against that record before anything is spooled.
    */
   protected override async recordGate(context: OtlpHookContext, record: EvidenceRecord): Promise<'continue' | 'stop'> {
+    // The session has its record: an ownerless-start marker has done its one job and must not admit another record.
+    await clearOwnerlessSessionStart(record.session_id);
     if (!this.identityUnverifiedAtGate) return 'continue';
     try {
       const key = recordKey(record.api_identity, record.owner_hash, record.session_id);
