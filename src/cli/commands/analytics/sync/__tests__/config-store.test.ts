@@ -186,6 +186,18 @@ describe('hasAnyTarget', () => {
 });
 
 describe('validateInstallOptions', () => {
+  it('trims --task-name and stores it', () => {
+    expect(validateInstallOptions({ webhook: FAKE_URL, taskName: '  my-task  ' }).taskName).toBe('my-task');
+  });
+
+  it('omits taskName when --task-name is not given', () => {
+    expect(validateInstallOptions({ webhook: FAKE_URL })).not.toHaveProperty('taskName');
+  });
+
+  it.each(['', '   ', '../evil', 'a\\b', '.hidden'])('rejects an invalid --task-name %j', (taskName) => {
+    expect(() => validateInstallOptions({ webhook: FAKE_URL, taskName })).toThrow(SyncConfigError);
+  });
+
   it('decodes --webhook-b64 into the same webhookUrl --webhook would store', () => {
     const url = 'https://prod.example.invalid/workflows/x/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sig=FAKESIG';
 
@@ -495,6 +507,22 @@ describe('sync settings file', () => {
       process.env.ANALYTICS_WEBHOOK_URL = FAKE_URL;
       await expect(loadSyncSettings(settingsPath)).resolves.toBeNull();
     });
+
+    it('round-trips a valid stored taskName', async () => {
+      const settings = validateInstallOptions({ webhook: FAKE_URL, taskName: 'my-custom-task' });
+      await writeSyncSettings(settings, settingsPath);
+
+      await expect(loadSyncSettings(settingsPath)).resolves.toEqual(expect.objectContaining({ taskName: 'my-custom-task' }));
+    });
+
+    it.each(['../evil', 'a/b', '-lead', ' padded ', '', 'a'.repeat(101)])(
+      'fails closed on an invalid stored taskName %j',
+      async (taskName) => {
+        await writeFile(settingsPath, JSON.stringify({ webhookUrl: FAKE_URL, taskName }), 'utf-8');
+
+        await expect(loadSyncSettings(settingsPath)).rejects.toThrow(/invalid taskName/);
+      }
+    );
 
     it('round-trips a previously written settings file', async () => {
       const settings = validateInstallOptions({ webhook: FAKE_URL, lookbackDays: '14' });

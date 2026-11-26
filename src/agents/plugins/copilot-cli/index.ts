@@ -11,3 +11,4 @@ export {
   isCopilotCompatibleModelName,
   resolveCopilotModel,
 } from './copilot-cli.models.js';
+export { applySavedCopilotModel, type CopilotModelOptions } from './copilot-cli.saved-model.js';

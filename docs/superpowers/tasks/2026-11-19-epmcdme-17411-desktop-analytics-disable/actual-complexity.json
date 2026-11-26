@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "generated": "2026-11-19T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 23,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 17,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "A new AnalyticsSwitch abstraction (analytics-switch.ts) is wired through DesktopTelemetryRuntime, DesktopSessionDelivery, DesktopSessionMetrics and the runtime checkpoints. It also changes the session record type and four CLI proxy analytics modules (command, status, hints, targets). That is the telemetry runtime and the CLI subsystem together." },
+    { "dimension": "technical_risk", "reason": "The switch is a stateful daemon-side machine with no exact precedent. It fails closed on a corrupt preferences file. It closes live records locally without sending anything. It rebases known records forward-only, using a collection generation counter to catch toggles the daemon never observed. Races and flaps (off/on between polls, a close that does not finish) are the main risk, and the tests cover them." },
+    { "dimension": "file_change_estimate", "reason": "17 files changed per the diffstat, which maps to XXL under the rubric's count mapping. 7 of them are test files, and 831 lines were added." },
+    { "dimension": "affected_layers", "reason": "CLI command surface; the daemon's telemetry runtime service; persisted session records and checkpoints, plus the analytics preferences file; and the upload path to the analytics backend that is being gated." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

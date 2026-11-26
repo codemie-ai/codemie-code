@@ -30,16 +30,24 @@ export function resolveCopilotAgentKey(clientName?: string): string {
 // The Copilot desktop (Tauri) app prefixes the user's message with internal context blocks
 // (<copilot_tauri_workspace>, <copilot_artifacts>, <current_datetime>, ...); they must not surface as the session
 // prompt/title. Every `copilot_*` tag is treated as a wrapper so new desktop-app blocks need no code change.
-// Only complete leading blocks are removed, so a user's own mention of these tags is kept.
+// The app also appends blocks after the user's text (<system_notification> session-rename reminder,
+// <app_user_message_source_json>), which must not leak into the stored prompt either.
+// Only complete blocks at the very start/end are removed, so a user's own mention of these tags is kept.
 const DESKTOP_WRAPPER_TAGS = 'copilot_[a-z0-9_]+|current_datetime|branch_rename_request';
+const DESKTOP_TRAILER_TAGS = 'system_notification|app_[a-z0-9_]+';
 const DESKTOP_PREAMBLE_RE = new RegExp(
   `^\\s*(?:<(${DESKTOP_WRAPPER_TAGS})\\b[^>]*>[\\s\\S]*?<\\/\\1>\\s*)+`,
   'i'
 );
+// A trailing block may not contain another opening of its own tag, so a mid-text mention cannot swallow the user's text.
+const DESKTOP_TRAILER_RE = new RegExp(
+  `(?:<(${DESKTOP_TRAILER_TAGS})\\b[^>]*>(?:(?!<\\1\\b)[\\s\\S])*?<\\/\\1>\\s*)+$`,
+  'i'
+);
 
-/** Removes the desktop app's leading internal context blocks from a user prompt. */
-export function stripDesktopPreamble(text: string): string {
-  return text.replace(DESKTOP_PREAMBLE_RE, '').trim();
+/** Removes the desktop app's leading and trailing internal context blocks from a user prompt. */
+export function stripDesktopWrappers(text: string): string {
+  return text.replace(DESKTOP_PREAMBLE_RE, '').replace(DESKTOP_TRAILER_RE, '').trim();
 }
 
 // For slash commands (/review, /security-review, /fleet, ...) Copilot swaps the typed command for an internal
@@ -75,10 +83,10 @@ function fleetTitle(instruction: string): string {
 export function normalizeUserPrompt(text: string, transformed?: string): string {
   for (const candidate of [transformed, text]) {
     if (typeof candidate !== 'string') continue;
-    const instruction = stripDesktopPreamble(candidate);
+    const instruction = stripDesktopWrappers(candidate);
     if (FLEET_INSTRUCTION_RE.test(instruction) || FLEET_LABEL_RE.test(instruction)) return fleetTitle(instruction);
   }
-  const stripped = stripDesktopPreamble(text);
+  const stripped = stripDesktopWrappers(text);
   const slash = SLASH_INSTRUCTION_RE.exec(stripped);
   return slash ? slash[1] : stripped;
 }
@@ -91,8 +99,8 @@ export function isSubagentPrompt(data: unknown): boolean {
 
 /** Slash command (without the leading `/`) behind a user message, from Copilot's instruction or the typed text. */
 export function extractSlashCommand(content?: string, transformedContent?: string): string | undefined {
-  const strippedContent = typeof content === 'string' ? stripDesktopPreamble(content) : undefined;
-  const strippedTransformed = typeof transformedContent === 'string' ? stripDesktopPreamble(transformedContent) : undefined;
+  const strippedContent = typeof content === 'string' ? stripDesktopWrappers(content) : undefined;
+  const strippedTransformed = typeof transformedContent === 'string' ? stripDesktopWrappers(transformedContent) : undefined;
   // A typed token is a command only when Copilot actually rewrote the message into one of its own
   // instructions (compared after preamble stripping, so a preamble added only on one side doesn't count),
   // it is namespaced, or it is a known built-in; otherwise it is a path such as /tmp is full.

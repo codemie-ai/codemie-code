@@ -47,20 +47,19 @@ export class CopilotCliMetricsProcessor implements SessionProcessor {
       );
       const writer = new MetricsWriter(session.sessionId);
       const window = session.runWindow ?? (await resolveRunWindow(session.sessionId, context));
-      const existing = await writer.readAll();
-      const deltas = runDeltas(session, context, window, existing);
-
-      let deltasWritten = 0;
-      if (deltas.length > 0) {
-        const appended = await writer.appendDeltas(deltas, window);
-        if (appended.gone) {
-          logger.warn(`[${this.name}] Metrics file of session ${session.sessionId} is gone (completed); ${deltas.length} deltas not written`);
-          return { success: false, message: `Metrics file of session ${session.sessionId} is gone; deltas not written` };
-        }
-        deltasWritten = appended.written;
+      let planned = 0;
+      const appended = await writer.appendDeltas((existing) => {
+        const deltas = runDeltas(session, context, window, existing);
+        planned = deltas.length;
+        return deltas;
+      }, window);
+      if (appended.gone) {
+        logger.warn(`[${this.name}] Metrics file of session ${session.sessionId} is gone (completed); ${planned} deltas not written`);
+        return { success: false, message: `Metrics file of session ${session.sessionId} is gone; deltas not written` };
       }
+      const deltasWritten = appended.written;
 
-      logger.debug(`[${this.name}] Wrote ${deltasWritten} of ${deltas.length} deltas for ${session.sessionId}`);
+      logger.debug(`[${this.name}] Wrote ${deltasWritten} of ${planned} deltas for ${session.sessionId}`);
       return { success: true, metadata: { recordsProcessed: deltasWritten, deltasWritten } };
     } catch (error) {
       logger.error(`[${this.name}] Processing failed:`, error);
@@ -81,7 +80,12 @@ function runDeltas(session: ParsedSession, context: ProcessingContext, window: R
   const turns = (session.messages as TurnRecord[]).filter((m) => m.type === 'assistant');
   const agentSessionId = context.agentSessionId ?? session.sessionId;
   const fallbackBranch = context.gitBranch ?? (session.metadata?.gitBranch as string | undefined);
-  const openingPrompt = session.metrics?.userPrompts?.[0];
+  const promptsDone = existing.reduce((n, d) => n + (d.userPrompts?.length ?? 0), 0);
+  const parsedPrompts = session.metrics?.userPrompts ?? [];
+  if (promptsDone > parsedPrompts.length) {
+    logger.debug(`[copilot-cli-metrics] ${promptsDone} prompts already on disk but the transcript now yields ${parsedPrompts.length}; later prompts may be skipped`);
+  }
+  const pendingPrompts = parsedPrompts.slice(promptsDone);
   const lastRecordAt = latestRecordTime(session.recordTimes, window.upperBound);
 
   // Activity not yet on disk: transcript totals minus what earlier runs wrote.
@@ -106,17 +110,20 @@ function runDeltas(session: ParsedSession, context: ProcessingContext, window: R
       ...(Object.keys(pending.commandInvocations).length > 0 && { commandInvocations: pending.commandInvocations }),
     }),
     ...(model && { models: [model] }),
-    ...(carry && existing.length === 0 && openingPrompt && { userPrompts: [openingPrompt] }),
+    ...(carry && pendingPrompts.length > 0 && { userPrompts: pendingPrompts }),
   });
 
   const deltas = runTurns.map(({ turn, recordId }, i) =>
     build(recordId, turn.timestamp ?? lastRecordAt ?? Date.now(), turn.gitBranch, turn.message?.model, i === 0, true)
   );
 
-  // Activity with no turn of this run to ride on (it arrived after every turn was written) is kept
+  // Activity or prompts with no turn of this run to ride on (they arrived after every turn was written) are kept
   // as a clearly-identified supplement delta, stamped inside the run window: the run's last transcript
-  // record, else the window's start, so the writer never drops it as another run's.
-  if (runTurns.length === 0 && hasActivity(pending)) {
+  // record, else the window's start, so the writer never drops it as another run's. Prompts alone only
+  // count once the session has a persisted delta or on its final pass, so a session that never got an assistant
+  // turn writes nothing until it ends (then its unanswered prompts are kept, as Claude does).
+  const trailingPrompts = pendingPrompts.length > 0 && (existing.length > 0 || context.finalPass === true);
+  if (runTurns.length === 0 && (hasActivity(pending) || trailingPrompts)) {
     const inWindowAt = lastRecordAt !== undefined && lastRecordAt >= window.startTime ? lastRecordAt : undefined;
     const stamp = inWindowAt ?? (Number.isFinite(window.startTime) ? window.startTime : Date.now());
     deltas.push(build(`${agentSessionId}-supplement-${existing.length}`, stamp, undefined, undefined, true, false));

@@ -33,3 +33,4 @@ import './008-repair-hook-shell-and-stale-paths.migration.js';
 import './009-raise-otlp-prompt-hook-timeout.migration.js';
 import './010-clear-cloned-profile-identity.migration.js';
 import './011-localize-otlp-hook-commands.migration.js';
+import './012-heal-gemini-hook-cmd-shim.migration.js';

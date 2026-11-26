@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "task": "Detect an active AWS Bedrock configuration in Claude Code, Claude Desktop and VS Code settings before codemie install claude, codemie-claude and Claude proxy connect write config or start a session, then warn and either back up and switch to the CodeMie gateway (removing Bedrock keys, preserving unrelated settings) or cancel with no changes, with tests.",
+  "generated": "2026-11-17T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 23,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "New module family (per-layer Bedrock resolver, switch planner with backup manifest, prompt) plus three entry-point hook-ups (AgentCLI.handleRun, install.ts, connect-orchestrator), edits to shared modules (claude-settings-env.ts, routing.ts exports) and two connectors (desktop.ts, vscode-claude-code.ts). 4+ components across several subsystems with new abstractions."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Closest patterns are vscode-claude-code.ts (JSONC edits), desktop.ts writeDesktopConfig, the .codemie-backup snapshot in claude-code-otlp.ts and launch-project-prompt.ts. None covers a multi-file backup with manifest under ~/.codemie/backups, managed-settings.d, macOS plist or Windows registry readers, so there is no exact precedent. The change rewrites users' own config files, including git-tracked project settings, and gate ordering differs across three flows. Changing malformed-file semantics in readClaudeSettingsEnv affects its OTLP caller. Claude precedence and Desktop behaviour are only verified through the brief's repro. The ACs enumerate many source classes and error paths, but a real-tmp-dir test template with injected platform and env exists, so no extra bump. Not scored XL because the work is local-filesystem only and a backup makes it reversible."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Roughly 8-12 modified files (AgentCLI.ts, install.ts, connect-orchestrator.ts, claude-settings-env.ts, routing.ts, desktop.ts, vscode-claude-code.ts, interactive helpers, existing tests that mock the settings module) and 5-8 new files (resolver, switcher/backup, prompt, plus tests per source class). This spans several directories (cli, agents/core, agents/plugins, proxy connectors)."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "CLI/UI prompt and exit handling, agent and service logic (detection, planning), file persistence (settings, Desktop config, VS Code settings, backups), and external-tool configuration (Claude Code, Desktop, VS Code, platform managed sources). No schema migration, so L rather than XL."
+    }
+  ],
+  "red_flags_applied": [
+    "Touches core shared utilities (claude-settings-env.ts, routing.ts): reflected in Component Scope at XL.",
+    "Edge-case acceptance criteria checked for the Technical Risk bump: existing parameterized tmp-dir test pattern covers it, so no extra bump."
+  ],
+  "split_recommendation": null
+}

@@ -4,7 +4,9 @@ import { getAgentInstallCommand, getAgentLauncherCommand, getUserFacingAgentName
 import { AgentInstallationError, getErrorMessage } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { restoreCliBinLink } from '@/utils/cli-bin.js';
-import type { AgentInstallationOptions } from '@/agents/core/types.js';
+import type { AgentInstallationOptions, ProviderSettingsProfile } from '@/agents/core/types.js';
+import { runProviderSettingsCheck } from '@/agents/core/provider-settings-check.js';
+import { ConfigLoader } from '@/utils/config.js';
 import {
   STATUSLINE_NAME,
   STATUSLINE_DISPLAY_NAME,
@@ -14,6 +16,18 @@ import {
 } from '@/agents/plugins/claude/statusline-installer.js';
 import ora from 'ora';
 import chalk from 'chalk';
+
+/** The active profile, or undefined when there is none or it cannot be read (the check skips an install without one). */
+async function loadActiveProfile(): Promise<ProviderSettingsProfile | undefined> {
+  try {
+    const name = await ConfigLoader.getActiveProfileName();
+    if (!name) return undefined;
+    return (await ConfigLoader.getProfile(name)) ?? undefined;
+  } catch (error: unknown) {
+    logger.debug(`Could not load the active profile for the provider settings check: ${getErrorMessage(error)}`);
+    return undefined;
+  }
+}
 
 export function createInstallCommand(): Command {
   const command = new Command('install');
@@ -102,6 +116,27 @@ export function createInstallCommand(): Command {
         const agent = AgentRegistry.getAgent(canonicalName);
 
         if (agent) {
+          // Agents whose own settings can select a cloud provider (Claude: Bedrock) check them before any other
+          // prompt; the agreed switch is applied only once the run really installs.
+          // A later failure in this run points at the switch's backup folder again.
+          const { canPromptForProject } = await import('@/utils/interactive.js');
+          const settingsSwitch = agent.checkProviderSettings
+            ? await runProviderSettingsCheck(
+                agent,
+                { flow: 'install', canPrompt: canPromptForProject({}), profile: await loadActiveProfile() },
+                'exit'
+              )
+            : null;
+          const runAdditionalInstallation = async (): Promise<void> => {
+            await settingsSwitch?.apply();
+            try {
+              await agent.additionalInstallation?.(options);
+            } catch (error: unknown) {
+              settingsSwitch?.printBackupNote();
+              throw error;
+            }
+          };
+
           // Determine which version to install
           let versionToInstall: string | undefined;
           let actualVersionToInstall: string | undefined; // Resolved version for display
@@ -135,7 +170,7 @@ export function createInstallCommand(): Command {
 
                 // Run additional installation steps (e.g., sounds)
                 if (agent.additionalInstallation) {
-                  await agent.additionalInstallation(options);
+                  await runAdditionalInstallation();
                 }
 
                 return;
@@ -164,7 +199,7 @@ export function createInstallCommand(): Command {
 
               // Run additional installation steps (e.g., sounds)
               if (agent.additionalInstallation) {
-                await agent.additionalInstallation(options);
+                await runAdditionalInstallation();
               }
 
               return;
@@ -178,6 +213,8 @@ export function createInstallCommand(): Command {
             : actualVersionToInstall
             ? ` v${actualVersionToInstall}`
             : '';
+
+          await settingsSwitch?.apply();
 
           const spinner = ora(`Installing ${agent.displayName}${versionMessage}...`).start();
 
@@ -251,6 +288,7 @@ export function createInstallCommand(): Command {
             }
           } catch (error: unknown) {
             spinner.fail(`Failed to install ${agent.displayName}`);
+            settingsSwitch?.printBackupNote();
             throw error;
           }
           return;

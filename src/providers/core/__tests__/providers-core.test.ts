@@ -10,6 +10,10 @@
  * abstract bases without any real HTTP.
  */
 
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import { BaseHealthCheck } from '../base/BaseHealthCheck.js';
@@ -409,11 +413,47 @@ describe('defaultAgentHooks', () => {
       expect(result).toEqual(['--plugin-dir', '/plugins/here', 'chat']);
     });
 
-    it('does not duplicate --plugin-dir when already present', () => {
+    it('keeps a user --plugin-dir and still passes the extension once', () => {
       process.env.CODEMIE_CLAUDE_EXTENSION_DIR = '/plugins/here';
-      const args = ['--plugin-dir', '/other', 'chat'];
-      const result = claudeHooks.enrichArgs!(args, {} as AgentConfig);
-      expect(result).toBe(args);
+      const userPlugin = mkdtempSync(join(tmpdir(), 'codemie-user-plugin-'));
+      try {
+        const manifestDir = join(userPlugin, '.claude-plugin');
+        mkdirSync(manifestDir);
+        writeFileSync(join(manifestDir, 'plugin.json'), JSON.stringify({ name: 'unrelated-plugin' }));
+
+        const args = ['--plugin-dir', userPlugin, 'chat'];
+        const result = claudeHooks.enrichArgs!(args, {} as AgentConfig);
+        expect(result).toEqual(['--plugin-dir', '/plugins/here', ...args]);
+      } finally {
+        rmSync(userPlugin, { recursive: true, force: true });
+      }
+    });
+
+    it('does not duplicate the extension when the user already passed it (either flag form)', () => {
+      process.env.CODEMIE_CLAUDE_EXTENSION_DIR = '/plugins/here';
+      const spaced = ['--plugin-dir', '/other', '--plugin-dir', '/plugins/here', 'chat'];
+      const equals = ['--plugin-dir=/plugins/here', 'chat'];
+      expect(claudeHooks.enrichArgs!(spaced, {} as AgentConfig)).toBe(spaced);
+      expect(claudeHooks.enrichArgs!(equals, {} as AgentConfig)).toBe(equals);
+    });
+
+    it('keeps the explicitly selected CodeMie source plugin instead of injecting the installed copy', () => {
+      process.env.CODEMIE_CLAUDE_EXTENSION_DIR = '/plugins/here';
+      const sourcePlugin = fileURLToPath(new URL('../../../agents/plugins/claude/plugin/', import.meta.url));
+      const args = ['--plugin-dir', '/other', '--plugin-dir', sourcePlugin, 'chat'];
+      expect(claudeHooks.enrichArgs!(args, {} as AgentConfig)).toBe(args);
+    });
+
+    it('does not inject the same extension when the explicit path has a trailing slash', () => {
+      process.env.CODEMIE_CLAUDE_EXTENSION_DIR = '/plugins/here';
+      const args = ['--plugin-dir', '/plugins/here/', 'chat'];
+      expect(claudeHooks.enrichArgs!(args, {} as AgentConfig)).toBe(args);
+    });
+
+    it('ignores --plugin-dir text after the -- boundary', () => {
+      process.env.CODEMIE_CLAUDE_EXTENSION_DIR = '/plugins/here';
+      const result = claudeHooks.enrichArgs!(['--', '--plugin-dir', '/plugins/here'], {} as AgentConfig);
+      expect(result).toEqual(['--plugin-dir', '/plugins/here', '--', '--plugin-dir', '/plugins/here']);
     });
 
     // Claude Code ignores ANTHROPIC_MODEL; --model is the only way the profile's

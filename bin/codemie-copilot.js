@@ -11,7 +11,11 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { AgentCLI } from '../dist/agents/core/AgentCLI.js';
 import { AgentRegistry } from '../dist/agents/registry.js';
-import { loadCopilotLaunchEnv, resolveCopilotModel } from '../dist/agents/plugins/copilot-cli/index.js';
+import {
+  applySavedCopilotModel,
+  loadCopilotLaunchEnv,
+  resolveCopilotModel,
+} from '../dist/agents/plugins/copilot-cli/index.js';
 import { getCodemiePath } from '../dist/utils/paths.js';
 
 const SAVED_MODEL_PATH = getCodemiePath('agents', 'copilot-cli', 'model.json');
@@ -85,14 +89,6 @@ async function saveSelectedModel(model) {
     `${JSON.stringify({ model, updatedAt: new Date().toISOString() }, null, 2)}\n`,
     'utf-8'
   );
-}
-
-function applySavedModelIfNeeded(options, savedModel) {
-  if (typeof options.model === 'string' || options.model === true || hasEnvModelOverride() || !savedModel) {
-    return;
-  }
-
-  process.env.CODEMIE_MODEL = savedModel;
 }
 
 function resolveInitialModelSource(options) {
@@ -178,7 +174,7 @@ function replaceValuelessModelArg(argv, model) {
 async function handleCopilotOnlyModelUx() {
   const options = parseCopilotOptions(process.argv);
   const savedModel = await loadSavedModel();
-  applySavedModelIfNeeded(options, savedModel);
+  applySavedCopilotModel(options, savedModel);
   process.env.CODEMIE_MODEL_SOURCE = resolveInitialModelSource(options);
 
   if (options.modelList) {
