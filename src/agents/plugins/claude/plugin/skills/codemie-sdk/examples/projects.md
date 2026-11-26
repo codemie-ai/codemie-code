@@ -20,6 +20,8 @@ codemie sdk projects get 'my-project'
 codemie sdk projects get 'my-project' --json
 ```
 
+`--json` is the input file here; add `--output json` to print the raw response instead of the success line.
+
 **JSON fields:** `name`, `display_name`, `description`, `project_type`, `created_by`, `user_count`, `admin_count`, `created_at`, `cost_center_id`, `cost_center_name`, `members[]` (`user_id`, `is_project_admin`, `date`)
 
 ## Check project exists
@@ -45,6 +47,7 @@ codemie sdk projects members 'my-project' --json
 ```bash
 codemie sdk projects create --data '{"name":"my-project","description":"Demo","display_name":"My Project"}'
 codemie sdk projects create --json path/to/project.json
+codemie sdk projects create --data '{"name":"my-project"}' --output json
 ```
 
 **Required:** `name`. **Optional:** `display_name` (max 150), `description`, `cost_center_id`, `cli_analytics_enabled`
@@ -56,6 +59,7 @@ codemie sdk projects create --json path/to/project.json
 ```bash
 codemie sdk projects update 'my-project' --data '{"description":"New description"}'
 codemie sdk projects update 'my-project' --json path/to/update.json
+codemie sdk projects update 'my-project' --data '{"description":"New"}' --output json
 ```
 
 **Optional fields:** `name`, `display_name`, `description`, `clear_description`, `cost_center_id`, `clear_cost_center`, `enforce_member_spend_limits`, `chargeback_attribution`, `cli_analytics_enabled`

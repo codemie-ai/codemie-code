@@ -297,11 +297,13 @@ function registerCreateCommand(cmd: Command): void {
     )
     .option("--data <string>", "Project configuration as inline JSON string")
     .option("--json <path>", "Path to JSON file with project configuration")
+    .option("--output <format>", "Output format: 'json' prints the raw response")
     .action(async (opts) =>
       run("Creating project...", "create project", async (client, spinner) => {
         const data = await parseDataOrJsonFile(opts.data, opts.json);
         const result = await createProject(client, data as ProjectCreateRequest);
         spinner.stop();
+        if (opts.output === "json") return outputJson(result);
         printSuccess(`Project ${chalk.cyan(result.name)} created.`);
       }),
     );
@@ -319,11 +321,13 @@ function registerUpdateCommand(cmd: Command): void {
     )
     .option("--data <string>", "Fields to update as inline JSON string")
     .option("--json <path>", "Path to JSON file with fields to update")
+    .option("--output <format>", "Output format: 'json' prints the raw response")
     .action(async (name: string, opts) =>
       run("Updating project...", "update project", async (client, spinner) => {
         const data = await parseDataOrJsonFile(opts.data, opts.json);
         const result = await updateProject(client, name, data as ProjectUpdateRequest);
         spinner.stop();
+        if (opts.output === "json") return outputJson(result);
         printSuccess(`Project ${chalk.cyan(result.name)} updated.`);
       }),
     );
