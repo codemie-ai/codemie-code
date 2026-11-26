@@ -250,15 +250,91 @@ describe('hook-side transitions', () => {
       expect(deps.forwardOtlpEventsToSpool).not.toHaveBeenCalled();
     });
 
-    it('continues the first prompt when authentication restores an owner for the session', async () => {
+    const signedIn = { api_identity: api, owner_hash: owner };
+    const ownerlessMarkers = () => {
+      try { return readdirSync(join(home, 'analytics', 'state', 'ownerless-sessions')); } catch { return []; }
+    };
+
+    it('a session that started signed out continues its first prompt after sign-in, then keeps going once its record exists', async () => {
+      const t = await setup();
+      identityMock.mockResolvedValue(null);
+      expect(await t.gate(hook({ hook_event_name: 'SessionStart', source: 'startup' }))).toBe('continue');
+      expect(ownerlessMarkers()).toHaveLength(1);
+
+      identityMock.mockResolvedValueOnce(null).mockResolvedValueOnce(signedIn); // sign-in restores the owner during the prompt's auth wait
+      expect(await t.gate(hook())).toBe('continue');
+      expect(authGateMock).toHaveBeenCalledTimes(1);
+      expect(await t.sm.isStopped(t.key())).toBe(false);
+
+      await t.record(); // what the stamp writes for the forwarded prompt
+      identityMock.mockResolvedValue(signedIn);
+      expect(await t.gate(hook())).toBe('continue'); // the next prompt is judged on the record
+    });
+
+    it('a resumed session with no record stays stopped after sign-in, as it would for a signed-in user', async () => {
+      const t = await setup();
+      identityMock.mockResolvedValue(null);
+      expect(await t.gate(hook({ hook_event_name: 'SessionStart', source: 'resume' }))).toBe('stop');
+      expect(ownerlessMarkers()).toHaveLength(0);
+
+      identityMock.mockResolvedValueOnce(null).mockResolvedValueOnce(signedIn);
+      expect(await t.gate(hook())).toBe('stop');
+      expect(await t.sm.isStopped(t.key())).toBe(true);
+      expect(await t.rs.readRecord(t.key())).toBeUndefined();
+
+      identityMock.mockResolvedValue(signedIn);
+      expect(await t.gate(hook())).toBe('stop'); // later prompts are stopped too
+      expect(await t.rs.readRecord(t.key())).toBeUndefined();
+    });
+
+    it('a prompt of an unknown session stays stopped after sign-in even when no SessionStart was seen', async () => {
       const t = await setup();
       identityMock.mockClear();
-      identityMock
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce({ api_identity: api, owner_hash: owner });
+      identityMock.mockResolvedValueOnce(null).mockResolvedValueOnce(signedIn);
 
-      expect(await t.gate(hook({ session_id: 'unknown' }))).toBe('continue');
+      expect(await t.gate(hook({ session_id: 'unknown' }))).toBe('stop');
       expect(identityMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('a failed owner lookup right after sign-in does not drop the first prompt of a session that started signed out', async () => {
+      const t = await setup();
+      identityMock.mockResolvedValue(null);
+      await t.gate(hook({ hook_event_name: 'SessionStart', source: 'startup' }));
+
+      // /v1/user failed once and is remembered for the cooldown: the owner is still unknown after sign-in
+      expect(await t.gate(hook())).toBe('continue');
+      expect(await t.gate(hook())).toBe('continue');
+
+      identityMock.mockResolvedValue(signedIn); // the cooldown ends and the owner resolves
+      expect(await t.gate(hook())).toBe('continue'); // the stamp creates the record on this prompt
+      expect(await t.sm.isStopped(t.key())).toBe(false);
+    });
+
+    it("lets the new session's first prompt reach the forwarder while the resumed session's does not", async () => {
+      const t = await setup();
+      identityMock.mockResolvedValue(null);
+      await t.gate(hook({ hook_event_name: 'SessionStart', source: 'startup' }));
+      await t.gate(hook({ hook_event_name: 'SessionStart', source: 'resume', session_id: 'resumed' }));
+      identityMock.mockResolvedValue(signedIn);
+      const deps = { ensureOtlpProxy: vi.fn(), forwardOtlpEventsToSpool: vi.fn().mockResolvedValue(true) };
+
+      await t.plugin.processOtlpEvent(JSON.stringify(hook({ session_id: 'resumed' })), deps as never);
+      expect(deps.ensureOtlpProxy).not.toHaveBeenCalled();
+      expect(deps.forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('paused for this session'));
+
+      logSpy.mockClear();
+      await t.plugin.processOtlpEvent(JSON.stringify(hook()), deps as never);
+      expect(deps.ensureOtlpProxy).toHaveBeenCalled(); // the gate let the new session's prompt through to the forwarder
+    });
+
+    it('an ownerless-start marker expires, so an old marker no longer opens a session', async () => {
+      const m = await import('@/agents/core/evidence/ownerless-session.js');
+      const t0 = Date.now();
+      await m.markOwnerlessSessionStart('s1', t0);
+      expect(await m.hasOwnerlessSessionStart('s1', t0 + m.OWNERLESS_SESSION_TTL_MS - 1000)).toBe(true);
+      expect(await m.hasOwnerlessSessionStart('s1', t0 + m.OWNERLESS_SESSION_TTL_MS + 60_000)).toBe(false);
+      expect(await m.hasOwnerlessSessionStart('other')).toBe(false);
     });
 
     it('blocks a recorded ownerless prompt before starting the proxy when authentication is missing', async () => {

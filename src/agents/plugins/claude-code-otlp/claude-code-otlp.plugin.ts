@@ -46,6 +46,7 @@ import { hasRecordForSession, readRecord, recordKey, type EvidenceRecord } from 
 import { isStopped, takeNotice, writeStop, type StopReason } from '@/agents/core/evidence/stop-marker.js';
 import { scopeViolation } from '@/agents/core/evidence/session-scope.js';
 import { hasPendingOwnerSession } from '@/agents/core/evidence/owner-pending.js';
+import { hasOwnerlessSessionStart, markOwnerlessSessionStart } from '@/agents/core/evidence/ownerless-session.js';
 import type { OtlpAdapterDeps } from '@/agents/core/types.js';
 import {
   buildSessionEnvEvent,
@@ -221,10 +222,10 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     try {
       let id = await currentEvidenceIdentity();
       const sessionId = hookInput.session_id;
-      let identityRecoveredAfterAuth = false;
       if (!id) {
-        // A prompt checks auth before the ownerless transition. If sign-in restores the owner while that check waits,
-        // let this authenticated prompt establish the session's first evidence record; older activity is not backfilled.
+        // A prompt checks auth before the ownerless transition, so a signed-out prompt never reaches the model.
+        // Whether the session may then continue is decided by what the session is (see below), not by how the owner
+        // was learned: a resumed or forked session with no record stays stopped even after sign-in.
         this.identityUnverifiedAtGate = true;
         if (hookInput.hook_event_name === 'UserPromptSubmit') {
           this.promptAuthResult = await this.ensureProxyAuth();
@@ -235,12 +236,15 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
             return 'stop';
           }
           id = await currentEvidenceIdentity();
-          identityRecoveredAfterAuth = Boolean(id);
         }
         if (!id) {
           const source = readOptionalString(hookInput, 'source');
           const fresh = hookInput.hook_event_name === 'SessionStart' && (source === 'startup' || source === 'clear');
-          return fresh || (await hasPendingOwnerSession(sessionId)) || (await hasRecordForSession(sessionId)) ? 'continue' : 'stop';
+          // Only a new session may later establish its first record; remember that this one began without an owner.
+          if (fresh) await markOwnerlessSessionStart(sessionId);
+          return fresh || (await hasPendingOwnerSession(sessionId)) || (await hasOwnerlessSessionStart(sessionId)) || (await hasRecordForSession(sessionId))
+            ? 'continue'
+            : 'stop';
         }
       }
       const key = recordKey(id.api_identity, id.owner_hash, sessionId);
@@ -255,9 +259,8 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       if (!found) {
         const source = readOptionalString(hookInput, 'source');
         const freshSession = hookInput.hook_event_name === 'SessionStart' && (source === 'startup' || source === 'clear');
-        if (freshSession || (await hasPendingOwnerSession(sessionId)) || (
-          identityRecoveredAfterAuth && hookInput.hook_event_name === 'UserPromptSubmit'
-        )) return 'continue';
+        // A session that began without an owner (signed out at startup) establishes its first record once the owner is known.
+        if (freshSession || (await hasPendingOwnerSession(sessionId)) || (await hasOwnerlessSessionStart(sessionId))) return 'continue';
         return this.stopSession(key, 'resume_unknown', sessionId);
       }
       const record = found.record;
