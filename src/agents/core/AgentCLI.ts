@@ -6,6 +6,7 @@ import type { AgentAdapter, ResumeOwnershipResult } from './types.js';
 import { runProviderSettingsCheck, type ProviderSettingsSwitch } from './provider-settings-check.js';
 import { CONTINUE_SESSION_ENV_KEY, RESUME_SESSION_ENV_KEY, SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY } from './session/types.js';
 import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config.js';
+import { MODEL_ENV_ORIGIN_ENV, PROFILE_MODEL_ENV, resolveModelEnvOrigin } from '../../utils/model-origin.js';
 import { ensureApiBase, DEFAULT_CODEMIE_BASE_URL } from '../../providers/core/codemie-auth-helpers.js';
 import { AuthMethod, ProviderName } from '../../providers/core/types.js';
 import { JWTTemplate } from '../../providers/plugins/jwt/jwt.template.js';
@@ -439,9 +440,13 @@ export class AgentCLI {
       // the marker bin/codemie-copilot.js already sets for the Copilot plugin.
       providerEnv.CODEMIE_MODEL_SOURCE = options.model
         ? 'cli'
-        : process.env.CODEMIE_MODEL
+        : ConfigLoader.modelResolutionOf(config)?.envModelUsed
           ? 'env'
           : 'default';
+      // Always set, so a nested launch never inherits a stale override marker for the banner.
+      const envModelShown = providerEnv.CODEMIE_MODEL_SOURCE === 'env' && Boolean(providerEnv.CODEMIE_MODEL);
+      providerEnv[MODEL_ENV_ORIGIN_ENV] = envModelShown ? (resolveModelEnvOrigin(process.env) ?? '') : '';
+      providerEnv[PROFILE_MODEL_ENV] = envModelShown ? (ConfigLoader.modelResolutionOf(config)?.profileModel ?? '') : '';
 
       // Pass status flag to lifecycle hooks
       if (options.status) {

@@ -22,11 +22,13 @@ export interface ProfileInfo {
 /**
  * Resolved CodeMie identity of a profile for display: URL and the project text
  * with its binding state (see describeProjectBinding()). `project` undefined
- * means no Project line (providers without a CodeMie project).
+ * means no Project line (providers without a CodeMie project). `model` is the
+ * effective model text (see describeModel()); status falls back to the profile model.
  */
 export interface ProfileIdentityDisplay {
   codeMieUrl?: string;
   project?: string;
+  model?: string;
 }
 
 
@@ -127,7 +129,7 @@ export class ProfileDisplay {
     const formatted = renderProfileInfo({
       profile: name,
       provider: profile.provider || 'N/A',
-      model: profile.model || 'N/A',
+      model: identity.model ?? (profile.model || 'N/A'),
       codeMieUrl: identity.codeMieUrl,
       project: identity.project,
       authStatus: authStatusDisplay,

@@ -4,9 +4,21 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+## [0.17.3] - 2026-11-25
+
 ### Added
 
 - `codemie proxy analytics resend` sends sessions held for lack of consent once a consent covers them (a folder consent for the session's folder, or `--all`); `consent grant`, `proxy connect` and `proxy doctor` point to it
+- `codemie analytics sync install --task-name <name>` chooses the name of the daily scheduler job (launchd label, systemd unit, Windows task). On a TTY, install and `sync bootstrap` prompt for it, and Enter keeps the default. Installing over a task this tool does not own asks before deleting and overwriting it, and non-interactive installs refuse without `--force`
+- Copilot sub-agent usage requests carry the sub-agent's id as `agent_id` in analytics, and Copilot 1.0.115 usage records are read with their per-request ids
+
+### Fixed
+
+- `codemie analytics sync install --include-external always` (and `sync bootstrap`) stores the policy you pass instead of silently falling back to `never`. A stray argument on an `analytics sync` subcommand is now an error. If you installed with `--include-external always|windows` on an earlier version, re-run `codemie analytics sync install ...` and check `codemie analytics sync status`
+- Stop and SubagentStop hooks skip the metrics sync when the session has no record yet, instead of logging `Session metadata not found` errors
+- Re-authentication hints point to `codemie profile login`, and `codemie proxy connect --claude-desktop` says there is no active CodeMie session for the profile when it has expired
+- On Windows, `codemie-opencode` no longer flashes a console window when tool hooks run
+- On Windows, `install.ps1` no longer aborts when npm prints a warning on stderr (for example an unrecognized key in `.npmrc`)
 
 ## [0.17.2] - 2026-11-24
 
