@@ -153,6 +153,106 @@ describe('LocalExportSource', () => {
 
     await expect(new LocalExportSource(failing, new ReportSource(reportSessions())).build(input())).rejects.toThrow('cannot read s1.hooks.jsonl');
   });
+
+  const failingReport = { build: async () => { throw new Error('cannot load the sessions'); } };
+
+  it('the report failing and a folder session: the OTLP file alone, with a warning that names the failure', async () => {
+    folderSession(home, 's1');
+    const { LocalExportSource } = await import('../local.js');
+    const { OtlpFolderSource } = await import('../../../analytics/sync/otlp-file-builder.js');
+
+    const files = await new LocalExportSource(new OtlpFolderSource(), failingReport).build(input());
+
+    expect(files?.map((file) => file.fileName)).toEqual([OTLP_NAME]);
+    expect(files?.warning).toBe('JSON report not built, the marker stays and the next run tries it again: cannot load the sessions');
+  });
+
+  it('the report failing and no folder session: the report\'s error', async () => {
+    const { LocalExportSource } = await import('../local.js');
+    const { OtlpFolderSource } = await import('../../../analytics/sync/otlp-file-builder.js');
+
+    await expect(new LocalExportSource(new OtlpFolderSource(), failingReport).build(input())).rejects.toThrow('cannot load the sessions');
+  });
+
+  it('both failing: the report\'s error', async () => {
+    const { LocalExportSource } = await import('../local.js');
+    const failingFolder = { build: async () => { throw new Error('cannot read s1.hooks.jsonl'); } };
+
+    await expect(new LocalExportSource(failingFolder, failingReport).build(input())).rejects.toThrow('cannot load the sessions');
+  });
+
+  /** A folder source answering `files` with `fields` (`leftOut`, `warning`). */
+  const answering = (files: string[], fields: { leftOut?: string; warning?: string }) => ({
+    build: async () =>
+      Object.assign(
+        files.map((fileName) => ({ fileName, bytes: Buffer.from(fileName), contentType: 'application/gzip' })),
+        fields
+      ),
+  });
+  const leavingOut = (files: string[], leftOut: string) => answering(files, { leftOut });
+
+  it('the folder leaving sessions out and a report session: both files, leftOut carried, no warning', async () => {
+    const { LocalExportSource } = await import('../local.js');
+    const { ReportSource } = await import('../../../analytics/sync/report-builder.js');
+
+    const files = await new LocalExportSource(leavingOut([OTLP_NAME], 'X'), new ReportSource(reportSessions('r1'))).build(input());
+
+    expect(files?.map((file) => file.fileName)).toEqual([OTLP_NAME, REPORT_NAME]);
+    expect(files?.leftOut).toBe('X');
+    expect(files?.warning).toBeUndefined();
+  });
+
+  it('the folder leaving sessions out with no file and no report session: an empty list with leftOut', async () => {
+    const { LocalExportSource } = await import('../local.js');
+    const { ReportSource } = await import('../../../analytics/sync/report-builder.js');
+
+    const files = await new LocalExportSource(leavingOut([], 'X'), new ReportSource(reportSessions())).build(input());
+
+    expect(files).toHaveLength(0);
+    expect(files?.leftOut).toBe('X');
+  });
+
+  it('the folder leaving sessions out and the report failing: the folder\'s files with the warning and leftOut', async () => {
+    const { LocalExportSource } = await import('../local.js');
+
+    const files = await new LocalExportSource(leavingOut([OTLP_NAME], 'X'), failingReport).build(input());
+
+    expect(files?.map((file) => file.fileName)).toEqual([OTLP_NAME]);
+    expect(files?.warning).toBe('JSON report not built, the marker stays and the next run tries it again: cannot load the sessions');
+    expect(files?.leftOut).toBe('X');
+  });
+
+  it('the folder with a warning and a report session: both files, the folder\'s warning carried', async () => {
+    const { LocalExportSource } = await import('../local.js');
+    const { ReportSource } = await import('../../../analytics/sync/report-builder.js');
+
+    const files = await new LocalExportSource(answering([OTLP_NAME], { warning: 'W' }), new ReportSource(reportSessions('r1'))).build(input());
+
+    expect(files?.map((file) => file.fileName)).toEqual([OTLP_NAME, REPORT_NAME]);
+    expect(files?.warning).toBe('W');
+    expect(files?.leftOut).toBeUndefined();
+  });
+
+  it('the folder with a warning and leftOut and the report failing: the folder\'s file, both warnings joined, leftOut carried', async () => {
+    const { LocalExportSource } = await import('../local.js');
+    const boom = { build: async () => { throw new Error('boom'); } };
+
+    const files = await new LocalExportSource(answering([OTLP_NAME], { warning: 'W', leftOut: 'X' }), boom).build(input());
+
+    expect(files?.map((file) => file.fileName)).toEqual([OTLP_NAME]);
+    expect(files?.warning).toBe('W; JSON report not built, the marker stays and the next run tries it again: boom');
+    expect(files?.leftOut).toBe('X');
+  });
+
+  it('the folder with a warning and no file, no report session: an empty list with the warning', async () => {
+    const { LocalExportSource } = await import('../local.js');
+    const { ReportSource } = await import('../../../analytics/sync/report-builder.js');
+
+    const files = await new LocalExportSource(answering([], { warning: 'W' }), new ReportSource(reportSessions())).build(input());
+
+    expect(files).toHaveLength(0);
+    expect(files?.warning).toBe('W');
+  });
 });
 
 describe('localCollection', () => {
@@ -167,8 +267,10 @@ describe('localCollection', () => {
     expect(await never.admit('s-1', gate, () => false)).toBe('stop');
   });
 
-  it('prints the mode as the status line of sync status', async () => {
-    expect((await collection()).statusLines()).toEqual(['Mode: local — delivers the OTLP files of ~/.codemie/analytics/sessions beside the JSON report']);
+  it('prints the mode as the status line of sync status, naming the analytics folder under CODEMIE_HOME', async () => {
+    expect((await collection()).statusLines()).toEqual([
+      `Mode: local — delivers the OTLP files of ${join(home, 'analytics', 'sessions')} beside the JSON report`,
+    ]);
   });
 
   it('its doctor plan names the local next steps, no status lines, no keyed probe and the mode as the daemon label', async () => {
@@ -317,6 +419,25 @@ describe('localCollection.teardown', () => {
     expect(claude.env ?? {}).not.toHaveProperty('CLAUDE_CODE_ENABLE_TELEMETRY');
     expect(claude.env ?? {}).not.toHaveProperty('OTEL_LOGS_EXPORTER');
     expect(claude.env ?? {}).not.toHaveProperty('OTEL_EXPORTER_OTLP_ENDPOINT');
+  });
+
+  it("removes CodeMie's own telemetry env left after Claude Code's hooks were removed by hand", async () => {
+    const claudeDir = join(home, '.claude');
+    mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(join(claudeDir, 'settings.json'), JSON.stringify({
+      model: 'opus',
+      env: {
+        OTEL_EXPORTER_OTLP_ENDPOINT: 'http://127.0.0.1:4001/v1/analytics/otlp',
+        OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer codemie-proxy',
+        OTEL_LOGS_EXPORTER: 'otlp',
+      },
+    }, null, 2));
+
+    await (await collection()).teardown(async () => undefined);
+
+    const claude = JSON.parse(readFileSync(join(claudeDir, 'settings.json'), 'utf-8'));
+    expect(claude.model).toBe('opus');
+    expect(claude).not.toHaveProperty('env');
   });
 
   it('leaves Claude Code settings with no CodeMie hook byte for byte, and their backup in place', async () => {

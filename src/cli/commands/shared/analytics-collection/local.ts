@@ -21,11 +21,12 @@ import { DAEMON_LOCK_COMMAND_BUDGET_MS, withDaemonLock } from '../../proxy/daemo
 import { ensureLocalOtlpProxy, restartLocalDaemon, startLocalDaemon } from '../../proxy/local-daemon.js';
 import { parsePortOption } from '../../proxy/start.js';
 import { localDoctorPlan } from './local-doctor.js';
-import { LOCAL_CLIENTS, LOCAL_MODE_TEXT, localInstallPlan } from './local-install.js';
+import { LOCAL_CLIENTS, localInstallPlan, localModeText } from './local-install.js';
 import { LocalPolicy } from './local-policy.js';
 import type { AnalyticsCollection } from './types.js';
 
-const STATUS_LINES = [`Mode: ${LOCAL_MODE_TEXT}`];
+/** The status lines, built when printed: the folder's path follows `CODEMIE_HOME`. */
+const statusLines = (): string[] => [`Mode: ${localModeText()}`];
 
 function refusal(): ConfigurationError {
   return new ConfigurationError(
@@ -43,8 +44,8 @@ function printRunning(state: DaemonState): void {
 }
 
 /**
- * The teardown of `sync uninstall`: the hooks of each client CodeMie has wired first — a client whose hooks are not
- * CodeMie's is not touched; then, in one hold of the daemon lock, the local daemon stopped, half-done moves undone,
+ * The teardown of `sync uninstall`: each client holding any of CodeMie's own entries is cleared first — a client with
+ * none of them is not touched; then, in one hold of the daemon lock, the local daemon stopped, half-done moves undone,
  * the local spool and the exclusion marks removed, and the uninstall's own removal last, so no hook sees a stopped
  * daemon while `local` is still set. The analytics folder stays.
  */
@@ -64,8 +65,16 @@ async function teardown(removeInstall: () => Promise<void>): Promise<void> {
 
 /**
  * The files of a local machine's run: the OTLP files of the analytics folder first, the JSON report last, both built
- * for the run's input; `null` when neither has anything. When the folder's build throws, the report goes alone with a
- * warning that names the failure and keeps the run's marker; with no report the folder's error is the run's.
+ * for the run's input; `null` when neither has anything. A build that throws holds the other's files back only when
+ * those are none:
+ * - the folder throws, a report is built — the report alone, with a warning that names the failure and keeps the
+ *   run's marker; no report — the folder's error is the run's;
+ * - the report throws, the folder built some file — the folder's files alone, the folder's `warning` and then the
+ *   same kind of warning; the folder built nothing, or threw too — the report's error is the run's;
+ * - neither throws — the folder's files and the report.
+ * Every answer carries the folder's `warning` and `leftOut`; with nothing to deliver and either of them set the answer
+ * is an empty list that carries them, not `null`. The one run where they are not seen: the folder built no file and
+ * the report throws — the report's error is the run's.
  */
 export class LocalExportSource implements ExportSource {
   constructor(
@@ -74,14 +83,26 @@ export class LocalExportSource implements ExportSource {
   ) {}
 
   async build(input: Parameters<ExportSource['build']>[0]): Promise<SyncFiles | null> {
-    let folderFiles: SyncReport[] = [];
+    let folderFiles: SyncFiles = [];
     let folderError: unknown;
     try {
       folderFiles = (await this.folder.build(input)) ?? [];
     } catch (err) {
       folderError = err;
     }
-    const reportFiles = (await this.report.build(input)) ?? [];
+    const leftOut = folderFiles.leftOut === undefined ? {} : { leftOut: folderFiles.leftOut };
+    const folderWarning = folderFiles.warning === undefined ? {} : { warning: folderFiles.warning };
+    let reportFiles: SyncReport[] = [];
+    try {
+      reportFiles = (await this.report.build(input)) ?? [];
+    } catch (err) {
+      if (folderError !== undefined || folderFiles.length === 0) throw err;
+      const reportWarning = `JSON report not built, the marker stays and the next run tries it again: ${errorMessage(err)}`;
+      return Object.assign([...folderFiles], {
+        warning: [folderFiles.warning, reportWarning].filter((part) => part !== undefined).join('; '),
+        ...leftOut,
+      });
+    }
     if (folderError !== undefined) {
       if (reportFiles.length === 0) throw folderError;
       return Object.assign([...reportFiles], {
@@ -89,7 +110,8 @@ export class LocalExportSource implements ExportSource {
       });
     }
     const files = [...folderFiles, ...reportFiles];
-    return files.length === 0 ? null : files;
+    if (files.length === 0 && folderFiles.leftOut === undefined && folderFiles.warning === undefined) return null;
+    return Object.assign(files, folderWarning, leftOut);
   }
 }
 
@@ -107,8 +129,8 @@ export function localCollection(settings: SyncSettings | null): AnalyticsCollect
     exportSource: () => new LocalExportSource(),
     install: localInstallPlan,
     teardown,
-    statusLines: () => STATUS_LINES,
-    doctor: localDoctorPlan(createRealStatusDeps(() => STATUS_LINES)),
+    statusLines,
+    doctor: localDoctorPlan(createRealStatusDeps(statusLines)),
     guardProxyCommand: () => {
       throw refusal();
     },

@@ -8,7 +8,7 @@ import { ConfigLoader } from '@/utils/config.js';
 import { SyncConfigError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { getCodemiePath } from '@/utils/paths.js';
-import { loadSyncSettings } from '../../analytics/sync/config-store.js';
+import { loadSyncSettings, readSyncSettingsRaw } from '../../analytics/sync/config-store.js';
 import type { SyncSettings } from '../../analytics/sync/types.js';
 import { isDaemonAlive, readState } from '../../proxy/daemon-manager.js';
 import { backendCollection } from './backend.js';
@@ -17,6 +17,18 @@ import type { AnalyticsCollection } from './types.js';
 /** The local collection, loaded only on a machine that runs it. */
 async function local(settings: SyncSettings | null): Promise<AnalyticsCollection> {
   return (await import('./local.js')).localCollection(settings);
+}
+
+/**
+ * The local collection for the install of a machine not local yet: the sync settings file absent, or loaded with no
+ * `local: true` — its plan stands down when no client could be set up. A file that exists and does not load, or that
+ * cannot be read, keeps the failing plan: the machine may be local, and the failure restores the file as it was. The
+ * read's error is not lost: the plan's settings step reads the file again and fails the install with it.
+ */
+async function localForInstall(previous: SyncSettings | null): Promise<AnalyticsCollection> {
+  const collection = await local(previous);
+  if (previous === null && (await readSyncSettingsRaw().catch(() => undefined)) !== null) return collection;
+  return { ...collection, install: (await import('./local-install.js')).standingDownLocalInstallPlan };
 }
 
 /**
@@ -47,8 +59,8 @@ async function assertGlobalConfigParses(): Promise<void> {
   }
   try {
     JSON.parse(raw);
-  } catch (error) {
-    throw new SyncConfigError(`The CodeMie CLI config at ${path} is not valid JSON: ${(error as Error).message}`);
+  } catch {
+    throw new SyncConfigError(`The CodeMie CLI config at ${path} is not valid JSON.`);
   }
 }
 
@@ -76,5 +88,5 @@ export async function resolveInstallCollection(
       note: `Local analytics mode not turned on: a CodeMie proxy is running on this machine (${state.url}).`,
     };
   }
-  return { collection: await local(previous) };
+  return { collection: await localForInstall(previous) };
 }

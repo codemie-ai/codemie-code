@@ -116,7 +116,7 @@ vi.mock('../event-fields/session-env-fields.js', () => ({
   resolveSessionEnvFields: resolveSessionEnvFieldsMock,
 }));
 
-import { isProjectTracked, readPromptHookTimeoutSeconds } from '../claude-code-otlp.allowlist.js';
+import { isProjectTracked, readAllowlistState, readPromptHookTimeoutSeconds } from '../claude-code-otlp.allowlist.js';
 import { ensureCodeMieSsoAuthOrWait } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
 import { detectGitHeadSha, detectGitCommitsByAuthor } from '@/utils/processes.js';
@@ -260,6 +260,13 @@ describe('ClaudeCodeOtlpPlugin.processOtlpEvent', () => {
     it('preferences-corrupt is not the filter', async () => {
       vi.mocked(isProjectTracked).mockResolvedValue(true);
       readClaudeAnalyticsPreferencesMock.mockResolvedValue({ kind: 'corrupt' } as never);
+
+      await expect(byFilter()).resolves.toBe(false);
+    });
+
+    it('allowlist-unresolved is not the filter', async () => {
+      vi.mocked(isProjectTracked).mockResolvedValue(false);
+      vi.mocked(readAllowlistState).mockResolvedValueOnce({ kind: 'invalid' });
 
       await expect(byFilter()).resolves.toBe(false);
     });

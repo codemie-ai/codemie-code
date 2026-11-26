@@ -131,6 +131,11 @@ export function parseLastFailure(log: string, target: TargetId): LastRun | null 
   return last;
 }
 
+/** Whether a parsed outcome is a run that ended `ok sent` or `skip` with a warning on its line. */
+export function endedWithWarning(outcome: string): boolean {
+  return (outcome.startsWith('ok sent') || outcome.startsWith('skip')) && outcome.includes(' (warning: ');
+}
+
 /** Turn a parsed outcome (`ok sent ...` | `skip ...` | `fail <category> ...`) into the
  * human text status prints: "sent / skipped / failed", each with its detail. */
 function describeOutcome(outcome: string): string {

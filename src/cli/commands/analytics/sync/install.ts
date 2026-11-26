@@ -356,7 +356,8 @@ export async function runInstall(opts: InstallOptions, deps: InstallDeps): Promi
     return 1;
   }
 
-  const registerResult = await replaceJob(deps, { ...settings, ...deps.plan.settingsExtras(cmd) }, cmd, previous);
+  const extras = planRun.stoodDown ? {} : deps.plan.settingsExtras(cmd);
+  const registerResult = await replaceJob(deps, { ...settings, ...extras }, cmd, previous);
   if (registerResult === null) {
     await undoSteps(deps, planRun.applied);
     return 1;

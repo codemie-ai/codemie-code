@@ -27,8 +27,12 @@ export interface InstallPlan {
   steps(settings: SyncSettings): InstallStep[];
   /** Settings fields the mode adds, given the job's command. */
   settingsExtras(job: { node: string; entry: string }): Partial<SyncSettings>;
-  /** The summary lines of the steps' outcomes, or the failure that ends the install. */
-  conclude(outcomes: StepOutcome[]): { summary: string[]; failure?: string };
+  /**
+   * The summary lines of the steps' outcomes, or the failure that ends the install. `standDown` — the plan asks for
+   * none of its changes: the install undoes the plan's steps and saves none of the plan's settings, and prints the
+   * summary; `undoFailed` is what the install prints instead when a step of the plan could not be undone.
+   */
+  conclude(outcomes: StepOutcome[]): { summary: string[]; failure?: string; standDown?: { undoFailed: string } };
 }
 
 export interface AnalyticsCollection {

@@ -761,6 +761,77 @@ describe('runInstall — install plan', () => {
     expect(harness.printed).toContain('No supported client could be set up.');
   });
 
+  it('a plan that stands down undoes its steps in reverse, saves none of its extras, prints its summary and exits 0', async () => {
+    const events: string[] = [];
+    const scheduler = makeScheduler({
+      register: vi.fn(async (): Promise<RegisterResult> => {
+        events.push('register');
+        return {};
+      }),
+    });
+    const harness = makeDeps({
+      scheduler,
+      plan: plan([recordingStep('a', events), recordingStep('b', events)], () => ({ summary: ['  Local mode:       not turned on'], standDown: { undoFailed: 'the stub plan could not be undone' } })),
+    });
+
+    const code = await runInstall(VALID_OPTS, harness.deps);
+
+    expect(code).toBe(0);
+    expect(events).toEqual(['apply:a', 'apply:b', 'undo:b', 'undo:a', 'register']);
+    expect(harness.writeSettings).toHaveBeenCalledWith(expect.objectContaining({ webhookUrl: FAKE_WEBHOOK }));
+    for (const [written] of harness.writeSettings.mock.calls) {
+      expect(written).not.toHaveProperty('local');
+      expect(written).not.toHaveProperty('localJob');
+    }
+    expect(harness.printed).toContain('  Local mode:       not turned on');
+  });
+
+  it('a plan that stands down with an undo that throws fails: both lines printed, nothing registered or written, exit 1', async () => {
+    const events: string[] = [];
+    const harness = makeDeps({
+      plan: plan(
+        [recordingStep('a', events), recordingStep('b', events, undefined, new Error('settings locked'))],
+        () => ({ summary: ['  Local mode:       not turned on'], standDown: { undoFailed: 'the stub plan could not be undone' } })
+      ),
+    });
+
+    const code = await runInstall(VALID_OPTS, harness.deps);
+
+    expect(code).toBe(1);
+    expect(events).toEqual(['apply:a', 'apply:b', 'undo:b', 'undo:a']);
+    expect(harness.printed).toContain('Could not undo "b": settings locked');
+    expect(harness.printed).toContain('Install failed: the stub plan could not be undone');
+    expect(harness.scheduler.register).not.toHaveBeenCalled();
+    expect(harness.writeSettings).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['settings there before: restored', previousRaw],
+    ['no settings before: deleted', null],
+  ])('a plan that stands down whose register throws fails and puts back the install of before (%s)', async (_name, before) => {
+    const events: string[] = [];
+    const register = vi.fn(async (): Promise<RegisterResult> => {
+      throw new Error('launchctl bootstrap failed: boom');
+    });
+    const harness = makeDeps({
+      scheduler: makeScheduler({ register }),
+      readSettingsRaw: async () => before,
+      plan: plan([recordingStep('a', events)], () => ({ summary: ['  Local mode:       not turned on'], standDown: { undoFailed: 'the stub plan could not be undone' } })),
+    });
+
+    const code = await runInstall(VALID_OPTS, harness.deps);
+
+    expect(code).toBe(1);
+    expect(events).toEqual(['apply:a', 'undo:a']);
+    expect(harness.printed).toContain('Install failed: launchctl bootstrap failed: boom');
+    if (before === null) {
+      expect(harness.deleteSettings).toHaveBeenCalled();
+      expect(harness.restoreSettingsRaw).not.toHaveBeenCalled();
+    } else {
+      expect(harness.restoreSettingsRaw).toHaveBeenCalledWith(previousRaw);
+    }
+  });
+
   it('a register that throws undoes the steps in reverse and restores the settings and the job of before the run', async () => {
     const events: string[] = [];
     let stored = previousRaw;

@@ -109,12 +109,16 @@ describe('resolveInstallCollection', () => {
     });
   });
 
-  it('a config file that does not parse → throws', async () => {
-    writeConfig('{"version": 2,');
+  it('a config file that does not parse → throws, naming the file alone and nothing of its text', async () => {
+    writeConfig('{"apiKey": "sk-SECRET1",');
     const { resolveInstallCollection } = await import('../resolve.js');
     const { SyncConfigError } = await import('@/utils/errors.js');
 
-    await expect(resolveInstallCollection(null)).rejects.toBeInstanceOf(SyncConfigError);
+    const error = await resolveInstallCollection(null).then(() => undefined, (rejected: unknown) => rejected);
+
+    expect(error).toBeInstanceOf(SyncConfigError);
+    expect((error as Error).message).toBe(`The CodeMie CLI config at ${join(home, 'codemie-cli.config.json')} is not valid JSON.`);
+    expect((error as Error).message).not.toContain('SECRET1');
   });
 
   it('settings installed local, and a profile added since → local', async () => {

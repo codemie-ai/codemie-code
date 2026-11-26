@@ -14,7 +14,7 @@ import {
 import { ConfigurationError } from '@/utils/errors.js';
 import type { TargetId } from '../../analytics/sync/run-sync.js';
 import { resolveSchedulerName } from '../../analytics/sync/scheduler/index.js';
-import { lastRunText, parseLastRun, readMarkerState, type StatusDeps } from '../../analytics/sync/status.js';
+import { endedWithWarning, lastRunText, parseLastRun, readMarkerState, type StatusDeps } from '../../analytics/sync/status.js';
 import type { SyncSettings } from '../../analytics/sync/types.js';
 import { PROXY_DOCTOR_GROUPS, type ProxyDoctorGroup } from '../../proxy/doctor/groups.js';
 import type { DoctorPlan, DoctorRemedies } from '../../proxy/doctor/plan.js';
@@ -22,7 +22,7 @@ import { guarded, type Sections } from '../../proxy/doctor/sections.js';
 
 const INSTALL_COMMAND = 'codemie analytics sync install';
 const REINSTALL_HINT = `Run \`${INSTALL_COMMAND}\` again.`;
-const RUN_HINT = 'Run `codemie analytics sync run` to deliver now.';
+const RUN_HINT = 'Run `codemie analytics sync run` to try again.';
 const MARKER_HINT = 'Remove the delivery marker (`analytics-last-sent*` in the CodeMie home); the next delivery writes it again.';
 
 export const LOCAL_REMEDIES: DoctorRemedies = {
@@ -70,7 +70,7 @@ async function folderRows(): Promise<Sections> {
   const files = listed.filter((_, index) => times[index] !== undefined);
   const sessions = new Set(files.map(folderSessionIdOf)).size;
   if (files.length === 0) return [{ id: 'local', status: 'ok', message: 'Local analytics folder: 0 sessions' }];
-  const newest = Math.max(...times.filter((time): time is number => time !== undefined));
+  const newest = times.reduce<number>((max, time) => (time !== undefined && time > max ? time : max), -Infinity);
   return [{
     id: 'local',
     status: 'ok',
@@ -105,9 +105,9 @@ function targetsOf(settings: SyncSettings): TargetId[] {
 }
 
 /**
- * Per target: the last run from the run log, a warning when it failed, and the last successful delivery from its marker;
- * a marker that cannot be read warns on its own target's row and leaves every other row. A target nothing was
- * delivered to yet is no problem: a fresh install has none.
+ * Per target: the last run from the run log, a warning when it failed or delivered with a warning, and the last
+ * successful delivery from its marker; a marker that cannot be read warns on its own target's row and leaves every
+ * other row. A target nothing was delivered to yet is no problem: a fresh install has none.
  */
 async function deliveryRows(settings: SyncSettings, status: StatusDeps): Promise<Sections> {
   const log = await status.readLog();
@@ -116,9 +116,11 @@ async function deliveryRows(settings: SyncSettings, status: StatusDeps): Promise
   for (const target of targetsOf(settings)) {
     const lastRun = log === null ? null : parseLastRun(log, target);
     const lastRunMessage = `Last run (${target}): ${lastRunText(lastRun)}`;
-    rows.push(lastRun?.outcome.startsWith('fail')
-      ? { id: 'local', status: 'warn', message: lastRunMessage, hint: RUN_HINT }
-      : { id: 'local', status: 'info', message: lastRunMessage });
+    if (lastRun !== null && (lastRun.outcome.startsWith('fail') || endedWithWarning(lastRun.outcome))) {
+      rows.push({ id: 'local', status: 'warn', message: lastRunMessage, hint: RUN_HINT });
+    } else {
+      rows.push({ id: 'local', status: 'info', message: lastRunMessage });
+    }
     const marker = await readMarkerState(status, target, now);
     if (marker.kind === 'none') {
       rows.push({ id: 'local', status: 'info', message: `Nothing delivered yet to ${target}` });

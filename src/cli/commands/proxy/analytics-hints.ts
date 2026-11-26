@@ -38,6 +38,11 @@ function claudeAdvice(reason: string, path: string, remedies: DoctorRemedies): N
         description: 'it is not in the Project-scope allowlist',
         action: `run this inside that project: ${remedies.connect(`${CLAUDE_OTLP_FLAG} --scope project`)}`,
       };
+    case 'allowlist-unresolved':
+      return {
+        description: 'the Project-scope allowlist cannot be applied',
+        action: 'fix the Claude Code settings file: it cannot be read, does not parse, or its project filter is not a list of absolute paths',
+      };
     case 'hooks-not-installed':
       return {
         description: 'the Claude Code hooks are not installed',

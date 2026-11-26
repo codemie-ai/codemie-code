@@ -15,11 +15,12 @@
  * `runSync` never throws and never calls `process.exit`. Every outcome for a target —
  * success, a skipped empty window, or a failure — prints and appends exactly one line via
  * {@link formatLogLine}:
- *   `<ISO> ok sent <name> <bytes> target=<id>` (one file), `<ISO> ok sent <n> files <total bytes> target=<id>`,
- *   either with ` (warning: <what>)` when a part of the run's files could not be built and the rest were delivered;
- *   such a run leaves the marker
+ *   `<ISO> ok sent <name> <bytes> target=<id>` (one file), `<ISO> ok sent <n> files <total bytes> target=<id>`
  *   `<ISO> skip <reason> target=<id>`
  *   `<ISO> fail <setup|export|send> <redacted detail> target=<id>`
+ * An `ok sent` and a `skip` line may each carry ` (warning: <what>)` once or twice before ` target=<id>`: the build's
+ * `warning` (a part of the run not built for a reason that may pass), then its `leftOut` (sessions no run can build);
+ * an `ok sent` line may add the marker's own warning after them.
  * A setup failure resolved before any target is chosen (no settings file, no configured
  * target, no resolvable identity) carries no ` target=<id>` suffix and counts for every
  * target in `status`; a target whose own marker cannot be read fails `setup` with its
@@ -28,8 +29,8 @@
  * a report-build failure -> `export`; a webhook delivery failure -> `export` when it is an
  * `ExportTooLargeError` (its message carries the byte count), else `send`; a git delivery
  * failure is always `send`, with its detail carrying {@link gitHint}. The marker for a
- * target only moves (to the run's `now()`) after that target accepted every file of a run that built all of
- * them — never on `skip`, `fail` or a build warning. A marker write that fails after delivery keeps the `ok sent` outcome
+ * target only moves (to the run's `now()`) after a delivery whose files carry no `warning` — a `leftOut` alone does not
+ * hold it; a `skip` and a `fail` move nothing. A marker write that fails after delivery keeps the `ok sent` outcome
  * (exit 0 for that target) with a warning suffix; a run-log append that fails is ignored.
  */
 import { appendFile, chmod, mkdir } from 'fs/promises';
@@ -149,8 +150,11 @@ async function runTarget(
     return true;
   }
 
+  // Both are named on the line: a `warning` holds the marker, a `leftOut` (sessions no run can build) does not.
+  const buildWarning = reports?.warning === undefined ? '' : ` (warning: ${reports.warning})`;
+  const leftOutWarning = reports?.leftOut === undefined ? '' : ` (warning: ${reports.leftOut})`;
   if (reports === null || reports.length === 0) {
-    await emit(deps, now, 'skip', `no sessions in window ${window.label}`, target);
+    await emit(deps, now, 'skip', `no sessions in window ${window.label}${buildWarning}${leftOutWarning}`, target);
     return false;
   }
 
@@ -161,12 +165,11 @@ async function runTarget(
     return true;
   }
 
-  // A run that could not build all its files leaves the marker, so the next run covers this window again.
+  // A run with a `warning` leaves the marker, so the next run covers this window again.
   const markerWarning = reports.warning === undefined ? await moveMarker(deps, target, now) : '';
-  const buildWarning = reports.warning === undefined ? '' : ` (warning: ${reports.warning})`;
   const total = reports.reduce((sum, report) => sum + report.bytes.length, 0);
   const sent = reports.length === 1 ? `${reports[0].fileName} ${total}` : `${reports.length} files ${total}`;
-  await emit(deps, now, 'ok', `sent ${sent}${buildWarning}${markerWarning}`, target);
+  await emit(deps, now, 'ok', `sent ${sent}${buildWarning}${leftOutWarning}${markerWarning}`, target);
   return false;
 }
 

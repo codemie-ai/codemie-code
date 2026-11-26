@@ -363,7 +363,11 @@ export function createProxyCommand(): Command {
       'With --claude-otlp: also send analytics from personal Claude subscriptions, for this repository (--scope project) or any repository (--scope user). Without it, an interactive connect asks (not with --yes).',
     )
     .action(async (opts: UnifiedConnectOptions) => {
-      (await resolveCollection()).guardProxyCommand('connect');
+      try {
+        (await resolveCollection()).guardProxyCommand('connect');
+      } catch (error) {
+        printProxyError(error, 'Failed to connect proxy');
+      }
       if (opts.force) deprecate(CONNECT_FORCE_DEPRECATION);
       if (opts.silent) deprecate(CONNECT_SILENT_DEPRECATION);
       deprecateConnectorFlags(connect, CONNECT_CONNECTOR_FLAGS);
@@ -429,7 +433,11 @@ export function createProxyCommand(): Command {
       insiders?: boolean;
       scope?: 'user' | 'project';
     }) => {
-      (await resolveCollection()).guardProxyCommand('disconnect');
+      try {
+        (await resolveCollection()).guardProxyCommand('disconnect');
+      } catch (error) {
+        printProxyError(error, 'Failed to disconnect proxy');
+      }
       deprecateConnectorFlags(disconnect, DISCONNECT_CONNECTOR_FLAGS);
       if (opts.all) {
         if (opts.scope) {

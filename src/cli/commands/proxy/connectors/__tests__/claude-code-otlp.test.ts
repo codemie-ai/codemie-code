@@ -18,6 +18,8 @@ import {
   SETTINGS_BACKUP_SUFFIX,
   writeClaudeCodeOtlpConfig,
   removeClaudeCodeOtlpConfig,
+  hasClaudeCodeOtlpEntries,
+  hasClaudeCodeOtlpHooks,
 } from '../claude-code-otlp.js';
 import {
   checkClaudeCodeOtlpEndpoint,
@@ -1828,6 +1830,51 @@ describe('claude-code-otlp connector', () => {
       await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
 
       expect(await isClaudeCodeOtlpConnected()).toBe(true);
+    });
+  });
+
+  describe('hasClaudeCodeOtlpEntries', () => {
+    const CODEMIE_ENV = {
+      OTEL_EXPORTER_OTLP_ENDPOINT: 'http://127.0.0.1:4001/v1/analytics/otlp',
+      OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer codemie-proxy',
+    };
+
+    async function writeSettings(text: string): Promise<void> {
+      await mkdir(join(homeDir, '.claude'), { recursive: true });
+      await writeFile(join(homeDir, '.claude', 'settings.json'), text);
+    }
+
+    it("is true for CodeMie's hooks alone", async () => {
+      await writeSettings(JSON.stringify({ hooks: { Stop: [codemieHookGroup()] } }));
+
+      expect(await hasClaudeCodeOtlpEntries()).toBe(true);
+    });
+
+    it("is true for no hook and CodeMie's own telemetry env; the hooks predicate stays false", async () => {
+      await writeSettings(JSON.stringify({ env: CODEMIE_ENV }));
+
+      expect(await hasClaudeCodeOtlpEntries()).toBe(true);
+      expect(await hasClaudeCodeOtlpHooks()).toBe(false);
+    });
+
+    it("is false for no hook and the user's own telemetry, the fixed values CodeMie also writes included", async () => {
+      await writeSettings(JSON.stringify({ env: {
+        CLAUDE_CODE_ENABLE_TELEMETRY: '1',
+        OTEL_LOGS_EXPORTER: 'otlp',
+        OTEL_EXPORTER_OTLP_ENDPOINT: 'https://otel.example.invalid',
+      } }));
+
+      expect(await hasClaudeCodeOtlpEntries()).toBe(false);
+    });
+
+    it('is false with no settings file', async () => {
+      expect(await hasClaudeCodeOtlpEntries()).toBe(false);
+    });
+
+    it('is false for a settings file that does not parse', async () => {
+      await writeSettings('{ "env": ');
+
+      expect(await hasClaudeCodeOtlpEntries()).toBe(false);
     });
   });
 

@@ -87,6 +87,17 @@ describe('adviceForReason', () => {
       const { adviceForReason } = await import('../analytics-hints.js');
       expect(adviceForReason(CLAUDE, 'preferences-corrupt', '/work/a', BACKEND_REMEDIES)?.description).toMatch(/corrupt/);
     });
+
+    it('allowlist-unresolved names the settings file that cannot be applied, no path and no status command', async () => {
+      const { adviceForReason } = await import('../analytics-hints.js');
+      const advice = adviceForReason(CLAUDE, 'allowlist-unresolved', '/work/a', BACKEND_REMEDIES);
+      expect(advice).toEqual({
+        description: 'the Project-scope allowlist cannot be applied',
+        action: 'fix the Claude Code settings file: it cannot be read, does not parse, or its project filter is not a list of absolute paths',
+      });
+      expect(advice?.description).not.toContain('~/');
+      expect(advice?.action).not.toContain('~/');
+    });
   });
 
   describe.each([

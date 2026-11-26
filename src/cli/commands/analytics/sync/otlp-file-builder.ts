@@ -7,6 +7,8 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { gunzip, gzip } from 'node:zlib';
 import { ExportTooLargeError } from '@/utils/errors.js';
+import { logger } from '@/utils/logger.js';
+import { sanitizeLogArgs } from '@/utils/security.js';
 import {
   FOLDER_STREAMS,
   MOVING_SUFFIX,
@@ -15,11 +17,14 @@ import {
   folderSessionIdOf,
 } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/analytics-folder-paths.js';
 import { emailSlug } from '../report/report-generator.js';
+import { errorMessage } from './redact.js';
 import { MAX_EXPORT_BYTES } from './targets/webhook-target.js';
-import { formatUtcDate } from './window.js';
-import type { ExportSource, SyncReport } from './types.js';
+import { formatUtcDate, type SyncWindow } from './window.js';
+import type { ExportSource, SyncFiles } from './types.js';
 
 const NEWLINE = 0x0a;
+/** How many sessions left out the run's line names per list before `and <k> more`. */
+const LEFT_OUT_SHOWN = 3;
 const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
 
@@ -82,11 +87,14 @@ async function packFiles(pieces: Buffer[], cap: number): Promise<Buffer[]> {
 /**
  * The analytics folder as the daily files: the sessions whose newest line falls in the window, in order, as files of
  * one gzip stream of whole lines each, no larger than `cap`; a session that does not fit a file alone is cut at a line.
+ * A session with one line above the cap is left out whole and named in `leftOut`; a session whose file cannot be read
+ * is left out for this run and named in `warning`; the others are built either way. A folder that cannot be listed
+ * throws. `null` when nothing was built or left out.
  */
 export class OtlpFolderSource implements ExportSource {
   constructor(private readonly cap: number = MAX_EXPORT_BYTES) {}
 
-  async build(input: Parameters<ExportSource['build']>[0]): Promise<SyncReport[] | null> {
+  async build(input: Parameters<ExportSource['build']>[0]): Promise<SyncFiles | null> {
     const { window, email, now } = input;
     const root = analyticsFolderRoot();
     let names: string[];
@@ -99,34 +107,56 @@ export class OtlpFolderSource implements ExportSource {
 
     const sessionIds = [...new Set(names.map(folderSessionIdOf).filter((id): id is string => id !== undefined))].sort();
     const pieces: Buffer[] = [];
+    const leftOut: string[] = [];
+    const notRead: string[] = [];
     for (const sessionId of sessionIds) {
-      const marker = join(root, sessionId + MOVING_SUFFIX);
-      // A session being moved is left for a later run.
-      if (await exists(marker)) continue;
-      const paths = FOLDER_STREAMS.map((stream) => join(root, folderFileName(sessionId, stream)));
-      const mtimes = await Promise.all(paths.map((path) => stat(path).then((info) => info.mtimeMs, () => null)));
-      const newest = Math.max(...mtimes.filter((mtime): mtime is number => mtime !== null));
-      if (newest < window.from.getTime() || newest > window.to.getTime()) continue;
-
-      const sessionParts: Buffer[] = [];
-      for (const path of paths) {
-        const lines = await wholeLines(path);
-        if (lines) sessionParts.push(lines);
+      try {
+        pieces.push(...(await this.sessionPieces(root, sessionId, window)));
+      } catch (err) {
+        logger.debug('[analytics-sync] session left out', ...sanitizeLogArgs({ sessionId, err: errorMessage(err) }));
+        (err instanceof ExportTooLargeError ? leftOut : notRead).push(`${sessionId} (${errorMessage(err)})`);
       }
-      if (await exists(marker)) continue;
-      if (sessionParts.length === 0) continue;
-      pieces.push(...(await compressedPieces(Buffer.concat(sessionParts), this.cap)));
     }
-    if (pieces.length === 0) return null;
-    const files = await packFiles(pieces, this.cap);
+    if (pieces.length === 0 && leftOut.length === 0 && notRead.length === 0) return null;
+    const files = pieces.length === 0 ? [] : await packFiles(pieces, this.cap);
 
     const base = `codemie-analytics-${emailSlug(email.toLowerCase())}-${formatUtcDate(now)}`;
     const width = Math.max(2, String(files.length).length);
     const part = (k: number) => `part-${String(k).padStart(width, '0')}-of-${String(files.length).padStart(width, '0')}.`;
-    return files.map((bytes, i) => ({
+    const reports: SyncFiles = files.map((bytes, i) => ({
       fileName: `${base}.${files.length === 1 ? '' : part(i + 1)}otlp.jsonl.gz`,
       bytes,
       contentType: 'application/gzip',
     }));
+    if (notRead.length > 0) reports.warning = leftOutText(notRead, ', the marker stays and the next run tries them again');
+    if (leftOut.length > 0) reports.leftOut = leftOutText(leftOut, '');
+    return reports;
   }
+
+  /** The session's gzip pieces, none when it is being moved, outside the window or has no whole line yet. */
+  private async sessionPieces(root: string, sessionId: string, window: SyncWindow): Promise<Buffer[]> {
+    const marker = join(root, sessionId + MOVING_SUFFIX);
+    // A session being moved is left for a later run.
+    if (await exists(marker)) return [];
+    const paths = FOLDER_STREAMS.map((stream) => join(root, folderFileName(sessionId, stream)));
+    const mtimes = await Promise.all(paths.map((path) => stat(path).then((info) => info.mtimeMs, () => null)));
+    const newest = Math.max(...mtimes.filter((mtime): mtime is number => mtime !== null));
+    if (newest < window.from.getTime() || newest > window.to.getTime()) return [];
+
+    const sessionParts: Buffer[] = [];
+    for (const path of paths) {
+      const lines = await wholeLines(path);
+      if (lines) sessionParts.push(lines);
+    }
+    if (await exists(marker)) return [];
+    if (sessionParts.length === 0) return [];
+    return compressedPieces(Buffer.concat(sessionParts), this.cap);
+  }
+}
+
+/** `OTLP files built without <n> session(s)<note>: …` naming the first sessions left out, each with its error. */
+function leftOutText(sessions: string[], note: string): string {
+  const shown = sessions.slice(0, LEFT_OUT_SHOWN).join(', ');
+  const more = sessions.length > LEFT_OUT_SHOWN ? `, and ${sessions.length - LEFT_OUT_SHOWN} more` : '';
+  return `OTLP files built without ${sessions.length} session${sessions.length === 1 ? '' : 's'}${note}: ${shown}${more}`;
 }

@@ -3260,29 +3260,43 @@ describe('the proxy commands in the local mode', () => {
   });
 
   const printed = (): string[] => consoleLogSpy.mock.calls.map((call) => String(call[0]));
+  const printedErrors = (): string => consoleErrorSpy.mock.calls.map((call) => String(call.join(' '))).join('\n');
 
-  it('connect refuses, naming sync uninstall, and starts, writes or records nothing', async () => {
+  /** Runs the command with `process.exit` throwing, as the CLI's exit would end it. */
+  async function runExiting(args: string[]): Promise<void> {
+    const { createProxyCommand } = await import('../index.js');
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((code?: string | number | null | undefined) => {
+      throw new Error(`process.exit:${code}`);
+    });
+    try {
+      await expect(createProxyCommand().parseAsync(args, { from: 'user' })).rejects.toThrow('process.exit:1');
+    } finally {
+      exitSpy.mockRestore();
+    }
+  }
+
+  it('connect prints the refusal, naming sync uninstall, exits 1, and starts, writes or records nothing', async () => {
     const daemon = await import('../daemon-manager.js');
     const spawner = await import('../daemon-spawn.js');
-    const { createProxyCommand } = await import('../index.js');
 
-    await expect(createProxyCommand().parseAsync(['connect', '--claude-otlp', '--yes'], { from: 'user' })).rejects.toThrow(REFUSAL);
+    await runExiting(['connect', '--claude-otlp', '--yes']);
 
+    expect(printedErrors()).toContain(REFUSAL);
     expect(spawner.spawnDaemon).not.toHaveBeenCalled();
     expect(spawner.spawnDaemonProcess).not.toHaveBeenCalled();
     expect(daemon.writeConnectionRecord).not.toHaveBeenCalled();
     expect(existsSync(join(clientHome, '.claude', 'settings.json'))).toBe(false);
   });
 
-  it.each([['--all'], ['--copilot-cli-otlp']])('disconnect %s refuses and removes nothing', async (flag) => {
+  it.each([['--all'], ['--copilot-cli-otlp']])('disconnect %s prints the refusal, exits 1 and removes nothing', async (flag) => {
     const hookFile = join(clientHome, '.copilot', 'hooks', 'codemie-copilot-cli-hooks.json');
     await mkdir(dirname(hookFile), { recursive: true });
     await writeFile(hookFile, '{}');
     const daemon = await import('../daemon-manager.js');
-    const { createProxyCommand } = await import('../index.js');
 
-    await expect(createProxyCommand().parseAsync(['disconnect', flag], { from: 'user' })).rejects.toThrow(REFUSAL);
+    await runExiting(['disconnect', flag]);
 
+    expect(printedErrors()).toContain(REFUSAL);
     expect(existsSync(hookFile)).toBe(true);
     expect(daemon.stopDaemon).not.toHaveBeenCalled();
   });

@@ -49,6 +49,8 @@ const hookLine = (event: Record<string, unknown>) => JSON.stringify({ agentName:
 const LOGS = JSON.stringify({ resourceLogs: [{ resource: { attributes: [] }, scopeLogs: [] }] });
 const METRICS = JSON.stringify({ resourceMetrics: [{ resource: { attributes: [] }, scopeMetrics: [] }] });
 const TRACES = JSON.stringify({ resourceSpans: [{ scopeSpans: [] }] });
+/** A logs export other than `LOGS`. */
+const LOGS_2 = JSON.stringify({ resourceLogs: [{ resource: { attributes: [{ key: 'n', value: { stringValue: '2' } }] }, scopeLogs: [] }] });
 
 /** Every spool file of a session written at `start`, so a move's `nowMs` is the same in every home. */
 function age(sessionId: string): void {
@@ -81,21 +83,30 @@ const spoolFilesOf = (sessionId: string): string[] =>
   existsSync(spoolDir()) ? readdirSync(spoolDir()).filter((name) => name.startsWith(sessionId + '.')) : [];
 const folderSnapshot = (): Record<string, string> => Object.fromEntries(folderFiles().map((name) => [name, folderText(name)]));
 
-/** Every line of a folder file, each resource's line id checked against the line's own offset. */
+/** The line id of every resource of one folder line. */
+function resourceIds(line: string): Array<string | undefined> {
+  const parsed = JSON.parse(line) as Record<string, Array<{ resource: { attributes: Array<{ key: string; value: { stringValue?: string } }> } }>>;
+  return Object.values(parsed).flat().map((entry) => entry.resource.attributes.find((a) => a.key === 'codemie.line_id')?.value.stringValue);
+}
+
+/** The line id of each line of a folder file, in order; every resource of a line carries the same one. */
+function lineIds(name: string): string[] {
+  return folderText(name).split('\n').slice(0, -1).map((line) => {
+    const ids = resourceIds(line);
+    expect(ids.length).toBeGreaterThan(0);
+    expect(new Set(ids).size).toBe(1);
+    return String(ids[0]);
+  });
+}
+
+const escaped = (name: string): string => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** Every line of a folder file, each with a line id of the file's name and a hash, no two lines sharing one. */
 function linesWithIds(name: string): Array<Record<string, unknown>> {
-  const out: Array<Record<string, unknown>> = [];
-  let offset = 0;
-  for (const line of folderText(name).split('\n').slice(0, -1)) {
-    const parsed = JSON.parse(line) as Record<string, Array<{ resource: { attributes: Array<{ key: string; value: { stringValue?: string } }> } }>>;
-    const resources = Object.values(parsed).flat();
-    expect(resources.length).toBeGreaterThan(0);
-    for (const entry of resources) {
-      expect(entry.resource.attributes.find((a) => a.key === 'codemie.line_id')?.value.stringValue).toBe(`${name}:${offset}`);
-    }
-    out.push(parsed);
-    offset += Buffer.byteLength(line) + 1;
-  }
-  return out;
+  const ids = lineIds(name);
+  for (const id of ids) expect(id).toMatch(new RegExp(`^${escaped(name)}:[0-9a-f]{32}$`));
+  expect(new Set(ids).size).toBe(ids.length);
+  return folderText(name).split('\n').slice(0, -1).map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
 const eventIds = (name: string): string[] =>
@@ -227,22 +238,95 @@ describe('sweepToFolder', () => {
     expect(spoolFilesOf('s1')).toEqual([]);
   });
 
-  it('a session resumed after a move gets its new lines after the first, ids continuing from the file length', async () => {
+  it('a session resumed after a move gets its new lines after the first, each with an id no earlier line has', async () => {
     await writeSession('s1', { hooks: EVENTS('s1'), logs: true });
     past();
     const m = await modules();
     await m.sweepToFolder();
-    const firstLength = statSync(join(folderDir(), 's1.hooks.jsonl')).size;
+    const firstHooks = folderText('s1.hooks.jsonl');
+    const firstLogs = folderText('s1.otel_logs.jsonl');
 
     vi.setSystemTime(start);
-    await writeSession('s1', { hooks: [{ type: 'agent.session.start', session_id: 's1', event_id: 'e9', source: 'resume' }], logs: true });
+    await writeSession('s1', { hooks: [{ type: 'agent.session.start', session_id: 's1', event_id: 'e9', source: 'resume' }] });
+    await m.appendSpool('s1', 'logsJson', LOGS_2 + '\n');
+    age('s1');
     past();
     await m.sweepToFolder();
 
     expect(eventIds('s1.hooks.jsonl')).toEqual(['e1', 'e2', 'e9']);
-    expect(folderText('s1.hooks.jsonl')).toContain(`"stringValue":"s1.hooks.jsonl:${firstLength}"`);
+    expect(folderText('s1.hooks.jsonl').startsWith(firstHooks)).toBe(true);
+    expect(folderText('s1.otel_logs.jsonl').startsWith(firstLogs)).toBe(true);
     linesWithIds('s1.hooks.jsonl');
     expect(linesWithIds('s1.otel_logs.jsonl')).toHaveLength(2);
+  });
+
+  it('a session moved, its folder files deleted, then resumed and moved again gets no id of the first move', async () => {
+    await writeSession('s1', { hooks: EVENTS('s1'), logs: true });
+    past();
+    const m = await modules();
+    await m.sweepToFolder();
+    const names = ['s1.hooks.jsonl', 's1.otel_logs.jsonl'];
+    const first = new Set(names.flatMap(lineIds));
+    for (const name of folderFiles()) rmSync(join(folderDir(), name));
+
+    vi.setSystemTime(start);
+    await writeSession('s1', { hooks: [{ type: 'agent.prompt.submit', session_id: 's1', event_id: 'e9' }] });
+    await m.appendSpool('s1', 'logsJson', LOGS_2 + '\n');
+    age('s1');
+    past();
+    await m.sweepToFolder();
+
+    const second = names.flatMap(lineIds);
+    expect(second).toHaveLength(2);
+    for (const id of second) expect(first.has(id)).toBe(false);
+  });
+
+  it('the same telemetry line spooled twice lands as two folder lines with one id', async () => {
+    await writeSession('s1', { hooks: EVENTS('s1'), logs: true });
+    const m = await modules();
+    await m.appendSpool('s1', 'logsJson', LOGS + '\n');
+    age('s1');
+    past();
+
+    await m.sweepToFolder();
+
+    const ids = lineIds('s1.otel_logs.jsonl');
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).toBe(ids[1]);
+  });
+
+  it('a move resumed over folder lines with ids of another form leaves those bytes and gives its own lines the hash form', async () => {
+    const { encodeHookRecord, addLineId } = await import('../hook-record-format.js');
+    mkdirSync(folderDir(), { recursive: true });
+    const oldHooks = encodeHookRecord({ type: 'agent.session.start', session_id: 's1', event_id: 'old1' }, { lineId: 's1.hooks.jsonl:0', nowMs: start }) + '\n';
+    const oldLogs = addLineId(LOGS_2, 's1.otel_logs.jsonl:0') + '\n';
+    writeFileSync(join(folderDir(), 's1.hooks.jsonl'), oldHooks);
+    writeFileSync(join(folderDir(), 's1.otel_logs.jsonl'), oldLogs);
+    await writeSession('s1', { hooks: EVENTS('s1'), logs: true });
+    past();
+    let thrown = false;
+    beforeFsCall = (call) => {
+      if (!thrown && call.fn === 'appendFile' && call.path.endsWith('s1.otel_logs.jsonl')) {
+        thrown = true;
+        throw new Error('injected');
+      }
+    };
+    const m = await modules();
+
+    await m.sweepToFolder();
+    expect(existsSync(join(folderDir(), 's1.moving'))).toBe(true);
+    await m.sweepToFolder();
+
+    for (const [name, old] of [['s1.hooks.jsonl', oldHooks], ['s1.otel_logs.jsonl', oldLogs]] as const) {
+      const text = folderText(name);
+      expect(text.startsWith(old)).toBe(true);
+      const added = text.slice(old.length).split('\n').slice(0, -1);
+      expect(added.length).toBeGreaterThan(0);
+      for (const line of added) {
+        for (const id of resourceIds(line)) expect(id).toMatch(new RegExp(`^${escaped(name)}:[0-9a-f]{32}$`));
+      }
+    }
+    expect(eventIds('s1.hooks.jsonl')).toEqual(['old1', 'e1', 'e2']);
   });
 
   it('writes an event_id once, never again after a resume; events with no event_id all', async () => {

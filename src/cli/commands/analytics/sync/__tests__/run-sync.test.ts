@@ -683,6 +683,63 @@ describe('runSync', () => {
       expect(writeMarker).not.toHaveBeenCalled();
     });
 
+    it('a source whose files leave sessions out: the ok line carries the warning and the marker moves', async () => {
+      const writeMarker = vi.fn(async () => {});
+      const { deps, logged } = makeDeps({ exportSource: { build: async () => Object.assign([REPORT], { leftOut: 'X' }) }, writeMarker });
+
+      expect(await runSync(deps)).toBe(0);
+      expect(logged).toEqual([`${NOW.toISOString()} ok sent ${REPORT.fileName} ${REPORT.bytes.length} (warning: X) target=webhook`]);
+      expect(writeMarker).toHaveBeenCalledWith('webhook', NOW);
+    });
+
+    it('a source answering no file with sessions left out: the skip line carries the warning, nothing delivered, the marker untouched', async () => {
+      const writeMarker = vi.fn(async () => {});
+      const deliver = vi.fn(async () => {});
+      const { deps, logged } = makeDeps({ exportSource: { build: async () => Object.assign([], { leftOut: 'X' }) }, writeMarker, deliver });
+
+      expect(await runSync(deps)).toBe(0);
+      expect(logged).toEqual([`${NOW.toISOString()} skip no sessions in window 2026-10-22-to-2026-10-29 (warning: X) target=webhook`]);
+      expect(deliver).not.toHaveBeenCalled();
+      expect(writeMarker).not.toHaveBeenCalled();
+    });
+
+    it('a source answering no file with a warning: the skip line carries it, nothing delivered, the marker untouched', async () => {
+      const writeMarker = vi.fn(async () => {});
+      const deliver = vi.fn(async () => {});
+      const { deps, logged } = makeDeps({ exportSource: { build: async () => Object.assign([], { warning: 'W' }) }, writeMarker, deliver });
+
+      expect(await runSync(deps)).toBe(0);
+      expect(logged).toEqual([`${NOW.toISOString()} skip no sessions in window 2026-10-22-to-2026-10-29 (warning: W) target=webhook`]);
+      expect(deliver).not.toHaveBeenCalled();
+      expect(writeMarker).not.toHaveBeenCalled();
+    });
+
+    it('a source answering no file with a warning and sessions left out: both on the skip line, warning first', async () => {
+      const writeMarker = vi.fn(async () => {});
+      const { deps, logged } = makeDeps({
+        exportSource: { build: async () => Object.assign([], { warning: 'W', leftOut: 'X' }) },
+        writeMarker,
+      });
+
+      expect(await runSync(deps)).toBe(0);
+      expect(logged).toEqual([
+        `${NOW.toISOString()} skip no sessions in window 2026-10-22-to-2026-10-29 (warning: W) (warning: X) target=webhook`,
+      ]);
+      expect(writeMarker).not.toHaveBeenCalled();
+    });
+
+    it('edge: a source with both a warning and sessions left out: both on the ok line, the marker stays', async () => {
+      const writeMarker = vi.fn(async () => {});
+      const { deps, logged } = makeDeps({
+        exportSource: { build: async () => Object.assign([REPORT], { warning: 'W', leftOut: 'X' }) },
+        writeMarker,
+      });
+
+      expect(await runSync(deps)).toBe(0);
+      expect(logged).toEqual([`${NOW.toISOString()} ok sent ${REPORT.fileName} ${REPORT.bytes.length} (warning: W) (warning: X) target=webhook`]);
+      expect(writeMarker).not.toHaveBeenCalled();
+    });
+
     it('edge: a gzip above 70,000,000 bytes fails export naming its size and the cap, and the marker stays', async () => {
       const writeMarker = vi.fn(async () => {});
       const fetchImpl = vi.fn();

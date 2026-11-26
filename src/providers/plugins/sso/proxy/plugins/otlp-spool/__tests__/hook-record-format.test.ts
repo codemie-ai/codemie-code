@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { addLineId, encodeHookRecord, hookRecordEventId, parseHookEnvelope } from '../hook-record-format.js';
+import { addLineId, encodeHookRecord, hookRecordEventId, lineIdOf, parseHookEnvelope } from '../hook-record-format.js';
 import { unwrapHookRecords } from '../forwarder.js';
 
 const NOW = 1_764_000_000_000;
@@ -204,5 +204,25 @@ describe('addLineId', () => {
 
   it('answers null for a line that does not parse', () => {
     expect(addLineId('not json', 'f.jsonl:0')).toBeNull();
+  });
+});
+
+describe('lineIdOf', () => {
+  const LINE = '{"resourceLogs":[{"resource":{"attributes":[]},"scopeLogs":[]}]}';
+
+  it('is the file name and 32 hex digits', () => {
+    expect(lineIdOf('s1.otel_logs.jsonl', LINE)).toMatch(/^s1\.otel_logs\.jsonl:[0-9a-f]{32}$/);
+  });
+
+  it('is the same for the same line', () => {
+    expect(lineIdOf('s1.otel_logs.jsonl', LINE)).toBe(lineIdOf('s1.otel_logs.jsonl', LINE));
+  });
+
+  it('differs for two lines that differ in one byte', () => {
+    expect(lineIdOf('s1.otel_logs.jsonl', LINE)).not.toBe(lineIdOf('s1.otel_logs.jsonl', LINE.replace('[]}', '[ }')));
+  });
+
+  it('differs for the same line under two file names', () => {
+    expect(lineIdOf('s1.otel_logs.jsonl', LINE)).not.toBe(lineIdOf('s2.otel_logs.jsonl', LINE));
   });
 });

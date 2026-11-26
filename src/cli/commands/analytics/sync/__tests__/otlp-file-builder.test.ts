@@ -9,7 +9,6 @@ import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
-import { ExportTooLargeError } from '@/utils/errors.js';
 
 /** Runs before a `readFile` of the folder reaches the file system. */
 let beforeRead: ((path: string) => void) | undefined;
@@ -135,12 +134,140 @@ describe('OtlpFolderSource', () => {
       for (const report of reports) expectOneMember(report.bytes);
     });
 
-    it('a single line whose gzip is above the cap throws ExportTooLargeError with that size and the cap', async () => {
+    it('a single line whose gzip is above the cap leaves its session out: an empty list naming it, the size and the cap', async () => {
       file('s1.hooks.jsonl', hexLines('s1', 1));
 
-      await expect(build('A.B@example.com', 50)).rejects.toSatisfy(
-        (err: unknown) => err instanceof ExportTooLargeError && err.limit === 50 && err.bytes > 50
+      const reports = (await build('A.B@example.com', 50))!;
+
+      expect(reports).toHaveLength(0);
+      const size = /^OTLP files built without 1 session: s1 \(Export size (\d+) bytes exceeds limit of 50 bytes\)$/.exec(
+        reports.leftOut ?? ''
       );
+      expect(size).not.toBeNull();
+      expect(Number(size![1])).toBeGreaterThan(50);
+      expect(reports.warning).toBeUndefined();
+    });
+
+    it('a session with a line above the cap beside a good one: the good one built, the other named alone', async () => {
+      file('big.hooks.jsonl', hexLines('big', 1));
+      file('ok.hooks.jsonl', 'ok\n');
+
+      const reports = (await build('A.B@example.com', 50))!;
+
+      expect(reports.map((report) => gunzipSync(report.bytes).toString('utf-8'))).toEqual(['ok\n']);
+      expect(reports.leftOut).toMatch(/^OTLP files built without 1 session: big \(Export size \d+ bytes exceeds limit of 50 bytes\)$/);
+      expect(reports.warning).toBeUndefined();
+    });
+
+    it('five sessions that cannot be built: the first three named in order, then the count of the rest', async () => {
+      for (const id of ['s1', 's2', 's3', 's4', 's5']) file(`${id}.hooks.jsonl`, hexLines(id, 1));
+
+      const reports = (await build('A.B@example.com', 50))!;
+
+      expect(reports).toHaveLength(0);
+      const named = (id: string) => `${id} \\(Export size \\d+ bytes exceeds limit of 50 bytes\\)`;
+      expect(reports.leftOut).toMatch(
+        new RegExp(`^OTLP files built without 5 sessions: ${named('s1')}, ${named('s2')}, ${named('s3')}, and 2 more$`)
+      );
+      expect(reports.warning).toBeUndefined();
+    });
+  });
+
+  describe('a session that cannot be read', () => {
+    /** A folder "file" that is a directory: its read fails on every platform. */
+    function unreadable(name: string): void {
+      mkdirSync(join(folder(), name), { recursive: true });
+      const mtime = new Date('2026-11-24T12:00:00.000Z');
+      utimesSync(join(folder(), name), mtime, mtime);
+    }
+
+    it('is left out for this run and named in the warning, the good session beside it is built', async () => {
+      unreadable('bad.hooks.jsonl');
+      file('good.hooks.jsonl', 'good\n');
+
+      const reports = (await build())!;
+
+      expect(reports.map((report) => gunzipSync(report.bytes).toString('utf-8'))).toEqual(['good\n']);
+      expect(reports.warning).toMatch(
+        /^OTLP files built without 1 session, the marker stays and the next run tries them again: bad \(/
+      );
+      expect(reports.leftOut).toBeUndefined();
+    });
+
+    it('a line above the cap and an unreadable file beside a good one: the first in leftOut, the second in the warning', async () => {
+      file('big.hooks.jsonl', hexLines('big', 1));
+      unreadable('bad.hooks.jsonl');
+      file('ok.hooks.jsonl', 'ok\n');
+
+      const reports = (await build('A.B@example.com', 50))!;
+
+      expect(reports.map((report) => gunzipSync(report.bytes).toString('utf-8'))).toEqual(['ok\n']);
+      expect(reports.leftOut).toMatch(/^OTLP files built without 1 session: big \(Export size \d+ bytes exceeds limit of 50 bytes\)$/);
+      expect(reports.warning).toMatch(
+        /^OTLP files built without 1 session, the marker stays and the next run tries them again: bad \(/
+      );
+    });
+
+    it('five unreadable sessions: the warning names the first three in order, then the count of the rest', async () => {
+      for (const id of ['s1', 's2', 's3', 's4', 's5']) unreadable(`${id}.hooks.jsonl`);
+
+      const reports = (await build())!;
+
+      expect(reports).toHaveLength(0);
+      expect(reports.warning).toMatch(
+        /^OTLP files built without 5 sessions, the marker stays and the next run tries them again: s1 \(.+\), s2 \(.+\), s3 \(.+\), and 2 more$/
+      );
+      expect(reports.warning).not.toContain('s4');
+      expect(reports.leftOut).toBeUndefined();
+    });
+
+    it('edge: a session with a line above the cap and an unreadable file → the read fails first: named in the warning', async () => {
+      file('mix.hooks.jsonl', hexLines('mix', 1));
+      unreadable('mix.otel_logs.jsonl');
+
+      const reports = (await build('A.B@example.com', 50))!;
+
+      expect(reports.warning).toMatch(
+        /^OTLP files built without 1 session, the marker stays and the next run tries them again: mix \(/
+      );
+      expect(reports.leftOut).toBeUndefined();
+    });
+
+    it('edge: left out at one run and readable at the next → a warning at the first, built at the next', async () => {
+      unreadable('bad.hooks.jsonl');
+      const first = (await build())!;
+      expect(first.warning).toMatch(/^OTLP files built without 1 session, the marker stays and the next run tries them again: bad /);
+      expect(first.leftOut).toBeUndefined();
+
+      rmSync(join(folder(), 'bad.hooks.jsonl'), { recursive: true });
+      file('bad.hooks.jsonl', 'bad\n');
+
+      const reports = (await build())!;
+      expect(reports.warning).toBeUndefined();
+      expect(reports.leftOut).toBeUndefined();
+      expect(reports.map((report) => gunzipSync(report.bytes).toString('utf-8'))).toEqual(['bad\n']);
+    });
+
+    it('edge: a folder that cannot be listed → the build rejects', async () => {
+      mkdirSync(join(home, 'analytics'), { recursive: true });
+      writeFileSync(folder(), 'not a folder');
+
+      await expect(build()).rejects.toThrow();
+    });
+  });
+
+  describe('the window', () => {
+    it('a session whose newest file is written one second after window.to is not built, one inside it is', async () => {
+      file('late.hooks.jsonl', 'late\n', new Date(NOW.getTime() + 1000));
+      file('inside.hooks.jsonl', 'inside\n');
+
+      expect(await single()).toBe('inside\n');
+    });
+
+    it('edge: a session whose newest file is written exactly at window.to is built', async () => {
+      file('edge.hooks.jsonl', 'edge\n', NOW);
+
+      expect(await single()).toBe('edge\n');
     });
   });
 

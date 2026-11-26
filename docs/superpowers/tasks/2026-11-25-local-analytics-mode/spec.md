@@ -32,15 +32,16 @@ that data on a machine that has no login at all.
 - **Turning it on.** The lead's command is unchanged. On a machine whose CLI config holds no profile, `sync install` marks
   the local mode in `~/.codemie/analytics-sync.json`, starts a proxy with no upstream, writes the hooks and telemetry settings of the clients found on the machine
   among Claude Code, Copilot CLI and Copilot Chat, and registers the daily job. A client whose settings cannot be written —
-  one that already sends telemetry elsewhere — is skipped and listed; no client written fails the install, and what this
-  run created is undone. A machine already local stays local on a re-install. On any other machine with a profile, or
+  one that already sends telemetry elsewhere — is skipped and listed; with no client written the install undoes what it created for the mode, registers the job
+  without it and says so in its summary — the machine delivers the JSON report alone; on a machine already local such an
+  install fails and what this run created is undone. A machine already local stays local on a re-install. On any other machine with a profile, or
   with a CodeMie proxy running, the install works as today and says in one line why the local mode is off.
 - **Collecting.** The local proxy keeps a spool of its own (`~/.codemie/analytics/spool/`), reads no credentials and sends
   nothing; the hooks run with no sign-in check, no evidence
   record and no session gate. A session is collected when `--include-external` allows it; a developer's folder filters and
   `proxy analytics exclude` apply on top. With `never` a machine with no CodeMie launcher collects nothing. A session that
   fires a hook in a folder the filters leave out is not collected from that hook on — a return to a tracked folder
-  included — and what of it is still in the spool is dropped. Copilot's block
+  included — and what of it is still in the spool is dropped. A Claude Code settings file that cannot be read or does not parse, a project filter in it that is not a list of absolute paths, or a hook that names no folder while that filter is not empty is not a filter: that hook is not collected, no mark is left, and the session goes on once the file reads again. Copilot's block
   stays: it comes only when the hook could not bring the proxy up.
 - **Keeping.** At the first sweep after a session's grace — 15 minutes from its end, 60 from its last write; Copilot Chat
   sends no end, so always 60 — the proxy moves it into `~/.codemie/analytics/sessions/`: one `.jsonl` file per session and
@@ -104,7 +105,9 @@ With `--include-external never` a machine with no CodeMie launcher gathers nothi
    - Copilot Chat — `~/.codemie/hooks/copilot-chat-hooks.json` (8 hooks), `chat.hookFilesLocations` in VS Code's user
      `settings.json`, and its record.
    A client that is not installed is listed as such; one whose settings already send telemetry elsewhere is skipped and
-   listed; with no client set up the install fails and undoes what it created.
+   listed; with no client set up the install undoes steps 2–5 and goes on without the local mode — step 6 registers the
+   job, the settings hold no `local`, and the summary says the local mode is not turned on; on a machine already local
+   it fails and undoes what it created.
 6. Registers the daily job of the OS at `--at` (03:00 by default) — a launchd agent on macOS, a systemd user timer on Linux,
    a scheduled task on Windows — that runs `<node> <CLI entry> analytics sync run --scheduled`, and prints a summary.
 
@@ -115,7 +118,7 @@ With `--include-external never` a machine with no CodeMie launcher gathers nothi
 | every hook event of a client | `codemie hook --agent <client>` — one short Node process | Applies the developer's folder filters and `--include-external`; starts the local proxy when it is not running; posts the event to the proxy's `/v1/analytics/hooks`. No sign-in, no network beyond `127.0.0.1`. |
 | while Claude Code runs | Claude Code's own exporter | Posts its logs, metrics and traces to the proxy's `/v1/analytics/otlp/v1/{logs,metrics,traces}`. |
 | every 15 minutes | the proxy's sweep | Moves each session past its grace from `~/.codemie/analytics/spool/` into `~/.codemie/analytics/sessions/`. |
-| daily at `--at` | `codemie analytics sync run --scheduled` | Per target: takes the window (the lookback, or since the last successful delivery when that is longer); gzips the lines of the sessions written to inside it, into files no larger than 70 MB; webhook — one POST per file with the file as a base64 attachment, which the lead's flow writes to SharePoint; git — a shallow clone in `~/.codemie/analytics-sync-repo`, the files at `<git-path>/<email>/<file>`, one commit under the developer's email, one push with the developer's own credentials. The delivery mark moves only after the target accepted every file of a run that built all of them; when the OTLP files cannot be built — the analytics folder cannot be read, or a single line's gzip alone is above 70 MB — the run delivers the JSON report, if there is one, with a warning in its log line, and leaves the mark; with no report it fails with `fail export`. Log: `~/.codemie/logs/analytics-sync.log`. |
+| daily at `--at` | `codemie analytics sync run --scheduled` | Per target: takes the window (the lookback, or since the last successful delivery when that is longer); gzips the lines of the sessions written to inside it, into files no larger than 70 MB; webhook — one POST per file with the file as a base64 attachment, which the lead's flow writes to SharePoint; git — a shallow clone in `~/.codemie/analytics-sync-repo`, the files at `<git-path>/<email>/<file>`, one commit under the developer's email, one push with the developer's own credentials. The delivery mark moves only after the target accepted every file of a run whose log line carries no `the marker stays` warning. A part of the run that cannot be built — the analytics folder cannot be read, the JSON report cannot be built, a session's file cannot be read — does not hold the rest back: the run delivers the rest with a warning in its log line and leaves the mark; with nothing left to deliver it fails with `fail export`. A session with a single line whose gzip alone is above 70 MB is left out whole and named in the log line, and the mark moves. Log: `~/.codemie/logs/analytics-sync.log`. |
 
 ### Other commands a developer may run
 
@@ -162,7 +165,7 @@ With `--include-external never` a machine with no CodeMie launcher gathers nothi
 ~/.codemie/analytics/sessions/   <sessionId>.hooks.jsonl, <sessionId>.otel_{logs,metrics,traces}.jsonl, <sessionId>.moving
 ~/.codemie/analytics/spool/      the local proxy's own spool
 ~/.codemie/analytics/excluded/   <sessionId> — an empty file: the session entered an excluded folder
-OTLP resource attribute          codemie.line_id = "<file name>:<byte offset of the line>"
+OTLP resource attribute          codemie.line_id = "<file name>:<first 32 hex digits of the SHA-256 of the spool line>"
 hook event line                  one OTLP LogsData: resource service.name=codemie-cli; scope codemie.hooks; one log record,
                                  eventName = the event's type, its fields as attributes
 ```
@@ -171,15 +174,16 @@ hook event line                  one OTLP LogsData: resource service.name=codemi
 
 - AC1: Given a machine whose CLI config holds no profile, when the lead's printed `sync install` runs, then the sync
   settings hold `local: true`, a proxy with no upstream runs, the hooks of every client found are written, the job is
-  registered, and the summary lists the clients written, skipped and not installed; when no client could be written, the install
-  fails and what it created is undone. (story AC1, AC17)
+  registered, and the summary lists the clients written, skipped and not installed; when no client could be written on a machine
+  that is not local yet, the install undoes its local steps, registers the job without the local mode and says so in its
+  summary; on a machine already local it fails and what it created is undone. (story AC1, AC17)
 - AC2: Given a machine with a profile and no local mode, when `sync install` runs, then the local mode stays off, one line
   names the profiles, and the run delivers the JSON report. (story AC12)
 - AC3 (negative): Given a machine already in the local mode and a profile added since, when `sync install` runs again, then
   it stays local. (story AC13, AC16)
 - AC4: Given the local mode with `--include-external always` and a Claude Code session started directly, when the session
   has ended and its grace and the next sweep have passed, then its four files are in the folder, every line is OTLP JSON
-  whose `codemie.line_id` is its file name and byte offset, and no request left the machine. (story AC1, AC2, AC5)
+  whose `codemie.line_id` is its file name and the first 32 hex digits of the SHA-256 of the line as the spool held it, and no request left the machine. (story AC1, AC2, AC5)
 - AC5: Given the same for a Copilot CLI or a Copilot Chat session, then its hooks file is in the folder. (story AC1, AC5)
 - AC6 (negative): Given `--include-external never` and a client started directly, then the folder holds no file of that
   session. (story AC3)
@@ -263,10 +267,12 @@ hook event line                  one OTLP LogsData: resource service.name=codemi
   wrote: the install rewrites the entries of a client set up before it, and entries left behind would point at a proxy
   that no longer runs; nothing a user or another tool wrote is removed.
 - D14: Files no larger than 70 MB, cut at a line, over one file per run: the delivery hook of a project sends nothing
-  above its own limit, and a run that failed on the size failed the same way on every later run. When the OTLP files
-  cannot be built — the analytics folder cannot be read, or a single line's gzip alone is above 70 MB — the run delivers
-  the JSON report, if there is one, with a warning in its log line, and leaves the marker; with no report it fails with
-  `fail export`. A target's marker moves only when it accepted every file of a run that built all of them.
+  above its own limit, and a run that failed on the size failed the same way on every later run. A part of the
+  run that cannot be built — the analytics folder cannot be read, the JSON report cannot be built, a session's file
+  cannot be read — does not hold the rest back: the run delivers the rest with a warning in its log line and leaves the
+  marker, and with nothing left to deliver it fails with `fail export`. A session with a single line whose gzip alone is
+  above 70 MB can be built by no run: it is left out whole, named in the log line, and does not hold the marker. A
+  target's marker moves only after it accepted every file of a run whose log line carries no `the marker stays` warning.
 - D15: A session counts as launched when the hook's environment holds the session id a CodeMie launcher sets, as in every
   mode: a client started by hand from a terminal opened inside a launched session is gathered under `never` too; on a
   machine with no profile this needs a profile added after the install.
@@ -280,7 +286,7 @@ hook event line                  one OTLP LogsData: resource service.name=codemi
   mode, this release starts no other proxy there, and one left running would take the hook events to a backend.
 - D19: The exclusion marks, and a session whose move into the folder was interrupted in a way the proxy cannot continue,
   are never cleaned by themselves — the session stays undelivered — and `sync uninstall` clears both: repeating such a
-  move would write the session's lines twice under new ids.
+  move would write the session's lines into the folder file a second time.
 - D20: The JSON report and the OTLP files beside it, rather than the OTLP files alone — a machine in the local mode delivers
   the report built as on any other machine: what a team received before the mode it goes on receiving, Codex, Gemini and Pi included,
   while the receiving side moves to the OTLP files; the report is deprecated, not removed.
@@ -307,9 +313,10 @@ hook event line                  one OTLP LogsData: resource service.name=codemi
 - **Copilot can be blocked.** When a hook cannot start the proxy, Copilot CLI refuses the prompt or the tool call, and
   Copilot Chat also the session start, as with a CodeMie backend today. Claude Code is never blocked.
 - **Size.** Measured on one machine over about a day: 62,909,648 bytes of lines, 3,489,676 gzipped. A run carries the whole
-  window, cut into files of 70,000,000 bytes at most; a session larger than that is cut at a line. A single line whose
-  gzip alone is above it leaves the OTLP files unbuilt: the run delivers the JSON report, if there is one, with a
-  warning, and leaves the marker; with no report it fails with `fail export`. The folder on the developer's disk is never cleaned.
+  window, cut into files of 70,000,000 bytes at most; a session larger than that is cut at a line. A session with a single
+  line whose gzip alone is above it is left out whole, its lines that would fit included, and named in the run's log
+  line; the other sessions are delivered and the marker moves. A session whose file cannot be read is left out of that
+  run; the marker stays and the next run tries it again. The folder on the developer's disk is never cleaned.
 - **The git target.** One file per developer per day, or its parts when it is cut, never pruned; a second run on the same
   day whose files are cut differently leaves the earlier files beside the new ones, and the reader keeps one copy of a
   line by its id. Every developer's working copy holds the team's files.
@@ -319,7 +326,7 @@ hook event line                  one OTLP LogsData: resource service.name=codemi
   class). A hook event still carries `developer_name` — the machine's git identity, as the backend gets it; a file is
   tied to its developer by the email in its name.
 - **Filters.** A session that fires a hook in an excluded folder is dropped from then on and never gathered again, a
-  resume in a tracked folder included; what of it was already moved into the folder stays. Telemetry carries no folder: of
+  resume in a tracked folder included; what of it was already moved into the folder stays. A Claude Code settings file that cannot be read or does not parse, a project filter in it that is not a list of absolute paths, or a hook that names no folder while that filter is not empty is not a filter: that hook is not collected, no mark is left, and the session goes on once the file reads again. Telemetry carries no folder: of
   a session never excluded it travels whole.
 - **One mode per machine.** A machine in the local mode cannot connect the CodeMie proxy until `sync uninstall`; a profile
   added later does not switch it.

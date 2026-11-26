@@ -318,7 +318,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
   protected override async onUntrackedHook(hookInput: HookInput): Promise<void> {
     try {
       const decision = await evaluateClaudeAnalyticsGate(hookInput.cwd);
-      if (decision.reason !== 'project-excluded' && decision.reason !== 'not-in-allowlist') return;
+      if (decision.reason !== 'project-excluded' && decision.reason !== 'not-in-allowlist' && decision.reason !== 'allowlist-unresolved') return;
       const id = await currentEvidenceIdentity();
       if (!id) return;
       const key = recordKey(id.api_identity, id.owner_hash, hookInput.session_id);

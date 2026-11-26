@@ -8,6 +8,7 @@ import { isCopilotConnectorEnabled } from '@/agents/core/copilot-connector-scope
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
 import {
+  analyticsFolderRoot,
   ensureAnalyticsFolder,
   removeMadeAnalyticsFolder,
 } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/analytics-folder-paths.js';
@@ -24,6 +25,7 @@ import type { SyncSettings } from '../../analytics/sync/types.js';
 import { isMemberFound, type AnalyticsMember } from '../../proxy/analytics-clients.js';
 import { requestedDaemonPort } from '../../proxy/connect-orchestrator.js';
 import {
+  hasClaudeCodeOtlpEntries,
   hasClaudeCodeOtlpHooks,
   removeClaudeCodeOtlpConfig,
   writeClaudeCodeOtlpConfig,
@@ -84,7 +86,7 @@ export const LOCAL_CLIENTS: readonly LocalClient[] = [
     name: 'claude-code',
     member: 'claudeCodeOtlp',
     setUp: hasClaudeCodeOtlpHooks,
-    hasEntries: hasClaudeCodeOtlpHooks,
+    hasEntries: hasClaudeCodeOtlpEntries,
     async write() {
       if (!(await isLiveLocal(await readState(), false))) throw new CodeMieError('The local proxy stopped during the install.');
       await writeClaudeCodeOtlpConfig({ keepProjectList: true, promptStatus: null });
@@ -237,28 +239,57 @@ function steps(settings: SyncSettings): InstallStep[] {
   return [settingsStep(settings, state), daemonStep(state), ...LOCAL_CLIENTS.map(clientStep)];
 }
 
-/** The local mode named in the install summary and in `sync status`, each under its own label. */
-export const LOCAL_MODE_TEXT = 'local — delivers the OTLP files of ~/.codemie/analytics/sessions beside the JSON report';
-
-function conclude(outcomes: StepOutcome[]): { summary: string[]; failure?: string } {
-  const clients = outcomes.filter((outcome) => outcome.name in CLIENT_LABELS);
-  const label = (outcome: StepOutcome): string => CLIENT_LABELS[outcome.name];
-  if (!clients.some((outcome) => outcome.state === 'done')) {
-    return { summary: [], failure: 'No supported client could be set up (Claude Code, Copilot CLI, Copilot Chat).' };
-  }
-  const summary = [`  Mode:             ${LOCAL_MODE_TEXT}`];
-  const written = clients.filter((outcome) => outcome.state === 'done').map(label);
-  summary.push(`  Clients set up:   ${written.join(', ')}`);
-  for (const skipped of clients.filter((outcome) => outcome.state === 'skipped')) {
-    summary.push(`  Skipped:          ${label(skipped)} — ${skipped.note}`);
-  }
-  const absent = clients.filter((outcome) => outcome.state === 'absent').map(label);
-  if (absent.length > 0) summary.push(`  Not installed:    ${absent.join(', ')}`);
-  return { summary };
+/** The local mode named in the install summary and in `sync status`, each under its own label; the folder's real path. */
+export function localModeText(): string {
+  return `local — delivers the OTLP files of ${analyticsFolderRoot()} beside the JSON report`;
 }
 
+/** The `Skipped:` and `Not installed:` lines of the client steps. */
+function clientLines(clients: StepOutcome[]): string[] {
+  const label = (outcome: StepOutcome): string => CLIENT_LABELS[outcome.name];
+  const lines = clients
+    .filter((outcome) => outcome.state === 'skipped')
+    .map((skipped) => `  Skipped:          ${label(skipped)} — ${skipped.note}`);
+  const absent = clients.filter((outcome) => outcome.state === 'absent').map(label);
+  if (absent.length > 0) lines.push(`  Not installed:    ${absent.join(', ')}`);
+  return lines;
+}
+
+/**
+ * The local plan's conclusion for an install where no client could be set up — `noClient` — and the summary of one
+ * where some client was.
+ */
+function concludeWith(
+  noClient: (clients: StepOutcome[]) => ReturnType<InstallPlan['conclude']>
+): InstallPlan['conclude'] {
+  return (outcomes) => {
+    const clients = outcomes.filter((outcome) => outcome.name in CLIENT_LABELS);
+    if (!clients.some((outcome) => outcome.state === 'done')) return noClient(clients);
+    const written = clients.filter((outcome) => outcome.state === 'done').map((outcome) => CLIENT_LABELS[outcome.name]);
+    return {
+      summary: [`  Mode:             ${localModeText()}`, `  Clients set up:   ${written.join(', ')}`, ...clientLines(clients)],
+    };
+  };
+}
+
+/** The local plan of a machine that may be local already: an install where no client could be set up fails. */
 export const localInstallPlan: InstallPlan = {
   steps,
   settingsExtras: (job) => ({ local: true, localJob: { node: job.node, entry: job.entry } }),
-  conclude,
+  conclude: concludeWith(() => ({ summary: [], failure: 'No supported client could be set up (Claude Code, Copilot CLI, Copilot Chat).' })),
+};
+
+/**
+ * The local plan of a machine that is not local yet: an install where no client could be set up stands down and goes
+ * on without the local mode, delivering the JSON report.
+ */
+export const standingDownLocalInstallPlan: InstallPlan = {
+  ...localInstallPlan,
+  conclude: concludeWith((clients) => ({
+    standDown: { undoFailed: 'The local mode was not turned on, and a step of the attempt could not be undone.' },
+    summary: [
+      '  Local mode:       not turned on — no supported client could be set up (Claude Code, Copilot CLI, Copilot Chat); the JSON report is delivered',
+      ...clientLines(clients),
+    ],
+  })),
 };

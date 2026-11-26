@@ -365,16 +365,16 @@ describe('analytics sync CLI wiring — the collection handed to each runner in 
     await parse(['sync', 'status']);
 
     const statusLines = createRealStatusDepsMock.mock.calls[0][0] as () => string[];
-    expect(statusLines()).toEqual(['Mode: local — delivers the OTLP files of ~/.codemie/analytics/sessions beside the JSON report']);
+    expect(statusLines()).toEqual([`Mode: local — delivers the OTLP files of ${join(home, 'analytics', 'sessions')} beside the JSON report`]);
   });
 
-  it('"sync install" with no settings and no profile hands createRealInstallDeps the local install plan', async () => {
+  it('"sync install" with no settings and no profile hands createRealInstallDeps the local plan that stands down with no client', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     await parse(['sync', 'install', '--webhook', 'https://h/x']);
     log.mockRestore();
 
-    const { localInstallPlan } = await import('../../shared/analytics-collection/local-install.js');
-    expect(createRealInstallDepsMock.mock.calls[0][0]).toBe(localInstallPlan);
+    const { standingDownLocalInstallPlan } = await import('../../shared/analytics-collection/local-install.js');
+    expect(createRealInstallDepsMock.mock.calls[0][0]).toBe(standingDownLocalInstallPlan);
   });
 
   it('"sync install" over a global CLI config that is not valid JSON fails as an install, runInstall not called', async () => {

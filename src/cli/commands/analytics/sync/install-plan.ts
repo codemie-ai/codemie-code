@@ -18,12 +18,14 @@ export function printFailure(deps: Pick<PlanDeps, 'print'>, err: unknown): void 
 
 /**
  * Applies the plan's steps for `settings` in order, then concludes them. A step that throws, or a conclusion that
- * fails, is printed, the applied steps are undone and the answer is `null`; else the applied steps and the summary.
+ * fails, is printed, the applied steps are undone and the answer is `null`. A conclusion that stands down undoes the
+ * applied steps and answers the summary with `stoodDown` and no applied step; when an undo failed it prints the
+ * failure and answers `null`. Else the applied steps and the summary.
  */
 export async function applyPlanSteps(
   deps: PlanDeps,
   settings: SyncSettings
-): Promise<{ applied: InstallStep[]; summary: string[] } | null> {
+): Promise<{ applied: InstallStep[]; summary: string[]; stoodDown: boolean } | null> {
   const applied: InstallStep[] = [];
   let conclusion: ReturnType<InstallPlan['conclude']>;
   try {
@@ -43,16 +45,29 @@ export async function applyPlanSteps(
     await undoSteps(deps, applied);
     return null;
   }
-  return { applied, summary: conclusion.summary };
+  if (conclusion.standDown !== undefined) {
+    if (!(await undoSteps(deps, applied))) {
+      printFailure(deps, new Error(conclusion.standDown.undoFailed));
+      return null;
+    }
+    return { applied: [], summary: conclusion.summary, stoodDown: true };
+  }
+  return { applied, summary: conclusion.summary, stoodDown: false };
 }
 
-/** Undoes the applied plan steps, last first; an undo that fails is reported and the rest still run. */
-export async function undoSteps(deps: Pick<PlanDeps, 'print'>, applied: InstallStep[]): Promise<void> {
+/**
+ * Undoes the applied plan steps, last first; an undo that fails is reported and the rest still run. Answers whether
+ * every undo was done.
+ */
+export async function undoSteps(deps: Pick<PlanDeps, 'print'>, applied: InstallStep[]): Promise<boolean> {
+  let allUndone = true;
   for (const step of [...applied].reverse()) {
     try {
       await step.undo();
     } catch (err) {
+      allUndone = false;
       deps.print(`Could not undo "${step.name}": ${errorMessage(err)}`);
     }
   }
+  return allUndone;
 }

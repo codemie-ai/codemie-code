@@ -1,8 +1,9 @@
 /**
  * The move of the local mode: a session past its grace leaves the local spool for the analytics folder, its hook
- * events as OTLP hook records and its JSON telemetry as it came, every line carrying its line id. A move is written
- * down first (`<sessionId>.moving` in the folder), so a move cut at any step repeats to the same files. The folder is
- * only appended to.
+ * events as OTLP hook records and its JSON telemetry as it came, every line carrying its line id — the folder file's
+ * name and a hash of the spool line, the same at every move of that line. A move is written down first
+ * (`<sessionId>.moving` in the folder), so a move cut at any step repeats to the same files. The folder is only
+ * appended to.
  */
 import { appendFile, open, readFile, readdir, stat, truncate, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -18,7 +19,7 @@ import {
   type FolderStream,
 } from './analytics-folder-paths.js';
 import { isSessionExcluded } from './analytics-exclusion-mark.js';
-import { encodeHookRecord, addLineId, hookRecordEventId, parseHookEnvelope } from './hook-record-format.js';
+import { encodeHookRecord, addLineId, hookRecordEventId, lineIdOf, parseHookEnvelope } from './hook-record-format.js';
 import { OTEL_STREAMS, SPOOL_STREAMS, listSessionIds, streamFile } from './spool-paths.js';
 import { withSessionLock } from './session-lock.js';
 import { createStatus, readStatus, writeStatus } from './session-status.js';
@@ -174,8 +175,8 @@ async function eventIdsBelow(path: string, length: number): Promise<Set<string>>
 }
 
 /**
- * Appends one spool stream's `[from, upto)` to its folder file, each line converted by `convert` with the line id of
- * the offset it lands at; a line `convert` answers `null` for is dropped.
+ * Appends one spool stream's `[from, upto)` to its folder file, each line converted by `convert` with its line id; a
+ * line `convert` answers `null` for is dropped.
  */
 async function copyStream(
   sessionId: string,
@@ -186,15 +187,12 @@ async function copyStream(
   const folderStream = FOLDER_STREAM_OF[stream];
   const name = folderFileName(sessionId, folderStream);
   const target = folderPath(sessionId, folderStream);
-  let offset = marker.lengths[name] ?? 0;
   await forEachChunk(streamFile(sessionId, stream), marker.from[stream], marker.upto[stream], async (lines) => {
     let out = '';
     for (const line of lines) {
-      const record = convert(line, `${name}:${offset}`);
+      const record = convert(line, lineIdOf(name, line));
       if (record === null) continue;
-      const text = record + '\n';
-      out += text;
-      offset += Buffer.byteLength(text);
+      out += record + '\n';
     }
     if (out.length > 0) await appendFile(target, out, { mode: 0o600 });
   });
@@ -289,7 +287,7 @@ async function startMove(sessionId: string): Promise<void> {
  */
 async function resumeMove(sessionId: string): Promise<void> {
   // A marker that does not parse throws here and the session stays where it is: without its lengths a repeated move
-  // would write the telemetry streams' lines a second time, under new line ids.
+  // would write the telemetry streams' lines a second time.
   const marker = await readMarker(sessionId);
   if (await isSessionExcluded(sessionId)) {
     await cutToLengths(sessionId, marker);

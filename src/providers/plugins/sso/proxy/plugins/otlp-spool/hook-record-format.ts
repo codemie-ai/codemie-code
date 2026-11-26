@@ -1,7 +1,10 @@
 /**
  * The hook record: one CLI hook event as one OTLP JSON `LogsData` line, and the line id a reader
- * tells a repeated line from a new one by. Nothing outside this module names a key of a hook record.
+ * tells a repeated line from a new one by: the folder file's name and a hash of the spool line's bytes,
+ * so a line keeps its id in every file and every move it reaches. Nothing outside this module names a
+ * key of a hook record.
  */
+import { createHash } from 'node:crypto';
 
 type AnyValue =
   | { stringValue: string }
@@ -20,6 +23,8 @@ interface KeyValue {
 const SERVICE_NAME = 'codemie-cli';
 const SCOPE_NAME = 'codemie.hooks';
 const LINE_ID_KEY = 'codemie.line_id';
+/** Hex digits of the SHA-256 a line id keeps. */
+const LINE_HASH_HEX_DIGITS = 32;
 const EVIDENCE_V_KEY = 'codemie.evidence_v';
 const EVENT_TYPE_KEY = 'event_type';
 const USER_EMAIL_KEY = 'user.email';
@@ -64,6 +69,14 @@ function timeUnixNano(timestamp: unknown, nowMs: number): string {
   const parsed = typeof timestamp === 'string' ? Date.parse(timestamp) : Number.NaN;
   const ms = Number.isNaN(parsed) ? Math.trunc(nowMs) : parsed;
   return (BigInt(ms) * 1_000_000n).toString();
+}
+
+/**
+ * The line id of a spool line (without its newline) moved into the folder file `name`:
+ * `<name>:<the first 32 hex digits of the SHA-256 of the line's UTF-8 bytes>`.
+ */
+export function lineIdOf(name: string, line: string): string {
+  return `${name}:${createHash('sha256').update(line, 'utf8').digest('hex').slice(0, LINE_HASH_HEX_DIGITS)}`;
 }
 
 /**

@@ -11,8 +11,11 @@ export interface SyncReport {
   contentType: string;
 }
 
-/** The files of one run in delivery order; `warning` names a part of the run that could not be built. */
-export type SyncFiles = SyncReport[] & { warning?: string };
+/**
+ * The files of one run in delivery order. `warning` names a part of the run not built for a reason that may pass — the
+ * marker stays; `leftOut` names sessions no run can build — they are named on the run's line and do not hold the marker.
+ */
+export type SyncFiles = SyncReport[] & { warning?: string; leftOut?: string };
 
 /** What one `sync` run delivers for one window: its files in delivery order, or `null` when there is nothing to send. */
 export interface ExportSource {

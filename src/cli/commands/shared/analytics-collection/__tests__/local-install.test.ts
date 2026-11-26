@@ -75,6 +75,18 @@ async function localPlan(): Promise<InstallPlan> {
   return (await import('../local-install.js')).localInstallPlan;
 }
 
+/** The plan `sync install` runs on this home: the one `resolveInstallCollection` picks for the settings found. */
+async function resolvedPlan(): Promise<InstallPlan> {
+  const { loadSyncSettings } = await import('../../../analytics/sync/config-store.js');
+  const { resolveInstallCollection } = await import('../resolve.js');
+  const previous = await loadSyncSettings().catch(() => null);
+  return (await resolveInstallCollection(previous)).collection.install;
+}
+
+const NOT_TURNED_ON =
+  '  Local mode:       not turned on — no supported client could be set up (Claude Code, Copilot CLI, Copilot Chat); the JSON report is delivered';
+const NO_CLIENT_FAILURE = 'No supported client could be set up (Claude Code, Copilot CLI, Copilot Chat).';
+
 function scheduler(overrides: Partial<Scheduler> = {}): Scheduler {
   return {
     preflight: vi.fn(async () => {}),
@@ -287,7 +299,7 @@ describe('localInstallPlan', () => {
     const { code, printed } = await install(await localPlan());
 
     expect(code).toBe(0);
-    expect(printed).toContain('  Mode:             local — delivers the OTLP files of ~/.codemie/analytics/sessions beside the JSON report');
+    expect(printed).toContain(`  Mode:             local — delivers the OTLP files of ${join(home, 'analytics', 'sessions')} beside the JSON report`);
     expect(printed.join('\n')).toContain('Skipped:          Copilot Chat — VS Code setting "chat.useHooks" is disabled');
     expect(printed.join('\n')).toContain('Clients set up:   Claude Code, Copilot CLI');
   });
@@ -314,18 +326,87 @@ describe('localInstallPlan', () => {
       touch(claudeSettingsPath());
       writeFileSync(claudeSettingsPath(), JSON.stringify({ env: { OTEL_LOGS_EXPORTER: 'console' } }));
     }],
-  ])('%s fails the install, registers nothing and leaves no settings or daemon', async (_name, arrange) => {
+  ])('%s on a machine not local before goes on without the local mode: the job registered, no daemon, no folder', async (name, arrange) => {
     arrange();
     const job = scheduler();
 
-    const { code, printed } = await install(await localPlan(), job);
+    const { code, printed } = await install(await resolvedPlan(), job);
 
-    expect(code).toBe(1);
-    expect(printed).toContain('No supported client could be set up (Claude Code, Copilot CLI, Copilot Chat).');
-    expect(job.register).not.toHaveBeenCalled();
-    expect(existsSync(settingsPath())).toBe(false);
+    expect(code).toBe(0);
+    expect(printed).toContain(NOT_TURNED_ON);
+    if (name === 'the one client found refusing') {
+      expect(printed).toContain('  Skipped:          Claude Code — its settings already set OTEL_LOGS_EXPORTER');
+    }
+    expect(job.register).toHaveBeenCalled();
+    const saved = JSON.parse(readFileSync(settingsPath(), 'utf-8')) as Record<string, unknown>;
+    expect(saved).not.toHaveProperty('local');
+    expect(saved).not.toHaveProperty('localJob');
     expect(existsSync(stateFile(home))).toBe(false);
     expect(existsSync(join(home, 'analytics'))).toBe(false);
+  });
+
+  it('on a machine not local before, the conclusion for no client stands down with the local mode\'s undo-failure text', async () => {
+    expect((await resolvedPlan()).conclude([]).standDown).toEqual({
+      undoFailed: 'The local mode was not turned on, and a step of the attempt could not be undone.',
+    });
+  });
+
+  it('a machine already local where no client is found now fails, registers nothing and keeps its settings byte for byte', async () => {
+    claudeCodeInstalled();
+    expect((await install(await resolvedPlan())).code).toBe(0);
+    unlinkSync(join(home, '.local', 'bin', 'claude'));
+    const before = readFileSync(settingsPath(), 'utf-8');
+    const hooksBefore = readClaudeSettings().hooks;
+    expect(JSON.stringify(hooksBefore.UserPromptSubmit)).toContain('codemie');
+    const stateBefore = readFileSync(stateFile(home), 'utf-8');
+    const job = scheduler();
+
+    const { code, printed } = await install(await resolvedPlan(), job);
+
+    expect(code).toBe(1);
+    expect(printed).toContain(NO_CLIENT_FAILURE);
+    expect(job.register).not.toHaveBeenCalled();
+    expect(readFileSync(settingsPath(), 'utf-8')).toBe(before);
+    expect(readClaudeSettings().hooks).toEqual(hooksBefore);
+    expect(readFileSync(stateFile(home), 'utf-8')).toBe(stateBefore);
+  });
+
+  it('a machine with a job from before the local mode and no client: the job registered with the new time, no local', async () => {
+    writeFileSync(settingsPath(), JSON.stringify({ ...SETTINGS, at: '02:00' }));
+    const job = scheduler();
+
+    const { code } = await install(await resolvedPlan(), job);
+
+    expect(code).toBe(0);
+    expect(job.register).toHaveBeenCalled();
+    const saved = JSON.parse(readFileSync(settingsPath(), 'utf-8')) as Record<string, unknown>;
+    expect(saved.at).toBe('03:00');
+    expect(saved).not.toHaveProperty('local');
+  });
+
+  it('a sync settings file that does not load, no profile and no client fails and keeps the file byte for byte', async () => {
+    writeFileSync(settingsPath(), '{ not json');
+    const job = scheduler();
+
+    const { code, printed } = await install(await resolvedPlan(), job);
+
+    expect(code).toBe(1);
+    expect(printed).toContain(NO_CLIENT_FAILURE);
+    expect(job.register).not.toHaveBeenCalled();
+    expect(readFileSync(settingsPath(), 'utf-8')).toBe('{ not json');
+  });
+
+  it('a sync settings file that cannot be read, no profile and no client fails the install, not the process', async () => {
+    mkdirSync(settingsPath());
+    const job = scheduler();
+    const plan = resolvedPlan();
+    await expect(plan).resolves.toBeDefined();
+
+    const { code, printed } = await install(await plan, job);
+
+    expect(code).toBe(1);
+    expect(printed.some((line) => line.startsWith('Install failed:'))).toBe(true);
+    expect(job.register).not.toHaveBeenCalled();
   });
 
   it('an undone install leaves analytics/ and a local spool that holds a file, and removes the folder it made', async () => {

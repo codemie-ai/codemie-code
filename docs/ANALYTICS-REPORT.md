@@ -419,7 +419,7 @@ For team leads setting up the Power Automate flow for the first time, see `codem
 sync bootstrap` in [COMMANDS.md](COMMANDS.md#team-lead-setup-analytics-sync-bootstrap).
 
 On a machine whose CodeMie CLI config holds no profile, `install` turns on the local analytics
-mode ([ANALYTICS-SYNC.md](ANALYTICS-SYNC.md#local-analytics-mode)): a local proxy gathers Claude
+mode ([ANALYTICS-SYNC.md](ANALYTICS-SYNC.md#local-analytics-mode)) when it sets up a supported client: a local proxy gathers Claude
 Code, Copilot CLI and Copilot Chat, and the job delivers an OTLP file,
 `codemie-analytics-<email slug>-<UTC date>.otlp.jsonl.gz` (`application/gzip`), built from
 `~/.codemie/analytics/sessions/` — or several, each no larger than 70 MB, when one would be
@@ -557,8 +557,8 @@ same 70 MB ceiling as `--export json`; an export larger than that, a failed/unre
 webhook, or missing settings/identity are all logged and failed without moving the marker,
 so the next run covers the same sessions. In the local mode the output is the
 `.otlp.jsonl.gz` of the sessions written to the analytics folder inside the window, cut into
-files no larger than 70 MB, followed by the JSON report, sent one request per file; the marker moves only when the target
-accepted every file of a run that built all of them. A report above the ceiling fails the export there too, after the OTLP files were taken. When the OTLP files cannot be built — the analytics folder cannot be read, or a single line's gzip alone is above the ceiling — the run delivers the JSON report, if there is one, with a warning in its log line, and leaves the marker; with no report it fails with `fail export`. There is no retry — the rolling window self-heals
+files no larger than 70 MB, followed by the JSON report, sent one request per file; the marker moves only after the target
+accepted every file of a run whose log line carries no `the marker stays` warning. A report above the ceiling fails the export there too, after the OTLP files were taken. A part of the run that cannot be built does not hold the rest back: with a JSON report that cannot be built, an analytics folder that cannot be read, or a session whose file cannot be read, the run delivers the rest with a warning in its log line and leaves the marker. A session with a single line whose gzip alone is above the ceiling is left out whole and named in the log line, and the marker moves. A run where the report cannot be built and the folder has no file to deliver, or the folder cannot be read and the window has no report, fails with `fail export`. There is no retry — the rolling window self-heals
 on the next scheduled run. `run` with nothing installed fails with the install command and
 sends nothing.
 
@@ -573,8 +573,8 @@ redacted:
 ```
 
 `setup` covers missing/invalid settings and identity errors; `export` covers a report-build
-failure or the 70 MB ceiling (the detail carries the size; in the local mode also an analytics folder that could not be read, or a single line whose
-gzip alone is above it); `send` covers any other webhook
+failure or the 70 MB ceiling (the detail carries the size; in the local mode also an analytics folder that could not be read when the window has no
+report); `send` covers any other webhook
 delivery failure. `run` exits non-zero on `fail`, zero on `ok`/`skip`, and never throws.
 
 ### `status`
@@ -586,7 +586,7 @@ with its reason, or "never"), and the time of the last successful send (the mark
 "never"). Nothing installed reports "not installed" with the install command and exits 0.
 Settings present but the job missing or disabled outside the CLI reports "disabled" and
 tells the developer to run install again. In the local mode it adds the line
-`Mode: local — delivers the OTLP files of ~/.codemie/analytics/sessions beside the JSON report` after the first line.
+`Mode: local — delivers the OTLP files of <the analytics folder> beside the JSON report` (the folder by its real path, `~/.codemie/analytics/sessions` unless `CODEMIE_HOME` moves it) after the first line.
 
 ### `uninstall`
 

@@ -746,10 +746,24 @@ describe('composeProxyDoctor', () => {
         {
           status: 'warn',
           message: 'Last run (webhook): 2026-11-22T03:00:05.000Z — failed (delivery webhook answered 500)',
-          hint: 'Run `codemie analytics sync run` to deliver now.',
+          hint: 'Run `codemie analytics sync run` to try again.',
         },
         { status: 'ok', message: 'Last delivery to webhook: 2026-11-21T03:00:05.000Z' },
       ]);
+    });
+
+    it.each([
+      'OTLP files not built, the marker stays and the next run tries them again: boom',
+      'last-sent marker not saved, the next run re-sends this window: boom',
+    ])('a last run that delivered with the warning "%s" warns with the run hint', async (warning) => {
+      runLog = `2026-11-22T03:00:05.000Z ok sent f.otlp.jsonl.gz 512 (warning: ${warning}) target=webhook\n`;
+      await sessionsFolder(['s1.hooks.jsonl']);
+
+      expect(localRows(await composeLocal())).toContainEqual({
+        status: 'warn',
+        message: `Last run (webhook): 2026-11-22T03:00:05.000Z — sent (f.otlp.jsonl.gz 512 (warning: ${warning}))`,
+        hint: 'Run `codemie analytics sync run` to try again.',
+      });
     });
 
     it('a last run that skipped for no sessions in its window is no problem', async () => {
@@ -759,6 +773,19 @@ describe('composeProxyDoctor', () => {
       expect(localRows(await composeLocal())).toContainEqual({
         status: 'info',
         message: 'Last run (webhook): 2026-11-22T03:00:05.000Z — skipped (no sessions in window 2026-11-15-to-2026-11-22)',
+      });
+    });
+
+    it('a last run that skipped with sessions left out warns with the run hint', async () => {
+      runLog =
+        '2026-11-22T03:00:05.000Z skip no sessions in window 2026-11-15-to-2026-11-22 (warning: OTLP files built without 1 session: s1 (boom)) target=webhook\n';
+      await sessionsFolder(['s1.hooks.jsonl']);
+
+      expect(localRows(await composeLocal())).toContainEqual({
+        status: 'warn',
+        message:
+          'Last run (webhook): 2026-11-22T03:00:05.000Z — skipped (no sessions in window 2026-11-15-to-2026-11-22 (warning: OTLP files built without 1 session: s1 (boom)))',
+        hint: 'Run `codemie analytics sync run` to try again.',
       });
     });
 

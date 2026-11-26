@@ -97,6 +97,16 @@ describe('hook-side transitions', () => {
     expect(await t.gate(hook())).toBe('stop');
   });
 
+  it.each(['not-in-allowlist', 'allowlist-unresolved'])('an already-known session answered %s is stopped as scope_excluded', async (reason) => {
+    const t = await setup();
+    await t.record();
+    gateMock.mockResolvedValue({ tracked: false, reason });
+    await t.untracked(hook());
+    expect(await t.sm.isStopped(t.key())).toBe(true);
+    const [stopFile] = evidenceFiles().filter((f) => f.endsWith('.stop.json'));
+    expect(JSON.parse(readFileSync(join(home, 'analytics', 'state', 'evidence', stopFile), 'utf-8')).reason).toBe('scope_excluded');
+  });
+
   it('resume / any later hook with no record stops with a marker; startup and /clear start fresh', async () => {
     const t = await setup();
     expect(await t.gate(hook({ hook_event_name: 'SessionStart', source: 'startup' }))).toBe('continue');
