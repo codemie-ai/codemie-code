@@ -2,6 +2,17 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { runUninstall } from '../uninstall.js';
 import type { UninstallDeps } from '../uninstall.js';
+import type { Scheduler } from '../scheduler/index.js';
+
+function schedulerReturning(present: boolean): Scheduler {
+  return {
+    preflight: async () => undefined,
+    register: async () => ({}),
+    unregister: async () => present,
+    query: async () => 'disabled',
+    exists: async () => 'absent',
+  };
+}
 
 interface Harness {
   deps: UninstallDeps;
@@ -17,8 +28,19 @@ function makeDeps(overrides: Partial<UninstallDeps> = {}): Harness {
   const deleteSettings = vi.fn(async () => true);
   const removeWorkingCopy = vi.fn(async () => true);
 
+  const schedulerFor = vi.fn(
+    (): Scheduler => ({
+      preflight: async () => undefined,
+      register: async () => ({}),
+      unregister: (...args: []) => unregister(...args),
+      query: async () => 'disabled',
+      exists: async () => 'absent',
+    })
+  );
+
   const deps: UninstallDeps = {
-    unregister,
+    loadSettings: async () => null,
+    schedulerFor,
     deleteSettings,
     removeWorkingCopy,
     print: (line: string): void => {
@@ -55,7 +77,7 @@ describe('runUninstall', () => {
 
   it('does not report a working copy removal when none existed', async () => {
     const { deps, printed } = makeDeps({
-      unregister: vi.fn(async () => true),
+      schedulerFor: () => schedulerReturning(true),
       removeWorkingCopy: vi.fn(async () => false),
     });
 
@@ -67,7 +89,7 @@ describe('runUninstall', () => {
 
   it('prints "nothing to remove" and exits 0 when the job, settings and working copy were all absent', async () => {
     const { deps, printed } = makeDeps({
-      unregister: vi.fn(async () => false),
+      schedulerFor: () => schedulerReturning(false),
       deleteSettings: vi.fn(async () => false),
       removeWorkingCopy: vi.fn(async () => false),
     });
@@ -80,7 +102,7 @@ describe('runUninstall', () => {
 
   it('reports removal (not "nothing to remove") when only the OS job existed', async () => {
     const { deps, printed } = makeDeps({
-      unregister: vi.fn(async () => true),
+      schedulerFor: () => schedulerReturning(true),
       deleteSettings: vi.fn(async () => false),
       removeWorkingCopy: vi.fn(async () => false),
     });
@@ -93,7 +115,7 @@ describe('runUninstall', () => {
 
   it('reports removal (not "nothing to remove") when only the settings existed', async () => {
     const { deps, printed } = makeDeps({
-      unregister: vi.fn(async () => false),
+      schedulerFor: () => schedulerReturning(false),
       deleteSettings: vi.fn(async () => true),
       removeWorkingCopy: vi.fn(async () => false),
     });
@@ -106,7 +128,7 @@ describe('runUninstall', () => {
 
   it('reports removal (not "nothing to remove") when only the working copy existed', async () => {
     const { deps, printed } = makeDeps({
-      unregister: vi.fn(async () => false),
+      schedulerFor: () => schedulerReturning(false),
       deleteSettings: vi.fn(async () => false),
       removeWorkingCopy: vi.fn(async () => true),
     });
@@ -122,7 +144,7 @@ describe('runUninstall', () => {
 
     // UninstallDeps has no marker/log fields at all — this is a type-level guarantee as
     // much as a runtime one, asserted here by exhaustively listing the deps surface.
-    expect(Object.keys(deps).sort()).toEqual(['deleteSettings', 'print', 'removeWorkingCopy', 'unregister']);
+    expect(Object.keys(deps).sort()).toEqual(['deleteSettings', 'loadSettings', 'print', 'removeWorkingCopy', 'schedulerFor']);
 
     await runUninstall(deps);
 

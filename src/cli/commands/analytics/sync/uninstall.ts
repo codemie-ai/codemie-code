@@ -14,17 +14,22 @@
 
 import { rm, stat } from 'fs/promises';
 
-import { deleteSyncSettings } from './config-store.js';
+import { deleteSyncSettings, loadSyncSettings } from './config-store.js';
 import { errorMessage } from './redact.js';
-import { createRealSchedulerDeps, createScheduler } from './scheduler/index.js';
+import { createRealSchedulerDeps, createScheduler, resolveSchedulerName } from './scheduler/index.js';
+import type { Scheduler } from './scheduler/index.js';
+import type { SyncSettings } from './types.js';
 import { gitWorkingCopyPath } from './targets/git-target.js';
 
 /** Every side effect `runUninstall` needs, injected so tests run without a real scheduler or
  * fs. `createRealUninstallDeps()` below wires the real ones. */
 export interface UninstallDeps {
-  /** Removes the OS job whether enabled or disabled (tolerant of it already being absent)
-   * and reports whether anything was actually present. */
-  unregister(): Promise<boolean>;
+  /** Throws on an unreadable/invalid settings file; `null` means no settings file exists
+   * (the default scheduler name is then used). */
+  loadSettings(): Promise<SyncSettings | null>;
+  /** A scheduler bound to the given OS job name. Its `unregister()` removes the job whether
+   * enabled or disabled (tolerant of it being absent) and reports whether it was present. */
+  schedulerFor(name: string): Scheduler;
   /** Deletes the settings file and reports whether it existed. */
   deleteSettings(): Promise<boolean>;
   /** Removes the git target's local working copy ({@link gitWorkingCopyPath}) and reports
@@ -39,10 +44,14 @@ export async function runUninstall(deps: UninstallDeps): Promise<number> {
   let deleted: boolean;
   let workingCopyRemoved: boolean;
   try {
-    unregistered = await deps.unregister();
+    const settings = await deps.loadSettings();
+    const name = resolveSchedulerName(settings ?? {}, process.platform);
+    unregistered = await deps.schedulerFor(name).unregister();
     deleted = await deps.deleteSettings();
     workingCopyRemoved = await deps.removeWorkingCopy();
   } catch (err) {
+    // Nothing after a failure is removed: settings and working copy are kept so the job name
+    // stays known and uninstall can be retried.
     deps.print(`Uninstall failed: ${errorMessage(err)}`);
     return 1;
   }
@@ -64,10 +73,9 @@ export async function runUninstall(deps: UninstallDeps): Promise<number> {
 /** Real dependencies for `runUninstall`: the real scheduler and settings store, the git
  * target's working-copy removal, and `console.log`. */
 export function createRealUninstallDeps(): UninstallDeps {
-  const scheduler = createScheduler(createRealSchedulerDeps());
-
   return {
-    unregister: () => scheduler.unregister(),
+    loadSettings: () => loadSyncSettings(),
+    schedulerFor: (name: string) => createScheduler(createRealSchedulerDeps(), name),
     deleteSettings: () => deleteSyncSettings(),
     removeWorkingCopy: async (): Promise<boolean> => {
       const path = gitWorkingCopyPath();

@@ -33,7 +33,8 @@ const COMPLETE_STATE: BootstrapState = {
   webhookUrl: FAKE_TRIGGER_URL,
   webhookTest: 'passed',
   includeExternal: 'windows',
-  lookbackDays: 7
+  lookbackDays: 7,
+  taskName: ''
 };
 
 /** A fully-answered git-only v2 state (every git step answered) that `checkReuse` should
@@ -46,7 +47,8 @@ const GIT_COMPLETE_STATE: BootstrapState = {
   gitPath: 'exports',
   gitTest: 'passed',
   includeExternal: 'windows',
-  lookbackDays: 7
+  lookbackDays: 7,
+  taskName: ''
 };
 
 describe('getBootstrapStatePath', () => {
@@ -249,7 +251,8 @@ describe('firstUnansweredStep — "already imported" shortcut', () => {
       webhookUrl: FAKE_TRIGGER_URL,
       webhookTest: 'passed',
       includeExternal: 'windows',
-      lookbackDays: 'default'
+      lookbackDays: 'default',
+      taskName: ''
     });
     expect(result.ok).toBe(true);
   });

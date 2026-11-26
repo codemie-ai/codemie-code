@@ -100,7 +100,7 @@ describe('summarizeSpoolDelivery', () => {
       s.holds = { session: { reason: 'publication_stopped', since: 1 } };
       s.delivery = { hooks: failure(0, 100, 1000, 'request_error') };
     });
-    expect(await summarizeSpoolDelivery()).toEqual({ pendingBytes: 120, heldBytes: 120, mismatchHeld: false, classificationStalled: false, organizationEncodingStalled: false });
+    expect(await summarizeSpoolDelivery()).toEqual({ pendingBytes: 120, heldBytes: 120, heldByReason: { publication_stopped: 120 }, mismatchHeld: false, classificationStalled: false, organizationEncodingStalled: false });
   });
 
   it('counts the bytes of sessions held as a whole, across sessions, as held', async () => {
@@ -112,6 +112,16 @@ describe('summarizeSpoolDelivery', () => {
     expect(summary.heldBytes).toBe(150);
   });
 
+  it('sums the held bytes per reason across sessions; heldBytes keeps its meaning (the total)', async () => {
+    await session('consent-a', { hooks: 30 }, (s) => { s.holds = { session: { reason: 'work_consent_required', since: 1 } }; });
+    await session('consent-b', { hooks: 20, logs: 5 }, (s) => { s.holds = { session: { reason: 'work_consent_required', since: 1 } }; });
+    await session('stopped', { hooks: 100 }, (s) => { s.holds = { session: { reason: 'publication_stopped', since: 1 } }; });
+    await session('healthy', { hooks: 500 });
+    const summary = await summarizeSpoolDelivery();
+    expect(summary.heldByReason).toEqual({ work_consent_required: 55, publication_stopped: 100 });
+    expect(summary.heldBytes).toBe(155);
+  });
+
   it('does not count a hold the status names on its own, or the short wait of a new session, as held', async () => {
     for (const reason of ['analytics_endpoint_mismatch', 'publication_contract_unavailable', 'organization_encoding_unsupported', 'stamp_pending'] as const) {
       await session(reason, { hooks: 10 }, (s) => { s.holds = { session: { reason, since: 1 } }; });
@@ -119,12 +129,15 @@ describe('summarizeSpoolDelivery', () => {
     const summary = await summarizeSpoolDelivery();
     expect(summary.pendingBytes).toBe(40);
     expect(summary).not.toHaveProperty('heldBytes');
+    expect(summary).not.toHaveProperty('heldByReason');
   });
 
   it('does not count a session held on a single stream, nor a held session with nothing pending', async () => {
     await session('stream-held', { hooks: 100, logs: 20 }, (s) => { s.holds = { logs: { reason: 'otlp_unparseable', since: 1 } }; });
     await session('drained', { hooks: 10 }, (s) => { s.cursors.hooks = 10; s.holds = { session: { reason: 'publication_stopped', since: 1 } }; });
-    expect(await summarizeSpoolDelivery()).not.toHaveProperty('heldBytes');
+    const summary = await summarizeSpoolDelivery();
+    expect(summary).not.toHaveProperty('heldBytes');
+    expect(summary).not.toHaveProperty('heldByReason');
   });
 
   it('keeps the failure of a stream that is held on its own, because that stream is still retried', async () => {

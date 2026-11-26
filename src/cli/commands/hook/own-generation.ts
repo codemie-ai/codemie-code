@@ -37,12 +37,12 @@ export function generationStartEvent(event: BaseHookEvent, startTime: number, pr
 
 /**
  * Makes `{id}.json` the record of the event's own generation before the event writes to it. `own`:
- * no record, or one of this generation. `closed`: the record is another generation's and the
+ * a record of this generation. `closed`: the record is another generation's and the
  * event's own generation was already closed and moved aside (a late event of it); the event writes
  * nothing. `created`: another generation's record was set aside (closed first when live) and a
  * fresh one written under the reconcile lock — by this event, or by another hook process of this
- * generation that took the lock first. `deferred`: the lock is held by another process; it is tried
- * once, never waited for (a Stop hook blocks the agent's turn); the event writes nothing.
+ * generation that took the lock first. `deferred`: no record exists yet, or the lock is held by another
+ * process; it is tried once, never waited for (a Stop hook blocks the agent's turn); the event writes nothing.
  */
 export async function ensureOwnGeneration(
   event: BaseHookEvent,
@@ -53,7 +53,11 @@ export async function ensureOwnGeneration(
   const live = await readLiveRecord(sessionId);
   const { SessionStore } = await import('../../../agents/core/session/SessionStore.js');
   const record = live ?? (await new SessionStore().loadSession(sessionId));
-  if (!record || !isOtherGeneration(record, event.session_id)) return 'own';
+  if (!record) {
+    logger.info(`[hook:${event.hook_event_name}] no record exists for ${sessionId}; the event is deferred, nothing written`);
+    return 'deferred';
+  }
+  if (!isOtherGeneration(record, event.session_id)) return 'own';
   // ponytail: a `/resume` back to a closed generation whose SessionStart could not write (lock held) reads the same as a late
   // event of that generation and is dropped until its next SessionStart; a start marker written by that SessionStart would tell them apart
   if (isClosedGeneration(sessionId, event.session_id)) {

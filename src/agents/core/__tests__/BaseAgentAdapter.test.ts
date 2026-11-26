@@ -495,6 +495,17 @@ describe('BaseAgentAdapter', () => {
       );
     });
 
+    it('hands the agent no CLAUDE_CODE_USE_BEDROCK key once it was deleted from process.env', async () => {
+      process.env.CLAUDE_CODE_USE_BEDROCK = '1';
+      delete process.env.CLAUDE_CODE_USE_BEDROCK;
+
+      await new RunPipelineAdapter(effortMetadata).run([], {});
+
+      const spawnOptions = vi.mocked(spawn).mock.calls.at(-1)?.[2] as { env: NodeJS.ProcessEnv };
+      expect(Object.keys(spawnOptions.env)).not.toContain('CLAUDE_CODE_USE_BEDROCK');
+      expect(process.env.CLAUDE_CODE_USE_BEDROCK).toBeUndefined();
+    });
+
     it('does not call applyReasoningEffort when CODEMIE_REASONING_EFFORT is absent', async () => {
       const adapter = new RunPipelineAdapter(effortMetadata);
 
@@ -537,6 +548,74 @@ describe('BaseAgentAdapter', () => {
       } finally {
         consoleErrorSpy.mockRestore();
       }
+    });
+  });
+
+  describe('run() — banner model text', () => {
+    class BannerAdapter extends BaseAgentAdapter {}
+
+    const bannerMetadata: AgentMetadata = {
+      name: 'banner-agent',
+      displayName: 'Banner Agent',
+      description: 'Agent that shows the welcome banner',
+      npmPackage: null,
+      cliCommand: 'banner-agent-bin',
+      envMapping: {},
+      supportedProviders: ['anthropic-subscription'],
+    };
+    const bannerKeys = ['CODEMIE_MODEL', 'CODEMIE_MODEL_ENV_ORIGIN', 'CODEMIE_PROFILE_MODEL'];
+    let envBefore: NodeJS.ProcessEnv;
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      envBefore = { ...process.env };
+      for (const key of bannerKeys) delete process.env[key];
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      vi.mocked(console.log).mockRestore();
+      // run() copies its env into process.env.
+      for (const key of Object.keys(process.env)) if (!(key in envBefore)) delete process.env[key];
+      Object.assign(process.env, envBefore);
+    });
+
+    async function bannerModel(env: Record<string, string>): Promise<unknown> {
+      const { renderProfileInfo } = await import('../../../utils/profile.js');
+      await new BannerAdapter(bannerMetadata).run([], env);
+      return (vi.mocked(renderProfileInfo).mock.calls.at(-1)?.[0] as { model?: string } | undefined)?.model;
+    }
+
+    it('marks a CODEMIE_MODEL override with its origin and the profile model it replaced', async () => {
+      expect(
+        await bannerModel({
+          CODEMIE_MODEL: 'claude-opus-4-8[1m]',
+          CODEMIE_MODEL_ENV_ORIGIN: 'dotenv',
+          CODEMIE_PROFILE_MODEL: 'claude-sonnet-5',
+        })
+      ).toBe('claude-opus-4-8[1m] (CODEMIE_MODEL from .env overrides profile: claude-sonnet-5)');
+    });
+
+    it('shows the plain model when the launcher reports no override', async () => {
+      expect(
+        await bannerModel({ CODEMIE_MODEL: 'claude-opus-4-8[1m]', CODEMIE_MODEL_ENV_ORIGIN: '', CODEMIE_PROFILE_MODEL: '' })
+      ).toBe('claude-opus-4-8[1m]');
+    });
+
+    it('drops the override marker when the agent replaces the env model before the banner', async () => {
+      class SwappingAdapter extends BaseAgentAdapter {
+        protected override async setupProxy(env: NodeJS.ProcessEnv): Promise<void> {
+          env.CODEMIE_MODEL = 'gpt-5.5';
+        }
+      }
+      const { renderProfileInfo } = await import('../../../utils/profile.js');
+      await new SwappingAdapter(bannerMetadata).run([], {
+        CODEMIE_MODEL: 'claude-opus-4-8[1m]',
+        CODEMIE_MODEL_ENV_ORIGIN: 'shell',
+        CODEMIE_PROFILE_MODEL: 'gpt-4.1',
+      });
+      expect((vi.mocked(renderProfileInfo).mock.calls.at(-1)?.[0] as { model?: string } | undefined)?.model)
+        .toBe('gpt-5.5');
     });
   });
 

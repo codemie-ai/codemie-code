@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { dirname } from 'node:path';
 import { ConfigurationError } from '@/utils/errors.js';
 import { getCodemiePath } from '@/utils/paths.js';
+import { rawProjectHeader } from '@/utils/header-value.js';
 import { canonicalizePath, comparable, isPathInside } from '@/agents/core/project-allowlist.js';
 import { acquirePidLock } from '@/utils/pid-lock.js';
 import { atomicReplace } from './record-store.js';
@@ -29,7 +30,15 @@ export interface ConsentEntry {
   id: string;
   /** Unix ms of the connect; absent on entries written by older builds. */
   connected_at?: number;
+  /**
+   * User-wide consent: covers every folder and every project of this owner and backend. `project` and `folder` hold
+   * the `ALL_FOLDERS` sentinel so older builds, which check only those strings, load the store and never match it.
+   */
+  all_folders?: true;
 }
+
+/** `project` and `folder` of the all-folders entry. */
+export const ALL_FOLDERS = '*';
 
 export interface ConsentScope {
   owner_hash: string;
@@ -48,7 +57,7 @@ const sameProject = (a: string, b: string): boolean => a.trim().toLowerCase() ==
 /** Stable, path-free reference frozen into the evidence record; changes with any of its parts and with each reconnect. */
 export function consentRef(e: ConsentEntry): string {
   const h = createHash('sha256');
-  const parts = [comparable(e.folder), e.api_identity, e.owner_hash, e.project.trim().toLowerCase(), e.id];
+  const parts = [e.all_folders === true ? ALL_FOLDERS : comparable(e.folder), e.api_identity, e.owner_hash, e.project.trim().toLowerCase(), e.id];
   for (const p of parts) h.update(`${p.length}:${p}|`);
   return h.digest('hex').slice(0, 16);
 }
@@ -57,11 +66,14 @@ function validEntry(v: unknown): v is ConsentEntry {
   if (!v || typeof v !== 'object') return false;
   const e = v as Record<string, unknown>;
   if (typeof e.id !== 'string' || !/^[0-9a-f]{16}$/.test(e.id)) return false;
-  return ['owner_hash', 'api_identity', 'project', 'folder'].every((k) => typeof e[k] === 'string' && (e[k] as string).length > 0);
+  if (!['owner_hash', 'api_identity', 'project', 'folder'].every((k) => typeof e[k] === 'string' && (e[k] as string).length > 0)) return false;
+  if (e.all_folders === undefined) return true;
+  return e.all_folders === true && e.project === ALL_FOLDERS && e.folder === ALL_FOLDERS;
 }
 
 /** Same connection target (not incarnation): owner, backend, project and canonical folder. */
 const sameTarget = (a: ConsentEntry, b: ConsentEntry): boolean =>
+  (a.all_folders === true) === (b.all_folders === true) &&
   a.owner_hash === b.owner_hash && a.api_identity === b.api_identity && sameProject(a.project, b.project) && comparable(a.folder) === comparable(b.folder);
 
 async function load(): Promise<Loaded> {
@@ -88,7 +100,10 @@ async function save(entries: ConsentEntry[]): Promise<void> {
 }
 
 const scopeMatches = (e: ConsentEntry, s: ConsentScope): boolean =>
-  e.owner_hash === s.owner_hash && e.api_identity === s.api_identity && sameProject(e.project, s.project);
+  e.owner_hash === s.owner_hash && e.api_identity === s.api_identity && (e.all_folders === true || sameProject(e.project, s.project));
+
+/** The all-folders entry covers every folder; any other entry covers its folder and the folders below it. */
+const coversFolder = (e: ConsentEntry, canonicalCwd: string): boolean => e.all_folders === true || isPathInside(canonicalCwd, e.folder);
 
 /** A consent lookup that keeps "no entry" apart from "the store could not be read". */
 export type ConsentLookup = { kind: 'found'; ref: string; connectedAt?: number } | { kind: 'none' } | { kind: 'unknown' };
@@ -96,15 +111,24 @@ export type ConsentLookup = { kind: 'found'; ref: string; connectedAt?: number }
 /**
  * The entry that grants consent for this owner, backend, project and folder (the folder or an ancestor of it is
  * connected): `found`, `none` when no entry grants it, `unknown` when the store or the folder could not be read.
- * Never throws.
+ * Without `cwd` (the session's folder is not known) only the all-folders entry can grant it. Never throws.
  */
-export async function lookupConsent(scope: ConsentScope, cwd: string): Promise<ConsentLookup> {
+export async function lookupConsent(scope: ConsentScope, cwd: string | undefined): Promise<ConsentLookup> {
   if (!scope.project.trim()) return { kind: 'none' };
   try {
     const store = await load();
     if (store.kind !== 'ok') return { kind: 'unknown' };
-    const canonicalCwd = await canonicalizePath(cwd);
-    const entry = store.entries.find((e) => scopeMatches(e, scope) && isPathInside(canonicalCwd, e.folder));
+    const canonicalCwd = cwd === undefined ? undefined : await canonicalizePath(cwd);
+    // The all-folders entry never covers a project whose name cannot travel as a raw header: a frozen reference there
+    // would stop the session at send time, and a folder grant for such a project is refused too.
+    const covering = store.entries.filter(
+      (e) =>
+        scopeMatches(e, scope) &&
+        (canonicalCwd === undefined ? e.all_folders === true : coversFolder(e, canonicalCwd)) &&
+        (e.all_folders !== true || rawProjectHeader(scope.project) !== undefined)
+    );
+    // A folder-bound entry wins over the all-folders one.
+    const entry = covering.find((e) => e.all_folders !== true) ?? covering[0];
     if (!entry) return { kind: 'none' };
     return { kind: 'found', ref: consentRef(entry), ...(typeof entry.connected_at === 'number' && { connectedAt: entry.connected_at }) };
   } catch {
@@ -132,7 +156,7 @@ export async function consentStatus(ref: string, scope: ConsentScope, cwd?: stri
     if (store.kind !== 'ok') return 'unknown';
     const canonicalCwd = cwd === undefined ? undefined : await canonicalizePath(cwd);
     const holds = store.entries.some(
-      (e) => scopeMatches(e, scope) && consentRef(e) === ref && (canonicalCwd === undefined || isPathInside(canonicalCwd, e.folder))
+      (e) => scopeMatches(e, scope) && consentRef(e) === ref && (canonicalCwd === undefined || coversFolder(e, canonicalCwd))
     );
     return holds ? 'holds' : 'revoked';
   } catch {
@@ -182,6 +206,40 @@ export async function connectFolder(scope: ConsentScope, folder: string): Promis
   });
 }
 
+/** Adds (idempotently) the all-folders entry for this owner and backend. Refuses to overwrite an unreadable store. */
+export async function connectAllFolders(scope: Omit<ConsentScope, 'project'>): Promise<void> {
+  await withStoreLock(async () => {
+    const store = await load();
+    if (store.kind !== 'ok') {
+      throw new ConfigurationError(`The work-consent store is unreadable and was not changed: ${consentStorePath()}. Fix or delete it, then retry.`);
+    }
+    const entry: ConsentEntry = {
+      owner_hash: scope.owner_hash,
+      api_identity: scope.api_identity,
+      project: ALL_FOLDERS,
+      folder: ALL_FOLDERS,
+      all_folders: true,
+      id: randomBytes(8).toString('hex'),
+      connected_at: Date.now(),
+    };
+    if (!store.entries.some((e) => sameTarget(e, entry))) await save([...store.entries, entry]);
+  });
+}
+
+/** Removes the all-folders entry of this owner and backend (folder entries are not touched). Returns how many were removed. */
+export async function disconnectAllFolders(scope: Omit<ConsentScope, 'project'>): Promise<number> {
+  return withStoreLock(async () => {
+    const store = await load();
+    if (store.kind !== 'ok') {
+      throw new ConfigurationError(`The work-consent store is unreadable and was not changed: ${consentStorePath()}. Fix or delete it, then retry.`);
+    }
+    const kept = store.entries.filter((e) => !(e.all_folders === true && e.owner_hash === scope.owner_hash && e.api_identity === scope.api_identity));
+    const removed = store.entries.length - kept.length;
+    if (removed > 0) await save(kept);
+    return removed;
+  });
+}
+
 /** Removes the folder's entries for this owner and backend (any project). Returns how many were removed. */
 export async function disconnectFolder(scope: Omit<ConsentScope, 'project'>, folder: string): Promise<number> {
   const canonical = await canonicalizePath(folder);
@@ -191,7 +249,7 @@ export async function disconnectFolder(scope: Omit<ConsentScope, 'project'>, fol
       throw new ConfigurationError(`The work-consent store is unreadable and was not changed: ${consentStorePath()}. Fix or delete it, then retry.`);
     }
     const kept = store.entries.filter(
-      (e) => !(e.owner_hash === scope.owner_hash && e.api_identity === scope.api_identity && comparable(e.folder) === comparable(canonical))
+      (e) => !(e.all_folders !== true && e.owner_hash === scope.owner_hash && e.api_identity === scope.api_identity && comparable(e.folder) === comparable(canonical))
     );
     const removed = store.entries.length - kept.length;
     if (removed > 0) await save(kept);
@@ -221,6 +279,6 @@ export async function coveringEntries(scope: Omit<ConsentScope, 'project'>, fold
   if (store.kind !== 'ok') return [];
   const canonical = await canonicalizePath(folder);
   return store.entries.filter(
-    (e) => e.owner_hash === scope.owner_hash && e.api_identity === scope.api_identity && isPathInside(canonical, e.folder)
+    (e) => e.owner_hash === scope.owner_hash && e.api_identity === scope.api_identity && coversFolder(e, canonical)
   );
 }

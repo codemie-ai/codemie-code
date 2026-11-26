@@ -24,6 +24,8 @@ export interface DeliveryHealth {
   pendingBytes?: number;
   /** The part of `pendingBytes` held in sessions that are not sent for now; absent when none, or when `pendingBytes` is. */
   heldBytes?: number;
+  /** `heldBytes` split by hold reason; absent when nothing is held. */
+  heldByReason?: Record<string, number>;
   /** The spool could not be read completely and no failure was found in what was read, so delivery cannot be judged. */
   incomplete?: true;
   /** When the next send is due and why the last one failed; set only when `reason` is `send_failed`. */
@@ -116,25 +118,28 @@ export async function collectDeliveryHealth(
 
     const reason: DeliveryReason | undefined =
       reply?.credentials === 'stale' ? 'credentials_expired'
-      : marker ? 'auth_rejected'
-      : spool.mismatchHeld ? 'identity_mismatch'
-      : spool.sendFailure ? 'send_failed'
-      // Capability is a single resolved value, so at most one of the capability branches ever applies.
-      // `evidence` means the backend answered with a usable policy but one that still does not advertise
-      // the negotiated publication contract — a stalled session under it is just as stuck as under
-      // `legacy`, it just means "answered, but still missing the capability" rather than "never answered".
-      // A contract stall clears once the contract is advertised, so an advertising backend stays quiet; an
-      // organization-encoding stall does not, so it is judged by the encodings the last policy advertised,
-      // which stay readable after the policy expires: an expired cache is an outage, not a missing encoding.
-      : spool.classificationStalled && policyState?.capability === 'unknown' ? 'classification_unreachable'
-      : spool.classificationStalled && policyState?.capability === 'legacy' ? 'classification_unsupported'
-      : spool.classificationStalled && policyState?.capability === 'evidence' && !advertisesContract(policyState) ? 'classification_unsupported'
-      : spool.organizationEncodingStalled && policyState?.capability === 'evidence' && !policyState.organizationEncodings?.includes(ORG_ENCODING_V1)
-        ? 'classification_unsupported'
-      : undefined;
+        : marker ? 'auth_rejected'
+          : spool.mismatchHeld ? 'identity_mismatch'
+            : spool.sendFailure ? 'send_failed'
+              // Capability is a single resolved value, so at most one of the capability branches ever applies.
+              // `evidence` means the backend answered with a usable policy but one that still does not advertise
+              // the negotiated publication contract — a stalled session under it is just as stuck as under
+              // `legacy`, it just means "answered, but still missing the capability" rather than "never answered".
+              // A contract stall clears once the contract is advertised, so an advertising backend stays quiet; an
+              // organization-encoding stall does not, so it is judged by the encodings the last policy advertised,
+              // which stay readable after the policy expires: an expired cache is an outage, not a missing encoding.
+              : spool.classificationStalled && policyState?.capability === 'unknown' ? 'classification_unreachable'
+                : spool.classificationStalled && policyState?.capability === 'legacy' ? 'classification_unsupported'
+                  : spool.classificationStalled && policyState?.capability === 'evidence' && !advertisesContract(policyState) ? 'classification_unsupported'
+                    : spool.organizationEncodingStalled && policyState?.capability === 'evidence' && !policyState.organizationEncodings?.includes(ORG_ENCODING_V1)
+                      ? 'classification_unsupported'
+                      : undefined;
 
     const drop = spool.latestDrop ? { latestDrop: spool.latestDrop } : {};
-    const pending = spool.incomplete ? {} : { pendingBytes: spool.pendingBytes, ...(spool.heldBytes ? { heldBytes: spool.heldBytes } : {}) };
+    const pending = spool.incomplete ? {} : {
+      pendingBytes: spool.pendingBytes, ...(spool.heldBytes ? { heldBytes: spool.heldBytes } : {}),
+      ...(spool.heldBytes && spool.heldByReason ? { heldByReason: spool.heldByReason } : {}),
+    };
     if (reason) {
       const failure = reason === 'send_failed' && spool.sendFailure ? { sendFailure: spool.sendFailure } : {};
       return { status: 'unhealthy', reason, ...pending, ...failure, ...drop };

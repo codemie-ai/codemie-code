@@ -68,6 +68,7 @@ vi.mock('../connectors/desktop.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../connectors/desktop.js')>()),
   writeDesktopConfig: vi.fn(),
   getDesktopBaseDir: vi.fn().mockReturnValue('/mock/desktop/base'),
+  getDesktopConfigPath: vi.fn(async () => '/mock/desktop/base/configLibrary/applied.json'),
   mapCanonicalToDesktop: vi.fn().mockReturnValue([]),
   summarizeManagedOauthShapes: vi.fn().mockReturnValue({ oauthConfigured: 0, oauthFlagged: 0, noAuth: 0 }),
   describeManagedSettingsOverride: vi.fn().mockReturnValue(null),
@@ -84,6 +85,7 @@ vi.mock('../connectors/omp.js', async (importOriginal) => ({
 vi.mock('../connectors/vscode-claude-code.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../connectors/vscode-claude-code.js')>()),
   writeVsCodeClaudeCodeConfig: vi.fn(),
+  getVsCodeClaudeCodeSettingsPath: vi.fn(() => '/mock/vscode/User/settings.json'),
 }));
 vi.mock('../connectors/claude-code-otlp.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../connectors/claude-code-otlp.js')>()),
@@ -148,6 +150,12 @@ vi.mock('../prompts/analytics-confirmation.js', async (importOriginal) => ({
   promptAnalyticsConfirmation: vi.fn().mockResolvedValue('enable'),
   promptScopeDropConfirmation: vi.fn().mockResolvedValue('confirm'),
 }));
+// The work consent a connect records has its own tests (connect-consent.test.ts); here only the calls are observed.
+vi.mock('../connect-consent.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../connect-consent.js')>()),
+  recordConnectConsent: vi.fn(async () => ({ label: 'Personal subscription analytics', ok: true })),
+}));
+vi.mock('../consent-project.js', () => ({ resolveConsentProject: vi.fn(async () => 'proj') }));
 // Each analytics connector's tracking scope, as its readScope reads it; every test starts in user scope.
 const scopeReads = vi.hoisted(() => ({
   values: {} as Record<string, Array<{ scope: 'user' | 'project'; paths: string[] } | { invalid: string }>>,
@@ -168,6 +176,12 @@ vi.mock('../analytics-connectors.js', async (importOriginal) => {
 });
 vi.mock('@/utils/interactive.js', () => ({
   isNonInteractiveEnvironment: vi.fn().mockReturnValue(false),
+  canPromptForProject: vi.fn().mockReturnValue(true),
+}));
+// The Claude adapter's provider settings check has its own tests; here its gate finds no conflict and never reads real settings.
+vi.mock('@/agents/plugins/claude/cloud-provider-conflict/gate.js', () => ({
+  detectAndAsk: vi.fn(async () => ({ kind: 'proceed', token: { plan: null, deps: {} } })),
+  applyConsented: vi.fn(async () => ({ backupDir: null, files: [], changed: [] })),
 }));
 
 // A test that connects Claude Desktop leaves the shared mock as it found it: not connected.
@@ -1487,6 +1501,181 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
     });
   });
 
+  describe('--include-personal-subscriptions and the work-consent question', () => {
+    const HINT_USER = '  To send analytics from personal Claude subscriptions in any repository later, run: codemie proxy analytics consent grant --all (applies to new sessions only)';
+    const HINT_PROJECT = '  To send analytics from personal Claude subscriptions in this repository later, run in the repository: codemie proxy analytics consent grant (applies to new sessions only)';
+
+    const printedLines = (): string[] => console_.log().mock.calls.map(([message]) => stripAnsi(String(message)));
+    async function run(opts: ConnectOptions): Promise<void> {
+      await withFreshDaemon();
+      const { connectTargets } = await import('../connect-orchestrator.js');
+      await connectTargets(opts);
+    }
+    const mocks = async () => ({
+      record: vi.mocked((await import('../connect-consent.js')).recordConnectConsent),
+      prompt: vi.mocked((await import('../prompts/analytics-confirmation.js')).promptAnalyticsConfirmation),
+      write: vi.mocked((await import('../connectors/claude-code-otlp.js')).writeClaudeCodeOtlpConfig),
+    });
+
+    it.each([
+      [undefined, 'user'],
+      ['user', 'user'],
+      ['project', 'project'],
+    ] as const)('flag with --yes (scope %s) records the %s consent once, after the writer succeeded, with no prompt and no hint', async (scope, recorded) => {
+      await run({ targets: { claudeCodeOtlp: true }, yes: true, includePersonalSubscriptions: true, scope });
+      const { record, prompt, write } = await mocks();
+
+      expect(prompt).not.toHaveBeenCalled();
+      expect(record).toHaveBeenCalledTimes(1);
+      expect(record).toHaveBeenCalledWith(recorded);
+      expect(write.mock.invocationCallOrder[0]).toBeLessThan(record.mock.invocationCallOrder[0]);
+      expect(printedLines()).not.toContain(HINT_USER);
+      expect(printedLines()).not.toContain(HINT_PROJECT);
+    });
+
+    it('without the flag, --yes asks nothing, records nothing and prints no hint (d)', async () => {
+      await run({ targets: { claudeCodeOtlp: true }, yes: true });
+      const { record, prompt } = await mocks();
+
+      expect(prompt).not.toHaveBeenCalled();
+      expect(record).not.toHaveBeenCalled();
+      expect(printedLines()).not.toContain(HINT_USER);
+    });
+
+    it.each([
+      ['user', undefined],
+      ['project', 'project'],
+    ] as const)('interactive without the flag (%s scope) puts the consent question to the prompt', async (scope, given) => {
+      await run({ targets: { claudeCodeOtlp: true }, scope: given });
+      const { prompt } = await mocks();
+
+      expect(prompt.mock.calls[0][0]).toEqual(expect.objectContaining({ workConsentQuestion: { scope } }));
+    });
+
+    it('Confirm on the question records the consent; no hint', async () => {
+      await withFreshDaemon();
+      const { promptAnalyticsConfirmation } = await import('../prompts/analytics-confirmation.js');
+      vi.mocked(promptAnalyticsConfirmation).mockResolvedValueOnce('enable-with-consent');
+      const { connectTargets } = await import('../connect-orchestrator.js');
+
+      await connectTargets({ targets: { claudeCodeOtlp: true } });
+
+      const { record } = await mocks();
+      expect(record).toHaveBeenCalledTimes(1);
+      expect(record).toHaveBeenCalledWith('user');
+      expect(printedLines()).not.toContain(HINT_USER);
+    });
+
+    it.each([
+      [undefined, HINT_USER],
+      ['project', HINT_PROJECT],
+    ] as const)('Decline on the question (scope %s) records nothing and prints the hint after the configured line', async (scope, hint) => {
+      await run({ targets: { claudeCodeOtlp: true }, scope });
+      const { record } = await mocks();
+
+      expect(record).not.toHaveBeenCalled();
+      const lines = printedLines();
+      const configured = lines.findIndex((line) => line.includes('Claude Code Analytics configured successfully'));
+      expect(configured).toBeGreaterThan(-1);
+      expect(lines.indexOf(hint)).toBeGreaterThan(configured);
+    });
+
+    it('a declined main question records nothing and prints no hint', async () => {
+      await withFreshDaemon();
+      const { promptAnalyticsConfirmation } = await import('../prompts/analytics-confirmation.js');
+      vi.mocked(promptAnalyticsConfirmation).mockResolvedValueOnce('cancel');
+      const { connectTargets } = await import('../connect-orchestrator.js');
+
+      await connectTargets({ targets: { claudeCodeOtlp: true } });
+
+      const { record, write } = await mocks();
+      expect(record).not.toHaveBeenCalled();
+      expect(write).not.toHaveBeenCalled();
+      expect(printedLines()).not.toContain(HINT_USER);
+      expect(printedLines()).toContain('Claude Code analytics was not enabled.');
+    });
+
+    it('with the flag and no --yes the question is not asked, the consent is recorded, no hint', async () => {
+      await run({ targets: { claudeCodeOtlp: true }, includePersonalSubscriptions: true });
+      const { record, prompt } = await mocks();
+
+      expect(prompt.mock.calls[0][0]).not.toHaveProperty('workConsentQuestion');
+      expect(record).toHaveBeenCalledTimes(1);
+      expect(printedLines()).not.toContain(HINT_USER);
+    });
+
+    it('project scope whose project does not resolve: no question without the flag', async () => {
+      const { resolveConsentProject } = await import('../consent-project.js');
+      await withFreshDaemon();
+      vi.mocked(resolveConsentProject).mockRejectedValue(new Error('No CodeMie project resolved'));
+      const { connectTargets } = await import('../connect-orchestrator.js');
+
+      await connectTargets({ targets: { claudeCodeOtlp: true }, scope: 'project' });
+
+      const { prompt, record } = await mocks();
+      expect(prompt.mock.calls[0][0]).not.toHaveProperty('workConsentQuestion');
+      expect(record).not.toHaveBeenCalled();
+      expect(printedLines()).not.toContain(HINT_PROJECT);
+    });
+
+    it('project scope whose project does not resolve: the flag fails before anything is started or written', async () => {
+      const { resolveConsentProject } = await import('../consent-project.js');
+      const { ConfigurationError } = await import('../../../../utils/errors.js');
+      await withFreshDaemon();
+      vi.mocked(resolveConsentProject).mockRejectedValue(new ConfigurationError('No CodeMie project resolved for this folder.'));
+      const { spawnDaemon } = await import('../daemon-manager.js');
+      const { connectTargets } = await import('../connect-orchestrator.js');
+
+      await expect(
+        connectTargets({ targets: { claudeCodeOtlp: true }, scope: 'project', yes: true, includePersonalSubscriptions: true }),
+      ).rejects.toThrow('process.exit:1');
+
+      const { record, write } = await mocks();
+      expect(spawnDaemon).not.toHaveBeenCalled();
+      expect(write).not.toHaveBeenCalled();
+      expect(record).not.toHaveBeenCalled();
+    });
+
+    it('a failed Claude Code writer records nothing and prints no hint', async () => {
+      await withFreshDaemon();
+      const { writeClaudeCodeOtlpConfig } = await import('../connectors/claude-code-otlp.js');
+      vi.mocked(writeClaudeCodeOtlpConfig).mockRejectedValueOnce(new Error('settings are read-only'));
+      const { connectTargets } = await import('../connect-orchestrator.js');
+
+      await connectTargets({ targets: { claudeCodeOtlp: true }, yes: true, includePersonalSubscriptions: true });
+
+      const { record } = await mocks();
+      expect(record).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+    });
+
+    it('a failed consent write makes the connect exit 1 and is listed as a failed target', async () => {
+      await withFreshDaemon();
+      const { recordConnectConsent } = await import('../connect-consent.js');
+      vi.mocked(recordConnectConsent).mockResolvedValueOnce({ label: 'Personal subscription analytics', ok: false, error: 'store busy' });
+      const { connectTargets } = await import('../connect-orchestrator.js');
+
+      await connectTargets({ targets: { claudeCodeOtlp: true }, yes: true, includePersonalSubscriptions: true });
+
+      expect(process.exitCode).toBe(1);
+      expect(printedLines()).toContain('✗ Personal subscription analytics — store busy');
+    });
+
+    it('--copilot-otlp alone with the flag prints the note and records nothing', async () => {
+      await run({ targets: { copilotChatOtlp: true, copilotCliOtlp: true }, yes: true, includePersonalSubscriptions: true });
+      const { record } = await mocks();
+
+      expect(printedLines()).toContain('Note: --include-personal-subscriptions has no effect without --claude-otlp.');
+      expect(record).not.toHaveBeenCalled();
+    });
+
+    it('the flag with --claude-otlp prints no such note', async () => {
+      await run({ targets: { claudeCodeOtlp: true }, yes: true, includePersonalSubscriptions: true });
+
+      expect(printedLines().some((line) => line.includes('has no effect without --claude-otlp'))).toBe(false);
+    });
+  });
+
   describe('pre-prompt "Using profile:" line', () => {
     async function profileLinesFor(
       opts: ConnectOptions,
@@ -2242,7 +2431,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       expect(failure).toBeGreaterThan(-1);
       const errors = vi.mocked(console.error).mock;
       const ssoError = errors.calls.findIndex(([message]) =>
-        stripAnsi(String(message)).startsWith("✗ No SSO credentials found for profile 'p'."));
+        stripAnsi(String(message)).startsWith("✗ No active CodeMie session for profile 'p'."));
       expect(ssoError).toBeGreaterThan(-1);
       expect(logs.invocationCallOrder[failure]).toBeLessThan(errors.invocationCallOrder[ssoError]);
     });
@@ -3005,7 +3194,7 @@ describe('ensureOtlpProxy', () => {
       expect(s.daemon.spawnDaemon).toHaveBeenCalledTimes(1);
       expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ profile: 'work' }));
       expect(warnings(s.warn)).toEqual([
-        expect.stringContaining("No SSO credentials found for profile 'work'"),
+        expect.stringContaining("No active CodeMie session for profile 'work'"),
         expect.stringContaining('no recorded proxy connection'),
       ]);
       expect(warnings(s.warn)[0]).toContain('no SSO credentials (profile: work)');
@@ -3090,7 +3279,7 @@ describe('ensureOtlpProxy', () => {
 
     expect(s.daemon.spawnDaemon).toHaveBeenCalledTimes(1);
     expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ profile: 'p' }));
-    expect(warnings(s.warn)).toEqual([expect.stringContaining("No SSO credentials found for profile 'p'")]);
+    expect(warnings(s.warn)).toEqual([expect.stringContaining("No active CodeMie session for profile 'p'")]);
     expect(warnings(s.warn)[0]).toContain('no SSO credentials (profile: p, local scope)');
     expect(warnings(s.warn)[0]).toContain('holds the port until you sign in');
     expectNoConsoleNoExit();
@@ -4013,12 +4202,14 @@ describe('assertSsoCredentials', () => {
     lookup.mockResolvedValue(null);
     const { assertSsoCredentials } = await import('../connect-orchestrator.js');
     const { ConfigurationError } = await import('../../../../utils/errors.js');
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValueOnce('other');
 
     const thrown = await assertSsoCredentials(BASE_URL, 'p', 'https://x.example.com').catch((e: unknown) => e);
 
     expect(thrown).toBeInstanceOf(ConfigurationError);
     expect((thrown as Error).message).toBe(
-      "No SSO credentials found for profile 'p'.\n  Sign in first — run: codemie profile login --url https://x.example.com"
+      "No active CodeMie session for profile 'p'.\n  Sign in first — run: codemie profile login --url https://x.example.com"
     );
     expect(lookup).toHaveBeenCalledTimes(1);
     expect(lookup).toHaveBeenCalledWith({
@@ -4028,6 +4219,45 @@ describe('assertSsoCredentials', () => {
     });
     expect(consoleErrorSpy).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it('prints the bare login command when the profile is the active one', async () => {
+    lookup.mockResolvedValue(null);
+    const { assertSsoCredentials } = await import('../connect-orchestrator.js');
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValueOnce('p');
+
+    const thrown = await assertSsoCredentials(BASE_URL, 'p', 'https://x.example.com').catch((e: unknown) => e);
+
+    expect((thrown as Error).message).toBe(
+      "No active CodeMie session for profile 'p'.\n  Sign in first — run: codemie profile login"
+    );
+  });
+
+  it('keeps --url for a profile that is not the active one', async () => {
+    lookup.mockResolvedValue(null);
+    const { assertSsoCredentials } = await import('../connect-orchestrator.js');
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValueOnce('other');
+
+    const thrown = await assertSsoCredentials(BASE_URL, 'p', 'https://x.example.com').catch((e: unknown) => e);
+
+    expect((thrown as Error).message).toBe(
+      "No active CodeMie session for profile 'p'.\n  Sign in first — run: codemie profile login --url https://x.example.com"
+    );
+  });
+
+  it('falls back to --url when the active profile cannot be resolved', async () => {
+    lookup.mockResolvedValue(null);
+    const { assertSsoCredentials } = await import('../connect-orchestrator.js');
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    vi.mocked(ConfigLoader.getActiveProfileName).mockRejectedValueOnce(new Error('config unreadable'));
+
+    const thrown = await assertSsoCredentials(BASE_URL, 'p').catch((e: unknown) => e);
+
+    expect((thrown as Error).message).toBe(
+      "No active CodeMie session for profile 'p'.\n  Sign in first — run: codemie profile login --url https://x.example.com"
+    );
   });
 
   it('throws Failed to verify credentials when the lookup throws, without double-wrapping', async () => {

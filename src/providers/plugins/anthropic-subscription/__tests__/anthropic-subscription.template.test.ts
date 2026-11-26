@@ -180,13 +180,22 @@ describe('AnthropicSubscriptionTemplate', () => {
       expect(result).toEqual(['--verbose']);
     });
 
-    it('does not inject --plugin-dir when it is already present in args', () => {
+    it('keeps a user --plugin-dir and still passes the extension once', () => {
       process.env.CODEMIE_CLAUDE_EXTENSION_DIR = '/tmp/codemie-claude-plugin';
 
       const hook = AnthropicSubscriptionTemplate.agentHooks?.['claude'];
       const result = hook!.enrichArgs!(['--plugin-dir', '/custom/path', '--verbose'], { agent: 'claude' });
 
-      expect(result).toEqual(['--plugin-dir', '/custom/path', '--verbose']);
+      expect(result).toEqual(['--plugin-dir', '/tmp/codemie-claude-plugin', '--plugin-dir', '/custom/path', '--verbose']);
+    });
+
+    it('does not duplicate the extension when the user already passed it', () => {
+      process.env.CODEMIE_CLAUDE_EXTENSION_DIR = '/tmp/codemie-claude-plugin';
+
+      const hook = AnthropicSubscriptionTemplate.agentHooks?.['claude'];
+      const args = ['--plugin-dir', '/tmp/codemie-claude-plugin', '--verbose'];
+
+      expect(hook!.enrichArgs!(args, { agent: 'claude' })).toEqual(args);
     });
   });
 

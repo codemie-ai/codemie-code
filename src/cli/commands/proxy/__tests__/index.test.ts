@@ -83,6 +83,7 @@ vi.mock('../connectors/desktop.js', async (importOriginal) => ({
   writeDesktopConfig: vi.fn(),
   describeManagedSettingsOverride: vi.fn().mockReturnValue(null),
   getDesktopBaseDir: vi.fn().mockReturnValue('/mock/desktop/base'),
+  getDesktopConfigPath: vi.fn(async () => '/mock/desktop/base/configLibrary/applied.json'),
   mapCanonicalToDesktop: vi.fn().mockReturnValue([]),
   summarizeManagedOauthShapes: vi.fn().mockReturnValue({ oauthConfigured: 0, oauthFlagged: 0, noAuth: 0 }),
   readDesktopGateway: vi.fn().mockResolvedValue(null),
@@ -129,6 +130,12 @@ vi.mock('../../../../cli/commands/skills/setup/sync-plugin.js', () => ({
 // guard for --claude-code-otlp; vitest has no TTY, so pretend there is one.
 vi.mock('@/utils/interactive.js', () => ({
   isNonInteractiveEnvironment: vi.fn().mockReturnValue(false),
+  canPromptForProject: vi.fn().mockReturnValue(true),
+}));
+// The Claude adapter's provider settings check has its own tests; here its gate finds no conflict and never reads real settings.
+vi.mock('@/agents/plugins/claude/cloud-provider-conflict/gate.js', () => ({
+  detectAndAsk: vi.fn(async () => ({ kind: 'proceed', token: { plan: null, deps: {} } })),
+  applyConsented: vi.fn(async () => ({ backupDir: null, files: [], changed: [] })),
 }));
 
 /**
@@ -345,11 +352,47 @@ describe('proxy connect --claude-desktop', () => {
 
     expect(spawnDaemon).not.toHaveBeenCalled();
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("No SSO credentials found for profile 'codemie-new'.")
+      expect.stringContaining("No active CodeMie session for profile 'codemie-new'.")
     );
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       '  Sign in first — run: codemie profile login --url https://codemie.lab.epam.com'
     );
+  });
+
+  it('prints the bare login command when the selected profile is the active profile', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { ProviderRegistry } = await import('../../../../providers/index.js');
+    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValue('codemie-new');
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'codemie-new',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+      codeMieUrl: 'https://codemie.lab.epam.com',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+    vi.mocked(ProviderRegistry.getProvider).mockReturnValue({
+      name: 'ai-run-sso',
+      authType: 'sso',
+    } as ReturnType<typeof ProviderRegistry.getProvider>);
+    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
+      return {
+        getStoredCredentials: vi.fn().mockResolvedValue(null),
+      };
+    } as unknown as typeof CodeMieSSO);
+
+    const command = createProxyCommand();
+    await expect(
+      command.parseAsync(['connect', '--claude-desktop', '--profile', 'codemie-new'], { from: 'user' })
+    ).rejects.toThrow('process.exit:1');
+
+    expect(spawnDaemon).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith('  Sign in first — run: codemie profile login');
+    expect(consoleErrorSpy).not.toHaveBeenCalledWith(expect.stringContaining('--url'));
+    vi.mocked(ConfigLoader.getActiveProfileName).mockReset();
   });
 
   it('checks both credential URLs and suggests the selected profile URL when workspace URL differs', async () => {
@@ -455,7 +498,7 @@ describe('proxy connect --claude-desktop', () => {
       expect.stringContaining('Failed to verify credentials: keychain locked')
     );
     expect(consoleErrorSpy).not.toHaveBeenCalledWith(
-      expect.stringContaining('No SSO credentials found')
+      expect.stringContaining('No active CodeMie session')
     );
   });
 
@@ -633,7 +676,7 @@ describe('proxy command registration', () => {
     const analytics = proxy.commands.find((c) => c.name() === 'analytics');
     expect(analytics).toBeDefined();
     const subcommandNames = analytics!.commands.map((c) => c.name()).sort();
-    expect(subcommandNames).toEqual(['connect-folder', 'consent', 'disable', 'disconnect-folder', 'enable', 'exclude', 'include', 'status']);
+    expect(subcommandNames).toEqual(['connect-folder', 'consent', 'disable', 'disconnect-folder', 'enable', 'exclude', 'include', 'resend', 'status']);
   });
 });
 
@@ -1938,6 +1981,33 @@ describe('proxy status', () => {
       expect((await diagnose()).payload.desktop).toEqual({ connected: true, collecting: true });
     });
 
+    async function writeAnalyticsPreferences(content: string): Promise<void> {
+      await writeFile(join(clientHome, 'claude-analytics.json'), content);
+    }
+
+    it('gives not collecting, with the enable command, once analytics were disabled', async () => {
+      await arrangeDesktop(4001, { desktopConnectedSince: '2026-11-16T10:00:00.000Z' });
+      await writeAnalyticsPreferences(JSON.stringify({ enabled: false }));
+
+      expect((await diagnose()).payload.desktop).toEqual({
+        connected: true,
+        collecting: false,
+        analyticsDisabled: true,
+        reason: 'analytics are disabled',
+        remedy: 'run: codemie proxy analytics enable --claude-otlp',
+      });
+    });
+
+    it('gives not collecting, naming the file, while the analytics preferences file is unreadable', async () => {
+      await arrangeDesktop(4001, { desktopConnectedSince: '2026-11-16T10:00:00.000Z' });
+      await writeAnalyticsPreferences('{not json');
+
+      const desktop = (await diagnose()).payload.desktop as { collecting: boolean; reason: string };
+
+      expect(desktop.collecting).toBe(false);
+      expect(desktop.reason).toContain('claude-analytics.json');
+    });
+
     it('says Desktop is not connected yet while the daemon has not noticed it on its own port', async () => {
       await arrangeDesktop(4001, {});
 
@@ -3067,6 +3137,20 @@ describe('proxy connect: which Claude client routes were typed', () => {
     const options = await connectWith('--claude-otlp');
     expect(options.targets).toMatchObject({ claudeDesktop: true, vscodeClaudeCode: true });
     expect(options.explicitRoutes).toEqual({ claudeDesktop: false, vscodeClaudeCode: false });
+  });
+
+  it('--include-personal-subscriptions is registered and maps to includePersonalSubscriptions: true', async () => {
+    const { createProxyCommand } = await import('../index.js');
+    const connect = createProxyCommand().commands.find((command) => command.name() === 'connect');
+    expect(connect?.options.some((option) => option.long === '--include-personal-subscriptions')).toBe(true);
+
+    const withFlag = await connectWith('--claude-otlp', '--include-personal-subscriptions') as { includePersonalSubscriptions?: boolean };
+    expect(withFlag.includePersonalSubscriptions).toBe(true);
+  });
+
+  it('includePersonalSubscriptions is false without the flag', async () => {
+    const withoutFlag = await connectWith('--claude-otlp') as { includePersonalSubscriptions?: boolean };
+    expect(withoutFlag.includePersonalSubscriptions).toBe(false);
   });
 
   it('a typed --claude-desktop or --vscode-claude-code is explicit, with or without --claude-otlp', async () => {

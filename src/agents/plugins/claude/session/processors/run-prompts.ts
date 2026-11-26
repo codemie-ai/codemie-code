@@ -1,5 +1,5 @@
 import type { MetricDelta } from '../../../../core/metrics/types.js';
-import { extractNamedInvocations, type NamedInvocationCounts } from '../claude-named-invocations.js';
+import { extractNamedInvocations, type NamedInvocationCounts, type ToolOutcome } from '../claude-named-invocations.js';
 import type { ClaudeMessage } from '../../claude-message-types.js';
 import { stripPastedContentTags } from '@/agents/core/pasted-content.js';
 
@@ -26,7 +26,7 @@ export function collectRunPromptsAndInvocations(
   // any[]: the final-pass delta reads `gitBranch`, which is not on ClaudeMessage.
   messages: any[],
   messagesByUuid: Map<string, ClaudeMessage>,
-  { sessionId, processedIds, attachedUserPrompts, lastProcessedMsgIndex, lastEmittedIndex, emittedDeltas, cutoffMs, finalPass, namedOnly }: {
+  { sessionId, processedIds, attachedUserPrompts, lastProcessedMsgIndex, lastEmittedIndex, emittedDeltas, cutoffMs, finalPass, namedOnly, toolOutcomes, emittedGroupLines }: {
     sessionId: string;
     processedIds: Set<string>;
     attachedUserPrompts: Set<string>;
@@ -36,6 +36,10 @@ export function collectRunPromptsAndInvocations(
     cutoffMs?: number;
     finalPass: boolean;
     namedOnly: boolean;
+    /** Outcome of every resolved tool call, from the FULL session: a call's result is usually outside this run's slice. */
+    toolOutcomes: ReadonlyMap<string, ToolOutcome>;
+    /** Every line of the assistant groups this run emitted, wherever they sit: a group held back by an unresolved call is emitted by a later run, after the slice has moved past it. */
+    emittedGroupLines: readonly ClaudeMessage[];
   }
 ): RunPromptsResult {
   let promptsDelta: PendingDelta | undefined;
@@ -44,7 +48,17 @@ export function collectRunPromptsAndInvocations(
   const ownLine = (line: ClaudeMessage) => !isStampedBefore(line, cutoffMs);
   const runLines = messages.slice(runStart, trailingStart).filter(ownLine);
   const trailingLines = finalPass ? messages.slice(trailingStart).filter(ownLine) : [];
-  const named = extractNamedInvocations([...runLines, ...trailingLines]);
+  const named = extractNamedInvocations([...runLines, ...trailingLines], toolOutcomes);
+  // An Agent/Task call counts once its result succeeded, so it must be counted by the run that
+  // emits its group (all of the group's calls are resolved by then), not by the slice: a group
+  // held back while a later group was emitted lies behind the next run's slice and would be lost.
+  // Lines outside any group (no assistant message id) and the final pass's trailing lines still
+  // come from the slice.
+  const isGroupedLine = (line: ClaudeMessage) => line.message?.role === 'assistant' && Boolean(line.message?.id);
+  named.agentInvocations = extractNamedInvocations(
+    [...runLines.filter(line => !isGroupedLine(line)), ...emittedGroupLines.filter(ownLine), ...trailingLines],
+    toolOutcomes
+  ).agentInvocations;
 
   const prompts: Array<{ count: number; text: string }> = [];
   if (attachedUserPrompts.size === 0) {
