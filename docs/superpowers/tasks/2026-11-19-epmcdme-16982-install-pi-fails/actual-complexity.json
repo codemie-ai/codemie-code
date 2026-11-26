@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated": "2026-11-19T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 14,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 5,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Shared exec utility, Pi plugin/packages installer and the install CLI command touched, a clear pattern (shell on Windows as with npm/npx)." },
+    { "dimension": "technical_risk", "reason": "Windows-only shell spawn and taskkill /T /F process-tree kill on timeout in the shared exec util; small, localized, easily reverted." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
