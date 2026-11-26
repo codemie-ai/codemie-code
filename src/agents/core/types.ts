@@ -3,6 +3,7 @@
  */
 
 import type { SessionAdapter } from './session/BaseSessionAdapter.js';
+import type { ShadowVerdict } from '../../utils/path-shadow.js';
 
 /**
  * Post-install hint - simple text lines shown after installation
@@ -218,6 +219,12 @@ export interface AgentMetadata {
   // === Installation ===
   npmPackage: string | null;       // '@anthropic-ai/claude-code' or null for built-in
   cliCommand: string | null;       // 'claude' or null for built-in
+
+  /**
+   * Set to `false` for agents that do not install through the CodeMie-managed npm prefix
+   * (native installers, bundled binaries), so no PATH shadow check applies. Default: checked.
+   */
+  pathShadowCheck?: false;
 
   /**
    * Latest version tested with the CodeMie backend — a recommendation, not a
@@ -815,6 +822,8 @@ export interface AgentAdapter {
   install(): Promise<void>;
   uninstall(): Promise<void>;
   isInstalled(): Promise<boolean>;
+  /** Whether another install of this agent shadows the CodeMie-managed one on PATH (win32 only). */
+  checkPathShadow?(opts?: { resolvePrefix?: boolean }): Promise<ShadowVerdict>;
   run(args: string[], env?: Record<string, string>, options?: { dryRun?: boolean }): Promise<void>;
   getVersion(): Promise<string | null>;
   getMetricsConfig(): AgentMetricsConfig | undefined;

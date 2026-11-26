@@ -175,6 +175,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
 
   npmPackage: '@anthropic-ai/claude-code',
   cliCommand: 'claude',
+  pathShadowCheck: false, // native installer, not the npm prefix
 
   sessionAnalyticsReport: true,
 
