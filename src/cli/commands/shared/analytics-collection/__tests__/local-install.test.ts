@@ -19,8 +19,11 @@ vi.mock('@/utils/processes.js', async (importOriginal) => {
     spawnDetached: vi.fn(standInSpawn),
     // The start-time comparison runs `ps`: a live pid is the daemon.
     isOwnerAlive: vi.fn(async ({ pid }: { pid: number }) => alive(pid)),
-    // Nothing is found on PATH: a client is found by its files alone.
-    getCommandPath: vi.fn(async () => null),
+    // PATH holds the stand's `~/.local/bin` alone: Windows finds Claude Code nowhere but on PATH.
+    getCommandPath: vi.fn(async (command: string) => {
+      const path = join(process.env.HOME ?? '', '.local', 'bin', command);
+      return existsSync(path) ? path : null;
+    }),
   };
 });
 vi.mock('@/utils/cli-updater.js', async (importOriginal) => {
