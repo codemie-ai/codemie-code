@@ -1337,10 +1337,22 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
         expect(readRecords()).toEqual(recordsBefore); // the session keeps the record its later hooks will find
       });
 
-      it('names the event identity from the login the record was stamped with, resolving the login once', async () => {
+      it('fresh-start recovery: the event identity is the stamping login even though the daemon state appears or is absent at field resolution', async () => {
+        const creds = { cookies: { codemie_access_token: tokenWith({ email: 'dev@example.com' }) }, apiUrl: 'https://api', timestamp: 0 };
+        // Only the recorded-profile lookup finds the login (no daemon state); a plain lookup, as event fields would make, finds nothing.
+        resolveHookCredentialsMock.mockImplementation(async (opts?: { recordedProfile?: boolean }) => (opts?.recordedProfile ? creds : null));
+        (adapter as HoldAdapter).inputs = { routing: { routed: true, routing_proof: 'proven' }, recoverWithoutDaemon: true } as never;
+        resolveIdentityMock.mockClear();
+        await start();
+        expect(resolveIdentityMock).toHaveBeenCalledWith(creds, expect.anything());
+        expect(forwarded().every((e) => e['user_email'] === 'dev@example.com')).toBe(true);
+        expect(resolveHookCredentialsMock).toHaveBeenCalledTimes(1);
+      });
+
+      it('a sibling hook (no recovery opt-in) still resolves its event identity itself, with the default lookup', async () => {
         resolveHookCredentialsMock.mockClear();
         await start();
-        expect(resolveHookCredentialsMock).toHaveBeenCalledTimes(1);
+        expect(resolveHookCredentialsMock.mock.calls).toEqual([[{ recordedProfile: false }], []]); // stamp, then the event identity lookup
       });
 
       it('an earlier attempt that may have been received keeps the batch out of the queue even when the retry is refused', async () => {

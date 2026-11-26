@@ -235,7 +235,9 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       }
       record = stamp.record;
       stamped = { record: stamp.record, fp: stamp.fp };
-      stampedCredentials = stamp.credentials;
+      // Only the fresh-start recovery names its events from the stamping login: it resolved that login without daemon state, which the
+      // event identity lookup (daemon state only) would not find. Every other hook keeps resolving identity as before.
+      if (context.evidenceInputs.recoverWithoutDaemon === true) stampedCredentials = stamp.credentials;
       if ((await this.recordGate(context, record)) === 'stop') return { events: [], failure: 'Session scope check stopped publication; hook event not enqueued' };
     }
     const [commonFields, agentFields] = await Promise.all([
