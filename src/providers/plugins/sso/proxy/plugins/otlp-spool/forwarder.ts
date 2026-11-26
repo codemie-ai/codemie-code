@@ -342,7 +342,7 @@ export function unwrapHookRecords(records: string[]): HookPayload {
       continue;
     }
 
-    if (envelope.event['type'] === SESSION_END_EVENT_TYPE) {
+    if (envelope.event['type'] === SESSION_END_EVENT_TYPE && !envelope.historicalEnd) {
       containsSessionEnd = true;
     }
     unwrapped.push(envelope.raw);

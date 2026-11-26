@@ -40,6 +40,7 @@ const EXPORT_KEYS = ['resourceLogs', 'resourceMetrics', 'resourceSpans'] as cons
 interface HookEnvelope {
   hookEvent?: unknown;
   evidence_v?: unknown;
+  historicalEnd?: unknown;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -155,17 +156,24 @@ export function addLineId(line: string, lineId: string): string | null {
 
 /**
  * One line of a spool hooks file: the envelope's `hookEvent` as it lies (`raw`) and parsed
- * (`event`), with its `evidence_v`; `null` when the envelope or its `hookEvent` does not parse to
- * an object.
+ * (`event`), with its `evidence_v` and its `historicalEnd`; `null` when the envelope or its
+ * `hookEvent` does not parse to an object.
  */
-export function parseHookEnvelope(line: string): { event: Record<string, unknown>; raw: string; evidenceV?: 1 } | null {
+export function parseHookEnvelope(
+  line: string
+): { event: Record<string, unknown>; raw: string; evidenceV?: 1; historicalEnd?: true } | null {
   try {
     const envelope = JSON.parse(line) as HookEnvelope;
     if (!isObject(envelope) || typeof envelope.hookEvent !== 'string') return null;
     const raw = envelope.hookEvent;
     const event: unknown = JSON.parse(raw);
     if (!isObject(event)) return null;
-    return envelope.evidence_v === 1 ? { event, raw, evidenceV: 1 } : { event, raw };
+    return {
+      event,
+      raw,
+      ...(envelope.evidence_v === 1 ? { evidenceV: 1 as const } : {}),
+      ...(envelope.historicalEnd === true ? { historicalEnd: true as const } : {}),
+    };
   } catch {
     return null;
   }

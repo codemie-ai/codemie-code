@@ -12,7 +12,6 @@ import { processSessionTick } from './otlp-spool/tick-processor.js';
 import { recordStampLoss } from './otlp-spool/spool-io.js';
 import { createOtlpIntake } from './otlp-intake.js';
 import { hookEventProjectNames } from './otlp-spool/session-project.js';
-import { scheduleCopilotUsageEnrichment } from './otlp-spool/copilot-usage-enrichment.js';
 import { sendIntervalMs, sweepIntervalMs } from './otlp-spool/spool-config.js';
 import { processPendingOwner } from './otlp-spool/owner-pending-replay.js';
 import { CREDENTIAL_REFRESH_INTERVAL_MS } from './credential-refresh.js';
@@ -34,6 +33,8 @@ export interface OtlpHookSpoolData {
   hookEvent: string;
   /** Provenance marker: the hook stamped a durable evidence record before spooling. Envelope only. */
   evidence_v?: 1;
+  /** This run ended before a recorded resume. Deliver it without closing the current spool lifecycle. */
+  historicalEnd?: true;
 }
 
 /** One hook invocation's batch, as the hook process POSTs it. */
@@ -43,6 +44,12 @@ export interface OtlpHookBatchRequest {
   /** The hook could not stamp and dropped `events` events of the session: recorded as a visible loss, nothing spooled. */
   evidence_loss?: { session_id: string; reason: string; events: number };
   hookEvents: Record<string, unknown>[];
+}
+
+export interface OtlpHookLifecycle {
+  beforeSessionTicks(sessionIds: readonly string[]): Promise<void>;
+  skipAppend(agentName: string, sessionId: string, events: OtlpHookBatchRequest['hookEvents']): (() => Promise<boolean>) | undefined;
+  afterBatchAccepted(agentName: string, events: OtlpHookBatchRequest['hookEvents']): void;
 }
 
 class OtlpInterceptor implements ProxyInterceptor {
@@ -55,14 +62,17 @@ class OtlpInterceptor implements ProxyInterceptor {
   private stopped = false;
   private readonly intake = createOtlpIntake({
     projectNamesOf: (events) => events.flatMap((event) => hookEventProjectNames(event)),
-    // Copilot writes its token rollup only after the sessionEnd hook exits: read it from here.
-    afterHooksWrite: (_sessionId, agentName, batchEvents) => scheduleCopilotUsageEnrichment(agentName, batchEvents),
+    // The lifecycle's own steps around a hooks batch: what it leaves unwritten, and its follow-up once the batch is
+    // accepted (Copilot writes its token rollup only after the sessionEnd hook exits: it is read from there).
+    skipHooksWrite: (sessionId, agentName, batchEvents) => this.hookLifecycle?.skipAppend(agentName, sessionId, batchEvents),
+    afterHooksWrite: (_sessionId, agentName, batchEvents) => this.hookLifecycle?.afterBatchAccepted(agentName, batchEvents),
     recordStampLoss: (loss) => recordStampLoss(loss.session_id, loss.reason, loss.events),
   });
 
   constructor(
     private credentials: SSOCredentials | JWTCredentials | undefined,
-    private readonly config: ProxyConfig | undefined
+    private readonly config: ProxyConfig | undefined,
+    private readonly hookLifecycle?: OtlpHookLifecycle
   ) {}
 
   healthStatus(): AnalyticsHealthReply {
@@ -175,6 +185,7 @@ class OtlpInterceptor implements ProxyInterceptor {
     }
 
     const sessionIds = await listSessionIds();
+    await this.hookLifecycle?.beforeSessionTicks(sessionIds);
 
     // Different sessions are independent (per-session locking happens inside
     // processSessionTick), so they are processed concurrently.
@@ -192,7 +203,7 @@ class OtlpInterceptor implements ProxyInterceptor {
 
     // Hook events held for a login whose owner was unknown: replay under this login, expire past retention (no hook
     // needed). After the walk, so a replayed session is sent by the next tick.
-    await processPendingOwner(creds);
+    await processPendingOwner(creds, undefined, this.hookLifecycle);
   }
 
   async handleRequest(
@@ -231,10 +242,13 @@ export class OtlpPlugin implements ProxyPlugin {
   version = '1.0.0';
   priority = 10;
 
+  constructor(private readonly hookLifecycle?: OtlpHookLifecycle) {}
+
   createInterceptor(context: PluginContext): ProxyInterceptor {
     return new OtlpInterceptor(
       context.syncCredentials || context.credentials,
-      context.config
+      context.config,
+      this.hookLifecycle
     );
   }
 }

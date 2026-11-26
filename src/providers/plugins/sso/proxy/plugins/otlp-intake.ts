@@ -26,6 +26,11 @@ export interface OtlpIntakeParts {
   /** The project names `appendSpool` marks the session with, from the events that are written. */
   projectNamesOf(writtenEvents: Record<string, unknown>[]): string[] | undefined;
   /**
+   * Asked before a hooks batch is written, with the whole batch: the check `appendSpool` runs under the session's
+   * lock — a batch it answers `true` for is accepted and not written. No part, or no check: the batch is written.
+   */
+  skipHooksWrite?(sessionId: string, agentName: string, batchEvents: Record<string, unknown>[]): (() => Promise<boolean>) | undefined;
+  /**
    * Runs after a hooks batch is written, with the whole batch, and is awaited before the answer; a throw or a
    * rejection is logged, the batch stays accepted.
    */
@@ -238,7 +243,9 @@ class SpoolIntake implements OtlpIntake {
     }
 
     try {
-      await appendSpool(sessionId, 'hooks', lines.join('\n') + '\n', this.parts.projectNamesOf(written));
+      await appendSpool(sessionId, 'hooks', lines.join('\n') + '\n', this.parts.projectNamesOf(written), {
+        skipIf: this.parts.skipHooksWrite?.(sessionId, batch.agentName, batch.hookEvents),
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn('[otlp-ingest] hooks disk write error', ...sanitizeLogArgs({ sessionId, err: msg }));

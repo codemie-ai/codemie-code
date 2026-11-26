@@ -259,6 +259,10 @@ export class CopilotCliOtlpPlugin extends OtlpAgentAdapter<CopilotCliHookInput, 
 
   private async onSessionStart(input: CopilotCliHookInput): Promise<CliForwardDecision> {
     sweepStaleStateFiles();
+    // Recorded now, not only at sessionEnd: an aborted sessionEnd must still leave the daemon the custom COPILOT_HOME.
+    if (!(await updateSessionState(input.sessionId, { sessionStateRoot: getCopilotSessionStateRoot() }, 1_000))) {
+      logger.debug('[copilot-cli-otlp] failed to record session-state root at start');
+    }
     return { decision: 'forward', payload: [this.normalizeEvent(input)] };
   }
 
