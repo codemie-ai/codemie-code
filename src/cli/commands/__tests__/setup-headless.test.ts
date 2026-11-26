@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockPrompt, mockGetCredentials } = vi.hoisted(() => ({
+const { mockPrompt, mockGetCredentials, mockGetAllProviderChoices, PROVIDERS } = vi.hoisted(() => ({
   mockPrompt: vi.fn(),
   mockGetCredentials: vi.fn(),
+  mockGetAllProviderChoices: vi.fn(),
+  PROVIDERS: [
+    { name: 'ai-run-sso', displayName: 'CodeMie SSO' },
+    { name: 'moonshot-subscription', displayName: 'Moonshot Subscription' },
+  ],
 }));
 
 vi.mock('inquirer', () => ({ default: { prompt: mockPrompt } }));
@@ -20,13 +25,13 @@ vi.mock('@/cli/first-time.js', () => ({
 }));
 vi.mock('@/providers/index.js', () => ({
   ProviderRegistry: {
-    getAllProviders: () => [],
+    getAllProviders: () => PROVIDERS,
     getProvider: () => undefined,
     getSetupSteps: () => ({ getCredentials: mockGetCredentials }),
   },
 }));
 vi.mock('@/providers/integration/setup-ui.js', () => ({
-  getAllProviderChoices: () => [],
+  getAllProviderChoices: (providers: unknown[]) => mockGetAllProviderChoices(providers),
   getAllModelChoices: () => [],
   displaySetupSuccess: () => undefined,
   displaySetupError: () => undefined,
@@ -39,6 +44,12 @@ async function runSetup(args: string[]): Promise<void> {
   await createSetupCommand().parseAsync(args, { from: 'user' });
 }
 
+/** Names of the providers the setup wizard offered in its provider list. */
+function offeredProviderNames(): string[] {
+  const call = mockGetAllProviderChoices.mock.calls[0];
+  return (call[0] as Array<{ name: string }>).map(p => p.name);
+}
+
 describe('codemie setup --no-browser wiring', () => {
   beforeEach(() => {
     mockPrompt.mockReset();
@@ -48,6 +59,10 @@ describe('codemie setup --no-browser wiring', () => {
     mockGetCredentials.mockReset();
     // Stop the wizard right after the credential step: the wiring is all these tests need
     mockGetCredentials.mockRejectedValue(new Error('stop after credentials'));
+    mockGetAllProviderChoices.mockReset();
+    mockGetAllProviderChoices.mockImplementation((providers: Array<{ name: string; displayName: string }>) =>
+      providers.map(p => ({ name: p.displayName, value: p.name }))
+    );
     vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
   });
@@ -69,5 +84,19 @@ describe('codemie setup --no-browser wiring', () => {
   it('keeps the browser path when no flag is given', async () => {
     await runSetup([]);
     expect(mockGetCredentials).toHaveBeenCalledWith(false);
+  });
+
+  it('hides Moonshot Subscription from the provider list with --no-browser', async () => {
+    await runSetup(['--no-browser']);
+    const offered = offeredProviderNames();
+    expect(offered).toContain('ai-run-sso');
+    expect(offered).not.toContain('moonshot-subscription');
+  });
+
+  it('still offers Moonshot Subscription in the provider list without the flag', async () => {
+    await runSetup([]);
+    const offered = offeredProviderNames();
+    expect(offered).toContain('ai-run-sso');
+    expect(offered).toContain('moonshot-subscription');
   });
 });

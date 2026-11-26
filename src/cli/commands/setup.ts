@@ -209,7 +209,10 @@ async function runSetupWizard(force?: boolean, headless = false): Promise<void> 
   }
 
   // Step 1: Get all registered providers from ProviderRegistry
-  const registeredProviders = ProviderRegistry.getAllProviders();
+  // Moonshot Subscription signs in through Kimi Code's own browser flow, so it is not offered headless.
+  const registeredProviders = ProviderRegistry.getAllProviders().filter(
+    p => !(headless && p.name === 'moonshot-subscription')
+  );
   const allProviderChoices = getAllProviderChoices(registeredProviders);
 
   const { provider } = await inquirer.prompt([
