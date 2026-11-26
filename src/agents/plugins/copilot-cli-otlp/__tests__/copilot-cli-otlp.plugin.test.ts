@@ -1,3 +1,4 @@
+import { getCopilotSessionStateRoot } from '../../copilot-cli/copilot-cli.paths.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -636,6 +637,7 @@ describe('CopilotCliOtlpPlugin sessionEnd without a session', () => {
     await plugin.processOtlpEvent(hookInput({ sessionId: 'start-early', codemieEventName: 'sessionStart', source: 'new' }), deps);
 
     expect(forwardOtlpEventsToSpool.mock.calls[0][0].map((e) => e.type)).toEqual(['agent.session.start']);
+    expect(readSessionState('start-early').sessionStateRoot).toBe(getCopilotSessionStateRoot());
   });
 
   it('does not record session state for the dropped sessionEnd', async () => {
