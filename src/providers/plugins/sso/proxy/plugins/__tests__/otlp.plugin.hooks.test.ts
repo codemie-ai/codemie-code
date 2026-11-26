@@ -10,7 +10,7 @@ import type { ProxyHTTPClient } from '../../proxy-http-client.js';
 
 const recordStampLossMock = vi.fn().mockResolvedValue(undefined);
 const appendSpoolMock = vi.fn(
-  async (_sessionId: string, _stream: string, _data: string, _projectNames?: string[]) => {}
+  async (_sessionId: string, _stream: string, _data: string, _projectNames?: string[], _options?: { skipIf?: () => Promise<boolean> }) => {}
 );
 vi.mock('../otlp-spool/spool-io.js', () => ({ appendSpool: appendSpoolMock, recordStampLoss: recordStampLossMock }));
 
@@ -254,7 +254,7 @@ describe('OtlpPlugin — deferred Copilot usage scheduling', () => {
     const events = [hookEvent('s1', { type: 'agent.session.end' })];
     await postHooks({ agentName: 'copilot-cli-otlp', hookEvents: events });
     expect(lateSkipMock).toHaveBeenCalledWith('copilot-cli-otlp', 's1', events);
-    expect(appendSpoolMock.mock.calls[0][5]).toBe(guard);
+    expect(appendSpoolMock.mock.calls[0][4]?.skipIf).toBe(guard);
   });
 
   it('does not schedule anything when the batch could not be persisted', async () => {

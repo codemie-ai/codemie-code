@@ -154,8 +154,7 @@ describe('tick: recovered session end reaches the analytics API', () => {
     await tick(); // retried send succeeds; recovery sees the end and the summary: adds nothing
     // The late native sessionEnd: appended the way the hook-ingest handler does, skipped as the run is already ended.
     const late = hook('agent.session.end', 4_900);
-    await appendSpool(SID, 'hooks', JSON.stringify({ agentName: COPILOT_CLI_OTLP_AGENT, hookEvent: JSON.stringify(late) }) + '\n', undefined, undefined,
-      lateSessionEndSkip(COPILOT_CLI_OTLP_AGENT, SID, [late]));
+    await appendSpool(SID, 'hooks', JSON.stringify({ agentName: COPILOT_CLI_OTLP_AGENT, hookEvent: JSON.stringify(late) }) + '\n', undefined, { skipIf: lateSessionEndSkip(COPILOT_CLI_OTLP_AGENT, SID, [late]) });
     await tick();
 
     expect(sent.map((s) => s.status)).toEqual([500, 200, ...sent.slice(2).map((s) => s.status)]);

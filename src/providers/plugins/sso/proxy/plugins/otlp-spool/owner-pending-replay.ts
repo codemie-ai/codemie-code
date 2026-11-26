@@ -129,7 +129,7 @@ async function replayEntry(
   const covered = lifecycle?.skipAppend(entry.agentName, entry.session_id, events);
   let deduplicated = false;
   const skipIf = covered && (async (): Promise<boolean> => (deduplicated = await covered()));
-  const appended = await appendSpool(entry.session_id, 'hooks', lines.join('\n') + '\n', events.flatMap((event) => hookEventProjectNames(event)), entry.first_at, skipIf);
+  const appended = await appendSpool(entry.session_id, 'hooks', lines.join('\n') + '\n', events.flatMap((event) => hookEventProjectNames(event)), { carriedSince: entry.first_at, skipIf });
   if (!appended && !deduplicated) return false; // not the head of the pending range, or too many ranges: stays queued with its original age
   await rename(path, path.replace(/\.json$/, '.done'));
   await unlink(path.replace(/\.json$/, '.done')).catch(() => undefined);

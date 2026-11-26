@@ -79,8 +79,7 @@ async function spool(events: Record<string, unknown>[]): Promise<void> {
 
 /** A hook-ingest append of one native end, guarded the way the daemon's handler guards it. */
 async function appendHook(event: Record<string, unknown>): Promise<boolean> {
-  return appendSpool(SID, 'hooks', JSON.stringify({ agentName: COPILOT_CLI_OTLP_AGENT, hookEvent: JSON.stringify(event) }) + '\n', undefined, undefined,
-    lateSessionEndSkip(COPILOT_CLI_OTLP_AGENT, SID, [event]));
+  return appendSpool(SID, 'hooks', JSON.stringify({ agentName: COPILOT_CLI_OTLP_AGENT, hookEvent: JSON.stringify(event) }) + '\n', undefined, { skipIf: lateSessionEndSkip(COPILOT_CLI_OTLP_AGENT, SID, [event]) });
 }
 
 async function spooled(): Promise<Record<string, unknown>[]> {

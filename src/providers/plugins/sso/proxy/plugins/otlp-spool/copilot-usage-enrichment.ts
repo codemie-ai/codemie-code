@@ -260,6 +260,85 @@ export function lateSessionEndSkip(
   };
 }
 
+type HookRecord = Record<string, unknown>;
+type Shutdown = { timestamp: string; index: number };
+
+function findRunShutdowns(records: HookRecord[], events: CopilotEvent[]) {
+  // A drained spool can be swept while Copilot is idle. Its next hook recreates it without a start.
+  const hasHookStart = Number.isFinite(runStartAt(records, Infinity));
+  const windows = hasHookStart ? records : transcriptStarts(events);
+  const lastStart = runStartAt(windows, Infinity);
+  const spooledRuns = hasHookStart ? undefined : new Set(records.map((record) => runStartAt(windows, timeOf(record))));
+  const shutdowns = new Map<number, Shutdown>();
+  for (const [index, event] of events.entries()) {
+    if (event.type !== 'session.shutdown' || !event.timestamp) continue;
+    const start = runStartAt(windows, Date.parse(event.timestamp));
+    if (Number.isFinite(start) && (!spooledRuns || spooledRuns.has(start))) {
+      shutdowns.set(start, { timestamp: event.timestamp, index });
+    }
+  }
+  return { windows, lastStart, hasHookStart, shutdowns };
+}
+
+interface RecoveryContext {
+  sessionId: string;
+  records: HookRecord[];
+  newestFirst: HookRecord[];
+  template: HookRecord;
+  events: CopilotEvent[];
+  truncated: boolean;
+  windows: HookRecord[];
+  lastStart: number;
+  hasHookStart: boolean;
+}
+
+async function recoverRun(
+  { sessionId, records, newestFirst, template, events, truncated, windows, lastStart, hasHookStart }: RecoveryContext,
+  startMs: number,
+  shutdown: Shutdown
+): Promise<void> {
+  const existing = records.find((r) => r['type'] === SESSION_END_TYPE && runStartAt(windows, timeOf(r)) === startMs);
+  if (existing && records.some((r) => r['type'] === SUMMARY_TYPE && r['is_final'] === true && r['ended_at'] === shutdown.timestamp)) return;
+
+  const endedMs = Date.parse(shutdown.timestamp);
+  const runTemplate = newestFirst.find((r) => timeOf(r) >= startMs && timeOf(r) <= endedMs) ?? template;
+  const end = existing ?? {
+    ...Object.fromEntries(TEMPLATE_FIELDS.filter((k) => runTemplate[k] !== undefined).map((k) => [k, runTemplate[k]])),
+    session_id: sessionId,
+    type: SESSION_END_TYPE,
+    timestamp: shutdown.timestamp,
+    event_id: recoveredEndId(sessionId, shutdown.timestamp),
+  };
+  if (!existing) {
+    const line = JSON.stringify({
+      agentName: COPILOT_CLI_OTLP_AGENT,
+      hookEvent: JSON.stringify(end),
+      ...(startMs < lastStart ? { historicalEnd: true } : {}),
+    }) + '\n';
+    const written = await appendSpool(sessionId, 'hooks', line, undefined, {
+      skipIf: async () => {
+        const current = await readHookRecordsLocked(sessionId);
+        return runEndedOrSuperseded(hasHookStart ? current : [...current, ...windows], startMs, endedMs);
+      },
+    });
+    if (!written) {
+      inspected.delete(sessionId); // A newer start or an end won the race. Re-read the run windows next tick.
+      return;
+    }
+  }
+
+  if (hasHookStart && startMs === lastStart) {
+    scheduleCopilotUsageEnrichment(COPILOT_CLI_OTLP_AGENT, [end]);
+  } else {
+    // Keep the transcript root for late-end matching when a recreated spool has no start.
+    scheduleEnrichment(sessionId, end, async () => {
+      if (await alreadyEnriched(sessionId, shutdown.timestamp)) return 'duplicate';
+      await flushDeferredUsage(sessionId, end, events.slice(0, shutdown.index + 1), { truncated });
+      return 'enriched';
+    });
+  }
+}
+
 /**
  * Recover each settled shutdown in the spool's run windows. A resumed transcript is cumulative:
  * a historical shutdown uses only its prefix and must leave the active run's state intact.
@@ -283,60 +362,11 @@ export async function recoverMissingSessionEnds(
       const newestFirst = [...records].reverse();
 
       const { events, truncated } = await readEvents(sessionId);
-      // A drained spool can be swept while Copilot is idle. Its next hook recreates it without a start.
-      const hasHookStart = Number.isFinite(runStartAt(records, Infinity));
-      const windows = hasHookStart ? records : transcriptStarts(events);
-      const lastStart = runStartAt(windows, Infinity);
-      const spooledRuns = hasHookStart ? undefined : new Set(records.map((record) => runStartAt(windows, timeOf(record))));
-      const shutdowns = new Map<number, { timestamp: string; index: number }>();
-      for (const [index, event] of events.entries()) {
-        if (event.type !== 'session.shutdown' || !event.timestamp) continue;
-        const start = runStartAt(windows, Date.parse(event.timestamp));
-        if (Number.isFinite(start) && (!spooledRuns || spooledRuns.has(start))) {
-          shutdowns.set(start, { timestamp: event.timestamp, index });
-        }
-      }
-
+      const { windows, lastStart, hasHookStart, shutdowns } = findRunShutdowns(records, events);
+      const context = { sessionId, records, newestFirst, template, events, truncated, windows, lastStart, hasHookStart };
       inspected.set(sessionId, signature);
       for (const [startMs, shutdown] of shutdowns) {
-        const existing = records.find((r) => r['type'] === SESSION_END_TYPE && runStartAt(windows, timeOf(r)) === startMs);
-        if (existing && records.some((r) => r['type'] === SUMMARY_TYPE && r['is_final'] === true && r['ended_at'] === shutdown.timestamp)) continue;
-
-        const endedMs = Date.parse(shutdown.timestamp);
-        const runTemplate = newestFirst.find((r) => timeOf(r) >= startMs && timeOf(r) <= endedMs) ?? template;
-        const end = existing ?? {
-          ...Object.fromEntries(TEMPLATE_FIELDS.filter((k) => runTemplate[k] !== undefined).map((k) => [k, runTemplate[k]])),
-          session_id: sessionId,
-          type: SESSION_END_TYPE,
-          timestamp: shutdown.timestamp,
-          event_id: recoveredEndId(sessionId, shutdown.timestamp),
-        };
-        if (!existing) {
-          const line = JSON.stringify({
-            agentName: COPILOT_CLI_OTLP_AGENT,
-            hookEvent: JSON.stringify(end),
-            ...(startMs < lastStart ? { historicalEnd: true } : {}),
-          }) + '\n';
-          const written = await appendSpool(sessionId, 'hooks', line, undefined, undefined, async () => {
-            const current = await readHookRecordsLocked(sessionId);
-            return runEndedOrSuperseded(hasHookStart ? current : [...current, ...windows], startMs, endedMs);
-          });
-          if (!written) {
-            inspected.delete(sessionId); // A newer start or an end won the race. Re-read the run windows next tick.
-            continue;
-          }
-        }
-
-        if (hasHookStart && startMs === lastStart) {
-          scheduleCopilotUsageEnrichment(COPILOT_CLI_OTLP_AGENT, [end]);
-        } else {
-          // Keep the transcript root for late-end matching when a recreated spool has no start.
-          scheduleEnrichment(sessionId, end, async () => {
-            if (await alreadyEnriched(sessionId, shutdown.timestamp)) return 'duplicate';
-            await flushDeferredUsage(sessionId, end, events.slice(0, shutdown.index + 1), { truncated });
-            return 'enriched';
-          });
-        }
+        await recoverRun(context, startMs, shutdown);
       }
     } catch (err) {
       inspected.delete(sessionId);

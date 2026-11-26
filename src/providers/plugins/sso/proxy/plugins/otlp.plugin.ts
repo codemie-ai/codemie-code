@@ -321,8 +321,9 @@ class OtlpInterceptor implements ProxyInterceptor {
     }
 
     try {
-      await appendSpool(sessionId, 'hooks', lines.join('\n') + '\n', projectNames, undefined,
-        this.hookLifecycle?.skipAppend(batch.agentName, sessionId, batch.hookEvents));
+      await appendSpool(sessionId, 'hooks', lines.join('\n') + '\n', projectNames, {
+        skipIf: this.hookLifecycle?.skipAppend(batch.agentName, sessionId, batch.hookEvents),
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn('[otlp-ingest] hooks disk write error', ...sanitizeLogArgs({ sessionId, err: msg }));
