@@ -21,6 +21,7 @@ const h = vi.hoisted(() => ({
   resolveEnvVarMock: vi.fn(),
   getProviderMock: vi.fn(),
   getInstalledAgentsMock: vi.fn(),
+  getManageableAgentsMock: vi.fn(),
   getAllFrameworksMock: vi.fn(),
   detectVCSMock: vi.fn(),
   listWorkflowsMock: vi.fn(),
@@ -70,6 +71,7 @@ vi.mock('@/providers/core/registry.js', async (importOriginal) => {
 vi.mock('@/agents/registry.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/agents/registry.js')>();
   (actual.AgentRegistry as unknown as Record<string, unknown>).getInstalledAgents = h.getInstalledAgentsMock;
+  (actual.AgentRegistry as unknown as Record<string, unknown>).getManageableAgents = h.getManageableAgentsMock;
   return actual;
 });
 
@@ -122,6 +124,7 @@ function fakeJwt(exp?: number): string {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.getManageableAgentsMock.mockReturnValue([]);
 });
 
 afterEach(() => {
@@ -313,6 +316,101 @@ describe('AgentsCheck', () => {
     const result = await new AgentsCheck().run();
     expect(result.details[0].status).toBe('warn');
     expect(result.details[0].message).toContain('installed via npm (deprecated');
+  });
+
+  describe('PATH shadow', () => {
+    // AgentsCheck splits the active path with the host platform's path module, so the fixture must use host separators.
+    const sep = process.platform === 'win32' ? '\\' : '/';
+    const oldDir = process.platform === 'win32' ? 'C:\\old\\bin' : '/old/bin';
+    const activePath = `${oldDir}${sep}claude.cmd`;
+    const shadowed = { status: 'shadowed', active: activePath, managedDir: 'C:\\managed\\bin' };
+    const missingOnPath = { status: 'missing-on-path', managedDir: 'C:\\managed\\bin', shimPath: 'C:\\managed\\bin\\codex.cmd' };
+    const agent = (name: string, verdict: unknown) => ({
+      name,
+      displayName: name,
+      getVersion: async () => '1.0.0',
+      checkPathShadow: vi.fn(async () => verdict),
+    });
+
+    beforeEach(() => {
+      h.getManageableAgentsMock.mockReturnValue([]);
+    });
+
+    it('warns with a put-ahead hint for a shadowed installed agent', async () => {
+      h.getInstalledAgentsMock.mockResolvedValue([agent('claude', shadowed)]);
+      const result = await new AgentsCheck().run();
+      expect(result.success).toBe(true);
+      expect(result.details).toHaveLength(1);
+      expect(result.details[0].status).toBe('warn');
+      expect(result.details[0].message).toContain('claude (1.0.0)');
+      expect(result.details[0].message).toContain(activePath);
+      expect(result.details[0].hint).toBe(`  - Put "C:\\managed\\bin" ahead of "${oldDir}" on your PATH`);
+    });
+
+    it('appends the version warning to a shadowed agent message', async () => {
+      h.getInstalledAgentsMock.mockResolvedValue([
+        {
+          ...agent('claude', shadowed),
+          checkVersionCompatibility: async () => ({ isSupported: false, isBelowMinimum: false, supportedVersion: '2.0.0' }),
+        },
+      ]);
+      const result = await new AgentsCheck().run();
+      expect(result.details[0].status).toBe('warn');
+      expect(result.details[0].message).toContain('CodeMie recommends v2.0.0');
+    });
+
+    it('warns with the add-to-PATH hint for a missing-on-path agent that is not installed', async () => {
+      h.getInstalledAgentsMock.mockResolvedValue([]);
+      h.getManageableAgentsMock.mockReturnValue([agent('codex', missingOnPath)]);
+      const result = await new AgentsCheck().run();
+      const warn = result.details.find((d) => d.status === 'warn');
+      expect(warn?.message).toContain('codex');
+      expect(warn?.hint).toContain('Add "C:\\managed\\bin" to your PATH');
+    });
+
+    it('does not re-check installed agents among the not-installed ones', async () => {
+      const installed = agent('claude', { status: 'clear' });
+      h.getInstalledAgentsMock.mockResolvedValue([installed]);
+      h.getManageableAgentsMock.mockReturnValue([installed]);
+      await new AgentsCheck().run();
+      expect(installed.checkPathShadow).toHaveBeenCalledTimes(1);
+      expect(installed.checkPathShadow).toHaveBeenCalledWith();
+    });
+
+    it.each([['clear'], ['missing'], ['unknown']])('leaves results unchanged for %s', async (status) => {
+      h.getInstalledAgentsMock.mockResolvedValue([agent('claude', { status })]);
+      h.getManageableAgentsMock.mockReturnValue([agent('codex', { status })]);
+      const result = await new AgentsCheck().run();
+      expect(result.details).toEqual([{ status: 'ok', message: 'claude (1.0.0)' }]);
+    });
+
+    it('treats a throwing or hanging check as unknown', async () => {
+      vi.useFakeTimers();
+      try {
+        h.getInstalledAgentsMock.mockResolvedValue([]);
+        h.getManageableAgentsMock.mockReturnValue([
+          { name: 'a', displayName: 'a', checkPathShadow: async () => { throw new Error('x'); } },
+          { name: 'b', displayName: 'b', checkPathShadow: () => new Promise(() => undefined) },
+        ]);
+        const pending = new AgentsCheck().run();
+        await vi.advanceTimersByTimeAsync(5000);
+        const result = await pending;
+        expect(result.details).toEqual([
+          { status: 'info', message: 'No agents installed (CodeMie Code is built-in)' },
+        ]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('runWithItemDisplay reports the same warnings', async () => {
+      h.getInstalledAgentsMock.mockResolvedValue([agent('claude', shadowed)]);
+      h.getManageableAgentsMock.mockReturnValue([agent('codex', missingOnPath)]);
+      const displayed: Array<{ status: string }> = [];
+      const result = await new AgentsCheck().runWithItemDisplay(() => undefined, (d) => displayed.push(d));
+      expect(displayed.map((d) => d.status)).toEqual(['warn', 'warn']);
+      expect(result.details).toHaveLength(2);
+    });
   });
 
   it('runWithItemDisplay emits start + display callbacks per agent', async () => {
