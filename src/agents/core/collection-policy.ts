@@ -2,7 +2,7 @@ import type { CollectionPolicy } from './types.js';
 
 /** Runs every step it is handed as the adapter gave it: the collection of a machine with a CodeMie backend. */
 export class BackendPolicy implements CollectionPolicy {
-  admit(_sessionId: string | undefined, gate: () => Promise<'continue' | 'stop'>): Promise<'continue' | 'stop'> {
+  admit(_sessionId: string | undefined, gate: () => Promise<'continue' | 'stop' | 'retry-after-proxy-start'>): Promise<'continue' | 'stop' | 'retry-after-proxy-start'> {
     return gate();
   }
 

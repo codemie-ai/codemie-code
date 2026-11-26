@@ -7,9 +7,8 @@ import type { SSOCredentials, JWTCredentials } from '../../../../../core/types.j
 import { getPolicyState, type NamespaceId, type PolicyState } from './policy-cache.js';
 import { isStopped, writeStop } from '@/agents/core/evidence/stop-marker.js';
 import { consentHolds } from '@/agents/core/evidence/consent-store.js';
-import { hasScopeEvidence } from '@/agents/core/evidence/session-scope.js';
+import { currentGeneration, hasScopeEvidence } from '@/agents/core/evidence/session-scope.js';
 import { stopIntentPending } from './stop-intent.js';
-import { readClaudeAnalyticsPreferences } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
 import { classifySession, sessionPolicyState, type AnalyticsEndpoint } from './classification.js';
 import { publicationMode, type PublicationMode } from './publication-mode.js';
 import { readStatus } from './session-status.js';
@@ -46,9 +45,9 @@ export async function sendGuard(key: string, record: EvidenceRecord): Promise<bo
       await writeStop(key, 'scope_unproven', record.session_id);
       return false;
     }
-    const prefs = await readClaudeAnalyticsPreferences();
-    if (prefs.kind !== 'ok') return false;
-    if (prefs.value.collectionGeneration !== record.collection_generation) {
+    const generation = await currentGeneration(record);
+    if (generation === undefined) return false;
+    if (generation !== record.collection_generation) {
       await writeStop(key, 'generation_changed', record.session_id);
       return false;
     }

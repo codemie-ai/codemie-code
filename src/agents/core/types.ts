@@ -758,7 +758,7 @@ export enum AgentAdapterType {
  */
 export interface CollectionPolicy {
   /** The per-hook session gate, after the tracked check; `launched` tells whether CodeMie launched the session. */
-  admit(sessionId: string | undefined, gate: () => Promise<'continue' | 'stop'>, launched: () => boolean): Promise<'continue' | 'stop'>;
+  admit(sessionId: string | undefined, gate: () => Promise<'continue' | 'stop' | 'retry-after-proxy-start'>, launched: () => boolean): Promise<'continue' | 'stop' | 'retry-after-proxy-start'>;
   /** The evidence inputs of a hook context; `undefined` stamps nothing. */
   evidenceInputs<T>(build: () => Promise<T>): Promise<T | undefined>;
   /** The sign-in check of an enforced event; `allowed` is the adapter's own "ok" answer. */

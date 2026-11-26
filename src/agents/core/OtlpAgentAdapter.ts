@@ -118,13 +118,14 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     }
 
     // The policy decides whether the adapter's per-hook session transition check (stop markers, folder / consent /
-    // generation changes) runs: the backend policy runs it, the local mode's policy never does. Adapters without one continue.
-    const admitted = await this.policy.admit(
+    // generation changes) runs: the backend policy runs it and answers what it answered, a deferred decision included;
+    // the local mode's policy never does. Adapters without one continue.
+    const transition = await this.policy.admit(
       this.sessionIdOf(hookInput),
       () => this.transitionGate(hookInput),
       () => this.launchedByCodemie(hookInput)
     );
-    if (admitted === 'stop') return;
+    if (transition === 'stop') return;
 
     try {
       try {
@@ -134,6 +135,8 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         const message = error instanceof Error ? error.message : String(error);
         logger.warn(`[${this.name}] ensureOtlpProxy failed (non-blocking): ${message}`);
       }
+
+      if (transition === 'retry-after-proxy-start' && (await this.transitionGate(hookInput)) !== 'continue') return;
 
       const decision = await this.evaluate(hookInput);
       if (decision.decision === 'block') {
@@ -284,8 +287,8 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     throw err;
   }
 
-  /** Runs after the allowlist gate and before the daemon or any spool write. `stop`: nothing is spooled for this hook. */
-  protected async transitionGate(_input: TInput): Promise<'continue' | 'stop'> {
+  /** A deferred decision is checked once after the proxy start attempt and must allow the hook before any spool write. */
+  protected async transitionGate(_input: TInput): Promise<'continue' | 'stop' | 'retry-after-proxy-start'> {
     return 'continue';
   }
 

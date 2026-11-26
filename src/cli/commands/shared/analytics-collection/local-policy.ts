@@ -16,7 +16,7 @@ export class LocalPolicy implements CollectionPolicy {
   /** The adapter's own gate is never run: a stop writes nothing and starts no daemon. */
   async admit(
     sessionId: string | undefined,
-    _gate: () => Promise<'continue' | 'stop'>,
+    _gate: () => Promise<'continue' | 'stop' | 'retry-after-proxy-start'>,
     launched: () => boolean
   ): Promise<'continue' | 'stop'> {
     if (await isSessionExcluded(sessionId)) return 'stop';
