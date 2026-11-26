@@ -1,0 +1,2 @@
+{"ts":"2026-11-23T11:36:18Z","gate_id":"plan.approved","mode":"hitl","verdict":{"decision":"approve","rationale":"User approved plan; use --project unit for vitest in Step 5; commit run artifacts (excl. *.local.*) at handoff like prior commits","follow_ups":[],"confidence":"high","source":"hitl"},"escalated":false}
+{"ts":"2026-11-23T11:45:51Z","gate_id":"code-review.final","mode":"hitl","verdict":{"decision":"approve","rationale":"No findings; user approved","follow_ups":[],"confidence":"high","source":"hitl"},"escalated":false}

@@ -18,6 +18,7 @@ import { credentialFingerprint } from '@/providers/core/credential-owner.js';
 import { isSSOCredentials, type JWTCredentials, type SSOCredentials } from '@/providers/core/types.js';
 import { heldRetentionMs } from './spool-config.js';
 import { appendSpool, recordStampLoss } from './spool-io.js';
+import type { OtlpHookLifecycle } from '../otlp.plugin.js';
 import { hookEventProjectNames } from './session-project.js';
 
 const STALE_TMP_MS = 60 * 60_000;
@@ -72,7 +73,13 @@ async function sessionOf(path: string): Promise<string | undefined> {
 }
 
 /** `true` only when the entry's events are in the spool; `false` leaves it queued (and blocks the session's later entries, keeping order). */
-async function replayEntry(path: string, fp: string, api: string, email: string): Promise<boolean> {
+async function replayEntry(
+  path: string,
+  fp: string,
+  api: string,
+  email: string,
+  lifecycle?: Pick<OtlpHookLifecycle, 'skipAppend'>
+): Promise<boolean> {
   let entry: PendingOwnerEntry;
   try {
     entry = JSON.parse(await readFile(path, 'utf8')) as PendingOwnerEntry;
@@ -118,8 +125,12 @@ async function replayEntry(path: string, fp: string, api: string, email: string)
   // Hook-time facts stay as captured; only identity comes from the verified login (never git/OS/config values).
   const events = entry.events.map((event) => ({ ...event, user_email: email, developer_name: email, identity_source: 'jwt' }));
   const lines = events.map((event) => JSON.stringify({ agentName: entry.agentName, hookEvent: JSON.stringify(event), evidence_v: 1 }));
-  const appended = await appendSpool(entry.session_id, 'hooks', lines.join('\n') + '\n', events.flatMap((event) => hookEventProjectNames(event)), entry.first_at);
-  if (!appended) return false; // not the head of the pending range, or too many ranges: stays queued with its original age
+  // A skipped duplicate is consumed under the spool lock after the scope check. A refused write retries.
+  const covered = lifecycle?.skipAppend(entry.agentName, entry.session_id, events);
+  let deduplicated = false;
+  const skipIf = covered && (async (): Promise<boolean> => (deduplicated = await covered()));
+  const appended = await appendSpool(entry.session_id, 'hooks', lines.join('\n') + '\n', events.flatMap((event) => hookEventProjectNames(event)), { carriedSince: entry.first_at, skipIf });
+  if (!appended && !deduplicated) return false; // not the head of the pending range, or too many ranges: stays queued with its original age
   await rename(path, path.replace(/\.json$/, '.done'));
   await unlink(path.replace(/\.json$/, '.done')).catch(() => undefined);
   return true;
@@ -131,7 +142,8 @@ async function replayEntry(path: string, fp: string, api: string, email: string)
  */
 export async function processPendingOwner(
   credentials: SSOCredentials | JWTCredentials | undefined,
-  now: number = Date.now()
+  now: number = Date.now(),
+  lifecycle?: Pick<OtlpHookLifecycle, 'skipAppend'>
 ): Promise<void> {
   try {
     await sweepPending(now);
@@ -146,7 +158,7 @@ export async function processPendingOwner(
       try {
         const sid = await sessionOf(join(dir, file));
         if (sid && blocked.has(sid)) continue;
-        if (!(await replayEntry(join(dir, file), fp, api, email)) && sid) blocked.add(sid);
+        if (!(await replayEntry(join(dir, file), fp, api, email, lifecycle)) && sid) blocked.add(sid);
       } catch (error) {
         const sid = await sessionOf(join(dir, file));
         if (sid) blocked.add(sid);
