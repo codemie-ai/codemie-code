@@ -219,9 +219,23 @@ async function run(cmd: string, args: string[]): Promise<{ code: number; stdout:
   return exec(cmd, args, { timeout: STEP_TIMEOUT_MS });
 }
 
+/**
+ * Code requirement for a vendor's Developer ID signature: the certificate must
+ * chain to Apple and its leaf must belong to `teamId` (Apple TN3127). Without
+ * it codesign only checks the bundle against its own requirement, so a
+ * self-made certificate carrying the same team string would pass.
+ */
+export function signatureRequirement(teamId: string): string {
+  return `anchor apple generic and certificate leaf[subject.OU] = "${teamId}"`;
+}
+
 /** Intact signature (`--deep --strict` covers nested helpers) from `teamId`. */
-export async function verifyBundle(bundlePath: string, teamId: string): Promise<void> {
-  const verify = await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', bundlePath]);
+export async function verifyBundle(
+  bundlePath: string,
+  teamId: string,
+  requirement: string = signatureRequirement(teamId),
+): Promise<void> {
+  const verify = await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', `-R=${requirement}`, bundlePath]);
   if (verify.code !== 0) {
     throw new Error(`signature check failed: ${verify.stderr || verify.stdout}`);
   }
@@ -249,6 +263,8 @@ export interface InstallClientOptions {
   log?: (line: string) => void;
   /** Download already resolved by the caller (e.g. after asking about its size). */
   download?: ClientDownload;
+  /** Code requirement the bundle must meet. Default: signatureRequirement(spec.teamId). Tests only. */
+  signatureRequirement?: string;
 }
 
 /**
@@ -311,7 +327,7 @@ export async function installClient(spec: ClientSpec, opts: InstallClientOptions
     log(`✓ Downloaded ${spec.label} ${await bundleVersion(src)}`.trimEnd());
 
     try {
-      await verifyBundle(src, spec.teamId);
+      await verifyBundle(src, spec.teamId, opts.signatureRequirement);
     } catch (e) {
       logger.debug('[client-install] verify failed', { app: spec.app, error: String(e) });
       throw fail(`The ${spec.label} download isn't signed by its vendor, so it was not installed.`);

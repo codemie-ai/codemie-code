@@ -18,6 +18,7 @@ import {
   parseClaudeReleases,
   parseTeamIdentifier,
   parseVsCodeLatest,
+  signatureRequirement,
   type ClientSpec,
 } from '../client-install.js';
 
@@ -61,6 +62,10 @@ describe('download sources', () => {
 });
 
 describe('codesign output', () => {
+  it('requires an Apple-issued certificate from the vendor team', () => {
+    expect(signatureRequirement('Q6L2SF6YDW')).toBe('anchor apple generic and certificate leaf[subject.OU] = "Q6L2SF6YDW"');
+  });
+
   it('reads the team identifier', () => {
     expect(parseTeamIdentifier('Identifier=com.microsoft.VSCode\nTeamIdentifier=UBF8T346G9\n')).toBe('UBF8T346G9');
     expect(parseTeamIdentifier('code object is not signed at all')).toBeNull();
@@ -129,6 +134,9 @@ describe.skipIf(!isMac)('installClient (macOS)', () => {
   });
   afterEach(() => ws.cleanup());
 
+  /** The stand-in has no Apple certificate, so the install tests accept it by its identifier. */
+  const STAND_IN = 'identifier "test.codemie.stand-in"';
+
   /** A tiny ad-hoc signed app: a valid sealed signature whose team is "not set". */
   function standIn(dir: string, bundle: string): string {
     const app = join(dir, bundle);
@@ -181,7 +189,7 @@ describe.skipIf(!isMac)('installClient (macOS)', () => {
 
   it.each(['zip', 'dmg'] as const)('installs a %s and reports each step', async (kind) => {
     const lines: string[] = [];
-    const path = await installClient(spec(kind), { destDir: dest, workDir: work, fetchImpl: serving(pack(kind)), log: (l) => lines.push(l) });
+    const path = await installClient(spec(kind), { destDir: dest, workDir: work, signatureRequirement: STAND_IN, fetchImpl: serving(pack(kind)), log: (l) => lines.push(l) });
     expect(path).toBe(join(dest, 'Stand In.app'));
     expect(existsSync(join(path, 'Contents', 'Info.plist'))).toBe(true);
     expect(lines).toEqual([
@@ -193,13 +201,13 @@ describe.skipIf(!isMac)('installClient (macOS)', () => {
   });
 
   it('detaches the disk image when it is done', async () => {
-    await installClient(spec('dmg'), { destDir: dest, workDir: work, fetchImpl: serving(pack('dmg')), log: () => {} });
+    await installClient(spec('dmg'), { destDir: dest, workDir: work, signatureRequirement: STAND_IN, fetchImpl: serving(pack('dmg')), log: () => {} });
     const mounts = execFileSync('/usr/bin/hdiutil', ['info']).toString();
     expect(mounts).not.toContain(join(work, 'mnt'));
   });
 
   it('refuses an app signed by another team and leaves nothing behind', async () => {
-    const err = await installClient(spec('zip', 'UBF8T346G9'), { destDir: dest, workDir: work, fetchImpl: serving(pack('zip')), log: () => {} })
+    const err = await installClient(spec('zip', 'UBF8T346G9'), { destDir: dest, workDir: work, signatureRequirement: STAND_IN, fetchImpl: serving(pack('zip')), log: () => {} })
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ClientInstallError);
     expect((err as ClientInstallError).message).toContain("isn't signed by its vendor");
@@ -207,8 +215,16 @@ describe.skipIf(!isMac)('installClient (macOS)', () => {
     nothingLeft();
   });
 
+  it('refuses a signature no Apple certificate backs, even when the team matches', async () => {
+    const err = await installClient(spec('zip'), { destDir: dest, workDir: work, fetchImpl: serving(pack('zip')), log: () => {} })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ClientInstallError);
+    expect((err as ClientInstallError).message).toContain("isn't signed by its vendor");
+    nothingLeft();
+  });
+
   it('refuses a tampered app even from the right team', async () => {
-    await expect(installClient(spec('dmg'), { destDir: dest, workDir: work, fetchImpl: serving(pack('dmg', true)), log: () => {} }))
+    await expect(installClient(spec('dmg'), { destDir: dest, workDir: work, signatureRequirement: STAND_IN, fetchImpl: serving(pack('dmg', true)), log: () => {} }))
       .rejects.toBeInstanceOf(ClientInstallError);
     nothingLeft();
     expect(execFileSync('/usr/bin/hdiutil', ['info']).toString()).not.toContain(join(work, 'mnt'));
@@ -216,14 +232,14 @@ describe.skipIf(!isMac)('installClient (macOS)', () => {
 
   it('refuses a download that does not match its published checksum', async () => {
     const withSha: ClientSpec = { ...spec('zip'), resolve: async () => ({ url: 'https://example.com/pkg', sha256: '00' }) };
-    await expect(installClient(withSha, { destDir: dest, workDir: work, fetchImpl: serving(pack('zip')), log: () => {} }))
+    await expect(installClient(withSha, { destDir: dest, workDir: work, signatureRequirement: STAND_IN, fetchImpl: serving(pack('zip')), log: () => {} }))
       .rejects.toThrow('published checksum');
     nothingLeft();
   });
 
   it('reports a failed download with the download page', async () => {
     const offline = (async () => { throw new TypeError('fetch failed'); }) as typeof fetch;
-    const err = await installClient(spec('zip'), { destDir: dest, workDir: work, fetchImpl: offline, log: () => {} })
+    const err = await installClient(spec('zip'), { destDir: dest, workDir: work, signatureRequirement: STAND_IN, fetchImpl: offline, log: () => {} })
       .catch((e: unknown) => e);
     expect((err as ClientInstallError).message).toContain("Couldn't download Stand In");
     expect((err as ClientInstallError).downloadPage).toBe('https://example.com/download');
@@ -236,7 +252,7 @@ describe.skipIf(!isMac)('installClient (macOS)', () => {
     execFileSync('/bin/chmod', ['500', locked]);
     const blockedDest = join(locked, 'Applications');
     try {
-      await expect(installClient(spec('zip'), { destDir: blockedDest, workDir: work, fetchImpl: serving(pack('zip')), log: () => {} }))
+      await expect(installClient(spec('zip'), { destDir: blockedDest, workDir: work, signatureRequirement: STAND_IN, fetchImpl: serving(pack('zip')), log: () => {} }))
         .rejects.toThrow('IT policy');
       expect(existsSync(join(blockedDest, 'Stand In.app'))).toBe(false);
       expect(existsSync(work)).toBe(false);
@@ -248,7 +264,7 @@ describe.skipIf(!isMac)('installClient (macOS)', () => {
   it('never overwrites an app that is already installed', async () => {
     mkdirSync(join(dest, 'Stand In.app', 'Contents'), { recursive: true });
     writeFileSync(join(dest, 'Stand In.app', 'Contents', 'mine'), 'keep');
-    await expect(installClient(spec('zip'), { destDir: dest, workDir: work, fetchImpl: serving(pack('zip')), log: () => {} }))
+    await expect(installClient(spec('zip'), { destDir: dest, workDir: work, signatureRequirement: STAND_IN, fetchImpl: serving(pack('zip')), log: () => {} }))
       .rejects.toThrow('already installed');
     expect(readdirSync(join(dest, 'Stand In.app', 'Contents'))).toEqual(['mine']);
   });

@@ -55,7 +55,8 @@ describe.skipIf(process.platform !== 'darwin')('installClient copy step', () => 
     };
 
     const err = await installClient(spec, {
-      destDir: dest, workDir: join(ws.path, 'work'), fetchImpl: (async () => new Response(bytes)) as typeof fetch, log: () => {},
+      // The ad-hoc stand-in has no Apple certificate; accept it by its identifier.
+      destDir: dest, workDir: join(ws.path, 'work'), signatureRequirement: 'identifier "test.codemie.stand-in"', fetchImpl: (async () => new Response(bytes)) as typeof fetch, log: () => {},
     }).catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(ClientInstallError);
