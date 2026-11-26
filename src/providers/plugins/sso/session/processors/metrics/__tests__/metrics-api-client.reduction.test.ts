@@ -197,6 +197,17 @@ describe('MetricsSender prompt reduction', () => {
     expect(posted().attributes.error_messages).toEqual(['REDACTED:ERROR-MESSAGES']);
   });
 
+  it('reduces a metric whose working directory no longer exists when any project opted in', async () => {
+    const gone = join(project, 'moved-away');
+    await sender().sendSessionMetric(toolUsageMetric(), gone);
+    expect(posted().attributes.error_messages).toEqual(['cannot read /home/me/secret.txt']);
+
+    fetchMock.mockClear();
+    writeFileSync(join(home, 'analytics-reduction-projects.json'), JSON.stringify([project]));
+    await sender().sendSessionMetric(toolUsageMetric(), gone);
+    expect(posted().attributes.error_messages).toEqual(['REDACTED:ERROR-MESSAGES']);
+  });
+
   it('reduces when a nested .codemie without the flag sits under a root that has it (CR-002)', async () => {
     setReduction(project, true);
     mkdirSync(join(project, '.git'));

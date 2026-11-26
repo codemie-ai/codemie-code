@@ -88,28 +88,39 @@ function reducePromptUnsafe(raw: string, opts: ReducePromptOptions = {}): string
       parts.push(ref);
     }
   }
+  const rawTokens = raw.split(/\s+/).filter(Boolean);
+  const coversRaw = (kept: string[]): boolean => {
+    const keptTokens = new Set(kept.map((part) => part.toUpperCase()));
+    return rawTokens.every((token) => keptTokens.has(token.toUpperCase()));
+  };
+  // Nothing was removed when every word of the prompt is one of the parts (a ref or the command, repeats aside)
+  // and they all fit: no marker then, whatever order the parts are in.
+  const whole = pack(parts, MAX_REDUCED_PROMPT);
+  if (whole.length > 0 && whole.length === parts.length && coversRaw(whole)) {
+    return whole.join(' ');
+  }
+  // Whatever the prompt held beyond the kept parts is gone: say so, so a reader of analytics knows it was cut.
+  // The parts are packed into what is left beside the marker, so no part is ever cut in the middle.
+  const kept = pack(parts, MAX_REDUCED_PROMPT - PROMPT_CUT_MARKER.length - 1);
+  if (kept.length === 0) {
+    return placeholder('prompt');
+  }
+  return `${kept.join(' ')} ${PROMPT_CUT_MARKER}`;
+}
+
+/** The leading parts that fit in `limit` characters when joined by spaces; a part is kept whole or not at all. */
+function pack(parts: string[], limit: number): string[] {
   const kept: string[] = [];
   let length = 0;
   for (const part of parts) {
     const next = length + (kept.length > 0 ? 1 : 0) + part.length;
-    if (next > MAX_REDUCED_PROMPT) {
+    if (next > limit) {
       break;
     }
     kept.push(part);
     length = next;
   }
-  if (kept.length === 0 && parts.length > 0) {
-    kept.push(parts[0].slice(0, MAX_REDUCED_PROMPT));
-  }
-  if (kept.length === 0) {
-    return placeholder('prompt');
-  }
-  const reduced = kept.join(' ');
-  // Whatever the prompt held beyond the kept parts is gone: say so, so a reader of analytics knows it was cut.
-  if (raw.trim().replace(/\s+/g, ' ') === reduced) {
-    return reduced;
-  }
-  return `${reduced.slice(0, MAX_REDUCED_PROMPT - PROMPT_CUT_MARKER.length - 1)} ${PROMPT_CUT_MARKER}`;
+  return kept;
 }
 
 /** Ticket keys found in a branch name, or `REDACTED:BRANCH`. Never throws: a failure becomes `REDACTED:FAILED`. */

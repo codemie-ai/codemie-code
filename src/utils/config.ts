@@ -1249,7 +1249,7 @@ export class ConfigLoader {
     const configPath = path.join(configDir, 'codemie-cli.config.json');
 
     // This rewrite builds the file from scratch, so carry over the analytics setting an earlier
-    // `codemie setup` saved here (EPMCDME-17748); an unreadable file simply has none to carry.
+    // `codemie setup` saved here (EPMCDME-17748); a missing file has none to carry, an unreadable one stops the rewrite.
     let analytics: MultiProviderConfig['analytics'];
     try {
       const existing = JSON.parse(await fs.readFile(configPath, 'utf-8')) as Record<string, unknown>;
@@ -1259,9 +1259,9 @@ export class ConfigLoader {
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        // Present but unreadable or not JSON: the setting cannot be told, so fail closed like every other reader.
-        logger.warn('[analytics] Project config unreadable while rewriting it; keeping prompt reduction on', { path: configPath });
-        analytics = { promptReduction: true };
+        // Present but unreadable or not JSON: the setting cannot be told, and writing a guess would turn a parse
+        // error into a committed team-wide opt-in or opt-out. Leave the file as it is, like the flag writer does.
+        throw new ConfigurationError(`Config file at ${configPath} is not valid JSON; not overwriting it. Fix or move the file, then retry.`);
       }
     }
 

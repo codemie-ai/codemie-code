@@ -56,3 +56,21 @@ describe('native attributes keep command, skill and agent names (CR-022)', () =>
     expect(out).not.toContain('private text');
   });
 });
+
+describe('native attributes keep the ids the backend joins on', () => {
+  it('keeps prompt, request and tool-use ids, query source, and skill and agent names; still redacts free text', () => {
+    const attr = (key: string, v: string) => ({ key, value: { stringValue: v } });
+    const out = reduceOtlpJsonRecord(JSON.stringify({
+      logRecords: [{ attributes: [
+        attr('prompt.id', 'P-1a2b'), attr('request_id', 'req_01abc'), attr('query_source', 'repl_main_thread'),
+        attr('tool_use_id', 'toolu_01xyz'), attr('skill.name', 'commit'), attr('agent.name', 'Explore'),
+        attr('prompt', 'private text'),
+      ] }],
+    })) as string;
+    for (const kept of ['P-1a2b', 'req_01abc', 'repl_main_thread', 'toolu_01xyz', 'commit', 'Explore']) {
+      expect(out).toContain(kept);
+    }
+    expect(out).not.toContain('REDACTED:PROMPT.ID');
+    expect(out).not.toContain('private text');
+  });
+});

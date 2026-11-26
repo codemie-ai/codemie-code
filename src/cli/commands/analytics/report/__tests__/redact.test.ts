@@ -74,6 +74,34 @@ describe('redactPayloadPerSession (CR-003)', () => {
   });
 });
 
+describe('sessions without a project', () => {
+  it('are not decided by the folder the command runs from', async () => {
+    const { mkdtemp, mkdir, writeFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const home = await mkdtemp(join(tmpdir(), 'reduce-home-'));
+    const cwdOn = await mkdtemp(join(tmpdir(), 'reduce-cwd-on-'));
+    await mkdir(join(cwdOn, '.codemie'), { recursive: true });
+    await writeFile(join(cwdOn, '.codemie', 'codemie-cli.config.json'), JSON.stringify({ analytics: { promptReduction: true } }));
+    const previousHome = process.env.CODEMIE_HOME;
+    const previousCwd = process.cwd();
+    process.env.CODEMIE_HOME = home;
+    process.chdir(cwdOn);
+    try {
+      const { redactPayloadPerSession } = await import('../redact.js');
+      const p = payload();
+      const noProject = { ...p.sessions[0], project: '', branch: 'feature/acme-bank-migration' };
+      // nothing opted in: the cwd's own flag must not reduce a session that has no project
+      const out = await redactPayloadPerSession({ meta: p.meta, sessions: [noProject] }, {});
+      expect(out.sessions[0].branch).toBe('feature/acme-bank-migration');
+    } finally {
+      process.chdir(previousCwd);
+      if (previousHome === undefined) delete process.env.CODEMIE_HOME;
+      else process.env.CODEMIE_HOME = previousHome;
+    }
+  });
+});
+
 describe('report privacy decisions across projects (CR-012, CR-014)', () => {
   async function withHome<T>(optedIn: string[] | undefined, body: () => Promise<T>): Promise<T> {
     const { mkdtemp, writeFile } = await import('node:fs/promises');

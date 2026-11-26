@@ -35,7 +35,8 @@ export const MAX_SNAPSHOT_BYTES = 5_242_880;
 /**
  * Native OTLP attributes (by `KeyValue` name) a reduced session still sends as text (EPMCDME-17748): the envelope names
  * (`session.id`, `event.name`, `event.timestamp`, `service.name`, `service.version`), the identifiers the structural proof
- * and routing need (`session_id`, `codemie_project_name`) and the tool type name. Every other string attribute is replaced
+ * and routing need (`session_id`, `codemie_project_name`), the tool type name, and the opaque ids (`prompt.id`, `request_id`,
+ * `query_source`, `tool_use_id`) the backend pairs native records with transcript requests on. Every other string attribute is replaced
  * by `REDACTED:<NAME>`; numeric and boolean values are kept. `tool_parameters` is a JSON string reduced by its nested list.
  * In Claude Code's native `tool_parameters` the names are `skill_name`, `mcp_server_name` and `mcp_tool_name`.
  */
@@ -45,6 +46,10 @@ export const OTLP_ATTRIBUTE_KEEP_LIST: KeepList = {
     'session_id', 'codemie_project_name', 'tool_name', 'type', 'model',
     // Command, skill and agent type names and MCP names, kept on every other route
     'command_name', 'skill_name', 'agent_type', 'agent_name', 'subagent_type', 'mcp_server_name', 'mcp_tool_name',
+    // Opaque ids and enums Claude Code sends natively; the backend joins requests, prompts and tool spans on them
+    'prompt.id', 'request_id', 'query_source', 'tool_use_id',
+    // Skill and agent type names in their dotted native spelling
+    'skill.name', 'agent.name',
   ]),
   nested: {
     tool_parameters: { keep: new Set(['skill_name', 'mcp_server_name', 'mcp_tool_name']) },

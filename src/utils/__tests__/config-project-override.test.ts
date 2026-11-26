@@ -102,14 +102,13 @@ describe('ConfigLoader - Project-Level Configuration', () => {
       expect(config.analytics).toBeUndefined();
     });
 
-    it('fails closed when the existing project config is unreadable: reduction stays on', async () => {
+    it('does not overwrite an unreadable project config, and writes no setting of its own', async () => {
       const workingDir = path.join(TEST_DIR, 'project');
       await fs.writeFile(LOCAL_CONFIG_PATH, '{ not json');
 
-      await ConfigLoader.initProjectConfig(workingDir);
+      await expect(ConfigLoader.initProjectConfig(workingDir)).rejects.toThrow(/not valid JSON/);
 
-      const config = JSON.parse(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8'));
-      expect(config.analytics).toEqual({ promptReduction: true });
+      expect(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8')).toBe('{ not json');
     });
 
     it('loads a project file that holds only the analytics setting, keeping it', async () => {

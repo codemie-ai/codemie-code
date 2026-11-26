@@ -88,7 +88,9 @@ export async function redactPayloadPerSession(
     if (!options.unreduced) {
       const key = session.project;
       if (!decisions.has(key)) {
-        decisions.set(key, await isReportReductionOn(key || process.cwd()));
+        // A session with no project has no directory to read: the folder `sync` runs from must not decide for it,
+        // so it is reduced when any project opted in.
+        decisions.set(key, key ? await isReportReductionOn(key) : (await isReductionOn({ configDirs: [] })) || (await anyProjectOptedIn()));
       }
       on = decisions.get(key) === true;
     }

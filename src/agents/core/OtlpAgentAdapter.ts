@@ -9,8 +9,8 @@ import { resolveBranchStory } from './story-resolver.js';
 import { stampEvidence, type EvidenceInputs } from './evidence/stamp.js';
 import { frozenProfileOf, type EvidenceRecord } from './evidence/record-store.js';
 import { enqueuePendingOwner } from './evidence/owner-pending.js';
-import { reduceBranch, reducePrompt, reduceRecord } from './analytics-reduction.js';
-import { HOOK_EVENT_KEEP_LIST } from './hook-event-keep-list.js';
+import { reducePrompt } from './analytics-reduction.js';
+import { reduceHookEvent } from './hook-event-keep-list.js';
 import { isReductionOn } from '@/utils/analytics-reduction-setting.js';
 
 export type ForwardDecision<TBlockOutput = Record<string, unknown>> =
@@ -358,14 +358,9 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     return ctx.reduced ? this.reduceEvent(event) : event;
   }
 
-  /** Last step with reduction on: stamp the decision, cut the branch, reduce every field against the hook keep-list. */
+  /** Last step with reduction on: stamp the decision, then reduce the event as every other producer does. */
   private reduceEvent(event: Record<string, unknown>): Record<string, unknown> {
-    const branch = event['git_branch'];
-    const staged: Record<string, unknown> = { ...event, analytics_reduction: true };
-    if (typeof branch === 'string') {
-      staged['git_branch'] = reduceBranch(branch);
-    }
-    return reduceRecord(staged, HOOK_EVENT_KEEP_LIST);
+    return reduceHookEvent({ ...event, analytics_reduction: true });
   }
 
   /**

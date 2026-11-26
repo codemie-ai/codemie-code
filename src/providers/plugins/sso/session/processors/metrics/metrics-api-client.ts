@@ -27,6 +27,7 @@ import type { Session } from '../../../../../../agents/core/session/types.js';
 import type { MCPConfigSummary, ExtensionsScanSummary } from '../../../../../../agents/core/types.js';
 import { logger } from '../../../../../../utils/logger.js';
 import { detectGitBranch } from '../../../../../../utils/processes.js';
+import { existsSync } from 'node:fs';
 import { extractRepository } from '../../../../../../utils/paths.js';
 import { encodeAttributionHeader, rawProjectHeader } from '../../../../../../utils/header-value.js';
 import { reduceBranch, reduceRecord } from '@/agents/core/analytics-reduction.js';
@@ -57,8 +58,9 @@ async function reduceMetric(metric: SessionMetric, workingDirectory?: string): P
     }
   }
   let reduce = await isReductionOn({ configDirs });
-  if (!reduce && !workingDirectory) {
-    // No project to read: reduce when any project opted in, rather than sending that project's session unreduced.
+  if (!reduce && (!workingDirectory || !existsSync(workingDirectory))) {
+    // No project to read (none given, or its directory is gone): reduce when any project opted in, rather than
+    // sending that project's session unreduced.
     const optedIn = await readOptedInProjects();
     reduce = optedIn === 'unreadable' || optedIn.length > 0;
   }
