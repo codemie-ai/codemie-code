@@ -1312,7 +1312,7 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       await run({ cwd, prompt: '/review-pr !456 secret', payload: payload() });
       const [event] = forwarded();
       expect(event).toMatchObject({
-        prompt_body: '/review-pr !456',
+        prompt_body: '/review-pr !456 REDACTED:REST_PROMPT',
         analytics_reduction: true,
         git_branch: 'EPMCDME-17748',
         story_id: 'EPMCDME-17748',

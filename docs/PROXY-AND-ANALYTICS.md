@@ -114,8 +114,8 @@ How individual values are reduced:
 
 | Value | Sent as |
 |---|---|
-| A prompt starting with a command | `/review-pr !456`: the command name plus the ticket and MR references found in the whole prompt |
-| A prompt without a command | the ticket and MR references only, or `REDACTED:PROMPT` when there are none |
+| A prompt starting with a command | `/review-pr !456 REDACTED:REST_PROMPT`: the command name plus the ticket and MR references found in the whole prompt; `REDACTED:REST_PROMPT` is added when other text was removed, and left out when nothing was (`/review-pr !456` typed alone is sent as it is) |
+| A prompt without a command | the ticket and MR references only, followed by `REDACTED:REST_PROMPT` when other text was removed, or `REDACTED:PROMPT` when there are no references |
 | An automatic prompt (hook, task or continuation notice) | its bare marker; the continuation notice becomes `This session is being continued from a previous conversation` |
 | Ticket and MR references | Jira-style keys in either case (`EPMCDME-123`), GitHub `#24` and `org/repo#24`, Azure DevOps `AB#123`, GitLab `!456`, and the path word and number of a request URL (`pull/24`, `merge_requests/77`; also `merge-requests`, `pull-requests`, `pullrequests`, `pullrequest`), and of an issue URL (`issues/31`, `work_items/33`) |
 | The git branch | its ticket keys (`feature/acme-EPMCDME-5` becomes `EPMCDME-5`); `REDACTED:BRANCH` when there are none |

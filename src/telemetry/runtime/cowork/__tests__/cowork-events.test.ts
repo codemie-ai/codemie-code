@@ -304,7 +304,7 @@ describe('Cowork prompt reduction (EPMCDME-17748)', () => {
       { type: 'agent.prompt.submit', timestamp: '2026-11-10T11:00:00.000Z', prompt_body: prompt },
       ENVELOPE, '', { reduced: true }
     );
-    expect(reduced['prompt_body']).toBe('XYZ-5 !42');
+    expect(reduced['prompt_body']).toBe('XYZ-5 !42 REDACTED:REST_PROMPT');
     expect(JSON.stringify(reduced)).not.toContain('ABC-777');
     expect(JSON.stringify(reduced)).not.toContain('acme');
   });

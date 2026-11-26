@@ -92,9 +92,12 @@ describe('reduceRecord', () => {
 describe('reducePrompt', () => {
   const CONT = 'This session is being continued from a previous conversation';
   it.each([
-    ['/review-pr !456 check auth', {}, '/review-pr !456'],
-    ['fix EPMCDME-123 see !456', {}, 'EPMCDME-123 !456'],
-    ['epmcdme-123 and EPMCDME-123', {}, 'epmcdme-123'],
+    ['/review-pr !456 check auth', {}, '/review-pr !456 REDACTED:REST_PROMPT'],
+    ['/review-pr !456', {}, '/review-pr !456'],
+    ['  EPMCDME-5   !42 ', {}, 'EPMCDME-5 !42'],
+    ['/review', {}, '/review'],
+    ['fix EPMCDME-123 see !456', {}, 'EPMCDME-123 !456 REDACTED:REST_PROMPT'],
+    ['epmcdme-123 and EPMCDME-123', {}, 'epmcdme-123 REDACTED:REST_PROMPT'],
     ['hello', {}, 'REDACTED:PROMPT'],
     ['<task-notification><x>secret EPMCDME-1</x>', {}, '<task-notification>'],
     ['<agent-message from=a>hi', {}, '<agent-message'],
@@ -103,13 +106,24 @@ describe('reducePrompt', () => {
     ['#fff', {}, 'REDACTED:PROMPT'],
     ['# Plan', {}, 'REDACTED:PROMPT'],
     ['v1.2.3', {}, 'REDACTED:PROMPT'],
-    ['https://github.com/o/r/pull/24', {}, 'pull/24'],
+    ['https://github.com/o/r/pull/24', {}, 'pull/24 REDACTED:REST_PROMPT'],
     ['/clear', {}, '/clear'],
-    ['/sdlc-factory:sdlc-standard do it for AB#12', {}, '/sdlc-factory:sdlc-standard AB#12'],
-    ['The user asked something', { commandName: 'fleet' }, '/fleet'],
+    ['/sdlc-factory:sdlc-standard do it for AB#12', {}, '/sdlc-factory:sdlc-standard AB#12 REDACTED:REST_PROMPT'],
+    ['The user asked something', { commandName: 'fleet' }, '/fleet REDACTED:REST_PROMPT'],
     ['anything', { autoMarker: '<task-notification>' }, '<task-notification>'],
   ])('reduces %j', (raw, opts, expected) => {
     expect(reducePrompt(raw, opts)).toBe(expected);
+  });
+
+  it('keeps the cut marker inside the 200 character limit', () => {
+    const refs = Array.from({ length: 40 }, (_, i) => `EPMCDME-${1000 + i}`).join(' ');
+    const out = reducePrompt(refs, {});
+    expect(out.length).toBeLessThanOrEqual(200);
+    expect(out.endsWith(' REDACTED:REST_PROMPT')).toBe(true);
+  });
+
+  it('never adds the cut marker to a fully redacted prompt', () => {
+    expect(reducePrompt('hello there', {})).toBe('REDACTED:PROMPT');
   });
 
   it('keeps a ref at the end of a 100 KB prompt, in linear time', () => {
@@ -117,7 +131,7 @@ describe('reducePrompt', () => {
     const start = performance.now();
     const out = reducePrompt(raw, {});
     expect(performance.now() - start).toBeLessThan(50);
-    expect(out).toBe('EPMCDME-9');
+    expect(out).toBe('EPMCDME-9 REDACTED:REST_PROMPT');
   });
 
   it('bounds the output to 200 characters', () => {
@@ -189,10 +203,10 @@ describe('reducePrompt: commands and refs (CR-009, CR-006)', () => {
     expect(reducePrompt('/usr/bin/node run it', { commandName: '' })).toBe('REDACTED:PROMPT');
   });
   it('still derives the command itself when no adapter value is supplied', () => {
-    expect(reducePrompt('/review-pr !456 secret')).toBe('/review-pr !456');
+    expect(reducePrompt('/review-pr !456 secret')).toBe('/review-pr !456 REDACTED:REST_PROMPT');
   });
   it('keeps short tracker prefixes and org/repo refs, not long bare words', () => {
-    expect(reducePrompt('see AB#123 and org/repo#7 and #9', { commandName: '' })).toBe('AB#123 org/repo#7 #9');
+    expect(reducePrompt('see AB#123 and org/repo#7 and #9', { commandName: '' })).toBe('AB#123 org/repo#7 #9 REDACTED:REST_PROMPT');
     expect(reducePrompt('call secretproject#5 now', { commandName: '' })).toBe('REDACTED:PROMPT');
   });
 });

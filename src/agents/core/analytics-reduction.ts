@@ -56,6 +56,9 @@ function reduceBranchUnsafe(branch: string | undefined): string | undefined {
 /** Longest reduced prompt, in characters. */
 const MAX_REDUCED_PROMPT = 200;
 
+/** Appended to a reduced prompt when text was removed, so analytics show the prompt was cut. Not used for `REDACTED:PROMPT`. */
+export const PROMPT_CUT_MARKER = 'REDACTED:REST_PROMPT';
+
 export interface ReducePromptOptions {
   /** Command name (no slash) the adapter already derived; when omitted it is parsed from the prompt. */
   commandName?: string;
@@ -96,9 +99,17 @@ function reducePromptUnsafe(raw: string, opts: ReducePromptOptions = {}): string
     length = next;
   }
   if (kept.length === 0 && parts.length > 0) {
-    return parts[0].slice(0, MAX_REDUCED_PROMPT);
+    kept.push(parts[0].slice(0, MAX_REDUCED_PROMPT));
   }
-  return kept.length > 0 ? kept.join(' ') : placeholder('prompt');
+  if (kept.length === 0) {
+    return placeholder('prompt');
+  }
+  const reduced = kept.join(' ');
+  // Whatever the prompt held beyond the kept parts is gone: say so, so a reader of analytics knows it was cut.
+  if (raw.trim().replace(/\s+/g, ' ') === reduced) {
+    return reduced;
+  }
+  return `${reduced.slice(0, MAX_REDUCED_PROMPT - PROMPT_CUT_MARKER.length - 1)} ${PROMPT_CUT_MARKER}`;
 }
 
 /** Ticket keys found in a branch name, or `REDACTED:BRANCH`. Never throws: a failure becomes `REDACTED:FAILED`. */

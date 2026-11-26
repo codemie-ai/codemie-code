@@ -15,7 +15,7 @@ function payload(): ReportPayload {
 describe('reduceSession and the --redact mode', () => {
   it('reduce mode reduces title and branch and keeps metrics', () => {
     const out = reduceSession(payload().sessions[0]) as unknown as Record<string, unknown>;
-    expect(out.title).toBe('/review-pr !456');
+    expect(out.title).toBe('/review-pr !456 REDACTED:REST_PROMPT');
     expect(out.branch).toBe('EPMCDME-123');
     expect(out.turns).toBe(3);
     expect(out.models).toEqual(['m1']);

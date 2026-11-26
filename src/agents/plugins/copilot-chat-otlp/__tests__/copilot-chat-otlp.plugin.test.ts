@@ -402,7 +402,7 @@ describe('CopilotChatOtlpPlugin.reducePromptBody (CR-007)', () => {
     (new CopilotChatOtlpPlugin() as unknown as { reducePromptBody(e: Record<string, unknown>): string }).reducePromptBody(hookEvent);
 
   it('keeps only ticket and MR refs, never a leading word as a command', () => {
-    expect(reduce({ prompt: '/review EPMCDME-5 and !42 for the acme bank plan' })).toBe('EPMCDME-5 !42');
+    expect(reduce({ prompt: '/review EPMCDME-5 and !42 for the acme bank plan' })).toBe('EPMCDME-5 !42 REDACTED:REST_PROMPT');
     expect(reduce({ prompt: '/tmp is full' })).toBe('REDACTED:PROMPT');
   });
 

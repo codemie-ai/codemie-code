@@ -2005,7 +2005,7 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
 
       const [forwarded] = forwardedEvents();
       expect(forwarded).toMatchObject({
-        prompt_body: '/review-pr !456',
+        prompt_body: '/review-pr !456 REDACTED:REST_PROMPT',
         analytics_reduction: true,
         command_name: 'review-pr',
         prompt: 'REDACTED:PROMPT',
