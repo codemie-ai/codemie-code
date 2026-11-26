@@ -342,12 +342,19 @@ const HASH_REF_RE = /(?<![A-Za-z0-9_/.&#-])(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|[
 /** `!456`, a GitLab merge request. */
 const BANG_REF_RE = /(?<![A-Za-z0-9_!])!\d+(?![A-Za-z0-9_])/g;
 
-/** `/pull/24` (GitHub) and `/merge_requests/24` (GitLab) inside a URL; the number is kept. */
-const MR_URL_RE = /\/(?:pull|merge_requests)\/(\d+)(?![A-Za-z0-9_])/g;
+/**
+ * A pull or merge request inside a URL: `/pull/24` (GitHub), `/merge_requests/24` or `/merge-requests/24` (GitLab),
+ * `/pull-requests/24` (Bitbucket Server), `/pullrequests/24` (Bitbucket Cloud), `/pullrequest/24` (Azure DevOps).
+ * The path word is kept with the number (`pull/24`), so a reduced prompt shows what the number is.
+ */
+const MR_URL_RE = /\/(pull|pulls|merge_requests|merge-requests|pull-requests|pullrequests|pullrequest)\/(\d+)(?![A-Za-z0-9_])/g;
+
+/** An issue inside a URL: `/issues/24` (GitHub, GitLab, Gitea), `/work_items/24` (GitLab). Kept as `issues/24`. */
+const ISSUE_URL_RE = /\/(issues|work_items)\/(\d+)(?![A-Za-z0-9_])/g;
 
 /**
  * Ticket refs as written in raw text: Jira-style keys that pass the `extractTicketMentions` filters,
- * then `#24`, `org/repo#24` and `AB#123`. De-duplicated case-insensitively, first spelling wins,
+ * then `#24`, `org/repo#24`, `AB#123` and the path and number of an issue URL (`issues/24`). De-duplicated case-insensitively, first spelling wins,
  * capped. Linear in the length of `raw`.
  */
 export function findTicketRefs(raw: string): string[] {
@@ -370,12 +377,18 @@ export function findTicketRefs(raw: string): string[] {
       refs.set(key, match[0]);
     }
   }
+  for (const match of raw.matchAll(ISSUE_URL_RE)) {
+    const ref = `${match[1]}/${match[2]}`;
+    if (!refs.has(ref.toUpperCase())) {
+      refs.set(ref.toUpperCase(), ref);
+    }
+  }
   return [...refs.values()].slice(0, MAX_REFS);
 }
 
 /**
- * Merge or pull request refs in raw text: `!456`, `#456`, and the number of a GitHub `/pull/N` or
- * GitLab `/merge_requests/N` URL (`N`). De-duplicated, first spelling wins, capped.
+ * Merge or pull request refs in raw text: `!456`, `#456`, and the path and number of a
+ * request URL (`pull/N`, `merge_requests/N`, see `MR_URL_RE`). De-duplicated, first spelling wins, capped.
  */
 export function findMrRefs(raw: string): string[] {
   if (!raw) {
@@ -396,7 +409,7 @@ export function findMrRefs(raw: string): string[] {
     }
   }
   for (const match of raw.matchAll(MR_URL_RE)) {
-    add(match[1]);
+    add(`${match[1]}/${match[2]}`);
   }
   return [...refs.values()].slice(0, MAX_REFS);
 }

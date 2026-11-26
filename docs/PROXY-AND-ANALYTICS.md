@@ -114,10 +114,10 @@ How individual values are reduced:
 
 | Value | Sent as |
 |---|---|
-| A prompt starting with a command | `/review-pr !456`: the command name plus the ticket and MR numbers found in the whole prompt |
-| A prompt without a command | the ticket and MR numbers only, or `REDACTED:PROMPT` when there are none |
+| A prompt starting with a command | `/review-pr !456`: the command name plus the ticket and MR references found in the whole prompt |
+| A prompt without a command | the ticket and MR references only, or `REDACTED:PROMPT` when there are none |
 | An automatic prompt (hook, task or continuation notice) | its bare marker; the continuation notice becomes `This session is being continued from a previous conversation` |
-| Ticket and MR references | Jira-style keys in either case (`EPMCDME-123`), GitHub `#24` and `org/repo#24`, Azure DevOps `AB#123`, GitLab `!456`, and the number of a `/pull/N` or `/merge_requests/N` URL |
+| Ticket and MR references | Jira-style keys in either case (`EPMCDME-123`), GitHub `#24` and `org/repo#24`, Azure DevOps `AB#123`, GitLab `!456`, and the path word and number of a request URL (`pull/24`, `merge_requests/77`; also `merge-requests`, `pull-requests`, `pullrequests`, `pullrequest`), and of an issue URL (`issues/31`, `work_items/33`) |
 | The git branch | its ticket keys (`feature/acme-EPMCDME-5` becomes `EPMCDME-5`); `REDACTED:BRANCH` when there are none |
 | `main`, `master`, `develop`, `dev`, `qa`, `test`, `testing`, `perf`, `stage`, `staging`, `prod` | sent as they are, when the whole branch name is exactly one of these |
 | The project path | the folder name in the local report |

@@ -103,7 +103,7 @@ describe('reducePrompt', () => {
     ['#fff', {}, 'REDACTED:PROMPT'],
     ['# Plan', {}, 'REDACTED:PROMPT'],
     ['v1.2.3', {}, 'REDACTED:PROMPT'],
-    ['https://github.com/o/r/pull/24', {}, '24'],
+    ['https://github.com/o/r/pull/24', {}, 'pull/24'],
     ['/clear', {}, '/clear'],
     ['/sdlc-factory:sdlc-standard do it for AB#12', {}, '/sdlc-factory:sdlc-standard AB#12'],
     ['The user asked something', { commandName: 'fleet' }, '/fleet'],
