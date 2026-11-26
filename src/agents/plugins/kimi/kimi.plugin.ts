@@ -41,6 +41,7 @@ export const KimiPluginMetadata: AgentMetadata = {
   description: 'Kimi Code CLI - Moonshot AI coding agent',
   npmPackage: '@moonshot-ai/kimi-code',
   cliCommand: 'kimi',
+  pathShadowCheck: false, // native installer, not the npm prefix
   supportedVersion: KIMI_SUPPORTED_VERSION,
   minimumSupportedVersion: KIMI_MINIMUM_SUPPORTED_VERSION,
   installerUrls: KIMI_INSTALLER_URLS,

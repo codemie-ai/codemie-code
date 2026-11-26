@@ -1,0 +1,89 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-16959_sounds-audio-player",
+  "head": "733569b0d8e9d7d13c5e223cffb434cf99e30ffa",
+  "runner": "npm",
+  "started_at": "2026-11-23T11:45:00Z",
+  "completed_at": "2026-11-23T17:06:00Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2000,
+      "command": "npm run license-check",
+      "exit_code": 0,
+      "notes": "first sandboxed attempt failed on npx network (403); rerun unsandboxed passed"
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2000,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3000,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5000,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 164000,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "sandboxed run timed out on local-HTTP tests; unsandboxed 12235 passed"
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 32000,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 0,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "secrets",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 1000,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Script output: 'No staged changes to scan' (self-skip). Recorded PASS per user instruction: commit 733569b0 passed the gitleaks pre-commit hook."
+    },
+    {
+      "id": "ci",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 202000,
+      "command": "npm run ci",
+      "exit_code": 0,
+      "notes": "reported separately; passed"
+    }
+  ],
+  "failures": {}
+}
