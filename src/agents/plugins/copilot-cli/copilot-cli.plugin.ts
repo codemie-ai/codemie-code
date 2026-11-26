@@ -13,6 +13,7 @@ import {
   COPILOT_CLI_AGENT_NAME,
   COPILOT_CLI_CLIENT_TYPE,
   COPILOT_CLI_DISPLAY_NAME,
+  LAUNCH_PROVIDER_BASE_URL_ENV,
   PINNED_NATIVE_SESSION_ENV,
 } from './copilot-cli.constants.js';
 import { getCopilotHome, getCopilotSessionStateRoot, sameDirectory } from './copilot-cli.paths.js';
@@ -173,6 +174,7 @@ function buildCopilotProviderEnv(env: NodeJS.ProcessEnv): Record<string, string>
   const providerType = /^claude/i.test(env.CODEMIE_MODEL) ? 'anthropic' : 'openai';
   const providerEnv: Record<string, string> = {
     COPILOT_PROVIDER_BASE_URL: env.CODEMIE_BASE_URL,
+    [LAUNCH_PROVIDER_BASE_URL_ENV]: env.CODEMIE_BASE_URL,
     COPILOT_PROVIDER_TYPE: providerType,
     COPILOT_MODEL: env.CODEMIE_MODEL,
     COPILOT_PROVIDER_MODEL_ID: env.CODEMIE_MODEL,
