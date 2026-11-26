@@ -27,6 +27,7 @@ import { loadSyncSettings } from './config-store.js';
 import { lookbackText, webhookHost } from './format.js';
 import { readMarker } from './marker.js';
 import { errorMessage, redactSecrets } from './redact.js';
+import { reductionStatusText } from './reduction-status.js';
 import type { TargetId } from './run-sync.js';
 import { createRealSchedulerDeps, createScheduler } from './scheduler/index.js';
 import { gitMarkerPath } from './targets/git-target.js';
@@ -43,6 +44,8 @@ export interface StatusDeps {
    * read) — status never fails over a missing/unreadable log; it just reports "never". */
   readLog(): Promise<string | null>;
   readMarker(target: TargetId, now: Date): Promise<Date | null>;
+  /** The `Prompt reduction:` text (`./reduction-status.ts`); never throws. */
+  reductionStatus(): Promise<string>;
   now(): Date;
   print(line: string): void;
 }
@@ -191,6 +194,7 @@ export async function runStatus(deps: StatusDeps): Promise<number> {
   deps.print(`  Run time:              ${settings.at} local`);
   deps.print(`  Lookback window:       ${lookbackText(settings)}`);
   deps.print(`  Include external:      ${settings.includeExternal}`);
+  deps.print(`  Prompt reduction:      ${await deps.reductionStatus()}`);
 
   if (settings.webhookUrl !== undefined) {
     const lastRun = log === null ? null : parseLastRun(log, 'webhook');
@@ -232,6 +236,7 @@ export function createRealStatusDeps(): StatusDeps {
     query: () => scheduler.query(),
     readLog: readSyncLog,
     readMarker: (target: TargetId, now: Date) => readMarker(now, target === 'git' ? gitMarkerPath() : undefined),
+    reductionStatus: reductionStatusText,
     now: () => new Date(),
     print: (line: string): void => {
       console.log(line);

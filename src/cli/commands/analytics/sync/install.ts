@@ -38,6 +38,7 @@ import {
 import { lookbackText, webhookHost } from './format.js';
 import { EMAIL_REGEX, realIdentityDeps, resolveSyncIdentity } from './identity.js';
 import { errorMessage, redactSecrets } from './redact.js';
+import { reductionStatusText } from './reduction-status.js';
 import { createRealSchedulerDeps, createScheduler, resolveJobCommand } from './scheduler/index.js';
 import type { JobCommand, RegisterResult, Scheduler } from './scheduler/index.js';
 import { createGitRunner, gitHint } from './targets/git-client.js';
@@ -58,6 +59,8 @@ export interface InstallDeps {
    * `SyncIdentityMissingError` when neither resolves. */
   resolveIdentity(): Promise<string>;
   isTTY: boolean;
+  /** The `Prompt reduction:` summary text (`./reduction-status.ts`); never throws. */
+  reductionStatus(): Promise<string>;
   /** Only called when `isTTY` is true and `resolveIdentity()` throws. */
   promptEmail(): Promise<string>;
   saveUserEmail(email: string): Promise<void>;
@@ -79,7 +82,8 @@ function printSummary(
   settings: SyncSettings,
   email: string,
   collectorPresent: boolean,
-  registerResult: RegisterResult
+  registerResult: RegisterResult,
+  reduction: string
 ): void {
   deps.print('Analytics sync installed.');
   deps.print(`  Run time:         ${settings.at} local`);
@@ -98,6 +102,7 @@ function printSummary(
     }
   }
   deps.print(`  Email:            ${email}`);
+  deps.print(`  Prompt reduction: ${reduction}`);
   deps.print('');
   deps.print('Try it now:   codemie analytics sync run');
   deps.print('Check status: codemie analytics sync status');
@@ -313,7 +318,7 @@ export async function runInstall(opts: InstallOptions, deps: InstallDeps): Promi
     return 1;
   }
 
-  printSummary(deps, settings, email, collectorPresent, registerResult);
+  printSummary(deps, settings, email, collectorPresent, registerResult, await deps.reductionStatus());
   return 0;
 }
 
@@ -329,6 +334,7 @@ export function createRealInstallDeps(): InstallDeps {
     restoreSettingsRaw: (raw: string) => restoreSyncSettingsRaw(raw),
     resolveIdentity: () => resolveSyncIdentity(realIdentityDeps),
     isTTY: Boolean(process.stdin.isTTY),
+    reductionStatus: reductionStatusText,
     promptEmail: async (): Promise<string> => {
       const inquirer = (await import('inquirer')).default;
       const { email } = await inquirer.prompt<{ email: string }>([

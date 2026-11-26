@@ -190,6 +190,12 @@ policy, the webhook host (signature masked), the git target, the last run's outc
 the last successful send. "disabled" means the job was removed outside the CLI; run install
 again.
 
+It also shows the prompt reduction setting: on globally, or off globally with the number of
+projects on this machine that turned it on in `codemie setup`. This line is for information
+only. Each run decides per session from that session's project config, so a project whose
+committed `.codemie/codemie-cli.config.json` turns reduction on is reduced even if it isn't
+counted. `sync install` prints the same line in its summary.
+
 ### Send now
 
 ```bash

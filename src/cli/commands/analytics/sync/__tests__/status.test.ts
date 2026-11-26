@@ -38,6 +38,7 @@ function makeDeps(overrides: Partial<StatusDeps> = {}): Harness {
     query: async () => 'enabled',
     readLog: async () => null,
     readMarker: async () => null,
+    reductionStatus: async () => 'off globally',
     now: () => NOW,
     print: (line: string): void => {
       printed.push(line);
