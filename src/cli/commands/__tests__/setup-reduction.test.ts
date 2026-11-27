@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import path from 'path';
 
 const prompt = vi.fn();
 vi.mock('inquirer', () => ({ default: { prompt } }));
@@ -45,7 +46,7 @@ describe('runAnalyticsReductionStep', () => {
     await runAnalyticsReductionStep();
     expect(writeProjectReductionFlag).toHaveBeenCalledTimes(1);
     const dir = writeProjectReductionFlag.mock.calls[0][0] as string;
-    expect(dir.startsWith('/')).toBe(true);
+    expect(path.isAbsolute(dir)).toBe(true);
     expect(addOptedInProject).toHaveBeenCalledWith(dir);
     expect(writeGlobalReductionFlag).not.toHaveBeenCalled();
   });

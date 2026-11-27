@@ -224,7 +224,8 @@ export class AnalyticsFormatter {
     // Files
     if (session.files.length > 0) {
       console.log(chalk.yellow(`\n      Files Changed (${session.files.length}):`));
-      for (const file of session.files.slice(0, 10)) {
+      // Reduced: file names are dropped (AC10); only the count above is shown.
+      for (const file of this.reduced ? [] : session.files.slice(0, 10)) {
         const filename = file.filePath.split('/').pop() || file.filePath;
         console.log(chalk.gray(`        ${filename}`));
         console.log(chalk.gray(`          Operations: ${file.operationCount}`));
@@ -232,7 +233,7 @@ export class AnalyticsFormatter {
         console.log(chalk.gray(`          Lines Removed: ${file.linesRemoved}`));
         console.log(chalk.gray(`          Net Changed: ${file.netLinesChanged}`));
       }
-      if (session.files.length > 10) {
+      if (!this.reduced && session.files.length > 10) {
         console.log(chalk.gray(`        ... and ${session.files.length - 10} more`));
       }
     }

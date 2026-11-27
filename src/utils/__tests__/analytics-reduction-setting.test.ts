@@ -52,14 +52,23 @@ describe('analytics reduction setting', () => {
       expect(await readReductionFlag(f)).toBe('off');
     });
 
-    it('is on only for a strict true', async () => {
+    it('is on only for a strict true, off for false or a missing key', async () => {
       const { readReductionFlag } = await import('../analytics-reduction-setting.js');
       const f = path.join(project, CONFIG);
       await put(f, '{"analytics":{"promptReduction":true}}');
       expect(await readReductionFlag(f)).toBe('on');
-      for (const v of ['"true"', '1', 'false', 'null']) {
-        await put(f, `{"analytics":{"promptReduction":${v}}}`);
+      for (const body of ['{"analytics":{"promptReduction":false}}', '{"analytics":{}}', '{}']) {
+        await put(f, body);
         expect(await readReductionFlag(f)).toBe('off');
+      }
+    });
+
+    it('treats a malformed setting (non-boolean flag, non-object analytics) as unreadable, so it fails closed', async () => {
+      const { readReductionFlag } = await import('../analytics-reduction-setting.js');
+      const f = path.join(project, CONFIG);
+      for (const body of ['{"analytics":{"promptReduction":"true"}}', '{"analytics":{"promptReduction":1}}', '{"analytics":{"promptReduction":null}}', '{"analytics":"on"}', '{"analytics":[]}']) {
+        await put(f, body);
+        expect(await readReductionFlag(f)).toBe('unreadable');
       }
     });
 

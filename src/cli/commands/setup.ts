@@ -614,7 +614,7 @@ async function turnOffReduction(ctx: ReductionContext, progress: ReductionProgre
     await removeOptedInProject(ctx.projectDir);
     console.log(chalk.green(`✓ Turned off for ${ctx.projectName}`));
     console.log(chalk.dim('  Saved in .codemie/codemie-cli.config.json'));
-  } else if (ctx.projectState === 'unreadable' && !ctx.projectIsGlobal && !ctx.globalOn) {
+  } else if (ctx.projectState === 'unreadable' && !ctx.projectIsGlobal) {
     // An unreadable file is treated as on by every reader, so it is not "already off".
     console.log(chalk.yellow(`! The project config (${ctx.projectConfig}) is not valid JSON, so prompts stay hidden.`));
     console.log(chalk.yellow('  Fix or move the file, then run this step again to turn reduction off.'));

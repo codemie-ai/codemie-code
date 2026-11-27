@@ -329,7 +329,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
    */
   protected reducePromptBody(hookEvent: Record<string, unknown>): string {
     const prompt = hookEvent['prompt'];
-    if (typeof prompt !== 'string') {
+    if (typeof prompt !== 'string' || prompt === '') {
       return '';
     }
     const command = hookEvent['command_name'];

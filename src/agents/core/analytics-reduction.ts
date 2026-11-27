@@ -34,8 +34,8 @@ export const SHARED_BRANCH_NAMES: ReadonlySet<string> = new Set([
  * branch name (as written, de-duplicated, space-joined), else `REDACTED:BRANCH`.
  */
 function reduceBranchUnsafe(branch: string | undefined): string | undefined {
-  if (branch === undefined) {
-    return undefined;
+  if (branch === undefined || branch === '') {
+    return branch;
   }
   if (SHARED_BRANCH_NAMES.has(branch.trim().toLowerCase())) {
     return branch;

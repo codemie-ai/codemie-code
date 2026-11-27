@@ -5,6 +5,7 @@
  */
 
 import path from 'node:path';
+import { realpathSync } from 'node:fs';
 import { boundedText, maskAndBoundFields, TEXT_FIELD_LIMITS } from '@/agents/core/otlp-field-limits.js';
 import { maskSecretsDeep } from '@/utils/security.js';
 import { reduceBranch, reducePrompt, reduceRecord } from '@/agents/core/analytics-reduction.js';
@@ -316,10 +317,25 @@ function subagentEvent(type: string, sessionId: string, subagent: CoworkSubagent
   };
 }
 
-/** True when `dir` is `root` or inside it (separator boundary, so `/a/b-two` is not inside `/a/b`). */
-function isWithin(dir: string, root: string): boolean {
+function isWithinLexical(dir: string, root: string): boolean {
   const rel = path.relative(path.resolve(root), path.resolve(dir));
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
+}
+
+function realOrSelf(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
+/**
+ * True when `dir` is `root` or inside it (separator boundary, so `/a/b-two` is not inside `/a/b`, and a child named
+ * `..cache` is inside). Compared as written and by real path, so a symlink or macOS `/var` vs `/private/var` still matches.
+ */
+function isWithin(dir: string, root: string): boolean {
+  return isWithinLexical(dir, root) || isWithinLexical(realOrSelf(dir), realOrSelf(root));
 }
 
 /**

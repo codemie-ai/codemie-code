@@ -46,7 +46,13 @@ export async function readReductionFlag(configFile: string): Promise<ReductionRe
   if (parsed.kind === 'missing') return 'off';
   if (parsed.kind === 'unreadable') return 'unreadable';
   const analytics = parsed.value['analytics'];
-  return isRecord(analytics) && analytics['promptReduction'] === true ? 'on' : 'off';
+  if (analytics === undefined) return 'off';
+  // A malformed setting (analytics not an object, promptReduction not a boolean) fails closed like an unreadable file.
+  if (!isRecord(analytics)) return 'unreadable';
+  const flag = analytics['promptReduction'];
+  if (flag === undefined) return 'off';
+  if (typeof flag !== 'boolean') return 'unreadable';
+  return flag ? 'on' : 'off';
 }
 
 function projectConfigFile(configDir: string): string {

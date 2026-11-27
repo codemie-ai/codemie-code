@@ -784,17 +784,24 @@ export class ConfigLoader {
       return rawConfig;
     }
 
+    // The analytics setting (EPMCDME-17748) must survive a rewrite of the global file, so it is carried into every result.
+    const { analytics, ...legacyFields } = rawConfig as Record<string, unknown>;
+    const analyticsBlock = typeof analytics === 'object' && analytics !== null && !Array.isArray(analytics)
+      ? { analytics: analytics as MultiProviderConfig['analytics'] }
+      : {};
+
     // Legacy format - migrate in-memory only; caller decides whether to persist
     if (isLegacyConfig(rawConfig)) {
       const defaultProfile: ProviderProfile = {
         name: 'default',
-        ...rawConfig
+        ...(legacyFields as Partial<ProviderProfile>)
       };
 
       return {
         version: 2,
         activeProfile: 'default',
-        profiles: { default: defaultProfile }
+        profiles: { default: defaultProfile },
+        ...analyticsBlock
       };
     }
 
@@ -802,7 +809,8 @@ export class ConfigLoader {
     return {
       version: 2,
       activeProfile: 'default',
-      profiles: {}
+      profiles: {},
+      ...analyticsBlock
     };
   }
 
@@ -817,7 +825,8 @@ export class ConfigLoader {
     // A file written by `codemie setup` that holds only the analytics setting (EPMCDME-17748) has no
     // profiles: read it as an empty config that keeps its `analytics` block.
     const { analytics, ...rest } = rawConfig as Record<string, unknown>;
-    if (Object.keys(rest).length === 0) {
+    // `version` alone beside `analytics` is what the flag writer produces from a file that held only `version`.
+    if (Object.keys(rest).every((key) => key === 'version')) {
       return {
         version: 2,
         activeProfile: 'default',

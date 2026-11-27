@@ -88,8 +88,10 @@ function loadEventKey(): Buffer {
     memoizedKey = { path, key };
     return key;
   } catch (error) {
-    logger.debug(`[event-id] analytics event key unavailable (${errorName(error)}); using a per-process key`);
-    fallbackKey ??= randomBytes(KEY_BYTES);
+    if (!fallbackKey) {
+      logger.warn(`[event-id] analytics event key unavailable (${errorName(error)}); using a per-process key, so event ids of a reduced session are not stable across processes and backend dedup may miss resent events`);
+      fallbackKey = randomBytes(KEY_BYTES);
+    }
     return fallbackKey;
   }
 }
