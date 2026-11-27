@@ -1,0 +1,61 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.final",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "User approved; 0 findings, compact, confidence low"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "User approved; 0 findings, compact, confidence low"
+    }
+  ],
+  "reviewed_head": "476bd1feaaf42687567a9dd21682cbf4db6a2926",
+  "rounds": [
+    "final"
+  ],
+  "rationale": "Only the edge-case lens ran (compact profile, no spec), so confidence is low; tests were not run. 3 candidates dismissed after reading the code: valid pinned paths are never rewritten (resolveHookCommand only rewrites shadowed or missing paths), the concurrent-write race needs a stale path plus a millisecond-window collision, and BOM settings is a rare input matching existing readSettingsFile behavior.",
+  "confidence": "low",
+  "check_confidence": null,
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 0,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "na",
+      "notes": "Standards audit not requested by profile."
+    },
+    {
+      "kind": "code-quality",
+      "status": "na",
+      "notes": "Standards audit not requested by profile."
+    },
+    {
+      "kind": "security",
+      "status": "na",
+      "notes": "Standards audit not requested by profile."
+    }
+  ],
+  "final_round": {
+    "decision": "approve",
+    "rationale": "Only the edge-case lens ran (compact profile, no spec), so confidence is low; tests were not run. 3 candidates dismissed after reading the code: valid pinned paths are never rewritten (resolveHookCommand only rewrites shadowed or missing paths), the concurrent-write race needs a stale path plus a millisecond-window collision, and BOM settings is a rare input matching existing readSettingsFile behavior.",
+    "confidence": "low",
+    "risk_flags": []
+  }
+}

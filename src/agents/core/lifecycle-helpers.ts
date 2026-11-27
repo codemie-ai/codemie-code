@@ -200,19 +200,21 @@ export async function executeBeforeRun(
  * @param agentName - Agent name (for provider hook resolution)
  * @param args - CLI arguments
  * @param config - Agent configuration
+ * @param env - The env the agent child is spawned with (optional)
  * @returns Enriched arguments
  */
 export async function executeEnrichArgs(
   lifecycle: AgentLifecycle | undefined,
   agentName: string,
   args: string[],
-  config: AgentConfig
+  config: AgentConfig,
+  env?: NodeJS.ProcessEnv
 ): Promise<string[]> {
   const provider = config.provider;
   const hook = await resolveHook(lifecycle, 'enrichArgs', provider, agentName);
 
   if (hook) {
-    return hook(args, config);
+    return hook(args, config, env);
   }
 
   return args;

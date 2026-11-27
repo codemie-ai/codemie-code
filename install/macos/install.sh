@@ -25,6 +25,23 @@ user_npmrc_prefix() {
   sed -n -E 's/^[[:space:]]*prefix[[:space:]]*=[[:space:]]*"?([^"]*)"?[[:space:]]*$/\1/p' "$user_config" | tail -n 1
 }
 
+# Prefix of the codemie the shell resolves today, or nothing when codemie is absent or not an npm install.
+# npm lays a global package out as <prefix>/bin/codemie next to <prefix>/lib/node_modules/@codemieai/code.
+existing_codemie_prefix() {
+  local bin candidate
+  bin="$(command -v codemie 2>/dev/null || true)"
+  [ -n "$bin" ] || return 0
+  candidate="$(cd "$(dirname "$bin")/.." 2>/dev/null && pwd -P)" || return 0
+  if [ -d "$candidate/lib/node_modules/@codemieai/code" ]; then
+    echo "$candidate"
+  fi
+}
+
+# Distinct codemie executables on PATH (a directory listed twice is one copy).
+codemie_copies() {
+  which -a codemie 2>/dev/null | awk '!seen[$0]++' || true
+}
+
 node_major() {
   local version
   version="$(node --version 2>/dev/null || true)"
@@ -80,9 +97,17 @@ if [ "$(user_npmrc_prefix)" = "$LEGACY_PREFIX" ]; then
   echo "Revert: npm config set prefix \"$LEGACY_PREFIX\" --location user"
 fi
 
+EXISTING_PREFIX="$(existing_codemie_prefix)"
+if [ -n "$EXISTING_PREFIX" ]; then
+  status "Existing install" "found in $EXISTING_PREFIX"
+fi
+
 if [ "$INSTALL_MODE" = "auto" ]; then
   NPM_PREFIX="$(npm config get prefix)"
-  if [ -w "$NPM_PREFIX" ]; then
+  if [ -n "$EXISTING_PREFIX" ] && [ -w "$EXISTING_PREFIX/lib/node_modules" ]; then
+    # Update the copy the shell already runs instead of creating a second one.
+    INSTALL_MODE="existing-prefix"
+  elif [ -w "$NPM_PREFIX" ]; then
     INSTALL_MODE="npm-global"
   else
     INSTALL_MODE="user-prefix"
@@ -123,6 +148,9 @@ INSTALL_PREFIX=""
 if [ "$INSTALL_MODE" = "user-prefix" ]; then
   INSTALL_PREFIX="$USER_PREFIX"
   INSTALL_ARGS+=(--prefix "$INSTALL_PREFIX")
+elif [ "$INSTALL_MODE" = "existing-prefix" ]; then
+  INSTALL_PREFIX="$EXISTING_PREFIX"
+  INSTALL_ARGS+=(--prefix "$INSTALL_PREFIX")
 fi
 
 if ! npm "${INSTALL_ARGS[@]}"; then
@@ -131,6 +159,13 @@ if ! npm "${INSTALL_ARGS[@]}"; then
 fi
 
 status "CodeMie" "installed $RESOLVED_PACKAGE_VERSION"
+
+COPIES="$(codemie_copies)"
+if [ -n "$COPIES" ] && [ "$(printf '%s\n' "$COPIES" | wc -l | tr -d ' ')" -gt 1 ]; then
+  echo "Warning: more than one codemie install is on your PATH (the first one runs):" >&2
+  printf '  %s\n' $COPIES >&2
+  echo "Keep one and remove the others: npm uninstall -g $PACKAGE_NAME --prefix <prefix of the copy to remove>" >&2
+fi
 
 if [ "$LEGACY_OVERRIDE_DETECTED" = "1" ] && [ "$INSTALL_PREFIX" != "$LEGACY_PREFIX" ]; then
   echo "Reinstall stranded packages, for example: npm i -g @anthropic-ai/claude-code@latest"

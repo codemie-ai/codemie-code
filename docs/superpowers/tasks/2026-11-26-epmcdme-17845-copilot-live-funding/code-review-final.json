@@ -1,0 +1,50 @@
+{
+  "decision": "request-changes",
+  "rationale": "Edge-case lens and standards ran; acceptance skipped (no spec), so confidence is low. One blocking commit-format partial (ticket key in both commit subjects); 2 advisory edge findings with reachability unconfirmed (nested-native launch-endpoint inheritance, pin id source); 0 deferred, 0 dismissed.",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    { "kind": "commit-format", "status": "partial", "notes": "2 subjects use allowed types (fix, refactor), allowed scope agents and are under 100 chars; both embed the ticket key EPMCDME-17845 in the subject, which git-workflow.md Anti-Patterns says to put in the body footer instead" },
+    { "kind": "code-quality", "status": "pass", "notes": "7 changed files; optional env param added with typed signatures, .js/@ alias imports, explicit return types, why-comments, no console.log or any introduced; executeEnrichArgs reaches 5 params, within the 4-5 guideline" },
+    { "kind": "security", "status": "pass", "notes": "new CODEMIE_COPILOT_LAUNCH_BASE_URL env carries a non-secret endpoint only, no logging added, no attribution header or injection path touched; spawnEnv mutation is limited to the pin env var" }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "evidence",
+      "severity": "major",
+      "triage": "patch",
+      "file": "unknown",
+      "title": "Ticket key in commit subjects",
+      "problem": "Commits 346240c8 and 3229d0a1 put EPMCDME-17845 in the subject; git-workflow.md Anti-Patterns says a ticket key in the subject is to be avoided when scope conveys context.",
+      "impact": "Documented commit-format convention is not fully met (standards partial); blocks per the standards rule, though the squash PR title may carry the ticket.",
+      "recommendation": "move the ticket reference to the commit body footer, or rely on the squash PR title, which carries the ticket"
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.evidence.ts",
+      "line": 50,
+      "title": "Inherited launch endpoint may misclassify nested native",
+      "problem": "A native copilot hook inheriting CODEMIE_COPILOT_LAUNCH_BASE_URL from a managed parent shell, with COPILOT_PROVIDER_BASE_URL absent, falls back to the launcher endpoint and can look CodeMie-routed.",
+      "impact": "Narrow trigger (native Copilot nested inside a managed session); a new funding claim also requires a fresh start whose id matches the pin, which narrows it further. Reachability unconfirmed.",
+      "recommendation": "only fall back when the hook's session id matches the pinned launch session, or scrub LAUNCH_PROVIDER_BASE_URL_ENV from nested spawns"
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/agents/plugins/copilot-cli/copilot-cli.plugin.ts",
+      "line": 341,
+      "title": "Pin id read from process.env, not spawnEnv",
+      "problem": "enrichArgs reads CODEMIE_SESSION_ID from process.env but writes the pin to both process.env and spawnEnv.",
+      "impact": "Only differs if the two envs carry different CODEMIE_SESSION_ID; spawn env is built from process.env so normally identical. Reachability unconfirmed.",
+      "recommendation": "const codemieSessionId = (spawnEnv ?? process.env).CODEMIE_SESSION_ID;"
+    }
+  ],
+  "deferred": []
+}

@@ -90,6 +90,65 @@ describe('forwardOtlpEventsToSpool', () => {
     await expect(forwardOtlpEventsToSpool([{ type: 'x' }], 'claude-code-otlp')).resolves.toBe(false);
   });
 
+  it('EPMCDME-17854: flags a batch as undelivered only when no daemon state or a refused connection proves nothing was sent (a reset, 5xx or timeout may follow a spool)', async () => {
+    const flag = () => ({ value: false });
+    const noState = flag();
+    readStateMock.mockResolvedValueOnce(null);
+    await forwardOtlpEventsToSpool([{ type: 'x' }], 'a', { undelivered: noState });
+    const refused = flag();
+    fetchMock.mockRejectedValueOnce(Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('connect'), { code: 'ECONNREFUSED' }) }));
+    await forwardOtlpEventsToSpool([{ type: 'x' }], 'a', { undelivered: refused });
+    const reset = flag();
+    fetchMock.mockRejectedValueOnce(Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('read'), { code: 'ECONNRESET' }) }));
+    await forwardOtlpEventsToSpool([{ type: 'x' }], 'a', { undelivered: reset });
+    const rejected = flag();
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 500 }));
+    await forwardOtlpEventsToSpool([{ type: 'x' }], 'a', { undelivered: rejected });
+    const aborted = flag();
+    fetchMock.mockRejectedValueOnce(new DOMException('Aborted', 'AbortError'));
+    await forwardOtlpEventsToSpool([{ type: 'x' }], 'a', { undelivered: aborted });
+
+    expect([noState.value, refused.value, reset.value, rejected.value, aborted.value]).toEqual([true, true, false, false, false]);
+  });
+
+  it('EPMCDME-17854: a 401 (gateway key, or a daemon awaiting its login) is answered before anything is spooled, so the daemon did not take the batch', async () => {
+    const rejected = { value: false };
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 401 }));
+    await expect(forwardOtlpEventsToSpool([{ type: 'x' }], 'a', { undelivered: rejected })).resolves.toBe(false);
+    expect(rejected.value).toBe(true);
+  });
+
+  it('EPMCDME-17854: refusals of every address of a multi-address host count as refused; a mixed outcome does not', async () => {
+    const refusedAt = (code: string) => Object.assign(new Error('connect'), { code });
+    const aggregate = (errors: Error[], code?: string) => Object.assign(new AggregateError(errors, 'all failed'), code ? { code } : {});
+    const run = async (cause: Error): Promise<boolean> => {
+      const flag = { value: false };
+      fetchMock.mockRejectedValueOnce(Object.assign(new TypeError('fetch failed'), { cause }));
+      await forwardOtlpEventsToSpool([{ type: 'x' }], 'a', { undelivered: flag });
+      return flag.value;
+    };
+    expect(await run(aggregate([refusedAt('ECONNREFUSED'), refusedAt('ECONNREFUSED')], 'ECONNREFUSED'))).toBe(true); // Node 24 shape
+    expect(await run(aggregate([refusedAt('ECONNREFUSED'), refusedAt('ECONNREFUSED')]))).toBe(true); // code only on the members
+    expect(await run(aggregate([refusedAt('ECONNREFUSED'), refusedAt('ETIMEDOUT')]))).toBe(false);
+  });
+
+  it('EPMCDME-17854: the error real fetch raises for a closed IPv4 loopback port is recognised as refused', async () => {
+    // Only the literal IPv4 address: how `localhost` resolves (IPv6 first, several addresses) depends on the host, and that
+    // multi-address shape is covered deterministically by the AggregateError cases above.
+    const { createServer } = await import('node:net');
+    const port = await new Promise<number>((resolve) => {
+      const server = createServer().listen(0, '127.0.0.1', () => {
+        const { port: free } = server.address() as { port: number };
+        server.close(() => resolve(free)); // closed again: nothing listens
+      });
+    });
+    vi.unstubAllGlobals(); // the real fetch
+    readStateMock.mockResolvedValueOnce({ url: `http://127.0.0.1:${port}`, gatewayKey: 'gw-key' });
+    const flag = { value: false };
+    await expect(forwardOtlpEventsToSpool([{ type: 'x' }], 'a', { undelivered: flag })).resolves.toBe(false);
+    expect(flag.value).toBe(true);
+  });
+
   it('aborts and returns false after the fixed 3s timeout', async () => {
     vi.useFakeTimers();
     fetchMock.mockImplementation((_url: string, init: RequestInit) => {

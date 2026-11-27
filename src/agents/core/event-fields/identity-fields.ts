@@ -11,6 +11,7 @@ import { pinProjectName, readPinnedProjectName } from '../session-project-pin.js
 import type { EvidenceRecord } from '../evidence/record-store.js';
 import { launchMode } from '../evidence/routing.js';
 import type { CodeMieConfigOptions } from '@/env/types.js';
+import type { SSOCredentials } from '@/providers/core/types.js';
 import {
   resolveCodemieCliEmail,
   resolveEmailFromCredentials,
@@ -44,10 +45,12 @@ export interface IdentityCandidateFields {
 export async function resolveIdentityFields(
   { cwd, sessionId }: OtlpHookContext,
   record?: EvidenceRecord,
-  policy: ProjectPolicy = {}
+  policy: ProjectPolicy = {},
+  /** The login the session was stamped with: used as is, so the events and the record name the same owner. */
+  stampedCredentials?: SSOCredentials
 ): Promise<IdentityFields> {
   const [identityResult, projectName, version] = await Promise.all([
-    resolveIdentityTier(cwd),
+    resolveIdentityTier(cwd, stampedCredentials),
     resolveProjectName(cwd, sessionId, record, policy),
     getCurrentCliVersion().catch(() => null),
   ]);
@@ -59,10 +62,11 @@ export async function resolveIdentityFields(
 }
 
 async function resolveIdentityTier(
-  cwd: string
+  cwd: string,
+  stampedCredentials?: SSOCredentials
 ): Promise<Pick<IdentityFields, 'user_email' | 'developer_name' | 'identity_source'>> {
   try {
-    const credentials = await resolveHookCredentials();
+    const credentials = stampedCredentials ?? (await resolveHookCredentials());
     const identity = await resolveIdentity(credentials, cwd);
     return {
       user_email: resolveEmailFromCredentials(credentials),

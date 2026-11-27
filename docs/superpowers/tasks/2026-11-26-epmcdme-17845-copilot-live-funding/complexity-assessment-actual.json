@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "mode": "actual",
+  "ticket": "EPMCDME-17845",
+  "base": "d2b18221",
+  "head_reviewed": "3229d0a1",
+  "note": "Scored against the frozen diff d2b18221..3229d0a1 (7 files, +133/-8; 112 added lines are one new regression test).",
+  "dimensions": {
+    "component_scope": {
+      "score": 4, "label": "L",
+      "evidence": "Shared agent core touched (BaseAgentAdapter, lifecycle-helpers, types: optional env arg on enrichArgs/executeEnrichArgs) plus the copilot-cli launcher and the copilot-cli-otlp route-proof. Core utility bump M to L; other agents and callers unchanged."
+    },
+    "requirements_clarity": {
+      "score": 2, "label": "S",
+      "evidence": "Two well-defined launch-to-hook gaps with a clear fix for each; minor details only."
+    },
+    "technical_risk": {
+      "score": 3, "label": "M",
+      "evidence": "Billing-attribution path, but the change is narrow: env propagation and a fallback used only when the BYOK var is absent. Existing #902 funding proof is the pattern; fail-closed behaviour preserved. Easily reversible."
+    },
+    "file_change_estimate": {
+      "score": 3, "label": "M",
+      "modified_files": 6,
+      "new_files": 1,
+      "evidence": "7 files: 6 modified, 1 new test, 3 production directories plus a test dir; only ~21 non-test lines of change."
+    },
+    "dependencies": {
+      "score": 1, "label": "XS",
+      "evidence": "No new packages; one internal env var added (CODEMIE_COPILOT_LAUNCH_BASE_URL)."
+    },
+    "affected_layers": {
+      "score": 2, "label": "S",
+      "layers_changed": ["Service (agent lifecycle and Copilot launcher/hook proof)"],
+      "schema_migration": false,
+      "cross_system": false,
+      "evidence": "Single service tier with a process-env boundary to the hook; no persistence or UI change."
+    }
+  },
+  "total": 15,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 7,
+  "routing": "brainstorming",
+  "split_recommendation": null,
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Shared core lifecycle contract extended with an optional arg across BaseAgentAdapter, lifecycle-helpers and types, plus two Copilot plugins." }
+  ],
+  "red_flags_applied": ["component_scope bumped M to L: touches core shared agent lifecycle utilities"]
+}
