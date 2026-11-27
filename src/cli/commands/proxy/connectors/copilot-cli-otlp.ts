@@ -18,6 +18,7 @@ import { getDirname } from '@/utils/paths.js';
 import { resolveProjectRoot } from '@/utils/project-root.js';
 import {
   isCopilotProjectTracked,
+  isCopilotConnectorEnabled,
   readCopilotConnectorScope,
   readKeptCopilotConnectorScope,
   writeCopilotConnectorScope,
@@ -182,6 +183,15 @@ export async function removeCopilotCliOtlpConfig(
 
   logger.info('[proxy] Removed Copilot CLI analytics hooks', ...sanitizeLogArgs({ hookFilePath }));
   return { removed: true, mode: 'full', hookFilePath };
+}
+
+/**
+ * Whether CodeMie's own entries of Copilot CLI are in place now — what {@link removeCopilotCliOtlpConfig} removes: its
+ * hook file exists, or its scope record is enabled. A scope record that does not read counts as not enabled.
+ */
+export async function hasCopilotCliOtlpHooks(): Promise<boolean> {
+  if (existsSync(getCopilotCliHookFilePath())) return true;
+  return isCopilotConnectorEnabled(COPILOT_CLI_OTLP_AGENT_NAME);
 }
 
 /** Allowlist read used by `codemie proxy status`. */

@@ -1,0 +1,87 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-16983-codemie-mcp-proxy-MCP-OAuth-tokens-are-not-persisted-to-disk,-forcing-re-authorization-on-every-session-start",
+  "head": "aac34e48916c2bb9693a8a39efa7939c412c4d86",
+  "runner": "npm",
+  "started_at": "2026-11-25T15:50:00Z",
+  "completed_at": "2026-11-25T15:52:00Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4275,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 16061,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 13438,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 24926,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3461,
+      "command": "npx vitest run src/mcp",
+      "exit_code": 0,
+      "notes": "Scoped to src/mcp by user constraint (9 files, 130 tests passed). Full unit project not run."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "npx vitest run --project cli",
+      "notes": "Skipped per user (HITL) constraint: only src/mcp tests may run; no full unit/integration suite, ci or ci:full."
+    },
+    {
+      "id": "full-ci",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "npm run ci",
+      "notes": "Skipped per user (HITL) constraint: only src/mcp tests may run; no full unit/integration suite, ci or ci:full. (ci:full also not run)"
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npm run commitlint:last",
+      "notes": "Only run via ci:full; skipped per user constraint."
+    },
+    {
+      "id": "secrets",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 323,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: output 'No staged changes to scan' (exit 0, nothing scanned). Enable locally by staging changes with Docker/Gitleaks available; CI scans unconditionally."
+    }
+  ],
+  "failures": {}
+}

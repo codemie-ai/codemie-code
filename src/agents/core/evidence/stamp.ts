@@ -24,6 +24,8 @@ export interface EvidenceInputs {
   collection_generation?: number;
   /** Set by an agent with its own collection controls: the record is then not tied to the Claude generation. */
   agent?: 'copilot-cli-otlp';
+  /** A fresh session's start: its login may be resolved from the recorded profile while the daemon has no state yet. */
+  recoverWithoutDaemon?: true;
 }
 
 /**
@@ -31,7 +33,8 @@ export interface EvidenceInputs {
  * `pending` (only with `no_owner`): the hook-time facts and the login fingerprint, so the events can be held for this login.
  */
 export type StampResult =
-  | { ok: true; record: EvidenceRecord }
+  /** `fp`: fingerprint of the login the record was keyed with, so held events can be bound to it; `credentials`: that login, for the event identity. */
+  | { ok: true; record: EvidenceRecord; fp: string; credentials: SSOCredentials }
   | { ok: false; reason: string; detail?: string; pending?: { fp: string; fields: PendingFields } };
 
 /** The hook-time facts of a new record, everything but the owner. */
@@ -139,7 +142,7 @@ export async function stampEvidence(
   const sessionId = context.sessionId;
   if (!sessionId) return { ok: false, reason: 'session_id_absent' };
   try {
-    const credentials = await resolveHookCredentials();
+    const credentials = await resolveHookCredentials({ recordedProfile: inputs.recoverWithoutDaemon === true });
     if (!credentials?.apiUrl) return { ok: false, reason: 'no_credentials' };
     const email = resolveEmailFromCredentials(credentials);
     if (!email) return { ok: false, reason: 'no_owner', ...(await pendingFor(credentials, context, inputs, sessionId, policy)) };
@@ -155,7 +158,7 @@ export async function stampEvidence(
     if (found) {
       if (found.kind !== 'created' && found.kind !== 'existing') return { ok: false, reason: found.kind };
       await touch(key);
-      return { ok: true, record: found.record };
+      return { ok: true, record: found.record, fp: credentialFingerprint(credentials), credentials };
     }
 
     const hookFields = await hookTimeFields(context, inputs, sessionId, api, policy);
@@ -170,7 +173,7 @@ export async function stampEvidence(
       const { pendingSpoolSessionIds } = await import('@/providers/plugins/sso/proxy/plugins/otlp-spool/sweep.js');
       created = await createOrRead(key, fields, { pendingSessionIds: await pendingSpoolSessionIds() });
     }
-    if (created.kind === 'created' || created.kind === 'existing') return { ok: true, record: created.record };
+    if (created.kind === 'created' || created.kind === 'existing') return { ok: true, record: created.record, fp: credentialFingerprint(credentials), credentials };
     const detail = 'reason' in created && created.reason !== created.kind ? created.reason : undefined;
     return { ok: false, reason: created.kind, ...(detail ? { detail } : {}) };
   } catch (error) {

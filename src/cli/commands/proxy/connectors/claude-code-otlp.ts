@@ -34,6 +34,8 @@ import {
 import { renderHint } from '@/utils/hint.js';
 
 interface WriteClaudeCodeOtlpOptions {
+  /** The status text of the `UserPromptSubmit` hook; `null` writes none. */
+  promptStatus: string | null;
   /** Replace conflicting settings and an invalid project list (`--overwrite`). */
   overwrite?: boolean;
   scope?: AllowlistScope;
@@ -357,6 +359,23 @@ export async function localizeCodemieHookCommands(hooksBlock: Record<string, unk
 }
 
 /**
+ * Repair stale CodeMie CLI paths in the OTLP hooks of ~/.claude/settings.json (EPMCDME-17164).
+ * Missing file or invalid JSON is a no-op; nothing is written when no path is stale.
+ */
+export async function healClaudeSettingsHooks(): Promise<boolean> {
+  const file = getClaudeSettingsPath();
+  let settings: { hooks?: Record<string, unknown> };
+  try {
+    settings = JSON.parse(await readFile(file, 'utf-8'));
+  } catch {
+    return false; // missing or invalid JSON: leave the file alone
+  }
+  if (!settings?.hooks || !(await localizeCodemieHookCommands(settings.hooks))) return false;
+  await writeAtomically(file, JSON.stringify(settings, null, 2) + '\n');
+  return true;
+}
+
+/**
  * True if a hook GROUP contains at least one codemie-owned command. Used only
  * for the "have we already touched this file before" backup heuristic in the
  * connect path — safe at group granularity since it's purely informational
@@ -501,7 +520,7 @@ async function readBackupSettings(backupPath: string): Promise<ClaudeSettings | 
 }
 
 export async function writeClaudeCodeOtlpConfig(
-  opts: WriteClaudeCodeOtlpOptions = {}
+  opts: WriteClaudeCodeOtlpOptions
 ): Promise<WriteClaudeCodeOtlpResult> {
   const state = await readState();
   if (!state) {
@@ -669,7 +688,7 @@ export async function writeClaudeCodeOtlpConfig(
           ? CODEMIE_USER_PROMPT_HOOK_TIMEOUT_SECONDS
           : CODEMIE_HOOK_TIMEOUT_SECONDS,
       ...(isPostCompact ? { async: true } : {}),
-      ...(eventName === 'UserPromptSubmit' ? { statusMessage: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE } : {}),
+      ...(eventName === 'UserPromptSubmit' && opts.promptStatus !== null ? { statusMessage: opts.promptStatus } : {}),
     };
     return { matcher: '', hooks: [hook] };
   };
@@ -885,6 +904,35 @@ async function readCodemieHookCommand(): Promise<string | null> {
  */
 export async function hasClaudeCodeOtlpHooks(): Promise<boolean> {
   return (await readCodemieHookCommand()) !== null;
+}
+
+/**
+ * Whether `~/.claude/settings.json` holds what only CodeMie writes: its hooks, or the local proxy's own telemetry
+ * endpoint and header pair. A pair of CodeMie's shape on another host is not asked: it is a destination the user set,
+ * and neither are the fixed telemetry values (`CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_LOGS_EXPORTER=otlp`, …): a
+ * user's own telemetry holds the same ones. No settings file → false. A file that cannot be read or does not parse →
+ * the reader's `ConfigurationError`. Writes nothing.
+ */
+export async function hasClaudeCodeOtlpEntries(): Promise<boolean> {
+  const existing = await readSettingsFile(getClaudeSettingsPath());
+  return stripCodemieManagedContent(existing).removedHookCommands || isOwnedLocalDaemonOtlpEnv(existing.env ?? {});
+}
+
+const SIGNAL_ENDPOINT_KEYS = [
+  'OTEL_EXPORTER_OTLP_LOGS_ENDPOINT',
+  'OTEL_EXPORTER_OTLP_METRICS_ENDPOINT',
+  'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT',
+] as const;
+
+/**
+ * The per-signal endpoint keys `~/.claude/settings.json` sets, in the order logs, metrics, traces. CodeMie writes
+ * none of them, so each is the user's own destination, which wins over the general endpoint for its signal. No
+ * settings file → none. A file that cannot be read or does not parse → the reader's `ConfigurationError`. Writes
+ * nothing.
+ */
+export async function readClaudeCodeSignalEndpoints(): Promise<string[]> {
+  const env = (await readSettingsFile(getClaudeSettingsPath())).env ?? {};
+  return SIGNAL_ENDPOINT_KEYS.filter((key) => env[key] !== undefined);
 }
 
 /**

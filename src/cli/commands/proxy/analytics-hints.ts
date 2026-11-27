@@ -11,6 +11,7 @@ import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/c
 import { COPILOT_CHAT_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-chat-otlp/copilot-chat-otlp.constants.js';
 import { COPILOT_CLI_OTLP_AGENT_NAME } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.constants.js';
 import { CLAUDE_OTLP_FLAG, COPILOT_OTLP_FLAG, vendorFlag } from './flag-list.js';
+import type { DoctorRemedies } from './doctor/plan.js';
 
 export interface NotTrackedAdvice {
   /** Why the project is not collected, as a clause ("it is excluded"). */
@@ -25,7 +26,7 @@ function quotePath(path: string): string {
   return /\s/.test(path) ? `"${path}"` : path;
 }
 
-function claudeAdvice(reason: string, path: string): NotTrackedAdvice | undefined {
+function claudeAdvice(reason: string, path: string, remedies: DoctorRemedies): NotTrackedAdvice | undefined {
   switch (reason) {
     case 'disabled':
       // Scoped to Claude: the flagless form acts on every connected connector, the Copilot ones included.
@@ -35,12 +36,17 @@ function claudeAdvice(reason: string, path: string): NotTrackedAdvice | undefine
     case 'not-in-allowlist':
       return {
         description: 'it is not in the Project-scope allowlist',
-        action: `run this inside that project: codemie proxy connect ${CLAUDE_OTLP_FLAG} --scope project`,
+        action: `run this inside that project: ${remedies.connect(`${CLAUDE_OTLP_FLAG} --scope project`)}`,
+      };
+    case 'allowlist-unresolved':
+      return {
+        description: 'the Project-scope allowlist cannot be applied',
+        action: 'fix the Claude Code settings file: it cannot be read, does not parse, or its project filter is not a list of absolute paths',
       };
     case 'hooks-not-installed':
       return {
         description: 'the Claude Code hooks are not installed',
-        command: `codemie proxy connect ${CLAUDE_OTLP_FLAG}`,
+        command: remedies.connect(CLAUDE_OTLP_FLAG),
       };
     case 'preferences-corrupt':
       return {
@@ -52,7 +58,7 @@ function claudeAdvice(reason: string, path: string): NotTrackedAdvice | undefine
   }
 }
 
-function copilotAdvice(connectorId: string, reason: string, path: string): NotTrackedAdvice | undefined {
+function copilotAdvice(connectorId: string, reason: string, path: string, remedies: DoctorRemedies): NotTrackedAdvice | undefined {
   const flag = `--${connectorId}`;
   switch (reason) {
     case 'analytics-disabled':
@@ -63,14 +69,14 @@ function copilotAdvice(connectorId: string, reason: string, path: string): NotTr
     case 'scope-untracked':
       return {
         description: "it is outside this connector's Project scope",
-        action: `run this inside that project: codemie proxy connect ${vendorFlag(flag)} --scope project`,
+        action: `run this inside that project: ${remedies.connect(`${vendorFlag(flag)} --scope project`)}`,
       };
     case 'scope-disabled':
-      return { description: 'the connector is not connected', command: `codemie proxy connect ${vendorFlag(flag)}` };
+      return { description: 'the connector is not connected', command: remedies.connect(vendorFlag(flag)) };
     case 'scope-corrupt':
       return {
         description: 'the connector scope config is corrupt',
-        action: 'fix or delete ~/.codemie/copilot-connectors.json, then reconnect',
+        action: `fix or delete ~/.codemie/copilot-connectors.json, then ${remedies.reconnect}`,
       };
     case 'preferences-corrupt':
       return {
@@ -117,7 +123,7 @@ export function coverageNote(connectorId: string, verb: CoverageVerb = 'disable'
 }
 
 /**
- * What a user should know when collection resumes. Usage is read from session transcripts, which keep
+ * What a user of a machine with a CodeMie backend should know when collection resumes. Usage is read from session transcripts, which keep
  * growing while collection is off, so it is reported once collection is back on. Copilot Chat has no
  * transcript pass, hence no note.
  */
@@ -133,12 +139,12 @@ export function resumeNote(connectorId: string): string | undefined {
 }
 
 /** Advice for a gate reason, or `undefined` when the project is tracked or the reason is unknown. */
-export function adviceForReason(connectorId: string, reason: string, path: string): NotTrackedAdvice | undefined {
+export function adviceForReason(connectorId: string, reason: string, path: string, remedies: DoctorRemedies): NotTrackedAdvice | undefined {
   if (connectorId === CLAUDE_CODE_OTLP_AGENT_NAME) {
-    return claudeAdvice(reason, path);
+    return claudeAdvice(reason, path, remedies);
   }
   if (connectorId === COPILOT_CLI_OTLP_AGENT_NAME || connectorId === COPILOT_CHAT_OTLP_AGENT_NAME) {
-    return copilotAdvice(connectorId, reason, path);
+    return copilotAdvice(connectorId, reason, path, remedies);
   }
   return undefined;
 }

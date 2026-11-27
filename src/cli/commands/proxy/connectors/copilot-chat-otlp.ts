@@ -29,6 +29,7 @@ import { parseHookCommandHead } from '@/utils/hook-command.js';
 import { resolveProjectRoot } from '@/utils/project-root.js';
 import {
   isCopilotProjectTracked,
+  isCopilotConnectorEnabled,
   readCopilotConnectorScope,
   readKeptCopilotConnectorScope,
   writeCopilotConnectorScope,
@@ -101,6 +102,11 @@ function getLegacyHookFileLocationKeys(): string[] {
   const underHome = hookFilePathUnderHome();
   return [getCopilotChatHookFilePath(), ...(underHome === undefined ? [] : [`/${underHome}`])]
     .filter((key) => key !== getCopilotChatHookFileLocationKey());
+}
+
+/** CodeMie's keys in `chat.hookFilesLocations`: the current one, then the legacy ones. */
+function codemieHookFileLocationKeys(): string[] {
+  return [getCopilotChatHookFileLocationKey(), ...getLegacyHookFileLocationKeys()];
 }
 
 interface SettingsReadResult {
@@ -270,6 +276,7 @@ export async function writeCopilotChatOtlpConfig(
     );
   }
 
+  const hadHookFile = existsSync(hookFilePath);
   await writeAtomically(hookFilePath, `${JSON.stringify(buildHookFileContent(resolveAbsoluteHookCommand()), null, 2)}\n`);
 
   let nextText: string;
@@ -287,6 +294,15 @@ export async function writeCopilotChatOtlpConfig(
   try {
     await writeAtomically(settingsPath, nextText);
   } catch (error) {
+    // A hook file no settings entry names is never loaded; one this call made goes with the failed write.
+    if (!hadHookFile) {
+      await removeFileThroughLink(hookFilePath).catch((removeError: unknown) =>
+        logger.warn(
+          '[proxy] Could not remove the Copilot Chat hook file after a failed VS Code settings write',
+          ...sanitizeLogArgs({ hookFilePath, error: removeError instanceof Error ? removeError.message : String(removeError) })
+        )
+      );
+    }
     throw new ConfigurationError(
       `Failed to update VS Code settings at ${settingsPath}: ` +
       `${error instanceof Error ? error.message : String(error)}`
@@ -343,20 +359,23 @@ export async function removeCopilotChatOtlpConfig(
     // Last tracked project removed: fall through to full removal below.
   }
 
-  if (!existsSync(settingsPath)) {
+  // A hook file with no entry in VS Code's settings: removed, with the scope record turned off.
+  const removeHookFileOnly = async (reason: string): Promise<RemoveCopilotChatOtlpResult> => {
+    const hadHookFile = existsSync(hookFilePath);
+    if (hadHookFile) await removeFileThroughLink(hookFilePath);
     await writeCopilotConnectorScope(COPILOT_CHAT_OTLP_AGENT_NAME, { enabled: false });
-    return { removed: false, mode: 'noop', settingsPath, reason: 'no VS Code settings file found' };
-  }
+    if (!hadHookFile) return { removed: false, mode: 'noop', settingsPath, reason };
+    logger.info('[proxy] Removed Copilot Chat analytics hook file', ...sanitizeLogArgs({ hookFilePath }));
+    return { removed: true, mode: 'full', settingsPath };
+  };
+
+  if (!existsSync(settingsPath)) return removeHookFileOnly('no VS Code settings file found');
 
   const { settings, raw } = await readSettings(settingsPath);
-  const currentLocations = readHookFileLocations(settings[HOOK_FILE_LOCATIONS_KEY]);
-  const codemieKeys = [getCopilotChatHookFileLocationKey(), ...getLegacyHookFileLocationKeys()];
-  const hadEntry = codemieKeys.some((key) => key in currentLocations);
+  const codemieKeys = codemieHookFileLocationKeys();
+  const hadEntry = hasCodemieHookFileLocation(settings);
 
-  if (!hadEntry) {
-    await writeCopilotConnectorScope(COPILOT_CHAT_OTLP_AGENT_NAME, { enabled: false });
-    return { removed: false, mode: 'noop', settingsPath, reason: 'no CodeMie entries found' };
-  }
+  if (!hadEntry) return removeHookFileOnly('no CodeMie entries found');
 
   const remainingLocations = removeHookFileLocations(settings[HOOK_FILE_LOCATIONS_KEY], codemieKeys);
   const formattingOptions = detectFormattingOptions(raw);
@@ -373,6 +392,28 @@ export async function removeCopilotChatOtlpConfig(
 
   logger.info('[proxy] Removed Copilot Chat analytics hooks', ...sanitizeLogArgs({ settingsPath, hookFilePath }));
   return { removed: true, mode: 'full', settingsPath };
+}
+
+/** Whether VS Code settings hold a CodeMie key, the current one or a legacy one, in `chat.hookFilesLocations`. */
+function hasCodemieHookFileLocation(settings: Record<string, unknown>): boolean {
+  const locations = readHookFileLocations(settings[HOOK_FILE_LOCATIONS_KEY]);
+  return codemieHookFileLocationKeys().some((key) => key in locations);
+}
+
+/**
+ * Whether CodeMie's own entries of Copilot Chat are in place now — what {@link removeCopilotChatOtlpConfig} removes: a
+ * CodeMie key in `chat.hookFilesLocations`, its hook file, or its scope record enabled. VS Code settings that do not
+ * read hold no key, and a scope record that does not read counts as not enabled.
+ */
+export async function hasCopilotChatOtlpHooks(): Promise<boolean> {
+  if (existsSync(getCopilotChatHookFilePath())) return true;
+  if (await isCopilotConnectorEnabled(COPILOT_CHAT_OTLP_AGENT_NAME)) return true;
+  try {
+    return hasCodemieHookFileLocation((await readSettings(getVsCodeChatSettingsPath())).settings);
+  } catch (error) {
+    if (error instanceof ConfigurationError) return false;
+    throw error;
+  }
 }
 
 /** Allowlist read used by `codemie proxy status`. */

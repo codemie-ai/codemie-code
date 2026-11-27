@@ -105,9 +105,10 @@ export interface ProviderLifecycleHooks {
 
   /**
    * Called to enrich CLI arguments (provider-specific)
-   * Can inject additional flags or modify existing ones
+   * Can inject additional flags or modify existing ones.
+   * `env` is the env the agent child is spawned with; only hooks that must hand the child a value derived from the args use it.
    */
-  enrichArgs?: (args: string[], config: AgentConfig) => string[];
+  enrichArgs?: (args: string[], config: AgentConfig, env?: NodeJS.ProcessEnv) => string[];
 
   /**
    * Called when agent session starts (provider-specific)
@@ -172,7 +173,7 @@ export interface AgentLifecycle {
    */
   beforeRun?: (this: any, env: NodeJS.ProcessEnv, config: AgentConfig) => Promise<NodeJS.ProcessEnv>;
   afterRun?: (this: any, exitCode: number, env: NodeJS.ProcessEnv) => Promise<void>;
-  enrichArgs?: (args: string[], config: AgentConfig) => string[];
+  enrichArgs?: (args: string[], config: AgentConfig, env?: NodeJS.ProcessEnv) => string[];
   onSessionStart?: (this: any, sessionId: string, env: NodeJS.ProcessEnv) => Promise<void>;
   onSessionEnd?: (this: any, exitCode: number, env: NodeJS.ProcessEnv) => Promise<void>;
 }
@@ -752,15 +753,45 @@ export enum AgentAdapterType {
   OTLP,
 }
 
+/**
+ * How a hook adapter collects: each step is handed the adapter's own check, and the policy decides whether and how it
+ * runs. Generic: it knows no adapter, no store and no mode.
+ */
+export interface CollectionPolicy {
+  /** The per-hook session gate, after the tracked check. */
+  admit(sessionId: string | undefined, gate: () => Promise<'continue' | 'stop' | 'retry-after-proxy-start'>): Promise<'continue' | 'stop' | 'retry-after-proxy-start'>;
+  /** The evidence inputs of a hook context; `undefined` stamps nothing. */
+  evidenceInputs<T>(build: () => Promise<T>): Promise<T | undefined>;
+  /** The sign-in check of an enforced event; `allowed` is the adapter's own "ok" answer. */
+  authorize<T>(check: () => Promise<T>, allowed: T): Promise<T>;
+  /** An untracked hook; `byFilter` is true when the developer's own filters left it out. */
+  onUntracked(sessionId: string | undefined, byFilter: boolean, stopMarker: () => Promise<void>): Promise<void>;
+  /** The block reason of an enforced event when the connector scope file is corrupt: what to do, in this mode's words. */
+  scopeCorruptReason(): string;
+}
+
 export interface OtlpAdapterDeps {
   /** `event` — the hook input's `hook_event_name` as the client sent it, when it has one. */
   ensureOtlpProxy: (agentName: string, event?: string) => Promise<void>;
-  /** Sends one hook invocation's events as a single batch; true only for a 2xx response. */
+  /** The collection policy this hook runs under. */
+  policy: CollectionPolicy;
+  /**
+   * Sends one hook invocation's events as a single batch; true only for a 2xx response. A batch the adapter holds in the
+   * owner-pending queue instead counts as accepted for the adapter's `finalize`, not for this function's result.
+   */
   forwardOtlpEventsToSpool: (
     events: Record<string, unknown>[],
     agentName: string,
     /** `evidenceV: 1` marks the spooled records as stamped (envelope only, never the event body). */
-    opts?: { evidenceV?: 1; evidenceLoss?: { sessionId: string; reason: string; events: number } }
+    opts?: {
+      evidenceV?: 1;
+      evidenceLoss?: { sessionId: string; reason: string; events: number };
+      /**
+       * Set to true when the daemon certainly did not take the batch: no daemon state, a refused connection (every address),
+       * or a 401 answered before any spool. A timeout, a reset or another status leaves it false: the batch may be spooled.
+       */
+      undelivered?: { value: boolean };
+    }
   ) => Promise<boolean>;
 }
 

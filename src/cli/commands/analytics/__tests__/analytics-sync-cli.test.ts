@@ -21,6 +21,9 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Command } from 'commander';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const runBootstrapMock = vi.fn();
 const createRealBootstrapDepsMock = vi.fn();
@@ -56,6 +59,17 @@ vi.mock('../sync/uninstall.js', () => ({
   runUninstall: (...a: unknown[]) => runUninstallMock(...a),
   createRealUninstallDeps: (...a: unknown[]) => createRealUninstallDepsMock(...a),
 }));
+
+vi.mock('@/utils/processes.js', async (importOriginal) => {
+  const { isPidAlive } = await import('../../shared/analytics-collection/__tests__/stand.js');
+  return {
+    ...(await importOriginal<typeof import('@/utils/processes.js')>()),
+    // The start-time comparison runs `ps`: a live pid is the daemon.
+    isOwnerAlive: vi.fn(async ({ pid }: { pid: number }) => isPidAlive(pid)),
+    // No `codemie` on PATH: the hook commands name this build.
+    getCommandPath: vi.fn(async () => null),
+  };
+});
 
 const loadAnalyticsMock = vi.fn();
 vi.mock('../analytics-core.js', () => ({
@@ -104,11 +118,13 @@ describe('analytics sync CLI wiring — command surface', () => {
     );
 
     const install = sync.commands.find((c) => c.name() === 'install')!;
-    expect(install.description()).toBe('Developer: register the daily delivery job on this machine');
+    expect(install.description()).toBe(
+      'Developer: register the daily delivery job on this machine; on a machine with no CLI profile also turn on the local analytics mode (the local proxy and the hooks of Claude Code, Copilot CLI and Copilot Chat)'
+    );
 
     const run = sync.commands.find((c) => c.name() === 'run')!;
     expect(run.description()).toBe(
-      'Developer or the daily scheduled job: send the pending analytics report to the configured webhook and/or team git repository now'
+      'Developer or the daily scheduled job: send the pending analytics report (in the local analytics mode, the OTLP files and the report) to the configured webhook and/or team git repository now'
     );
 
     for (const name of ['status', 'run', 'uninstall']) {
@@ -299,6 +315,241 @@ describe('analytics sync CLI wiring — subcommand dispatch', () => {
 
     expect(runUninstallMock).toHaveBeenCalledWith({ fake: 'uninstall-deps' });
     expect(process.exitCode).toBe(0);
+  });
+});
+
+describe('analytics sync CLI wiring — the collection handed to each runner in the local mode', () => {
+  const LOCAL_SETTINGS = {
+    webhookUrl: 'https://example.invalid/hook?sig=FAKE',
+    format: 'json',
+    includeExternal: 'never',
+    at: '03:00',
+    local: true,
+    localJob: { node: '/usr/bin/node', entry: '/opt/codemie/bin/codemie.js' },
+  };
+  let home: string;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    home = mkdtempSync(join(tmpdir(), 'codemie-sync-cli-local-'));
+    for (const name of ['HOME', 'USERPROFILE', 'CODEMIE_HOME']) vi.stubEnv(name, home);
+    runSyncMock.mockResolvedValue(0);
+    runUninstallMock.mockResolvedValue(0);
+    runStatusMock.mockResolvedValue(0);
+    runInstallMock.mockResolvedValue(0);
+  });
+
+  afterEach(async () => {
+    process.exitCode = undefined;
+    await (await import('@/utils/logger.js')).logger.close();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+
+  const writeLocalSettings = (): void => writeFileSync(join(home, 'analytics-sync.json'), JSON.stringify(LOCAL_SETTINGS));
+
+  it('"sync run" hands realSyncDeps a collection that exports the OTLP folder beside the JSON report', async () => {
+    writeLocalSettings();
+    await parse(['sync', 'run']);
+
+    const { LocalExportSource } = await import('../../shared/analytics-collection/local.js');
+    const collection = realSyncDepsMock.mock.calls[0][0] as { exportSource(): unknown };
+    expect(collection.exportSource()).toBeInstanceOf(LocalExportSource);
+  });
+
+  it('"sync uninstall" runs the local teardown: the local spool is removed before the install', async () => {
+    writeLocalSettings();
+    mkdirSync(join(home, 'analytics', 'spool'), { recursive: true });
+    writeFileSync(join(home, 'analytics', 'spool', 's1.hooks.ndjson'), 'x\n');
+    await parse(['sync', 'uninstall']);
+
+    const teardown = createRealUninstallDepsMock.mock.calls[0][0] as (removeInstall: () => Promise<void>) => Promise<void>;
+    let spoolAtRemoval: boolean | undefined;
+    await teardown(async () => {
+      spoolAtRemoval = existsSync(join(home, 'analytics', 'spool'));
+    });
+    expect(spoolAtRemoval).toBe(false);
+  });
+
+  it('"sync status" passes the local mode line', async () => {
+    writeLocalSettings();
+    await parse(['sync', 'status']);
+
+    const statusLines = createRealStatusDepsMock.mock.calls[0][0] as () => string[];
+    expect(statusLines()).toEqual([`Mode: local — delivers the OTLP files of ${join(home, 'analytics', 'sessions')} beside the JSON report`]);
+  });
+
+  it('"sync install" with no settings and no profile hands createRealInstallDeps the local plan that stands down with no client', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    await parse(['sync', 'install', '--webhook', 'https://h/x']);
+    log.mockRestore();
+
+    const { standingDownLocalInstallPlan } = await import('../../shared/analytics-collection/local-install.js');
+    expect(createRealInstallDepsMock.mock.calls[0][0]).toBe(standingDownLocalInstallPlan);
+  });
+
+  it('"sync install" over a global CLI config that is not valid JSON fails as an install, runInstall not called', async () => {
+    writeFileSync(join(home, 'codemie-cli.config.json'), '{ not json');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      await parse(['sync', 'install', '--webhook', 'https://h/x']);
+      const lines = log.mock.calls.map((call) => String(call[0]));
+
+      expect(lines).toHaveLength(1);
+      expect(lines[0].startsWith('Install failed: The CodeMie CLI config at')).toBe(true);
+      expect(process.exitCode).toBe(1);
+      expect(runInstallMock).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+    }
+  });
+});
+
+describe('analytics sync CLI wiring — "sync uninstall" past the border, by the real runner', () => {
+  const UNINSTALLED = [
+    'Analytics sync uninstalled.',
+    '  The OS job and the sync settings were removed.',
+    '  The last-sent markers (webhook and git) and the run log were kept.',
+  ];
+  const LOCAL_PART_ONLY = [
+    'Analytics sync uninstalled.',
+    '  The last-sent markers (webhook and git) and the run log were kept.',
+  ];
+  let home: string;
+  let log: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const { setUpHome } = await import('../../shared/analytics-collection/__tests__/stand.js');
+    home = setUpHome();
+    vi.resetModules();
+    const actual = await vi.importActual<typeof import('../sync/uninstall.js')>('../sync/uninstall.js');
+    runUninstallMock.mockImplementation(actual.runUninstall);
+    // The OS scheduler is the boundary: no job of this name is registered on the stand.
+    createRealUninstallDepsMock.mockImplementation((teardown: Parameters<typeof actual.createRealUninstallDeps>[0]) => ({
+      ...actual.createRealUninstallDeps(teardown),
+      schedulerFor: () => ({ unregister: async () => false }),
+    }));
+    log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  });
+
+  afterEach(async () => {
+    log.mockRestore();
+    process.exitCode = undefined;
+    const { tearDownHome } = await import('../../shared/analytics-collection/__tests__/stand.js');
+    await tearDownHome(home);
+  });
+
+  const claudeSettings = (): string => join(home, '.claude', 'settings.json');
+  const spool = (): string => join(home, 'analytics', 'spool');
+  const syncSettings = (): string => join(home, 'analytics-sync.json');
+
+  /** CodeMie's entries in Claude Code's settings, a session in the local spool and a live local daemon; its pid. */
+  async function stageLocalMachine(): Promise<number> {
+    const { writeLiveState } = await import('../../shared/analytics-collection/__tests__/stand.js');
+    const pid = await writeLiveState(home, { mode: 'local' });
+    mkdirSync(join(home, '.claude'), { recursive: true });
+    const { writeClaudeCodeOtlpConfig } = await import('../../proxy/connectors/claude-code-otlp.js');
+    await writeClaudeCodeOtlpConfig({ promptStatus: null, keepProjectList: true });
+    mkdirSync(spool(), { recursive: true });
+    writeFileSync(join(spool(), 's1.hooks.ndjson'), 'x\n');
+    return pid;
+  }
+
+  /**
+   * CodeMie's entries in Claude Code's settings as `proxy connect` writes them for a backend daemon, then that proxy
+   * stopped (its state gone): no trace of the local mode.
+   */
+  async function stageBackendClaudeEntries(): Promise<void> {
+    const { stateFile, writeLiveState } = await import('../../shared/analytics-collection/__tests__/stand.js');
+    await writeLiveState(home, { profile: 'work', targetUrl: 'https://codemie.example.invalid', provider: 'ai-run-sso' });
+    mkdirSync(join(home, '.claude'), { recursive: true });
+    const { CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, writeClaudeCodeOtlpConfig } = await import(
+      '../../proxy/connectors/claude-code-otlp.js'
+    );
+    await writeClaudeCodeOtlpConfig({ promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE });
+    rmSync(stateFile(home));
+  }
+
+  async function claudeHooksLeft(): Promise<boolean> {
+    const { hasClaudeCodeOtlpEntries } = await import('../../proxy/connectors/claude-code-otlp.js');
+    return hasClaudeCodeOtlpEntries();
+  }
+
+  const printed = (): string[] => log.mock.calls.map((call) => String(call[0]));
+
+  it('no profile and settings {} → removes the local part and the settings, the uninstalled lines', async () => {
+    await stageLocalMachine();
+    writeFileSync(syncSettings(), '{}');
+
+    await parse(['sync', 'uninstall']);
+
+    expect(process.exitCode).toBe(0);
+    expect(await claudeHooksLeft()).toBe(false);
+    expect(existsSync(spool())).toBe(false);
+    expect(existsSync(syncSettings())).toBe(false);
+    expect(printed()).toEqual(UNINSTALLED);
+  });
+
+  it('no profile and no settings file → the same removal, the uninstalled lines with no job-and-settings line', async () => {
+    await stageLocalMachine();
+
+    await parse(['sync', 'uninstall']);
+
+    expect(process.exitCode).toBe(0);
+    expect(await claudeHooksLeft()).toBe(false);
+    expect(existsSync(spool())).toBe(false);
+    expect(printed()).toEqual(LOCAL_PART_ONLY);
+  });
+
+  it.each([
+    ['settings {}', '{}'],
+    ["a backend install's settings", JSON.stringify({ webhookUrl: 'https://example.invalid/hook?sig=FAKE', format: 'json', includeExternal: 'never', at: '03:00' })],
+  ])("no profile, no trace and %s → Claude Code's settings byte for byte, the settings removed", async (_name, text) => {
+    await stageBackendClaudeEntries();
+    writeFileSync(syncSettings(), text);
+    const before = readFileSync(claudeSettings(), 'utf-8');
+
+    await parse(['sync', 'uninstall']);
+
+    expect(process.exitCode).toBe(0);
+    expect(readFileSync(claudeSettings(), 'utf-8')).toBe(before);
+    expect(existsSync(syncSettings())).toBe(false);
+    expect(printed()).toEqual(UNINSTALLED);
+  });
+
+  it("no profile, no trace and no settings file → Claude Code's settings byte for byte, nothing to remove", async () => {
+    await stageBackendClaudeEntries();
+    const before = readFileSync(claudeSettings(), 'utf-8');
+
+    await parse(['sync', 'uninstall']);
+
+    expect(process.exitCode).toBe(0);
+    expect(readFileSync(claudeSettings(), 'utf-8')).toBe(before);
+    expect(printed()).toEqual(['Nothing to remove: analytics sync is not installed.']);
+  });
+
+  it("a profile and settings {} → Claude Code's settings byte for byte, the spool in place, the daemon running", async () => {
+    const pid = await stageLocalMachine();
+    writeFileSync(syncSettings(), '{}');
+    writeFileSync(
+      join(home, 'codemie-cli.config.json'),
+      JSON.stringify({ version: 2, activeProfile: 'work', profiles: { work: { name: 'work', provider: 'ai-run-sso' } } })
+    );
+    const before = readFileSync(claudeSettings(), 'utf-8');
+
+    await parse(['sync', 'uninstall']);
+
+    expect(process.exitCode).toBe(0);
+    expect(readFileSync(claudeSettings(), 'utf-8')).toBe(before);
+    expect(existsSync(join(spool(), 's1.hooks.ndjson'))).toBe(true);
+    const { isPidAlive } = await import('../../shared/analytics-collection/__tests__/stand.js');
+    expect(isPidAlive(pid)).toBe(true);
+    expect(printed()).toEqual([
+      'Analytics sync uninstalled.',
+      '  The OS job and the sync settings were removed.',
+      '  The last-sent markers (webhook and git) and the run log were kept.',
+    ]);
   });
 });
 

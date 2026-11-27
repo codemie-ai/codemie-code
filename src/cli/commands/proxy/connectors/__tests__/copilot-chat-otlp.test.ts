@@ -14,7 +14,20 @@ import { ConfigurationError } from '@/utils/errors.js';
 import { canonicalizePath } from '@/agents/core/project-allowlist.js';
 import { getCopilotConnectorsConfigPath, writeCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
 
-const mocks = vi.hoisted(() => ({ productDir: '', projectRoot: '', home: '' }));
+const mocks = vi.hoisted(() => ({ productDir: '', projectRoot: '', home: '', failRenameTo: '' }));
+
+vi.mock('fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs/promises')>();
+  return {
+    ...actual,
+    rename: async (from: string, to: string) => {
+      if (mocks.failRenameTo && to.endsWith(mocks.failRenameTo)) {
+        throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+      }
+      return actual.rename(from, to);
+    },
+  };
+});
 
 vi.mock('node:os', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:os')>();
@@ -34,6 +47,7 @@ import {
   getCopilotChatHookFileLocationKey,
   getCopilotChatHookFilePath,
   getVsCodeChatSettingsPath,
+  hasCopilotChatOtlpHooks,
   readCopilotChatHookInstall,
   removeCopilotChatOtlpConfig,
   writeCopilotChatOtlpConfig,
@@ -73,6 +87,7 @@ describe('copilot-chat-otlp connector', () => {
     await mkdir(projectA, { recursive: true });
     await mkdir(projectB, { recursive: true });
     mocks.projectRoot = projectA;
+    mocks.failRenameTo = '';
     vi.spyOn(logger, 'info').mockImplementation(() => undefined);
     vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
   });
@@ -299,6 +314,50 @@ describe('copilot-chat-otlp connector', () => {
     });
   });
 
+  describe('hasCopilotChatOtlpHooks', () => {
+    it('answers true for the current CodeMie key in chat.hookFilesLocations alone', async () => {
+      await writeSettingsRaw(JSON.stringify({ [HOOK_LOCATIONS_KEY]: { [getCopilotChatHookFileLocationKey()]: true } }));
+
+      await expect(hasCopilotChatOtlpHooks()).resolves.toBe(true);
+    });
+
+    it('answers true for a legacy CodeMie key in chat.hookFilesLocations alone', async () => {
+      mocks.home = join(testDir, 'home');
+      process.env.CODEMIE_HOME = join(mocks.home, '.codemie');
+      try {
+        await writeSettingsRaw(JSON.stringify({ [HOOK_LOCATIONS_KEY]: { '/.codemie/hooks/copilot-chat-hooks.json': true } }));
+
+        await expect(hasCopilotChatOtlpHooks()).resolves.toBe(true);
+      } finally {
+        mocks.home = '';
+      }
+    });
+
+    it('answers true for the hook file alone', async () => {
+      await writeHookCommand('codemie hook --agent copilot-chat-otlp');
+
+      await expect(hasCopilotChatOtlpHooks()).resolves.toBe(true);
+    });
+
+    it('answers true for an enabled scope record alone', async () => {
+      await writeCopilotConnectorScope('copilot-chat-otlp', { enabled: true, scope: 'user' });
+
+      await expect(hasCopilotChatOtlpHooks()).resolves.toBe(true);
+    });
+
+    it('answers false with none of them, and for settings or a scope record that do not parse', async () => {
+      await expect(hasCopilotChatOtlpHooks()).resolves.toBe(false);
+
+      await writeSettingsRaw(JSON.stringify({ [HOOK_LOCATIONS_KEY]: { '/other/hooks.json': true } }));
+      await writeCopilotConnectorScope('copilot-chat-otlp', { enabled: false });
+      await expect(hasCopilotChatOtlpHooks()).resolves.toBe(false);
+
+      await writeSettingsRaw('{ not json');
+      await writeFile(getCopilotConnectorsConfigPath(), '{ not json', 'utf-8');
+      await expect(hasCopilotChatOtlpHooks()).resolves.toBe(false);
+    });
+  });
+
   describe('keepProjectList', () => {
     async function storeTwoProjects(): Promise<unknown> {
       await writeCopilotChatOtlpConfig({ scope: 'project' });
@@ -369,6 +428,30 @@ describe('copilot-chat-otlp connector', () => {
       expect(await readSettingsRaw()).toBe(original);
     });
 
+    it('takes back the hook file it made when the VS Code settings write fails', async () => {
+      await writeSettingsRaw('{}');
+      mocks.failRenameTo = join('User', 'settings.json');
+
+      const write = writeCopilotChatOtlpConfig({ scope: 'user' });
+
+      await expect(write).rejects.toBeInstanceOf(ConfigurationError);
+      await expect(write).rejects.toThrow(
+        `Failed to update VS Code settings at ${getVsCodeChatSettingsPath()}: ENOSPC: no space left on device`
+      );
+      expect(existsSync(getCopilotChatHookFilePath())).toBe(false);
+    });
+
+    it('keeps a hook file that was there before when the VS Code settings write fails', async () => {
+      await writeSettingsRaw('{}');
+      await writeHookCommand('codemie hook --agent copilot-chat-otlp');
+      mocks.failRenameTo = join('User', 'settings.json');
+
+      await expect(writeCopilotChatOtlpConfig({ scope: 'user' })).rejects.toThrow(
+        `Failed to update VS Code settings at ${getVsCodeChatSettingsPath()}: ENOSPC: no space left on device`
+      );
+      expect(existsSync(getCopilotChatHookFilePath())).toBe(true);
+    });
+
     it('rejects unparsable settings without changing them', async () => {
       const original = '{ "editor.fontSize": ';
       await writeSettingsRaw(original);
@@ -384,5 +467,44 @@ describe('copilot-chat-otlp connector', () => {
 
     expect(result).toMatchObject({ removed: false, mode: 'noop' });
     expect(await readScopeRecord()).toEqual({ enabled: false });
+  });
+
+  it('disconnect with settings holding no CodeMie entry and no hook file is a noop', async () => {
+    await writeSettingsRaw(JSON.stringify({ [HOOK_LOCATIONS_KEY]: { '/other/hooks.json': true } }));
+
+    const result = await removeCopilotChatOtlpConfig();
+
+    expect(result).toEqual({
+      removed: false,
+      mode: 'noop',
+      settingsPath: getVsCodeChatSettingsPath(),
+      reason: 'no CodeMie entries found',
+    });
+    expect(await readScopeRecord()).toEqual({ enabled: false });
+  });
+
+  it('disconnect with the hook file left and no settings file removes the hook file and says so', async () => {
+    await writeHookCommand('codemie hook --agent copilot-chat-otlp');
+
+    const result = await removeCopilotChatOtlpConfig();
+
+    expect(result).toEqual({ removed: true, mode: 'full', settingsPath: getVsCodeChatSettingsPath() });
+    expect(existsSync(getCopilotChatHookFilePath())).toBe(false);
+    expect(await readScopeRecord()).toEqual({ enabled: false });
+    await expect(hasCopilotChatOtlpHooks()).resolves.toBe(false);
+  });
+
+  it('disconnect with the hook file left and settings holding no CodeMie entry removes the hook file alone', async () => {
+    const original = `{\n\t"${HOOK_LOCATIONS_KEY}": { "/other/hooks.json": true }\n}\n`;
+    await writeSettingsRaw(original);
+    await writeHookCommand('codemie hook --agent copilot-chat-otlp');
+
+    const result = await removeCopilotChatOtlpConfig();
+
+    expect(result).toEqual({ removed: true, mode: 'full', settingsPath: getVsCodeChatSettingsPath() });
+    expect(existsSync(getCopilotChatHookFilePath())).toBe(false);
+    expect(await readSettingsRaw()).toBe(original);
+    expect(await readScopeRecord()).toEqual({ enabled: false });
+    await expect(hasCopilotChatOtlpHooks()).resolves.toBe(false);
   });
 });

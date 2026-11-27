@@ -12,6 +12,9 @@ import type { ClaudeAnalyticsStatus, CopilotAnalyticsStatus } from '../analytics
 
 let tempDir: string;
 
+/** Loaded once the CodeMie home is stubbed: the plan's modules read paths on load. */
+const backendRemedies = async () => (await import('../doctor/backend-plan.js')).BACKEND_REMEDIES;
+
 vi.mock('@/utils/paths.js', async () => {
   const actual = await vi.importActual<typeof import('@/utils/paths.js')>('@/utils/paths.js');
   return {
@@ -143,13 +146,13 @@ describe('analytics-status', () => {
 
     async function render(status: ClaudeAnalyticsStatus): Promise<string[]> {
       const { formatClaudeAnalyticsStatus } = await import('../analytics-status.js');
-      return stripVTControlCharacters(await formatClaudeAnalyticsStatus(status)).split('\n');
+      return stripVTControlCharacters(await formatClaudeAnalyticsStatus(status, await backendRemedies())).split('\n');
     }
 
     it('prints the Claude section as plain rows under a bold heading, then the unaffected sentence', async () => {
       const { formatClaudeAnalyticsStatus } = await import('../analytics-status.js');
 
-      const raw = (await formatClaudeAnalyticsStatus(base)).split('\n');
+      const raw = (await formatClaudeAnalyticsStatus(base, await backendRemedies())).split('\n');
 
       expect(raw[0]).toBe(chalk.bold('Claude:'));
       expect(raw.at(-1)).toBe(chalk.dim(`  ${SENTENCE}`));
@@ -241,6 +244,18 @@ describe('analytics-status', () => {
       expect(lines.join('\n').match(/run:/g)).toHaveLength(1);
     });
 
+    it('with the local mode\'s remedies the connect hint names codemie analytics sync install', async () => {
+      const { formatClaudeAnalyticsStatus } = await import('../analytics-status.js');
+      const { LOCAL_REMEDIES } = await import('../../shared/analytics-collection/local-doctor.js');
+
+      const lines = stripVTControlCharacters(
+        await formatClaudeAnalyticsStatus({ ...base, hooksInstalled: false, scope: 'not-configured' }, LOCAL_REMEDIES)
+      ).split('\n');
+
+      expect(lines[2]).toBe('      Not connected — run: codemie analytics sync install');
+      expect(lines.join('\n')).not.toMatch(/proxy (connect|disconnect)/);
+    });
+
     it('reports a corrupt preferences file as a row with its hint, only when corrupt', async () => {
       expect((await render(base)).join('\n')).not.toContain('corrupt');
 
@@ -269,7 +284,7 @@ describe('analytics-status', () => {
 
     async function render(status: CopilotAnalyticsStatus): Promise<string[]> {
       const { formatCopilotAnalyticsStatus } = await import('../analytics-status.js');
-      return stripVTControlCharacters(await formatCopilotAnalyticsStatus(status)).split('\n');
+      return stripVTControlCharacters(await formatCopilotAnalyticsStatus(status, await backendRemedies())).split('\n');
     }
 
     it('prints the Copilot CLI section with a Connected row and the connector-specific unaffected sentence', async () => {

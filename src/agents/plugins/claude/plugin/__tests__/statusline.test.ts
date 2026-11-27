@@ -7,6 +7,7 @@ import {
   extractBasicInfo,
   formatDuration,
   buildStatusLine,
+  isManagedSession,
   truncate,
   resolveBudget,
   isMainModule,
@@ -213,6 +214,24 @@ describe('truncate', () => {
   });
 });
 
+describe('isManagedSession', () => {
+  it('is true when CODEMIE_SESSION_ID is set', () => {
+    expect(isManagedSession({ CODEMIE_SESSION_ID: 'abc' })).toBe(true);
+  });
+
+  it('is false when CODEMIE_SESSION_ID is absent', () => {
+    expect(isManagedSession({})).toBe(false);
+  });
+
+  it('is false when CODEMIE_SESSION_ID is an empty string', () => {
+    expect(isManagedSession({ CODEMIE_SESSION_ID: '' })).toBe(false);
+  });
+
+  it('is false when CODEMIE_SESSION_ID is whitespace only', () => {
+    expect(isManagedSession({ CODEMIE_SESSION_ID: '   ' })).toBe(false);
+  });
+});
+
 describe('buildStatusLine', () => {
   const basic = {
     projectName: 'my-project', branch: 'main', model: 'Claude Sonnet 5',
@@ -237,6 +256,52 @@ describe('buildStatusLine', () => {
     const inner = plain.match(/^\[([^\]]*)\]/)![1];
     expect(Array.from(inner)).toHaveLength(20);
     expect(inner.endsWith('…')).toBe(true);
+    expect(plain).toContain('$1.5000');
+  });
+
+  it('prefixes [⏺ CodeMie] as the first segment for managed sessions', () => {
+    const line = buildStatusLine({ ...basic, managed: true });
+
+    // Verify visible output and segment ordering: the CodeMie badge leads, before the project.
+    expect(stripAnsi(line)).toMatch(/^\[⏺ CodeMie\] \| \[my-project\]/);
+
+    // Verify ANSI styling of the managed-session prefix: bold lavender brackets/label around a
+    // bold bright-green dot, each span closed with a reset so colors never bleed into later segments.
+    expect(line.startsWith(
+      '\x1b[1;38;2;177;185;249m[\x1b[0m\x1b[1;92m⏺\x1b[0m\x1b[1;38;2;177;185;249m CodeMie]\x1b[0m',
+    )).toBe(true);
+  });
+
+  it('omits the segment for plain sessions', () => {
+    // Both an absent flag and an explicit false must leave plain `claude` sessions untouched.
+    for (const args of [{ ...basic }, { ...basic, managed: false }]) {
+      const line = buildStatusLine(args);
+
+      // Verify no CodeMie branding leaks into the raw output (text or dot glyph).
+      expect(line).not.toContain('CodeMie');
+      expect(line).not.toContain('⏺');
+
+      // Verify the project segment stays first, as it was before the badge existed.
+      expect(stripAnsi(line)).toMatch(/^\[my-project\]/);
+    }
+  });
+
+  it('renders only the segment when nothing else is available', () => {
+    // Verify the badge stands alone, with no dangling " | " separator, when no other data exists.
+    expect(stripAnsi(buildStatusLine({ managed: true }))).toBe('[⏺ CodeMie]');
+  });
+
+  it('truncates a long project name in a managed session without confusing it with the segment', () => {
+    const plain = stripAnsi(buildStatusLine({ ...basic, managed: true, projectName: 'p'.repeat(27) }));
+    // Capture the project segment that follows the badge. The badge's own brackets must not be
+    // mistaken for the project's, which is why the pattern is anchored on the badge text.
+    const inner = plain.match(/^\[⏺ CodeMie\] \| \[([^\]]*)\]/)![1];
+
+    // Verify the 27-char name is capped at 20 code points and ends with an ellipsis.
+    expect(Array.from(inner)).toHaveLength(20);
+    expect(inner.endsWith('…')).toBe(true);
+
+    // Verify truncating the project does not drop later segments.
     expect(plain).toContain('$1.5000');
   });
 

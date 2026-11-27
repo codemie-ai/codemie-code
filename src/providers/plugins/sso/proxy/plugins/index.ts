@@ -28,6 +28,8 @@ import { LoggingPlugin } from './logging.plugin.js';
 import { RoutingHeaderInjectorPlugin } from './routing-header-injector.plugin.js';
 import { SSOSessionSyncPlugin } from './sso.session-sync.plugin.js';
 import { OtlpPlugin } from './otlp.plugin.js';
+import { LocalAnalyticsPlugin } from './local-analytics.plugin.js';
+import { NoUpstreamPlugin } from './no-upstream.plugin.js';
 import { copilotHookLifecycle } from './otlp-spool/copilot-usage-enrichment.js';
 
 /**
@@ -60,6 +62,9 @@ export function registerCorePlugins(): void {
   registry.register(new RoutingHeaderInjectorPlugin()); // Priority 55 - copies router decision headers onto the response body so agents persist them
   registry.register(new SSOSessionSyncPlugin()); // Priority 100 - syncs sessions via multiple processors
   registry.register(new OtlpPlugin(copilotHookLifecycle)); // Priority 10 - OTLP ingestion
+  // The local daemon's set: off unless the daemon enables them.
+  registry.register(new LocalAnalyticsPlugin(), { enabled: false }); // Priority 10 - OTLP ingestion into the local spool
+  registry.register(new NoUpstreamPlugin(), { enabled: false }); // Priority 1000 - 404 for every request nothing else took
 }
 
 // Auto-register on import
@@ -87,6 +92,8 @@ export {
   VsCodeRequestNormalizerPlugin,
   LoggingPlugin,
   RoutingHeaderInjectorPlugin,
+  LocalAnalyticsPlugin,
+  NoUpstreamPlugin,
 };
 export { SSOSessionSyncPlugin } from './sso.session-sync.plugin.js';
 export { getPluginRegistry, resetPluginRegistry } from './registry.js';

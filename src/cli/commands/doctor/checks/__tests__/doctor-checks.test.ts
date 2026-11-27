@@ -7,6 +7,7 @@
  * is mocked so results are deterministic and no real process/network/fs probing occurs.
  */
 
+import { backendDoctorPlan } from '../../../proxy/doctor/backend-plan.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AuthMethod } from '@/providers/core/types.js';
 
@@ -695,8 +696,8 @@ describe('NpmPrefixOverrideCheck', () => {
 describe('ProxyCheck', () => {
   it('composes without the auth probe', async () => {
     h.composeMock.mockResolvedValue({ sections: [{ id: 'daemon', status: 'ok', message: 'running' }], nothingConnected: false });
-    const result = await new ProxyCheck().run();
-    expect(h.composeMock).toHaveBeenCalledWith({ authProbe: false, verbose: false });
+    const result = await new ProxyCheck(backendDoctorPlan).run();
+    expect(h.composeMock).toHaveBeenCalledWith({ authProbe: false, verbose: false, plan: backendDoctorPlan });
     expect(result.name).toBe('Proxy');
     expect(result.success).toBe(true);
     expect(result.details).toEqual([
@@ -705,17 +706,49 @@ describe('ProxyCheck', () => {
     ]);
   });
 
+  it('in the local mode composes with the local plan', async () => {
+    const { mkdtemp, writeFile, rm } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const home = await mkdtemp(join(tmpdir(), 'proxy-check-local-'));
+    vi.stubEnv('CODEMIE_HOME', home);
+    try {
+      await writeFile(join(home, 'analytics-sync.json'), JSON.stringify({
+        webhookUrl: 'https://hooks.example.invalid/x?sig=FAKE', format: 'json', includeExternal: 'never', at: '03:00', local: true,
+      }));
+      h.composeMock.mockResolvedValue({ sections: [{ id: 'local', status: 'ok', message: 'Local analytics folder: 0 sessions' }], nothingConnected: false });
+
+      const { resolveCollection } = await import('@/cli/commands/shared/analytics-collection/resolve.js');
+      const localPlan = (await resolveCollection()).doctor;
+
+      const result = await new ProxyCheck(localPlan).run();
+
+      const { plan, authProbe } = h.composeMock.mock.calls.at(-1)?.[0] as { plan: { daemonLabel: () => string }; authProbe: boolean };
+      expect(authProbe).toBe(false);
+      expect(plan.daemonLabel()).toBe('local analytics mode');
+      expect(result.details[0]).toEqual({ status: 'ok', message: 'Local analytics folder: 0 sessions' });
+
+      // The check composes with the plan it is handed, whatever mode this machine is in.
+      await new ProxyCheck(backendDoctorPlan).run();
+      expect(h.composeMock.mock.calls.at(-1)?.[0]).toEqual({ authProbe: false, verbose: false, plan: backendDoctorPlan });
+    } finally {
+      vi.unstubAllEnvs();
+      await (await import('@/utils/logger.js')).logger.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('ends with a pointer to codemie proxy doctor for the full report', async () => {
     h.composeMock.mockResolvedValue({ sections: [{ id: 'clients', status: 'warn', message: 'w', hint: 'h' }], nothingConnected: false });
-    const result = await new ProxyCheck().run();
+    const result = await new ProxyCheck(backendDoctorPlan).run();
     expect(result.details.at(-1)).toEqual({ status: 'info', message: 'Full report: codemie proxy doctor' });
   });
 
   it('fails only on an error section, not on a warning', async () => {
     h.composeMock.mockResolvedValue({ sections: [{ id: 'clients', status: 'warn', message: 'w', hint: 'h' }], nothingConnected: false });
-    expect((await new ProxyCheck().run()).success).toBe(true);
+    expect((await new ProxyCheck(backendDoctorPlan).run()).success).toBe(true);
     h.composeMock.mockResolvedValue({ sections: [{ id: 'auth', status: 'error', message: 'e' }], nothingConnected: false });
-    expect((await new ProxyCheck().run()).success).toBe(false);
+    expect((await new ProxyCheck(backendDoctorPlan).run()).success).toBe(false);
   });
 
   it('reports a single info line when nothing is connected', async () => {
@@ -723,14 +756,23 @@ describe('ProxyCheck', () => {
       sections: [{ id: 'clients', status: 'warn', message: 'nothing is connected', hint: 'run: codemie proxy connect' }],
       nothingConnected: true,
     });
-    const result = await new ProxyCheck().run();
+    const result = await new ProxyCheck(backendDoctorPlan).run();
     expect(result.success).toBe(true);
     expect(result.details.every((d) => d.status === 'info' || d.status === 'ok')).toBe(true);
   });
 
+  it('fails with the error of a collection that did not resolve, ending with the full-report pointer', async () => {
+    const result = await new ProxyCheck(new Error('sync settings unreadable')).run();
+    expect(result.success).toBe(false);
+    expect(result.details).toEqual([
+      { status: 'error', message: 'Proxy check failed: sync settings unreadable' },
+      { status: 'info', message: 'Full report: codemie proxy doctor' },
+    ]);
+  });
+
   it('never rejects: a thrown compose becomes an error detail', async () => {
     h.composeMock.mockRejectedValue(new Error('boom'));
-    const result = await new ProxyCheck().run();
+    const result = await new ProxyCheck(backendDoctorPlan).run();
     expect(result.success).toBe(false);
     expect(result.details[0].status).toBe('error');
     expect(result.details[0].message).toContain('boom');

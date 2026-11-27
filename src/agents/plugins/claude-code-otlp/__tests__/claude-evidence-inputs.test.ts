@@ -15,6 +15,7 @@ vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({ readState: readStateM
 vi.mock('@/utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
+const { BackendPolicy } = await import('@/agents/core/collection-policy.js');
 const { logger } = await import('@/utils/logger.js');
 
 const GATEWAY = 'https://llm-gateway.example.com';
@@ -24,6 +25,8 @@ const UNPROVEN = { routed: false, routing_proof: 'unproven' };
 
 describe('ClaudeCodeOtlpPlugin.extractHookContext', () => {
   const plugin = new ClaudeCodeOtlpPlugin();
+  // The context is built inside `processOtlpEvent`, under the policy of its call.
+  Object.assign(plugin, { activePolicy: new BackendPolicy() });
   const call = async () => {
     const context = await (plugin as unknown as {
       extractHookContext: (input: { cwd: string; session_id: string }) => Promise<{ evidenceInputs: { organization?: string; routing: unknown } }>;
@@ -51,6 +54,16 @@ describe('ClaudeCodeOtlpPlugin.extractHookContext', () => {
     settings({ ANTHROPIC_BASE_URL: GATEWAY });
     expect(await call()).toEqual({ organization: undefined, routing: PROVEN_ROUTED, funding_route: 'api_based', collection_generation: 0 });
     expect(readSettingsMock).toHaveBeenCalledWith('/x');
+  });
+
+  it('EPMCDME-17854: only a fresh session start may recover its login without daemon state; sibling hooks and resumes may not', async () => {
+    const inputsFor = async (input: Record<string, unknown>) =>
+      (await (plugin as unknown as { extractHookContext: (i: unknown) => Promise<{ evidenceInputs: Record<string, unknown> }> }).extractHookContext({ cwd: '/x', session_id: 's1', ...input })).evidenceInputs;
+    expect(await inputsFor({ hook_event_name: 'SessionStart', source: 'startup' })).toMatchObject({ recoverWithoutDaemon: true });
+    expect(await inputsFor({ hook_event_name: 'SessionStart', source: 'clear' })).toMatchObject({ recoverWithoutDaemon: true });
+    for (const input of [{ hook_event_name: 'SessionStart', source: 'resume' }, { hook_event_name: 'PostToolUse' }, { hook_event_name: 'UserPromptSubmit' }, { hook_event_name: 'SessionEnd' }]) {
+      expect(await inputsFor(input)).not.toHaveProperty('recoverWithoutDaemon');
+    }
   });
 
   describe('organization only when the saved OAuth login is what pays (review finding 2)', () => {

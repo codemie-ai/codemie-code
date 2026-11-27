@@ -353,7 +353,7 @@ export function createRealBootstrapDeps(): BootstrapDeps {
     },
     send: async (url: string, report: SyncReport, timeoutMs?: number): Promise<void> => {
       const { sendWebhook } = await import('../targets/webhook-target.js');
-      await sendWebhook(url, report, undefined, timeoutMs);
+      await sendWebhook(url, [report], undefined, timeoutMs);
     },
     openUrl: async (url: string): Promise<void> => {
       const { openUrlInBrowser } = await import('@/utils/browser.js');

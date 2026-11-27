@@ -28,7 +28,8 @@ export interface ProxyStartOptions {
   profile?: string;
 }
 
-function parsePortOption(value: string | undefined, fallback: number): number {
+/** The port in `value`, or `fallback` when it is empty. Throws a `ConfigurationError` when it is not a positive integer. */
+export function parsePortOption(value: string | undefined, fallback: number): number {
   if (!value) {
     return fallback;
   }

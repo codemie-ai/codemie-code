@@ -25,6 +25,7 @@ import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import { renderHint } from '@/utils/hint.js';
 import { adviceForReason } from './analytics-hints.js';
+import type { DoctorRemedies } from './doctor/plan.js';
 import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
 import { readDesktopGateway } from './connectors/desktop.js';
 import { CLAUDE_CODE_OTLP_AGENT_NAME } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.constants.js';
@@ -150,7 +151,12 @@ export function printSaved(store: AnalyticsStore, suffix = ''): void {
  * only: it reads state, never throws, and never changes the command's outcome. With `confirmLabel`
  * a tracked project is confirmed as tracked by that connector.
  */
-export async function reportEffectiveState(connectorId: AnalyticsConnectorId, target: string, confirmLabel?: string): Promise<void> {
+export async function reportEffectiveState(
+  connectorId: AnalyticsConnectorId,
+  target: string,
+  remedies: DoctorRemedies,
+  confirmLabel?: string
+): Promise<void> {
   try {
     const decision =
       connectorId === CLAUDE_CODE_OTLP_AGENT_NAME
@@ -167,7 +173,7 @@ export async function reportEffectiveState(connectorId: AnalyticsConnectorId, ta
       return;
     }
     const reason = hooksMissing ? 'hooks-not-installed' : 'reason' in decision ? decision.reason : 'unknown';
-    const advice = adviceForReason(connectorId, reason, target);
+    const advice = adviceForReason(connectorId, reason, target, remedies);
     console.log(chalk.yellow(`Note: ${target} is NOT tracked${advice ? ` — ${advice.description}` : ` (${reason})`}.`));
     const nextStep = advice?.command ?? advice?.action;
     if (nextStep) {
@@ -246,7 +252,7 @@ async function connectorState(entry: AnalyticsConnector): Promise<ConnectorState
  * on a connector with a stored preference or whose state cannot be read, so a skipped connector can never keep collecting (the
  * Copilot gate checks the preference before the scope). Throws when nothing is left to act on.
  */
-export async function selectTargetConnectors(verb: AnalyticsVerb, opts: ConnectorOptions): Promise<TargetSelection> {
+export async function selectTargetConnectors(verb: AnalyticsVerb, opts: ConnectorOptions, remedies: DoctorRemedies): Promise<TargetSelection> {
   if (hasConnectorFlag(opts)) {
     const ids = resolveAnalyticsConnectors(opts);
     return { targets: ANALYTICS_CONNECTORS.filter((entry) => ids.includes(entry.id)), unreadable: [] };
@@ -264,7 +270,7 @@ export async function selectTargetConnectors(verb: AnalyticsVerb, opts: Connecto
     throw new ConfigurationError(
       renderHint({
         reason: 'No analytics connector is connected',
-        command: `codemie proxy connect ${vendorFlags(CONNECTOR_FLAGS).join(' | ')}`,
+        command: remedies.connect(vendorFlags(CONNECTOR_FLAGS).join(' | ')),
       })
     );
   }
@@ -280,11 +286,12 @@ export async function selectTargetConnectors(verb: AnalyticsVerb, opts: Connecto
 export async function forEachTarget(
   verb: AnalyticsVerb,
   opts: ConnectorOptions,
-  act: (connector: AnalyticsConnector) => Promise<boolean>
+  act: (connector: AnalyticsConnector) => Promise<boolean>,
+  remedies: DoctorRemedies
 ): Promise<boolean> {
   let selection: TargetSelection;
   try {
-    selection = await selectTargetConnectors(verb, opts);
+    selection = await selectTargetConnectors(verb, opts, remedies);
   } catch (error) {
     console.error(chalk.red(`✗ ${errorMessage(error)}`));
     process.exitCode = 1;
