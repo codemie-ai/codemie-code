@@ -105,9 +105,10 @@ export interface ProviderLifecycleHooks {
 
   /**
    * Called to enrich CLI arguments (provider-specific)
-   * Can inject additional flags or modify existing ones
+   * Can inject additional flags or modify existing ones.
+   * `env` is the env the agent child is spawned with; only hooks that must hand the child a value derived from the args use it.
    */
-  enrichArgs?: (args: string[], config: AgentConfig) => string[];
+  enrichArgs?: (args: string[], config: AgentConfig, env?: NodeJS.ProcessEnv) => string[];
 
   /**
    * Called when agent session starts (provider-specific)
@@ -172,7 +173,7 @@ export interface AgentLifecycle {
    */
   beforeRun?: (this: any, env: NodeJS.ProcessEnv, config: AgentConfig) => Promise<NodeJS.ProcessEnv>;
   afterRun?: (this: any, exitCode: number, env: NodeJS.ProcessEnv) => Promise<void>;
-  enrichArgs?: (args: string[], config: AgentConfig) => string[];
+  enrichArgs?: (args: string[], config: AgentConfig, env?: NodeJS.ProcessEnv) => string[];
   onSessionStart?: (this: any, sessionId: string, env: NodeJS.ProcessEnv) => Promise<void>;
   onSessionEnd?: (this: any, exitCode: number, env: NodeJS.ProcessEnv) => Promise<void>;
 }
@@ -774,12 +775,23 @@ export interface OtlpAdapterDeps {
   ensureOtlpProxy: (agentName: string, event?: string) => Promise<void>;
   /** The collection policy this hook runs under. */
   policy: CollectionPolicy;
-  /** Sends one hook invocation's events as a single batch; true only for a 2xx response. */
+  /**
+   * Sends one hook invocation's events as a single batch; true only for a 2xx response. A batch the adapter holds in the
+   * owner-pending queue instead counts as accepted for the adapter's `finalize`, not for this function's result.
+   */
   forwardOtlpEventsToSpool: (
     events: Record<string, unknown>[],
     agentName: string,
     /** `evidenceV: 1` marks the spooled records as stamped (envelope only, never the event body). */
-    opts?: { evidenceV?: 1; evidenceLoss?: { sessionId: string; reason: string; events: number } }
+    opts?: {
+      evidenceV?: 1;
+      evidenceLoss?: { sessionId: string; reason: string; events: number };
+      /**
+       * Set to true when the daemon certainly did not take the batch: no daemon state, a refused connection (every address),
+       * or a 401 answered before any spool. A timeout, a reset or another status leaves it false: the batch may be spooled.
+       */
+      undelivered?: { value: boolean };
+    }
   ) => Promise<boolean>;
 }
 
