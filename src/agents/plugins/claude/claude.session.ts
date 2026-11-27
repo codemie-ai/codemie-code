@@ -8,7 +8,7 @@
 import { join, dirname, basename, resolve } from 'path';
 import { homedir } from 'os';
 import { existsSync, realpathSync } from 'fs';
-import { readdir, readFile, stat } from 'fs/promises';
+import { open, readdir, readFile, stat } from 'fs/promises';
 import { latestRecordTime, type SessionAdapter, type ParsedSession, type AggregatedResult } from '../../core/session/BaseSessionAdapter.js';
 import type { SessionDiscoveryOptions, SessionDescriptor } from '../../core/session/discovery-types.js';
 import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
@@ -26,6 +26,24 @@ import { applyClaudeBaseline } from './session/claude-baseline.js';
 import { extractClaudeFileOperation, type ClaudeFileOperation } from './session/claude-file-operation.js';
 import { collectToolOutcomes, extractNamedInvocations } from './session/claude-named-invocations.js';
 import { isCountedTranscriptLine, keepFirstAcrossCompaction } from './session/transcript-lines.js';
+
+/** When a transcript began: its first event's timestamp, else the file's last-write time. */
+async function transcriptStartTime(path: string, fallbackMs: number): Promise<number> {
+  let handle;
+  try {
+    handle = await open(path, 'r');
+    const buffer = Buffer.alloc(16384);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const firstLine = buffer.toString('utf-8', 0, bytesRead).split('\n')[0];
+    const match = /"timestamp"\s*:\s*"([^"]+)"/.exec(firstLine);
+    const parsed = match ? Date.parse(match[1]) : NaN;
+    return Number.isNaN(parsed) ? fallbackMs : parsed;
+  } catch {
+    return fallbackMs;
+  } finally {
+    await handle?.close();
+  }
+}
 
 /** The transcript paths named by CodeMie records other than `sessionId`. */
 async function claimedTranscripts(sessionId: string): Promise<Set<string>> {
@@ -127,7 +145,7 @@ export class ClaudeSessionAdapter implements SessionAdapter {
 
   /**
    * Find the transcripts of a record that names none, read-only: the `*.jsonl` files of the projects
-   * directory of the record's working directory last written within its run window (at or after
+   * directory of the record's working directory that began within its run window (at or after
    * its start, before the next record of the same agent in that directory), minus files another
    * record already names. Sorted by time; empty when none.
    */
@@ -156,7 +174,7 @@ export class ClaudeSessionAdapter implements SessionAdapter {
       const path = join(dir, name);
       const info = await stat(path).catch(() => null);
       if (!info) continue;
-      const time = info.mtimeMs;
+      const time = await transcriptStartTime(path, info.mtimeMs);
       if (time < record.startTime || (until !== undefined && time >= until)) {
         outside++;
         continue;

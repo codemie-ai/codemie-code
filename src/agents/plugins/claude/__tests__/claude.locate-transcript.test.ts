@@ -24,9 +24,9 @@ let cwd: string;
 let projectDir: string;
 const previous = { codemie: process.env.CODEMIE_HOME, config: process.env.CLAUDE_CONFIG_DIR };
 
-function transcript(name: string, mtimeMs: number): string {
+function transcript(name: string, mtimeMs: number, firstEventMs?: number): string {
   const path = join(projectDir, name);
-  writeFileSync(path, '{}\n');
+  writeFileSync(path, firstEventMs === undefined ? '{}\n' : `{"timestamp":"${new Date(firstEventMs).toISOString()}"}\n`);
   utimesSync(path, new Date(mtimeMs), new Date(mtimeMs));
   return path;
 }
@@ -83,6 +83,13 @@ describe('ClaudeSessionAdapter.locateTranscript', () => {
     const inside = transcript('inside.jsonl', minute(5));
     transcript('later.jsonl', minute(10));
     expect(await adapter().locateTranscript(record())).toEqual([inside]);
+  });
+
+  it('windows by the first event time, not the last write', async () => {
+    transcript('resumed.jsonl', minute(5), minute(-30));
+    const spanning = transcript('spanning.jsonl', minute(20), minute(5));
+    saveRecord(record({ sessionId: '00000000-0000-4000-8000-0000000000b2', startTime: minute(10) }));
+    expect(await adapter().locateTranscript(record())).toEqual([spanning]);
   });
 
   it('excludes a file another record already names', async () => {

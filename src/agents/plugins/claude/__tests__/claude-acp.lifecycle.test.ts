@@ -112,13 +112,14 @@ describe('claude-acp lifecycle', () => {
     expect(hook.processEvent.mock.calls.map(([event]) => event.hook_event_name)).toEqual(['SessionEnd']);
   });
 
-  it('two transcripts of the run are summed once each, with no double count on a repeat', async () => {
+  it('two distinct transcripts of the run are summed once each, with no double count on a repeat', async () => {
+    const second = join(root, 'second.jsonl');
+    writeFileSync(second, readFileSync(FIXTURE, 'utf-8').replace(/uuid-/g, 'uuid-b-').replace(/msg_bdrk_/g, 'msg_bdrk_b').replace(/toolu_bdrk_/g, 'toolu_bdrk_b'));
     placeTranscript('one.jsonl', FIXTURE, Date.now() - 60_000);
-    placeTranscript('two.jsonl', FIXTURE, Date.now());
+    placeTranscript('two.jsonl', second, Date.now());
     await ClaudeAcpPluginMetadata.lifecycle!.onSessionEnd!(0, env());
-    // Same fixture twice: identical record ids, so the second file adds nothing (dedupe)
-    expect(lineTotals()).toEqual({ added: 7, removed: 2 });
+    expect(lineTotals()).toEqual({ added: 14, removed: 4 });
     await ClaudeAcpPluginMetadata.lifecycle!.onSessionEnd!(0, env());
-    expect(lineTotals()).toEqual({ added: 7, removed: 2 });
+    expect(lineTotals()).toEqual({ added: 14, removed: 4 });
   });
 });

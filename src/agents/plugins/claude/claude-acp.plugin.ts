@@ -5,6 +5,7 @@ import {sendPathApiUrl} from '../../core/session/send-path.js';
 import {recordTranscriptCorrelation} from '../../core/session/no-transcript-correlation.js';
 import {wrapperOwnerFromEnv} from '../../../utils/processes.js';
 import {logger} from '../../../utils/logger.js';
+import type {Session} from '../../core/session/types.js';
 import {basename} from 'path';
 
 /**
@@ -29,6 +30,37 @@ function buildHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcess
   };
 }
 
+
+/** Locate the run's transcripts and record their line metrics; failures are logged, never thrown. */
+async function processLocatedTranscripts(record: Session | null, sessionId: string, env: NodeJS.ProcessEnv): Promise<void> {
+  const { ClaudeSessionAdapter } = await import('./claude.session.js');
+  const adapter = new ClaudeSessionAdapter(ClaudePluginMetadata);
+  const transcripts = record ? await adapter.locateTranscript(record) : [];
+  if (transcripts.length === 0) {
+    logger.warn('[claude-acp] No transcript matched the current run, skipping metrics');
+    return;
+  }
+  await recordTranscriptCorrelation(sessionId, transcripts[0]);
+  for (const transcript of transcripts) {
+    try {
+      const result = await adapter.processSession(transcript, sessionId, {
+        sessionId,
+        agentSessionId: basename(transcript, '.jsonl'),
+        apiBaseUrl: sendPathApiUrl(env) || '',
+        cookies: '',
+        clientType: env.CODEMIE_CLIENT_TYPE || 'codemie-claude-acp',
+        version: env.CODEMIE_CLI_VERSION || '1.0.0',
+        dryRun: false,
+        finalPass: true,
+      });
+      if (!result.success) {
+        logger.warn(`[claude-acp] Metrics processing had failures: ${result.failedProcessors.join(', ')}`);
+      }
+    } catch (error) {
+      logger.error(`[claude-acp] Transcript processing failed (non-blocking): ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
 
 /**
  * Claude Code ACP Plugin Metadata
@@ -112,37 +144,10 @@ export const ClaudeAcpPluginMetadata: AgentMetadata = {
       let endSessionId = sessionId;
       try {
         const { SessionStore } = await import('../../core/session/SessionStore.js');
-        const { ClaudeSessionAdapter } = await import('./claude.session.js');
         const record = await new SessionStore().loadSession(sessionId);
         const nativeId = record?.correlation?.agentSessionId;
         if (nativeId && nativeId !== 'unknown') endSessionId = nativeId;
-        const adapter = new ClaudeSessionAdapter(ClaudePluginMetadata);
-        const transcripts = record ? await adapter.locateTranscript(record) : [];
-
-        if (transcripts.length === 0) {
-          logger.warn('[claude-acp] No transcript matched the current run, skipping metrics');
-        } else {
-          await recordTranscriptCorrelation(sessionId, transcripts[0]);
-          for (const transcript of transcripts) {
-            try {
-              const result = await adapter.processSession(transcript, sessionId, {
-                sessionId,
-                agentSessionId: basename(transcript, '.jsonl'),
-                apiBaseUrl: sendPathApiUrl(env) || '',
-                cookies: '',
-                clientType: env.CODEMIE_CLIENT_TYPE || 'codemie-claude-acp',
-                version: env.CODEMIE_CLI_VERSION || '1.0.0',
-                dryRun: false,
-                finalPass: true,
-              });
-              if (!result.success) {
-                logger.warn(`[claude-acp] Metrics processing had failures: ${result.failedProcessors.join(', ')}`);
-              }
-            } catch (error) {
-              logger.error(`[claude-acp] Transcript processing failed (non-blocking): ${error instanceof Error ? error.message : String(error)}`);
-            }
-          }
-        }
+        await processLocatedTranscripts(record, sessionId, env);
       } catch (error) {
         logger.error(`[claude-acp] Transcript lookup failed (non-blocking): ${error instanceof Error ? error.message : String(error)}`);
       }
