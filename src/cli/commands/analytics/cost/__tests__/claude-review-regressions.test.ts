@@ -129,7 +129,7 @@ describe('Claude review regressions', () => {
   it('CR-012 does not let already excluded replay make fresh allocations ambiguous', async () => {
     const parsed = family([invoke('a', 0), invoke('b', 1)], [child('a', 'a', 'root', [usage('shared', 3), usage('fresh-a', 5)]), child('b', 'b', 'root', [usage('shared', 3), usage('fresh-b', 7)])]);
     const { index } = await enrichCosts([{ sessionId: 'earlier', deltas: [] }, { sessionId: 'root', deltas: [] }], {
-      resolveAgentName: () => 'claude', loadAgentSessionFile: async () => '/sanitized/root.jsonl',
+      resolveAgentName: () => 'claude', loadAgentSessionFile: async (r) => `/sanitized/${r.sessionId}.jsonl`,
       parseNative: async (_agent, _file, id) => id === 'earlier' ? { ...family([usage('shared', 3)]), sessionId: 'earlier' } : parsed,
     });
     expect(index.get('root')?.dispatches?.map((event) => [event.attributionStatus, event.tokens?.total])).toEqual([['exact', 5], ['exact', 7]]);
