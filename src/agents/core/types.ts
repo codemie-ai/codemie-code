@@ -774,7 +774,10 @@ export interface OtlpAdapterDeps {
   ensureOtlpProxy: (agentName: string, event?: string) => Promise<void>;
   /** The collection policy this hook runs under. */
   policy: CollectionPolicy;
-  /** Sends one hook invocation's events as a single batch; true only for a 2xx response. */
+  /**
+   * Sends one hook invocation's events as a single batch; true only for a 2xx response. A batch the adapter holds in the
+   * owner-pending queue instead counts as accepted for the adapter's `finalize`, not for this function's result.
+   */
   forwardOtlpEventsToSpool: (
     events: Record<string, unknown>[],
     agentName: string,
@@ -782,7 +785,10 @@ export interface OtlpAdapterDeps {
     opts?: {
       evidenceV?: 1;
       evidenceLoss?: { sessionId: string; reason: string; events: number };
-      /** Set to true when the batch certainly reached no daemon (no daemon state, or a refused connection). */
+      /**
+       * Set to true when the daemon certainly did not take the batch: no daemon state, a refused connection (every address),
+       * or a 401 answered before any spool. A timeout, a reset or another status leaves it false: the batch may be spooled.
+       */
       undelivered?: { value: boolean };
     }
   ) => Promise<boolean>;
