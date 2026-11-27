@@ -22,8 +22,9 @@ export interface ParseSSOTokenOptions {
   fetchTimeoutMs?: number;
 }
 
-const INVALID_TOKEN = 'Invalid login token. Copy the full address from the browser and try again.';
-const MISSING_COOKIES = 'Login token does not contain session cookies.';
+/** Shown on the paste flow, where the user copies an address from the browser. */
+export const INVALID_TOKEN = 'Invalid login token. Copy the full address from the browser and try again.';
+export const MISSING_COOKIES = 'Login token does not contain session cookies.';
 const ABORT_MESSAGE = 'Authentication cancelled by user';
 
 /**

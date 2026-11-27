@@ -17,7 +17,7 @@ import { withVerifiedOwner } from '../../core/credential-owner.js';
 import { ensureApiBase } from '../../core/codemie-auth-helpers.js';
 import { logger } from '../../../utils/logger.js';
 import { effectiveExpiresAt } from './sso.expiry.js';
-import { parseSSOToken } from './sso.token-parser.js';
+import { parseSSOToken, MISSING_COOKIES } from './sso.token-parser.js';
 import { promptForPastedToken, ABORT_MESSAGE } from './sso.paste-prompt.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 
@@ -403,13 +403,19 @@ export class CodeMieSSO {
    * Handle OAuth callback from browser
    */
   private async handleCallback(url: URL): Promise<SSOAuthResult> {
+    // The browser path keeps its original failure texts. The paste-back wording
+    // ("copy the full address from the browser") does not fit a redirect that already landed here.
+    if (!url.searchParams.get('token') && !url.searchParams.get('auth') && !url.searchParams.get('data')) {
+      return { success: false, error: 'Missing token parameter in OAuth callback' };
+    }
     try {
       const parsed = await parseSSOToken(url.href, { codeMieUrl: this.codeMieUrl });
       return { success: true, apiUrl: parsed.apiUrl, cookies: parsed.cookies };
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : String(error)
+        error: message === MISSING_COOKIES ? 'Token missing cookies field' : message
       };
     }
   }

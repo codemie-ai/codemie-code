@@ -209,6 +209,21 @@ describe('CodeMieSSO browser callback', () => {
     expect(result).toEqual({ success: true, apiUrl: `${BASE}/code-assistant-api`, cookies });
   });
 
+  it('keeps the original missing-token text on the browser callback', async () => {
+    const sso = new CodeMieSSO() as unknown as CallbackHandler;
+    sso.codeMieUrl = BASE;
+    const result = await sso.handleCallback(new URL('http://localhost:1234/?foo=bar'));
+    expect(result).toEqual({ success: false, error: 'Missing token parameter in OAuth callback' });
+  });
+
+  it('keeps the original missing-cookies text on the browser callback', async () => {
+    const sso = new CodeMieSSO() as unknown as CallbackHandler;
+    sso.codeMieUrl = BASE;
+    const noCookies = Buffer.from(JSON.stringify({ a: 1 })).toString('base64');
+    const result = await sso.handleCallback(new URL(`http://localhost:1234/?token=${encodeURIComponent(noCookies)}`));
+    expect(result).toEqual({ success: false, error: 'Token missing cookies field' });
+  });
+
   it('reports a callback without a token as a failure', async () => {
     const sso = new CodeMieSSO() as unknown as CallbackHandler;
     sso.codeMieUrl = BASE;
