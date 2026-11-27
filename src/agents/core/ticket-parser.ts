@@ -332,3 +332,87 @@ export function parsePromptFields(prompt: string): PromptFields {
     prompt_length: prompt.length,
   };
 }
+
+/** Upper bound on refs returned by `findTicketRefs` / `findMrRefs`. */
+const MAX_REFS = 20;
+
+/**
+ * `#24`, `org/repo#24`, `AB#123`: digits only after the `#`, so `#fff` and `# Plan` never match; a bare prefix is 1-4 letters, so `secret#5` is not a ref.
+ * Neither segment of `org/repo` may hold a dot, so a file path with a line anchor (`src/login.ts#42`) is not a ref; a dotted repo name (`vercel/next.js#7`) is dropped with it.
+ */
+const HASH_REF_RE = /(?<![A-Za-z0-9_/.&#-])(?:[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+|[A-Za-z]{1,4})?#\d+(?![A-Za-z0-9_])/g;
+
+/** `!456`, a GitLab merge request. */
+const BANG_REF_RE = /(?<![A-Za-z0-9_!])!\d+(?![A-Za-z0-9_])/g;
+
+/**
+ * A pull or merge request inside a URL: `/pull/24` (GitHub), `/merge_requests/24` or `/merge-requests/24` (GitLab),
+ * `/pull-requests/24` (Bitbucket Server), `/pullrequests/24` (Bitbucket Cloud), `/pullrequest/24` (Azure DevOps).
+ * The path word is kept with the number (`pull/24`), so a reduced prompt shows what the number is.
+ */
+const MR_URL_RE = /\/(pull|pulls|merge_requests|merge-requests|pull-requests|pullrequests|pullrequest)\/(\d+)(?![A-Za-z0-9_])/g;
+
+/** An issue inside a URL: `/issues/24` (GitHub, GitLab, Gitea), `/work_items/24` (GitLab). Kept as `issues/24`. */
+const ISSUE_URL_RE = /\/(issues|work_items)\/(\d+)(?![A-Za-z0-9_])/g;
+
+/**
+ * Ticket refs as written in raw text: Jira-style keys that pass the `extractTicketMentions` filters,
+ * then `#24`, `org/repo#24`, `AB#123` and the path and number of an issue URL (`issues/24`). De-duplicated case-insensitively, first spelling wins,
+ * capped. Linear in the length of `raw`.
+ */
+export function findTicketRefs(raw: string): string[] {
+  if (!raw) {
+    return [];
+  }
+  const refs = new Map<string, string>();
+  const accepted = new Set(extractTicketMentions(raw, MAX_REFS));
+  if (accepted.size > 0) {
+    for (const match of raw.matchAll(new RegExp(TICKET_RE.source, TICKET_RE.flags))) {
+      const key = match[0].toUpperCase();
+      if (accepted.has(key) && !refs.has(key)) {
+        refs.set(key, match[0]);
+      }
+    }
+  }
+  for (const match of raw.matchAll(HASH_REF_RE)) {
+    const key = match[0].toUpperCase();
+    if (!refs.has(key)) {
+      refs.set(key, match[0]);
+    }
+  }
+  for (const match of raw.matchAll(ISSUE_URL_RE)) {
+    const ref = `${match[1]}/${match[2]}`;
+    if (!refs.has(ref.toUpperCase())) {
+      refs.set(ref.toUpperCase(), ref);
+    }
+  }
+  return [...refs.values()].slice(0, MAX_REFS);
+}
+
+/**
+ * Merge or pull request refs in raw text: `!456`, `#456`, and the path and number of a
+ * request URL (`pull/N`, `merge_requests/N`, see `MR_URL_RE`). De-duplicated, first spelling wins, capped.
+ */
+export function findMrRefs(raw: string): string[] {
+  if (!raw) {
+    return [];
+  }
+  const refs = new Map<string, string>();
+  const add = (ref: string): void => {
+    if (!refs.has(ref)) {
+      refs.set(ref, ref);
+    }
+  };
+  for (const match of raw.matchAll(BANG_REF_RE)) {
+    add(match[0]);
+  }
+  for (const match of raw.matchAll(HASH_REF_RE)) {
+    if (match[0].startsWith('#')) {
+      add(match[0]);
+    }
+  }
+  for (const match of raw.matchAll(MR_URL_RE)) {
+    add(`${match[1]}/${match[2]}`);
+  }
+  return [...refs.values()].slice(0, MAX_REFS);
+}

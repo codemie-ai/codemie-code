@@ -1,5 +1,9 @@
-import { describe, it, expect } from 'vitest';
-import { buildClaudeEventId } from '../claude-code-otlp.event-id.js';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { buildClaudeEventId, resetEventKeyCache } from '../claude-code-otlp.event-id.js';
 
 /** The built event supplies type/session; the payload is the record before enrichment. */
 const event = (type: string, sessionId = 's1') => ({ type, session_id: sessionId });
@@ -83,5 +87,81 @@ describe('buildClaudeEventId', () => {
 
   it('content-hashes an event type without a template', () => {
     expect(buildClaudeEventId(event('agent.event'), { a: 1 }, 't')).toMatch(/^agent\.event:s1:[0-9a-f]{64}$/);
+  });
+});
+
+describe('buildClaudeEventId under reduction', () => {
+  let home: string;
+  const savedHome = process.env.CODEMIE_HOME;
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'codemie-event-key-'));
+    process.env.CODEMIE_HOME = home;
+    resetEventKeyCache();
+  });
+
+  afterEach(() => {
+    if (savedHome === undefined) delete process.env.CODEMIE_HOME;
+    else process.env.CODEMIE_HOME = savedHome;
+    resetEventKeyCache();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  const hook = (prompt: string) => ({ prompt });
+
+  it('keeps unreduced ids equal to the unkeyed hash, with or without the option', () => {
+    const payload = { provider: 'anthropic' };
+    const plain = buildClaudeEventId(event('agent.event'), payload, 't');
+    expect(buildClaudeEventId(event('agent.event'), payload, 't', { reduced: false })).toBe(plain);
+    expect(plain).toBe(
+      `agent.event:s1:${createHash('sha256').update('{"provider":"anthropic","timestamp":"t"}').digest('hex')}`
+    );
+  });
+
+  it('keys a reduced id: it differs from the unkeyed hash and is stable across calls', () => {
+    const reduced = buildClaudeEventId(event('agent.event'), hook('secret'), 't', { reduced: true });
+    expect(reduced).toMatch(/^agent\.event:s1:[0-9a-f]{64}$/);
+    expect(reduced).not.toBe(buildClaudeEventId(event('agent.event'), hook('secret'), 't'));
+    expect(buildClaudeEventId(event('agent.event'), hook('secret'), 't', { reduced: true })).toBe(reduced);
+    resetEventKeyCache();
+    expect(buildClaudeEventId(event('agent.event'), hook('secret'), 't', { reduced: true })).toBe(reduced);
+  });
+
+  it('gives two distinct prompts distinct reduced ids', () => {
+    const a = buildClaudeEventId(event('agent.event'), hook('one'), 't', { reduced: true });
+    const b = buildClaudeEventId(event('agent.event'), hook('two'), 't', { reduced: true });
+    expect(a).not.toBe(b);
+  });
+
+  it('cannot be reproduced by hashing a guessed payload', () => {
+    const guess = createHash('sha256').update('{"prompt":"secret","timestamp":"t"}').digest('hex');
+    expect(buildClaudeEventId(event('agent.event'), hook('secret'), 't', { reduced: true })).not.toContain(guess);
+  });
+
+  it('writes the key once, 32 bytes, mode 0600', () => {
+    buildClaudeEventId(event('agent.event'), hook('x'), 't', { reduced: true });
+    const keyPath = join(home, 'analytics-event-key');
+    const first = readFileSync(keyPath);
+    expect(first.length).toBe(32);
+    if (process.platform !== 'win32') expect(statSync(keyPath).mode & 0o777).toBe(0o600);
+    resetEventKeyCache();
+    buildClaudeEventId(event('agent.event'), hook('y'), 't', { reduced: true });
+    expect(readFileSync(keyPath).equals(first)).toBe(true);
+  });
+
+  it('does not touch the key file for unreduced ids', () => {
+    buildClaudeEventId(event('agent.event'), hook('x'), 't');
+    expect(existsSync(join(home, 'analytics-event-key'))).toBe(false);
+  });
+
+  it('falls back to a random per-process key, never the unkeyed hash, when the key cannot be stored', () => {
+    // A file where the home directory should be makes the key unreadable and uncreatable.
+    const blocker = join(home, 'blocker');
+    writeFileSync(blocker, 'x');
+    process.env.CODEMIE_HOME = blocker;
+    resetEventKeyCache();
+    const first = buildClaudeEventId(event('agent.event'), hook('secret'), 't', { reduced: true });
+    expect(first).not.toBe(buildClaudeEventId(event('agent.event'), hook('secret'), 't'));
+    expect(buildClaudeEventId(event('agent.event'), hook('secret'), 't', { reduced: true })).toBe(first);
   });
 });

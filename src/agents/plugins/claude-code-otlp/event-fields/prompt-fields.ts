@@ -1,11 +1,6 @@
-/** Who wrote a `UserPromptSubmit` prompt: the user, or Claude Code itself on a background task or agent message. */
-export type PromptSource = 'user' | 'task_notification' | 'agent_message';
+import { autoPromptSource, type PromptSource } from '@/agents/core/prompt-grammar.js';
 
-/** Starts of an auto prompt: Claude Code injects it when a background task finishes or a message arrives. */
-const AUTO_PROMPT_SOURCES: ReadonlyArray<readonly [prefix: string, source: PromptSource]> = [
-  ['<task-notification>', 'task_notification'],
-  ['<agent-message', 'agent_message'],
-];
+export { AUTO_PROMPT_SOURCES, autoPromptSource, type PromptSource } from '@/agents/core/prompt-grammar.js';
 
 /**
  * Context blocks Claude Code adds to the typed text: the IDE extensions' open file and selection,
@@ -13,12 +8,6 @@ const AUTO_PROMPT_SOURCES: ReadonlyArray<readonly [prefix: string, source: Promp
  * matching closing tag, so text between two blocks is kept; an unterminated block is left as is.
  */
 const INJECTED_CONTEXT_BLOCK = /<(ide_opened_file|ide_selection|system-reminder)(?:[ \t][^<>]*)?>[\s\S]*?<\/\1>/g;
-
-/** The source of an auto prompt, `undefined` for a prompt the user wrote. */
-export function autoPromptSource(text: string): PromptSource | undefined {
-  const start = text.trimStart();
-  return AUTO_PROMPT_SOURCES.find(([prefix]) => start.startsWith(prefix))?.[1];
-}
 
 /** The source of a `UserPromptSubmit` prompt; an auto prompt keeps its text, only flagged. */
 export function resolvePromptSource(prompt: string): PromptSource {

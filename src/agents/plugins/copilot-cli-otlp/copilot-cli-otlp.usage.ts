@@ -1,6 +1,7 @@
 import type { CopilotEvent, CopilotShutdownData } from '@/agents/plugins/copilot-cli/copilot-cli-event-types.js';
 import { extractCopilotToolActivity, type OpenToolCall } from '@/agents/plugins/copilot-cli/copilot-cli.tool-activity.js';
 import { extractSlashCommand, isSubagentPrompt } from '@/agents/plugins/copilot-cli/copilot-cli.constants.js';
+import { reduceHookEvent } from '@/agents/core/hook-event-keep-list.js';
 import { buildUsageRows, stableEventId, USAGE_REQUEST_EVENT_TYPE, type PendingMessage } from './copilot-cli-otlp.request-usage.js';
 import { buildUnhookedToolEvents } from './copilot-cli-otlp.unhooked-tools.js';
 
@@ -218,6 +219,11 @@ export interface DeferredUsageOptions {
    * real, later enrichment produces — so both would be stored and double-count.
    */
   withoutSummary?: boolean;
+  /**
+   * Reduce every built event (EPMCDME-17748). Defaults to the template's own `analytics_reduction: true`, the
+   * hook-time decision of the session.
+   */
+  reduced?: boolean;
 }
 
 /**
@@ -231,6 +237,7 @@ export function buildDeferredUsageEvents(
   options: DeferredUsageOptions = {}
 ): Record<string, unknown>[] {
   const { truncated = false, withoutSummary = false } = options;
+  const reduced = options.reduced ?? template['analytics_reduction'] === true;
   const sessionId = String(template['session_id'] ?? '');
   const common: Record<string, unknown> = {};
   for (const key of TEMPLATE_FIELDS) {
@@ -244,7 +251,7 @@ export function buildDeferredUsageEvents(
   const endedAt = lastShutdown?.timestamp ?? '';
   // A tail-only transcript would yield a final summary that understates the incremental totals, so omit it.
   const outgoing: Record<string, unknown>[] = [...slice.rows];
-  if (!truncated) outgoing.push(...buildUnhookedToolEvents(sessionId, events));
+  if (!truncated) outgoing.push(...buildUnhookedToolEvents(sessionId, events, { reduced }));
   if (!truncated && !withoutSummary) {
     outgoing.push(buildSessionSummaryEvent({
       sessionId,
@@ -257,5 +264,8 @@ export function buildDeferredUsageEvents(
     }));
   }
 
-  return outgoing.map((event) => ({ ...common, ...event }));
+  const merged = outgoing.map((event) => ({ ...common, ...event }));
+  return reduced
+    ? merged.map((event) => reduceHookEvent({ ...event, analytics_reduction: true }))
+    : merged;
 }

@@ -1,4 +1,5 @@
 import { maskAndBoundFields } from '@/agents/core/otlp-field-limits.js';
+import { reduceHookEvent } from '@/agents/core/hook-event-keep-list.js';
 import type {
   CopilotEvent,
   CopilotToolCompleteData,
@@ -61,7 +62,15 @@ function toolEnd(toolName: string, toolArgs: unknown, complete: CopilotToolCompl
  * session whose transcript shows no tool hook at all, or for a tail-only transcript, where a missing hook
  * cannot be told from a cut one.
  */
-export function buildUnhookedToolEvents(sessionId: string, events: CopilotEvent[]): Record<string, unknown>[] {
+export function buildUnhookedToolEvents(
+  sessionId: string,
+  events: CopilotEvent[],
+  opts: { reduced?: boolean } = {}
+): Record<string, unknown>[] {
+  const finish = (event: Record<string, unknown>): Record<string, unknown> => {
+    const limited = maskAndBoundFields(event);
+    return opts.reduced ? reduceHookEvent({ ...limited, analytics_reduction: true }) : limited;
+  };
   const hooked = hookedToolCallIds(events);
   if (hooked.size === 0) return [];
 
@@ -88,7 +97,7 @@ export function buildUnhookedToolEvents(sessionId: string, events: CopilotEvent[
       ...(event.agentId ? { agent_id: event.agentId } : {}),
     });
 
-    out.push(maskAndBoundFields({
+    out.push(finish({
       ...buildToolEvent(base(TOOL_START_TYPE, event.timestamp), toolName, toolArgs, { toolUseId }),
       event_id: stableEventId(TOOL_START_TYPE, sessionId, toolUseId),
     }));
@@ -97,7 +106,7 @@ export function buildUnhookedToolEvents(sessionId: string, events: CopilotEvent[
     if (!complete) continue;
     const end = toolEnd(toolName, toolArgs, (complete.data ?? {}) as CopilotToolCompleteData);
     const endEvent = buildToolEvent(base(TOOL_END_TYPE, complete.timestamp), toolName, toolArgs, { toolUseId, end });
-    out.push(maskAndBoundFields({
+    out.push(finish({
       ...endEvent,
       event_id: stableEventId(String(endEvent['type']), sessionId, toolUseId),
     }));

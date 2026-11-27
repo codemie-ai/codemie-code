@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
+import { keyedDigest } from '@/agents/core/analytics-event-key.js';
 import { OtlpAgentAdapter, type OtlpHookContext } from '@/agents/core/OtlpAgentAdapter.js';
+import { reducePrompt } from '@/agents/core/analytics-reduction.js';
 import { ensureCodeMieSsoAuth, type AuthGateResult } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { describeLogin, type DetachedLoginOutcome } from '@/providers/plugins/sso/sso.detached-login.js';
 import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
@@ -112,6 +114,12 @@ export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput
     };
   }
 
+  /** Copilot Chat has no slash command: only auto markers and ticket and MR refs are kept. */
+  protected override reducePromptBody(hookEvent: Record<string, unknown>): string {
+    const prompt = hookEvent['prompt'];
+    return typeof prompt === 'string' ? reducePrompt(prompt, { commandName: '' }) : '';
+  }
+
   protected resolveEventType(event: Record<string, unknown>): string {
     return HOOK_EVENT_TYPE_MAP[String(event['hook_event_name'] ?? '')] ?? 'agent.event';
   }
@@ -119,10 +127,11 @@ export class CopilotChatOtlpPlugin extends OtlpAgentAdapter<CopilotChatHookInput
   protected buildEventId(
     event: Record<string, unknown>,
     payload: Record<string, unknown>,
-    timestamp: string
+    timestamp: string,
+    options: { reduced: boolean } = { reduced: false }
   ): string {
     const content = JSON.stringify({ ...payload, timestamp }) ?? 'null';
-    const digest = createHash('sha256').update(content).digest('hex');
+    const digest = options.reduced ? keyedDigest(content) : createHash('sha256').update(content).digest('hex');
     return `${String(event['type'] ?? '')}:${String(event['session_id'] ?? '')}:${digest}`;
   }
 

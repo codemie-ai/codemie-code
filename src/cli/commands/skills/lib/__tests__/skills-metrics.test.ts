@@ -17,6 +17,13 @@ const mockConfigLoad = vi.fn();
 const mockEnsureApiBase = vi.fn();
 const mockDetectGitBranch = vi.fn();
 const mockDetectGitRemote = vi.fn();
+const mockIsReductionOn = vi.fn();
+const mockReadOptedIn = vi.fn();
+
+vi.mock('@/utils/analytics-reduction-setting.js', () => ({
+  isReductionOn: (...args: unknown[]) => mockIsReductionOn(...args),
+  readOptedInProjects: (...args: unknown[]) => mockReadOptedIn(...args),
+}));
 
 vi.mock('@/utils/config.js', () => ({
   ConfigLoader: { load: () => mockConfigLoad() },
@@ -46,6 +53,8 @@ beforeEach(() => {
   mockEnsureApiBase.mockReset().mockImplementation((raw: string) => `${raw}/code-assistant-api`);
   mockDetectGitBranch.mockReset().mockResolvedValue('feature/test');
   mockDetectGitRemote.mockReset().mockResolvedValue('codemie-ai/codemie-code');
+  mockIsReductionOn.mockReset().mockResolvedValue(false);
+  mockReadOptedIn.mockReset().mockResolvedValue([]);
 
   fetchSpy = vi.fn().mockResolvedValue({
     ok: true,
@@ -219,6 +228,24 @@ describe('skill events emitter (transport behavior)', () => {
     const [, init] = fetchSpy.mock.calls[0]!;
     expect(init.headers['X-CodeMie-Repository']).toBe('codemie-ai/codemie-code');
     expect(init.headers['X-CodeMie-Branch']).toBe('feature/test');
+  });
+
+  it('cuts the branch to its ticket keys when prompt reduction is on (AC10)', async () => {
+    mockConfigLoad.mockResolvedValue({ codeMieUrl: 'https://codemie.lab.epam.com' });
+    mockGetStoredCredentials.mockResolvedValue({
+      cookies: { session: 'abc' },
+      apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+    });
+    mockDetectGitBranch.mockResolvedValue('feature/acme-bank-ledger-EPMCDME-1');
+    mockIsReductionOn.mockResolvedValue(true);
+
+    const { startSkillMetric, emitStarted } = await importMetrics();
+    const session = await startSkillMetric('list');
+    await emitStarted(session, { scope: 'global' });
+
+    const [, init] = fetchSpy.mock.calls[0]!;
+    expect(init.headers['X-CodeMie-Branch']).toBe('EPMCDME-1');
+    expect(JSON.parse(init.body).branch).toBe('EPMCDME-1');
   });
 
   it('percent-encodes non-Latin-1 repository header', async () => {

@@ -48,3 +48,16 @@ describe('session.usage_record keyed by accounting.usageId', () => {
     expect(new Set(incremental.map((r) => r.event_id)).size).toBe(expected.length);
   });
 });
+
+describe('deferred usage events reduced only by the session binding (EPMCDME-17748)', () => {
+  it('cuts the full branch from the template even when the template was not reduced at hook time', () => {
+    const template = { session_id: SID, git_branch: 'feature/acme-bank-migration-EPMCDME-5', repo_remote: 'git@example:acme/bank.git' };
+
+    const out = buildDeferredUsageEvents(template, events, '1.0.0', { reduced: true });
+
+    expect(out.length).toBeGreaterThan(0);
+    expect(out.every((e) => e['analytics_reduction'] === true)).toBe(true);
+    expect(out.every((e) => e['git_branch'] === 'EPMCDME-5')).toBe(true);
+    expect(JSON.stringify(out)).not.toContain('acme-bank-migration');
+  });
+});

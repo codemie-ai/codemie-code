@@ -12,6 +12,12 @@ import type { ProxyHTTPClient } from '../../proxy-http-client.js';
 const appendSpoolMock = vi.fn(async (_sessionId: string, _stream: string, _data: string) => {});
 vi.mock('../otlp-spool/spool-io.js', () => ({ appendSpool: appendSpoolMock }));
 
+const readStatusMock = vi.fn(async (_sessionId: string): Promise<{ reduction?: true } | null> => null);
+vi.mock('../otlp-spool/session-status.js', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  readStatus: readStatusMock,
+}));
+
 const loggerMock = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
 vi.mock('@/utils/logger.js', () => ({ logger: loggerMock }));
 
@@ -285,5 +291,55 @@ describe('OtlpPlugin — POST /v1/analytics/otlp/v1/{signal} (application/json)'
     expect(res.statusCode).toBe(200);
     expect(appendSpoolMock).not.toHaveBeenCalled();
     expect(loggerMock.debug).toHaveBeenCalled();
+  });
+
+  describe('protobuf OTLP for a reduced session (EPMCDME-17748)', () => {
+    const protobufContext = (): ProxyContext =>
+      otlpJsonContext('logs', `\u0001${SESSION_ID}\u0002`, { headers: { 'content-type': 'application/x-protobuf' } });
+
+    async function post(ctx: ProxyContext) {
+      const interceptor = new OtlpPlugin().createInterceptor({} as never);
+      const res = fakeResponse();
+      await interceptor.handleRequest(ctx, {} as IncomingMessage, res, {} as ProxyHTTPClient);
+      return res;
+    }
+    const dropWarnings = (): unknown[][] =>
+      loggerMock.warn.mock.calls.filter(([message]) => String(message).includes('protobuf'));
+
+    beforeEach(async () => {
+      readStatusMock.mockReset();
+      readStatusMock.mockResolvedValue(null);
+      (await import('../otlp-spool/protobuf-drop.js')).resetProtobufDropLog();
+    });
+
+    it('returns 200, spools nothing and logs once per run, naming the fix, until a JSON request arrives', async () => {
+      readStatusMock.mockResolvedValue({ reduction: true });
+
+      const first = await post(protobufContext());
+      const second = await post(protobufContext());
+
+      expect(first.statusCode).toBe(200);
+      expect(second.statusCode).toBe(200);
+      expect(appendSpoolMock).not.toHaveBeenCalled();
+      expect(dropWarnings()).toHaveLength(1);
+      expect(String(dropWarnings()[0][0])).toContain('codemie proxy connect --claude-otlp');
+
+      await postOtlpJson('logs', JSON.stringify({ sessionId: SESSION_ID }));
+      appendSpoolMock.mockClear();
+      await post(protobufContext());
+
+      expect(dropWarnings()).toHaveLength(2);
+      expect(appendSpoolMock).not.toHaveBeenCalled();
+    });
+
+    it('still spools protobuf for a session that is not reduced', async () => {
+      readStatusMock.mockResolvedValue({});
+
+      const res = await post(protobufContext());
+
+      expect(res.statusCode).toBe(200);
+      expect(appendSpoolMock).toHaveBeenCalledTimes(1);
+      expect(dropWarnings()).toHaveLength(0);
+    });
   });
 });

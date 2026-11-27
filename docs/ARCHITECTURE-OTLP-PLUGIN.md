@@ -403,3 +403,24 @@ Backend cost: `cost_daily.cost_usd` stays empty for hook-only rows, but the back
 
 **Migration / release note:** the Copilot Chat connector writes `chat.hookFilesLocations` as an object with a flat hook file, managed desktop sessions are labelled `copilot-desktop` instead of `copilot-cli`, and managed launch now requires Copilot CLI >= 1.0.83. **Reconnect requirement:** users connected with an earlier version get the new settings key and hook-file format only after re-running `codemie proxy connect --copilot-otlp`.
 
+
+## 10. Prompt reduction (EPMCDME-17748)
+
+An opt-in setting (`analytics.promptReduction`, read by `src/utils/analytics-reduction-setting.ts`) makes every route send a fixed list of safe fields instead of free text. User-facing behaviour is in [PROXY-AND-ANALYTICS.md](PROXY-AND-ANALYTICS.md#hide-prompts-in-analytics-prompt-reduction); this section is the rule for adapter authors.
+
+**Keep-lists, not deny-lists.** Reduction replaces every string field that is not on a keep-list with `REDACTED:<FIELD>` (a string list becomes `['REDACTED:<FIELD>']`); numbers and booleans pass. So **a new field you add to an event is redacted for reduced sessions until you add it to the keep-list**, and forgetting that shows up as `REDACTED:...` in dashboards, as `REDACTED:MODEL-RAW` once did. Add a field to the list only when it is an identifier, a type name or a fixed enum, never typed text. One keep-list per record shape:
+
+| Route | Keep-list | Where |
+|---|---|---|
+| Hook events (every adapter, Cowork, Copilot usage enrichment, hook-less tool calls) | `HOOK_EVENT_KEEP_LIST` | `src/agents/core/hook-event-keep-list.ts`; use `reduceHookEvent()`, which also cuts `git_branch` first |
+| Native OTLP attributes (`--claude-otlp`) | `OTLP_ATTRIBUTE_KEEP_LIST` | `otlp-spool/otlp-reader.ts`, applied by `otlp-json-reduction.ts`, which also redacts any string outside attributes except ids, timestamps and units |
+| Managed-session metrics | `METRICS_KEEP_LIST` | `session/processors/metrics/metrics-types.ts`, applied in `metrics-api-client.ts` |
+| Local report and sync | `REPORT_SESSION_KEEP_LIST` | `analytics/report/redact.ts` |
+
+**Building blocks** (`src/agents/core/analytics-reduction.ts`): `reducePrompt` (command plus ticket and MR refs, an automatic-prompt marker, or `REDACTED:PROMPT`; pass `commandName: ''` when your adapter found no command so a path's first word is never read as one), `reduceBranch` (ticket keys, `REDACTED:BRANCH`, or a shared branch name such as `main`), `reduceRecord`, and `placeholder`. The command grammar and automatic-prompt markers live in `prompt-grammar.ts`; ticket and MR refs in `ticket-parser.ts` (`findTicketRefs`, `findMrRefs`).
+
+**Order inside `OtlpAgentAdapter.buildEvent`.** Attribution (ticket, story, project) is computed from the raw prompt and branch first; the prompt is reduced from the raw text before the 200-character cut; then the event is masked, stamped `analytics_reduction: true` and passed through the keep-list. Override `reducePromptBody()` if your tool has its own command handling. `buildEventId` receives `{ reduced }`: a content-hashed id of a reduced event must be keyed (`keyedDigest`, `analytics-event-key.ts`) so it cannot be guessed from a prompt.
+
+**One decision per session.** `decideReduction()` runs in the hook process: the global setting, or any project config found by `findAllConfigDirs()` from `CLAUDE_PROJECT_DIR` or the hook cwd up to the repository root (every level counts, so a nested `.codemie` cannot shadow the root). The stamped `analytics_reduction` is bound to the session in the spool status (`reduction`); the daemon then reduces that session's native JSON telemetry when it forwards it, drops its `http/protobuf` records, and holds native data of a session whose decision is not bound yet (`'unbound'`). Daemon-side producers that have no hook (Cowork, Copilot usage enrichment) follow the global setting, the opted-in project list (`analytics-reduction-projects.json`) and the template event's own stamp.
+
+**Fail closed.** An unreadable setting counts as on; a record or field that cannot be reduced is dropped or sent as `REDACTED:FAILED`, never sent as it was. Conversation history sync is outside this pipeline and is not reduced.

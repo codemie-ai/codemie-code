@@ -946,3 +946,18 @@ export async function readClaudeCodeHookInstall(): Promise<string | null> {
   const last = paths?.[paths.length - 1];
   return last !== undefined && isAbsoluteCodemiePath(last) ? last : null;
 }
+
+/**
+ * True when the Claude Code analytics connection is still on the `http/protobuf` OTLP protocol an older CodeMie
+ * version wrote (the connection `connect --claude-otlp` migrates to `http/json`). Read-only; never throws.
+ */
+export async function isClaudeCodeOtlpOnProtobuf(): Promise<boolean> {
+  try {
+    if (!(await hasClaudeCodeOtlpHooks())) return false;
+    const settings = await readSettingsFile(getClaudeSettingsPath());
+    const env = settings.env ?? {};
+    return env.OTEL_EXPORTER_OTLP_PROTOCOL === 'http/protobuf' && isOwnedLocalDaemonOtlpEnv(env);
+  } catch {
+    return false;
+  }
+}

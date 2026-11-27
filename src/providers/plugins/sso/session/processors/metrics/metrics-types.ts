@@ -5,6 +5,7 @@
  */
 
 import type { CredentialsSupersededCheck } from '../../cookie-auth.js';
+import type { KeepList } from '@/agents/core/analytics-reduction.js';
 
 /**
  * Base identity fields shared by all metric types
@@ -115,6 +116,27 @@ export interface ToolUsageAttributes extends MetricIdentity {
  * @deprecated Use SessionLifecycleAttributes or ToolUsageAttributes directly
  */
 export type SessionAttributes = SessionLifecycleAttributes | ToolUsageAttributes;
+
+/**
+ * Fields of a metric's attributes that survive analytics prompt reduction (EPMCDME-17748).
+ * Anything string-typed and not listed (`reason`, `error_messages`, `api_errors`, and any field added
+ * later) is replaced by `REDACTED:<FIELD>`. Numbers and booleans always pass. `branch` and `delta_id`
+ * are listed because the sender cuts them first (see `reduceMetric`).
+ */
+export const METRICS_KEEP_LIST: KeepList = {
+  keep: new Set<string>([
+    // Envelope identifiers and attribution
+    'agent', 'agent_version', 'codemie_client', 'repository', 'session_id', 'branch', 'project', 'delta_id',
+    'llm_model', 'status',
+    // Tool and extension type names
+    'error_tools', 'tool_names',
+    'mcp_server_names', 'mcp_local_server_names', 'mcp_project_server_names', 'mcp_user_server_names',
+    'agent_names', 'agents_project_names', 'agents_global_names',
+    'command_names', 'commands_project_names', 'commands_global_names',
+    'skill_names', 'skills_project_names', 'skills_global_names',
+    // Hook and rule names are file names the team chose (they can name a client or a policy): not kept.
+  ])
+};
 
 export interface SessionMetric {
   /**

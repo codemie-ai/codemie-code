@@ -279,6 +279,12 @@ policy, the webhook host (signature masked), the git target, the last run's outc
 the last successful send. "disabled" means the job was removed outside the CLI; run install
 again.
 
+It also shows the prompt reduction setting: on globally, or off globally with the number of
+projects on this machine that turned it on in `codemie setup`. This line is for information
+only. Each run decides per session from that session's project config, so a project whose
+committed `.codemie/codemie-cli.config.json` turns reduction on is reduced even if it isn't
+counted. `sync install` prints the same line in its summary.
+
 ### Send now
 
 ```bash
@@ -469,6 +475,8 @@ The body is a Teams webhook message with the report as its only attachment:
 In the local mode the run sends the `.otlp.jsonl.gz` files first, each with
 `"contentType": "application/gzip"`, then the report as above: one request per file, each with
 that file as its only attachment; the rest of the shape is the same.
+
+**Prompt reduction applies.** Sync always sends the reduced report for a session whose project has prompt reduction on (or when it is on globally), and there is no `--unreduced` for sync. A session whose project directory no longer exists is reduced when any project opted in. See [PROXY-AND-ANALYTICS.md](PROXY-AND-ANALYTICS.md#hide-prompts-in-analytics-prompt-reduction).
 
 **That shape is the contract with the flow.** The flow reads `attachments[0].name` and
 `attachments[0].contentBytes` of each request. It is the same shape the standalone collector sent, so

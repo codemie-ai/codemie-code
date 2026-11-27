@@ -19,7 +19,7 @@ import { isSSOCredentials, type JWTCredentials, type SSOCredentials } from '@/pr
 import { heldRetentionMs } from './spool-config.js';
 import { appendSpool, recordStampLoss } from './spool-io.js';
 import type { OtlpHookLifecycle } from '../otlp.plugin.js';
-import { hookEventProjectNames } from './session-project.js';
+import { hookEventProjectNames, hookEventReduced } from './session-project.js';
 
 const STALE_TMP_MS = 60 * 60_000;
 const EXPIRED_REASON = 'owner_unresolved_expired';
@@ -133,13 +133,19 @@ async function replayEntry(
   }
 
   // Hook-time facts stay as captured; only identity comes from the verified login (never git/OS/config values).
-  const events = entry.events.map((event) => ({ ...event, user_email: email, developer_name: email, identity_source: 'jwt' }));
+  // An event reduced at hook time keeps all its identity fields redacted, source label included, exactly as every
+  // other reduced event leaves the machine; the owner travels in the entry's `owner_hash`/`api_identity`.
+  const events = entry.events.map((event) =>
+    hookEventReduced(event)
+      ? event
+      : { ...event, user_email: email, developer_name: email, identity_source: 'jwt' }
+  );
   const lines = events.map((event) => JSON.stringify({ agentName: entry.agentName, hookEvent: JSON.stringify(event), evidence_v: 1 }));
   // A skipped duplicate is consumed under the spool lock after the scope check. A refused write retries.
   const covered = lifecycle?.skipAppend(entry.agentName, entry.session_id, events);
   let deduplicated = false;
   const skipIf = covered && (async (): Promise<boolean> => (deduplicated = await covered()));
-  const appended = await appendSpool(entry.session_id, 'hooks', lines.join('\n') + '\n', events.flatMap((event) => hookEventProjectNames(event)), { carriedSince: entry.undelivered ? undefined : entry.first_at, skipIf });
+  const appended = await appendSpool(entry.session_id, 'hooks', lines.join('\n') + '\n', events.flatMap((event) => hookEventProjectNames(event)), { carriedSince: entry.undelivered ? undefined : entry.first_at, skipIf, reduced: events.some((event) => hookEventReduced(event)) });
   if (!appended && !deduplicated) return false; // not the head of the pending range, or too many ranges: stays queued with its original age
   await rename(path, path.replace(/\.json$/, '.done'));
   await unlink(path.replace(/\.json$/, '.done')).catch(() => undefined);

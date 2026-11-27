@@ -784,17 +784,24 @@ export class ConfigLoader {
       return rawConfig;
     }
 
+    // The analytics setting (EPMCDME-17748) must survive a rewrite of the global file, so it is carried into every result.
+    const { analytics, ...legacyFields } = rawConfig as Record<string, unknown>;
+    const analyticsBlock = typeof analytics === 'object' && analytics !== null && !Array.isArray(analytics)
+      ? { analytics: analytics as MultiProviderConfig['analytics'] }
+      : {};
+
     // Legacy format - migrate in-memory only; caller decides whether to persist
     if (isLegacyConfig(rawConfig)) {
       const defaultProfile: ProviderProfile = {
         name: 'default',
-        ...rawConfig
+        ...(legacyFields as Partial<ProviderProfile>)
       };
 
       return {
         version: 2,
         activeProfile: 'default',
-        profiles: { default: defaultProfile }
+        profiles: { default: defaultProfile },
+        ...analyticsBlock
       };
     }
 
@@ -802,7 +809,8 @@ export class ConfigLoader {
     return {
       version: 2,
       activeProfile: 'default',
-      profiles: {}
+      profiles: {},
+      ...analyticsBlock
     };
   }
 
@@ -814,11 +822,18 @@ export class ConfigLoader {
       return rawConfig;
     }
 
-    if (Object.keys(rawConfig).length === 0) {
+    // A file written by `codemie setup` that holds only the analytics setting (EPMCDME-17748) has no
+    // profiles: read it as an empty config that keeps its `analytics` block.
+    const { analytics, ...rest } = rawConfig as Record<string, unknown>;
+    // `version` alone beside `analytics` is what the flag writer produces from a file that held only `version`.
+    if (Object.keys(rest).every((key) => key === 'version')) {
       return {
         version: 2,
         activeProfile: 'default',
-        profiles: {}
+        profiles: {},
+        ...(typeof analytics === 'object' && analytics !== null && !Array.isArray(analytics)
+          ? { analytics: analytics as MultiProviderConfig['analytics'] }
+          : {})
       };
     }
 
@@ -1008,31 +1023,23 @@ export class ConfigLoader {
    * Works with local config if it exists, otherwise global
    */
   static async deleteProfile(profileName: string, workingDir: string = process.cwd()): Promise<void> {
-    // Check if local config exists
-    const hasLocal = await this.hasLocalConfig(workingDir);
+    // The local file is used only when it is multi-provider and holds the profile: a file with only
+    // the `analytics` block (EPMCDME-17748) is not a profile store, so deletion falls through to global.
+    const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
+    const localConfig = (await this.hasLocalConfig(workingDir))
+      ? await this.loadLocalMultiProviderConfig(workingDir)
+      : undefined;
 
-    if (hasLocal) {
-      // Delete from local config
-      const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
-      const config = await this.loadJsonConfig(localConfigPath);
+    if (localConfig?.profiles[profileName]) {
+      delete localConfig.profiles[profileName];
 
-      if (isMultiProviderConfig(config)) {
-        if (!config.profiles[profileName]) {
-          throw new Error(`Profile "${profileName}" not found in local config`);
-        }
-
-        delete config.profiles[profileName];
-
-        // If we deleted the active profile, switch to another one (if any exist)
-        if (config.activeProfile === profileName) {
-          const remainingProfiles = Object.keys(config.profiles);
-          config.activeProfile = remainingProfiles.length > 0 ? remainingProfiles[0] : '';
-        }
-
-        await fs.writeFile(localConfigPath, JSON.stringify(config, null, 2), 'utf-8');
-      } else {
-        throw new Error('Local config is not in multi-provider format');
+      // If we deleted the active profile, switch to another one (if any exist)
+      if (localConfig.activeProfile === profileName) {
+        const remainingProfiles = Object.keys(localConfig.profiles);
+        localConfig.activeProfile = remainingProfiles.length > 0 ? remainingProfiles[0] : '';
       }
+
+      await fs.writeFile(localConfigPath, JSON.stringify(localConfig, null, 2), 'utf-8');
     } else {
       // Delete from global config
       const config = await this.loadMultiProviderConfig();
@@ -1082,11 +1089,15 @@ export class ConfigLoader {
         config.activeProfile = profileName;
         await fs.writeFile(localConfigPath, JSON.stringify(config, null, 2), 'utf-8');
       } else {
-        // Create proper multi-provider structure if needed
+        // Create proper multi-provider structure if needed, keeping the analytics setting of the old file
+        const previousAnalytics = (config as Record<string, unknown>)['analytics'];
         const newConfig: MultiProviderConfig = {
           version: 2,
           activeProfile: profileName,
-          profiles: {}
+          profiles: {},
+          ...(typeof previousAnalytics === 'object' && previousAnalytics !== null && !Array.isArray(previousAnalytics)
+            ? { analytics: previousAnalytics as MultiProviderConfig['analytics'] }
+            : {})
         };
         await fs.writeFile(localConfigPath, JSON.stringify(newConfig, null, 2), 'utf-8');
       }
@@ -1322,16 +1333,35 @@ export class ConfigLoader {
 
     const { profile, workspace } = this.splitProfileAndWorkspace(rawOverrides);
 
+    const configPath = path.join(configDir, 'codemie-cli.config.json');
+
+    // This rewrite builds the file from scratch, so carry over the analytics setting an earlier
+    // `codemie setup` saved here (EPMCDME-17748); a missing file has none to carry, an unreadable one stops the rewrite.
+    let analytics: MultiProviderConfig['analytics'];
+    try {
+      const existing = JSON.parse(await fs.readFile(configPath, 'utf-8')) as Record<string, unknown>;
+      const value = existing['analytics'];
+      if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+        analytics = value as MultiProviderConfig['analytics'];
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        // Present but unreadable or not JSON: the setting cannot be told, and writing a guess would turn a parse
+        // error into a committed team-wide opt-in or opt-out. Leave the file as it is, like the flag writer does.
+        throw new ConfigurationError(`Config file at ${configPath} is not valid JSON; not overwriting it. Fix or move the file, then retry.`);
+      }
+    }
+
     const config: MultiProviderConfig = {
       version: 2,
       activeProfile: profileName,
       profiles: {
         [profileName]: profile as any
       },
-      ...(Object.keys(this.removeUndefined(workspace)).length > 0 ? { workspace } : {})
+      ...(Object.keys(this.removeUndefined(workspace)).length > 0 ? { workspace } : {}),
+      ...(analytics ? { analytics } : {})
     };
 
-    const configPath = path.join(configDir, 'codemie-cli.config.json');
     await fs.writeFile(
       configPath,
       JSON.stringify(config, null, 2),

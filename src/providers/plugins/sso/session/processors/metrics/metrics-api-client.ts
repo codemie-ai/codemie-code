@@ -22,12 +22,17 @@ import type {
   MetricsApiError,
   SessionLifecycleAttributes,
 } from './metrics-types.js';
+import { METRICS_KEEP_LIST } from './metrics-types.js';
 import type { Session } from '../../../../../../agents/core/session/types.js';
 import type { MCPConfigSummary, ExtensionsScanSummary } from '../../../../../../agents/core/types.js';
 import { logger } from '../../../../../../utils/logger.js';
 import { detectGitBranch } from '../../../../../../utils/processes.js';
+import { existsSync } from 'node:fs';
 import { extractRepository } from '../../../../../../utils/paths.js';
 import { encodeAttributionHeader, rawProjectHeader } from '../../../../../../utils/header-value.js';
+import { reduceBranch, reduceRecord } from '@/agents/core/analytics-reduction.js';
+import { keyedDigest } from '@/agents/core/analytics-event-key.js';
+import { isReductionOn, readOptedInProjects } from '@/utils/analytics-reduction-setting.js';
 import { clearAnalyticsAuthStatus } from '@/utils/analytics-auth-status.js';
 import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
 import { SyncStoppedError, type SyncBounds } from '../../../../../../agents/core/session/BaseProcessor.js';
@@ -35,6 +40,45 @@ import { backoffWithin, boundedRequest, newRequestGroup, noteAuthFailure, throwI
 import { CodeMieError } from '../../../../../../utils/errors.js';
 import { markAuthInvalidUnlessSuperseded } from '../../analytics-auth-marker.js';
 import type { CredentialsSupersededCheck } from '../../cookie-auth.js';
+
+/**
+ * The metric as it is posted: when prompt reduction is on for the session's working directory (read now,
+ * never cached), the branch is cut to its ticket keys and every field off the keep-list is redacted.
+ * Returns the given metric untouched when reduction is off. Never mutates its input.
+ */
+async function reduceMetric(metric: SessionMetric, workingDirectory?: string): Promise<SessionMetric> {
+  let configDirs: string[] = [];
+  if (workingDirectory) {
+    try {
+      // Lazy: identity-fields pulls in ConfigLoader and the proxy graph, which cycles back to the plugin registry
+      const { findAllConfigDirs } = await import('@/agents/core/event-fields/identity-fields.js');
+      configDirs = await findAllConfigDirs(workingDirectory);
+    } catch {
+      configDirs = [workingDirectory];
+    }
+  }
+  let reduce = await isReductionOn({ configDirs });
+  if (!reduce && (!workingDirectory || !existsSync(workingDirectory))) {
+    // No project to read (none given, or its directory is gone): reduce when any project opted in, rather than
+    // sending that project's session unreduced.
+    const optedIn = await readOptedInProjects();
+    reduce = optedIn === 'unreadable' || optedIn.length > 0;
+  }
+  if (!reduce) {
+    return metric;
+  }
+  const rawBranch = metric.attributes.branch;
+  const attributes: Record<string, unknown> = { ...metric.attributes, branch: reduceBranch(rawBranch) };
+  const deltaId = metric.attributes.delta_id;
+  if (deltaId !== undefined) {
+    // delta_id ends in `:<branch>`; swap the branch for a keyed digest (not a plain hash, branch names are guessable)
+    const suffix = `:${rawBranch}`;
+    attributes.delta_id = deltaId.endsWith(suffix)
+      ? `${deltaId.slice(0, -suffix.length)}:${keyedDigest(rawBranch).slice(0, 12)}`
+      : deltaId;
+  }
+  return { ...metric, attributes: reduceRecord(attributes, METRICS_KEEP_LIST) as unknown as SessionMetric['attributes'] };
+}
 
 interface MetricsRequestError extends Error {
   statusCode?: number;
@@ -517,7 +561,7 @@ export class MetricsSender {
       return { success: true, message: '[DRY-RUN] Session start metric logged' };
     }
 
-    const response = await this.client.sendMetric(metric);
+    const response = await this.client.sendMetric(await reduceMetric(metric, workingDirectory));
 
     logger.debug('[MetricsSender] Session start metric sent', {
       name: metric.name,
@@ -618,7 +662,7 @@ export class MetricsSender {
       return { success: true, message: '[DRY-RUN] Session end metric logged' };
     }
 
-    const response = await this.client.sendMetric(metric);
+    const response = await this.client.sendMetric(await reduceMetric(metric, workingDirectory));
 
     logger.debug('[MetricsSender] Session end metric sent', {
       name: metric.name,
@@ -639,8 +683,9 @@ export class MetricsSender {
    * Called by SSO metrics sync plugin for periodic sync
    *
    * @param metric - Aggregated session metric
+   * @param workingDirectory - The session's working directory (locates the project's reduction setting)
    */
-  async sendSessionMetric(metric: SessionMetric): Promise<MetricsSyncResponse> {
+  async sendSessionMetric(metric: SessionMetric, workingDirectory?: string): Promise<MetricsSyncResponse> {
     // Dry-run mode: log without sending
     if (this.dryRun) {
       logger.info('[MetricsSender] [DRY-RUN] Would send aggregated metric:', {
@@ -658,7 +703,7 @@ export class MetricsSender {
       return { success: true, message: '[DRY-RUN] Aggregated metric logged' };
     }
 
-    const response = await this.client.sendMetric(metric);
+    const response = await this.client.sendMetric(await reduceMetric(metric, workingDirectory));
 
     logger.debug('[MetricsSender] Aggregated usage metric sent', {
       agent: metric.attributes.agent,

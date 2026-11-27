@@ -12,6 +12,7 @@ import { readTranscriptFromAsync } from '@/agents/plugins/copilot-cli-otlp/copil
 import { deleteSessionStateFiles, readSessionState } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.state.js';
 import { appendSpool } from './spool-io.js';
 import { listHookRecords, readHookRecordsLocked } from './copilot-usage-spool.js';
+import { readStatus } from './session-status.js';
 import type { OtlpHookLifecycle } from '../otlp.plugin.js';
 
 export const copilotHookLifecycle: OtlpHookLifecycle = {
@@ -118,7 +119,9 @@ async function flushDeferredUsage(
   options: DeferredUsageOptions
 ): Promise<void> {
   const start = events.find((e) => e.type === 'session.start')?.data as { copilotVersion?: string } | undefined;
-  const wire = buildDeferredUsageEvents(template, events, start?.copilotVersion ?? '', options);
+  // The hook-time decision rides on the template; a template without it follows the session's bound decision.
+  const reduced = template['analytics_reduction'] === true || (await readStatus(sessionId))?.reduction === true;
+  const wire = buildDeferredUsageEvents(template, events, start?.copilotVersion ?? '', { ...options, reduced });
   if (wire.length === 0) return;
   await appendSpool(sessionId, 'hooks', wire
     .map((hookEvent) => JSON.stringify({ agentName: COPILOT_CLI_OTLP_AGENT, hookEvent: JSON.stringify(hookEvent) }))

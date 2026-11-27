@@ -646,6 +646,30 @@ describe('CoworkEventProducer.run', () => {
     expect(readFileSync(spoolPath(), 'utf-8')).not.toContain(secret);
   });
 
+  it('binds the session reduction to the spool status when the global flag is on (CR-007)', async () => {
+    const configPath = join(codemieHome, 'codemie-cli.config.json');
+    const config = JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+    writeFileSync(configPath, JSON.stringify({ ...config, analytics: { promptReduction: true } }));
+
+    await settle(newProducer(), LAST_LINE_MS + 20_000);
+
+    expect(events().every((event) => event['analytics_reduction'] === true)).toBe(true);
+    expect((JSON.parse(readFileSync(spoolPath(CLI, '.status'), 'utf-8')) as { reduction?: boolean }).reduction).toBe(true);
+  });
+
+  it('reduces a session whose own project has the flag in a config that holds only that flag, global off (CR-030, CR-032)', async () => {
+    const [session] = await discoverClaudeDesktopSessions(LAST_LINE_MS - DAY_MS);
+    const localConfig = join(session.workingDirectory, '.codemie', 'codemie-cli.config.json');
+    mkdirSync(dirname(localConfig), { recursive: true });
+    writeFileSync(localConfig, JSON.stringify({ analytics: { promptReduction: true } }));
+
+    await settle(newProducer(), LAST_LINE_MS + 20_000);
+
+    expect(events().length).toBeGreaterThan(0);
+    expect(events().every((event) => event['analytics_reduction'] === true)).toBe(true);
+    expect((JSON.parse(readFileSync(spoolPath(CLI, '.status'), 'utf-8')) as { reduction?: boolean }).reduction).toBe(true);
+  });
+
   it('skips a session whose metadata carries otelConfig, with one warning', async () => {
     writeMetadata(LOCAL, { otelConfig: { endpoint: 'http://127.0.0.1:9' } });
     const producer = newProducer();

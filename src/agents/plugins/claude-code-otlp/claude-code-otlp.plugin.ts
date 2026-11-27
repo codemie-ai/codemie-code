@@ -77,6 +77,7 @@ import { readClaudeSettingsEnv } from './event-fields/claude-settings-env.js';
 import { resolveLocalProxy } from './event-fields/local-proxy.js';
 import { resolveClientVersion } from './client-version-cache.js';
 import { resolveCommandFields } from './event-fields/command-fields.js';
+import { reducePrompt } from '@/agents/core/analytics-reduction.js';
 import { resolvePromptSource, stripInjectedContext } from './event-fields/prompt-fields.js';
 import { resolveSessionEnvFields } from './event-fields/session-env-fields.js';
 import { resolveSubagentStopFields } from './event-fields/subagent-fields.js';
@@ -365,6 +366,16 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     };
   }
 
+  /** Reads the typed text, without the context Claude Code injects, like the other prompt-derived fields. */
+  protected override reducePromptBody(hookEvent: Record<string, unknown>): string {
+    const prompt = hookEvent['prompt'];
+    if (typeof prompt !== 'string') {
+      return '';
+    }
+    const command = hookEvent['command_name'];
+    return reducePrompt(stripInjectedContext(prompt), { commandName: typeof command === 'string' ? command : undefined });
+  }
+
   protected resolveEventType(event: Record<string, unknown>): string {
     return HOOK_EVENT_TYPE_MAP[String(event['hook_event_name'] ?? '')] ?? 'agent.event';
   }
@@ -373,9 +384,10 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
   protected buildEventId(
     event: Record<string, unknown>,
     payload: Record<string, unknown>,
-    timestamp: string
+    timestamp: string,
+    options?: { reduced: boolean }
   ): string {
-    return buildClaudeEventId(event, payload, timestamp);
+    return buildClaudeEventId(event, payload, timestamp, options);
   }
 
   protected async evaluate(hookInput: HookInput): Promise<ClaudeForwardDecision> {

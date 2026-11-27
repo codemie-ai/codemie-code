@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { keyedDigest } from '@/agents/core/analytics-event-key.js';
+
+export { resetEventKeyCache } from '@/agents/core/analytics-event-key.js';
 
 /**
  * Deterministic `event_id` templates for the Claude Code adapter.
@@ -16,7 +19,7 @@ import { createHash } from 'node:crypto';
  */
 type EventRecord = Record<string, unknown>;
 
-type EventIdTemplate = (payload: EventRecord) => string | null;
+type EventIdTemplate = (payload: EventRecord, reduced: boolean) => string | null;
 
 const str = (value: unknown): string => (typeof value === 'string' ? value : '');
 
@@ -40,17 +43,23 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value) ?? 'null';
 }
 
-/** SHA-256 (hex) of {@link canonicalJson} — the content-addressed discriminator. */
-function contentKey(value: unknown): string {
-  return createHash('sha256').update(canonicalJson(value)).digest('hex');
+/**
+ * The content-addressed discriminator: SHA-256 (hex) of {@link canonicalJson}, or with `reduced` an
+ * HMAC-SHA256 under the local key, so a reduced event's id cannot confirm a guessed prompt.
+ */
+function contentKey(value: unknown, reduced = false): string {
+  const canonical = canonicalJson(value);
+  return reduced
+    ? keyedDigest(canonical)
+    : createHash('sha256').update(canonical).digest('hex');
 }
 
 const EVENT_ID_TEMPLATES: Record<string, EventIdTemplate> = {
   'agent.git.snapshot': (payload) => keyed('git-snapshot', str(payload['git_head_end'])),
   // These two are cumulative: a later pass re-sends them with more tokens/usage, and the backend
   // must store the newer row (it groups by request id / takes the latest subagent row).
-  'agent.usage.request': (payload) => contentKey(payload),
-  'agent.subagent.usage': (payload) => contentKey(payload),
+  'agent.usage.request': (payload, reduced) => contentKey(payload, reduced),
+  'agent.subagent.usage': (payload, reduced) => contentKey(payload, reduced),
   'agent.session.summary': (payload) =>
     keyed(
       'summary',
@@ -69,9 +78,11 @@ const EVENT_ID_TEMPLATES: Record<string, EventIdTemplate> = {
 export function buildClaudeEventId(
   event: EventRecord,
   payload: EventRecord,
-  timestamp: string
+  timestamp: string,
+  options: { reduced: boolean } = { reduced: false }
 ): string {
   const type = str(event['type']);
-  const discriminator = EVENT_ID_TEMPLATES[type]?.(payload) ?? contentKey({ ...payload, timestamp });
+  const discriminator =
+    EVENT_ID_TEMPLATES[type]?.(payload, options.reduced) ?? contentKey({ ...payload, timestamp }, options.reduced);
   return `${type}:${str(event['session_id'])}:${discriminator}`;
 }

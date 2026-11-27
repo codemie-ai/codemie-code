@@ -310,6 +310,35 @@ Location: `~/.codemie/codemie-cli.config.json`
 }
 ```
 
+### Analytics privacy (prompt reduction)
+
+One optional key controls whether analytics sends prompts and project details. It lives in the same file as your profiles, in two places:
+
+| File | Scope |
+|---|---|
+| `~/.codemie/codemie-cli.config.json` | All projects |
+| `<project>/.codemie/codemie-cli.config.json` | This project only (can be committed to share it with the team) |
+
+```json
+{
+  "analytics": { "promptReduction": true }
+}
+```
+
+- Reduction is on if **either** file has `true`; a project cannot switch it off while the global setting is on. `false`, a missing key or a missing file means off.
+- A file that cannot be read counts as **on** (fail closed), with one warning in the log.
+- A project file may hold only this key (no profiles); `codemie setup` writes it that way when the project has no config yet. It does not change which profile is used.
+- `codemie setup` writes the key for you ("Analytics privacy" step). Any code that rewrites a project config must carry the `analytics` block over.
+
+Two more files under `~/.codemie/` belong to this feature:
+
+| File | Purpose |
+|---|---|
+| `analytics-reduction-projects.json` | Absolute paths of the projects that opted in. The background proxy and Claude Desktop (Cowork) use it, because they cannot see a project's config. |
+| `analytics-event-key` | A random 32-byte key (mode 0600, created on first use) that keys the ids of reduced events, so they cannot be guessed from a prompt. Never logged or sent. |
+
+See [PROXY-AND-ANALYTICS.md](PROXY-AND-ANALYTICS.md#hide-prompts-in-analytics-prompt-reduction) for what reduction sends and hides.
+
 ## Model Compatibility
 
 AI/Run CodeMie CLI automatically validates model compatibility:

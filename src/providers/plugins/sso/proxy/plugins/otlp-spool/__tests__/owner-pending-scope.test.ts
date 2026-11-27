@@ -68,9 +68,9 @@ describe('owner-pending replay scope', () => {
       project: 'work', project_source: 'none' as const, api_identity: apiIdentity(API),
       funding_route: 'subscription' as const, collection_generation: 0, negotiate_publication: true as const, ...over,
     });
-    const hold = (n: number, projectAtCwd: string, over: Record<string, unknown> = {}) => store.enqueuePendingOwner({
+    const hold = (n: number, projectAtCwd: string, over: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) => store.enqueuePendingOwner({
       fp: credentialFingerprint(credentials as never), agentName: 'claude-code-otlp', api_identity: apiIdentity(API),
-      session_id: SESSION, fields: fields(over), cwd: join(tmpdir(), 'folder'), project_at_cwd: projectAtCwd, events: [event(n)],
+      session_id: SESSION, fields: fields(over), cwd: join(tmpdir(), 'folder'), project_at_cwd: projectAtCwd, events: [{ ...event(n), ...extra }],
     }, Date.now() + n);
     const existing = (over: Record<string, unknown> = {}) =>
       rs.createOrRead(key, { ...fields(over), owner_hash: ownerHash('a@example.com') } as never);
@@ -108,6 +108,22 @@ describe('owner-pending replay scope', () => {
     await m.run();
     expect(await m.sm.isStopped(m.key)).toBe(false);
     expect(await m.hooksBytes()).toBeGreaterThan(0);
+  });
+
+  it('a reduced held event keeps its redacted identity and binds the session reduction (CR-005, CR-006)', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const m = await mods();
+    await m.existing();
+    await m.hold(1, 'work', {}, { analytics_reduction: true, user_email: 'REDACTED:USER-EMAIL', developer_name: 'REDACTED:USER-EMAIL' });
+    await m.run();
+    const line = JSON.parse((await readFile(join(state.root, SESSION + '.hooks.ndjson'), 'utf-8')).trim().split('\n')[0]) as { hookEvent: string };
+    const sent = JSON.parse(line.hookEvent) as Record<string, unknown>;
+    expect(sent['user_email']).toBe('REDACTED:USER-EMAIL');
+    expect(sent['developer_name']).toBe('REDACTED:USER-EMAIL');
+    expect(sent['identity_source']).not.toBe('jwt');
+    expect(JSON.stringify(sent)).not.toContain('a@example.com');
+    const { readStatus } = await import('../session-status.js');
+    expect((await readStatus(SESSION))?.reduction).toBe(true);
   });
 
   it('a fresh session is still created from its held facts, but a later entry from another folder stops it', async () => {

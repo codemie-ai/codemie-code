@@ -292,7 +292,8 @@ function applyCommonOptions(command: Command): Command {
     .option('--export [format]', 'Write report: html (default), json, or both')
     .option('-o, --output <path>', 'Output file or directory (default: ./codemie-analytics-YYYY-MM-DD.{ext})')
     .option('--open', 'Open the generated HTML report in the default browser')
-    .option('--redact', 'Omit prompt text (session titles) and absolute paths from the exported report, for sharing outside this machine')
+    .option('--redact', 'Omit prompt text (session titles) and absolute paths from the exported report, for sharing outside this machine (with prompt reduction on, titles keep only command names and ticket/MR refs instead)')
+    .option('--unreduced', 'Show full local data even when prompt reduction is on (local report only; sync stays reduced)')
     .addOption(removedOption(REMOVED_REPORT_FLAGS[0].entry, REMOVED_REPORT_FLAGS[0].flags))
     .addOption(removedOption(REMOVED_REPORT_FLAGS[1].entry, REMOVED_REPORT_FLAGS[1].flags))
     .addOption(removedOption(REMOVED_REPORT_FLAGS[2].entry, REMOVED_REPORT_FLAGS[2].flags));
@@ -363,7 +364,9 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
     const { analytics, costResult } = loaded;
 
     // Display results
-    const formatter = new AnalyticsFormatter(options.verbose);
+    const { resolveReportPrivacyMode } = await import('./report/redact.js');
+    const privacyMode = await resolveReportPrivacyMode(options);
+    const formatter = new AnalyticsFormatter(options.verbose, privacyMode === 'reduce');
     formatter.displayRoot(analytics);
     formatter.displayProjects(analytics.projects);
     formatter.displayCost(keptCostSummary(costResult.summary, costResult.index, analytics));
@@ -373,7 +376,7 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
       const { buildPayload } = await import('./report/payload-builder.js');
       const { generateReport, generateReportJson, writeReportWithFallback } = await import('./report/report-generator.js');
       const { resolveOutputTargets } = await import('./report/output-target.js');
-      const { redactPayload } = await import('./report/redact.js');
+      const { redactPayloadPerSession } = await import('./report/redact.js');
 
       // Load user email for report metadata and filename; non-fatal if config is unavailable.
       let userEmail: string | undefined;
@@ -413,7 +416,7 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
         ...(filter.fromDate !== undefined && { periodStart: filter.fromDate.toISOString() }),
         ...(filter.toDate !== undefined && { periodEnd: filter.toDate.toISOString() }),
       });
-      const payload = options.redact ? redactPayload(builtPayload) : builtPayload;
+      const payload = await redactPayloadPerSession(builtPayload, options);
 
       const targets = resolveOutputTargets(exportFormat, output, process.cwd(), userEmail);
       let htmlPath = targets.html;

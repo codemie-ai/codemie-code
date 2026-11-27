@@ -10,6 +10,7 @@ import { loadAnalytics } from '../analytics-core.js';
 import type { AnalyticsSource } from '../sources/types.js';
 import { SessionsSource } from '../sources/sessions-source.js';
 import { buildPayload } from '../report/payload-builder.js';
+import { redactPayloadPerSession } from '../report/redact.js';
 import { emailSlug } from '../report/report-generator.js';
 import type { ExportSource, SyncReport } from './types.js';
 import { formatUtcDate, type SyncWindow } from './window.js';
@@ -44,7 +45,7 @@ export async function buildSyncReport(opts: BuildSyncReportOptions): Promise<Syn
   const { analytics, costResult } = loaded;
   const { index: costIndex, summary } = costResult;
 
-  const payload = buildPayload(analytics, costIndex, summary, {
+  const builtPayload = buildPayload(analytics, costIndex, summary, {
     rangeLabel: window.label,
     projectFilter: 'all',
     generatedAt: now.toISOString(),
@@ -52,6 +53,9 @@ export async function buildSyncReport(opts: BuildSyncReportOptions): Promise<Syn
     periodStart: window.from.toISOString(),
     periodEnd: window.to.toISOString(),
   });
+
+  // Each session is reduced by its own project's setting (global is the floor); there is no unreduced override.
+  const payload = await redactPayloadPerSession(builtPayload, {});
 
   // Lowercase is applied here only (sync's attachment name), never in the shared `emailSlug`
   // helper or the interactive export path, so two differently-cased emails for the same

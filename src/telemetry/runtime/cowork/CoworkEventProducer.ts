@@ -45,7 +45,7 @@ import { detectGitBranch, detectGitRemoteRepo, resolveRepositoryName } from '@/u
 import { coworkCursorPath, emptyCoworkCursor, loadCoworkCursor, saveCoworkCursor, type CoworkCursor } from './cowork-cursor.js';
 import { coworkFundingSource, loadCoworkAttribution, saveCoworkAttribution, type CoworkAttribution } from './cowork-attribution.js';
 import { coworkServedMarkPath, forgetCoworkServedMark, listCoworkServedMarks } from './cowork-served-mark.js';
-import { buildCoworkEvents, stampCoworkEvent, type CoworkEnvelope, type CoworkSubagentInput } from './cowork-events.js';
+import { buildCoworkEvents, resolveCoworkReduction, stampCoworkEvent, type CoworkEnvelope, type CoworkSubagentInput } from './cowork-events.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_BACKFILL_DAYS = 7;
@@ -351,8 +351,9 @@ export class CoworkEventProducer {
       }
     }
     progress.step = end ? 'session-end-events' : 'events';
+    const reduced = await resolveCoworkReduction(envelope);
     if (own.length > 0) {
-      await appendSpool(cliSessionId, 'hooks', spoolLines(own.map((event) => stampCoworkEvent(event, envelope, next.events.lastLineAt))), project);
+      await appendSpool(cliSessionId, 'hooks', spoolLines(own.map((event) => stampCoworkEvent(event, envelope, next.events.lastLineAt, { reduced }))), project, { reduced });
     }
     if (end) next.lastEndedAt = next.events.lastLineAt;
     progress.step = 'cursor-save';
@@ -412,6 +413,7 @@ export class CoworkEventProducer {
       repository,
       repoRemote,
       ...(branch && { branch }),
+      workingDirectory,
       cliVersion: cliVersion ?? '',
       entrypoint: cursor.events.entrypoint,
       clientVersion: cursor.events.clientVersion,
@@ -429,8 +431,9 @@ async function appendPass(pass: TranscriptPass, envelope: CoworkEnvelope, cursor
     return;
   }
   try {
-    const events = pass.events.map((event) => stampCoworkEvent(event, envelope, cursor.events.lastLineAt));
-    await appendSpool(envelope.sessionId, 'hooks', spoolLines(events), project);
+    const reduced = await resolveCoworkReduction(envelope);
+    const events = pass.events.map((event) => stampCoworkEvent(event, envelope, cursor.events.lastLineAt, { reduced }));
+    await appendSpool(envelope.sessionId, 'hooks', spoolLines(events), project, { reduced });
   } catch (error) {
     await pass.finalize(false);
     throw error;

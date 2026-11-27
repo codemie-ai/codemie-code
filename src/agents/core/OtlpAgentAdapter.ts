@@ -4,12 +4,15 @@ import { AnalyticsSourceError, CodeMieError } from '@/utils/errors.js';
 import { boundedText, maskAndBoundFields, MAX_PROMPT_CHARS } from './otlp-field-limits.js';
 import { AgentAdapterType, type CollectionPolicy, type OtlpAdapterDeps } from './types.js';
 import { resolveRepoFields, type RepoFields } from './event-fields/repo-fields.js';
-import { resolveIdentityFields, resolveProjectAtCwd, type IdentityFields, type ProjectPolicy } from './event-fields/identity-fields.js';
+import { findAllConfigDirs, resolveIdentityFields, resolveProjectAtCwd, type IdentityFields, type ProjectPolicy } from './event-fields/identity-fields.js';
 import { resolveBranchStory } from './story-resolver.js';
 import { stampEvidence, type EvidenceInputs } from './evidence/stamp.js';
 import { frozenProfileOf, type EvidenceRecord } from './evidence/record-store.js';
 import { enqueuePendingOwner, type PendingFields } from './evidence/owner-pending.js';
 import type { SSOCredentials } from '@/providers/core/types.js';
+import { reducePrompt } from './analytics-reduction.js';
+import { reduceHookEvent } from './hook-event-keep-list.js';
+import { isReductionOn } from '@/utils/analytics-reduction-setting.js';
 
 export type ForwardDecision<TBlockOutput = Record<string, unknown>> =
   | {
@@ -55,6 +58,8 @@ interface InvocationContext {
   /** Captured once, so the fallback timestamp is the same for every event and every retry. */
   hookTime: Date;
   commonFields: CommonFields;
+  /** Whether analytics reduction applies to every event of this invocation; decided once per hook process. */
+  reduced: boolean;
   agentFields: Record<string, unknown>;
 }
 
@@ -246,7 +251,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       this.resolveCommonFields(context, record, stampedCredentials),
       this.resolveAgentFields(hookInput),
     ]);
-    const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(), commonFields, agentFields };
+    const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(), commonFields, agentFields, reduced: await this.decideReduction(context.cwd) };
     return {
       events: decision.payload.map((hookEvent) => this.buildEvent(hookEvent, invocation)),
       options: record ? { evidenceV: 1 } : undefined,
@@ -277,7 +282,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       const now = Date.now();
       const provisional: EvidenceRecord = { schema: 1, ...pending.fields, owner_hash: '', created: now, last_used: now };
       const [commonFields, agentFields] = await Promise.all([this.resolveCommonFields(context, provisional), this.resolveAgentFields(hookInput)]);
-      const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(now), commonFields, agentFields };
+      const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(now), commonFields, agentFields, reduced: await this.decideReduction(context.cwd) };
       return await enqueuePendingOwner({
         fp: pending.fp,
         agentName: this.name,
@@ -399,12 +404,55 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   protected abstract resolveAgentFields(input: TInput): Promise<Record<string, unknown>>;
   /** `type` of a native event that does not carry an explicit one. */
   protected abstract resolveEventType(event: Record<string, unknown>): string;
-  protected abstract buildEventId(event: Record<string, unknown>, payload: Record<string, unknown>, timestamp: string): string;
+  /** `options.reduced`: the invocation reduces its events, so a content-hashed id must be keyed. */
+  protected abstract buildEventId(
+    event: Record<string, unknown>,
+    payload: Record<string, unknown>,
+    timestamp: string,
+    options?: { reduced: boolean }
+  ): string;
+
+  /**
+   * Whether this hook invocation reduces its events: the global setting, the project found from the session pin
+   * (`CLAUDE_PROJECT_DIR`) or the project found from the hook-time cwd. Never `ConfigLoader.load`. The setting
+   * itself reads fail-closed (unreadable is on); a project walk that fails falls back to the start dir.
+   */
+  private async decideReduction(cwd: string): Promise<boolean> {
+    const allDirs = async (start: string | undefined): Promise<string[]> => {
+      if (!start) return [];
+      try {
+        return await findAllConfigDirs(start);
+      } catch (error) {
+        logger.debug(`[${this.name}] project lookup for the reduction setting failed (${error instanceof Error ? error.name : 'error'})`);
+        return [start];
+      }
+    };
+    const [pinnedDirs, cwdDirs] = await Promise.all([allDirs(process.env['CLAUDE_PROJECT_DIR']?.trim()), allDirs(cwd)]);
+    return await isReductionOn({ configDirs: [...pinnedDirs, ...cwdDirs] });
+  }
+
+  /**
+   * The reduced `prompt_body` of an event, from the raw prompt: the auto marker, or command name plus ticket and MR
+   * refs, or `REDACTED:PROMPT`. `''` when the event carries no prompt. An adapter overrides to pick its own raw text or command.
+   */
+  protected reducePromptBody(hookEvent: Record<string, unknown>): string {
+    const prompt = hookEvent['prompt'];
+    if (typeof prompt !== 'string' || prompt === '') {
+      return '';
+    }
+    const command = hookEvent['command_name'];
+    // An adapter that found no command says so (''), so the reducer never reads a path's first word as one.
+    return reducePrompt(prompt, { commandName: typeof command === 'string' ? command : '' });
+  }
 
   /** Assembles the final event: masked and truncated hook fields plus the common and agent fields, all at the top level. */
   private buildEvent(hookEvent: Record<string, unknown>, ctx: InvocationContext): Record<string, unknown> {
     const limited = this.limitPayload(hookEvent);
     const explicitType = hookEvent['type'];
+    // Reduced from the raw prompt before the 200-character cut, then masked and bounded like any prompt.
+    const promptBody = ctx.reduced
+      ? boundedText(maskAndBoundFields({ prompt: this.reducePromptBody(hookEvent) })['prompt'], MAX_PROMPT_CHARS)
+      : boundedText(limited['prompt'], MAX_PROMPT_CHARS);
 
     const event: Record<string, unknown> = {
       ...this.mergeCommonFields(limited, ctx.commonFields),
@@ -413,11 +461,17 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       session_id: String(hookEvent['session_id'] ?? ''),
       timestamp: this.resolveEventTimestamp(hookEvent['timestamp'], ctx.hookTime),
       cwd: extractRepository(ctx.cwd),
-      prompt_body: boundedText(limited['prompt'], MAX_PROMPT_CHARS),
+      prompt_body: promptBody,
       schema_version: SCHEMA_VERSION,
     };
-    event['event_id'] = this.buildEventId(event, limited, String(event['timestamp']));
-    return event;
+    // The one event_id call site: over the pre-reduction payload.
+    event['event_id'] = this.buildEventId(event, limited, String(event['timestamp']), { reduced: ctx.reduced });
+    return ctx.reduced ? this.reduceEvent(event) : event;
+  }
+
+  /** Last step with reduction on: stamp the decision, then reduce the event as every other producer does. */
+  private reduceEvent(event: Record<string, unknown>): Record<string, unknown> {
+    return reduceHookEvent({ ...event, analytics_reduction: true });
   }
 
   /**

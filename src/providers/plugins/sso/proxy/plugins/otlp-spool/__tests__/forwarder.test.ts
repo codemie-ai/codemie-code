@@ -1177,3 +1177,150 @@ describe('send outcomes and evidence requests (Task 13)', () => {
     expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'hooks', Buffer.byteLength(good) + 1);
   });
 });
+
+describe('forwardSession (native OTLP reduction, EPMCDME-17748)', () => {
+  const nativeRecord = JSON.stringify({
+    resourceLogs: [{
+      resource: { attributes: [{ key: 'service.name', value: { stringValue: 'claude-code' } }, { key: 'service.version', value: { stringValue: '2.1.0' } }] },
+      scopeLogs: [{
+        logRecords: [{
+          body: { stringValue: 'a user prompt that must not leave' },
+          attributes: [
+            { key: 'session.id', value: { stringValue: 's1' } },
+            { key: 'event.name', value: { stringValue: 'tool_result' } },
+            { key: 'event.timestamp', value: { stringValue: '2026-01-01T00:00:00.000Z' } },
+            { key: 'user.email', value: { stringValue: 'dev@example.com' } },
+            { key: 'type', value: { stringValue: 'cacheRead' } },
+            { key: 'model', value: { stringValue: 'claude-sonnet-4-5' } },
+            { key: 'duration_ms', value: { intValue: '42' } },
+            { key: 'success', value: { boolValue: true } },
+            { key: 'tool_parameters', value: { stringValue: JSON.stringify({ skill_name: 'review', mcp_server_name: 'jira', mcp_tool_name: 'search', bash_command: 'rm -rf secret-dir', description: 'private words' }) } },
+          ],
+        }],
+      }],
+    }],
+  });
+  const batch = (reduction?: 'on' | 'off' | 'unbound') => ({
+    project: 'Proj A', cursor: 0, records: [nativeRecord], byteLength: Buffer.byteLength(nativeRecord) + 1, ...(reduction ? { reduction } : {}),
+  });
+  const sentLogs = (): { resourceLogs: Array<Record<string, unknown>> } => {
+    const call = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/logs'));
+    return JSON.parse(String(call![1].body));
+  };
+  const attrs = (): Record<string, Record<string, unknown>> => {
+    const logRecord = ((sentLogs().resourceLogs[0] as any).scopeLogs[0].logRecords[0]);
+    return Object.fromEntries(logRecord.attributes.map((a: { key: string; value: Record<string, unknown> }) => [a.key, a.value]));
+  };
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    vi.stubGlobal('fetch', fetchMock);
+    readStateMock.mockResolvedValue({ url: 'http://127.0.0.1:1', targetUrl: 'https://api.example.com' });
+    isSendAllowedMock.mockResolvedValue(true);
+    snapshotPendingHookRecordsMock.mockResolvedValue(null);
+    snapshotPendingBytesMock.mockResolvedValue(null);
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    // the unstamped legacy path: no recorded session, no evidence, no hold (earlier describes leave their own behind)
+    readStatusMock.mockResolvedValue(null);
+    readRecordMock.mockResolvedValue(undefined);
+    forwarderIdentityMock.mockReturnValue(undefined);
+    deliveryGateMock.mockResolvedValue('go');
+    noteStreamHoldMock.mockResolvedValue('clear');
+    holdForIdleReopenMock.mockResolvedValue(false);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('forwards a session whose hook stamped the reduction with tool_parameters cut to its keep-list and user.email redacted', async () => {
+    snapshotPendingNdjsonRecordsMock.mockImplementation(async (_s: string, stream: string) => (stream === 'logsJson' ? batch('on') : null));
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', false, credentials);
+
+    const a = attrs();
+    expect(a['session.id']).toEqual({ stringValue: 's1' });
+    expect(a['event.name']).toEqual({ stringValue: 'tool_result' });
+    expect(a['event.timestamp']).toEqual({ stringValue: '2026-01-01T00:00:00.000Z' });
+    expect(a['user.email']).toEqual({ stringValue: 'REDACTED:USER.EMAIL' });
+    expect(a['type']).toEqual({ stringValue: 'cacheRead' });
+    expect(a['model']).toEqual({ stringValue: 'claude-sonnet-4-5' });
+    expect(a['duration_ms']).toEqual({ intValue: '42' });
+    expect(a['success']).toEqual({ boolValue: true });
+    expect(JSON.parse(String(a['tool_parameters']['stringValue']))).toEqual({
+      skill_name: 'review', mcp_server_name: 'jira', mcp_tool_name: 'search',
+      bash_command: 'REDACTED:BASH-COMMAND', description: 'REDACTED:DESCRIPTION',
+    });
+    const sent = String(fetchMock.mock.calls.find(([url]) => String(url).endsWith('/logs'))![1].body);
+    expect(sent).not.toContain('dev@example.com');
+    expect(sent).not.toContain('a user prompt');
+    expect(sent).not.toContain('secret-dir');
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'logsJson', Buffer.byteLength(nativeRecord) + 1);
+  });
+
+  it('replaces an unparseable tool_parameters string with REDACTED:TOOL-PARAMETERS', async () => {
+    const parsed = JSON.parse(nativeRecord);
+    const logRecord = parsed.resourceLogs[0].scopeLogs[0].logRecords[0];
+    logRecord.attributes.find((a: { key: string }) => a.key === 'tool_parameters').value.stringValue = '{not json private';
+    const broken = JSON.stringify(parsed);
+    snapshotPendingNdjsonRecordsMock.mockImplementation(async (_s: string, stream: string) =>
+      (stream === 'logsJson' ? { ...batch('on'), records: [broken] } : null));
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', false, credentials);
+
+    expect(attrs()['tool_parameters']).toEqual({ stringValue: 'REDACTED:TOOL-PARAMETERS' });
+  });
+
+  it.each([['off' as const], [undefined]])('forwards the record unchanged when the settled decision is %s', async (reduction) => {
+    snapshotPendingNdjsonRecordsMock.mockImplementation(async (_s: string, stream: string) => (stream === 'logsJson' ? batch(reduction) : null));
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', false, credentials);
+
+    const body = String(fetchMock.mock.calls.find(([url]) => String(url).endsWith('/logs'))![1].body);
+    expect(body).toBe(nativeRecord);
+  });
+
+  it('waits (nothing sent, cursor untouched) for a native record whose session decision is not yet bound', async () => {
+    snapshotPendingNdjsonRecordsMock.mockImplementation(async (_s: string, stream: string) => (stream === 'logsJson' ? batch('unbound') : null));
+    snapshotPendingBytesMock.mockImplementation(async (_s: string, stream: string) =>
+      (stream === 'logs' ? { project: 'Proj A', cursor: 0, bytes: Buffer.from('pb'), more: false, reduction: 'unbound' } : null));
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', false, credentials);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(advanceCursorMock).not.toHaveBeenCalled();
+  });
+
+  it('never sends a record of a reduced session that cannot be reduced, and consumes its bytes (CR-020)', async () => {
+    const unreducible = '{ this is not json, with a private prompt';
+    snapshotPendingNdjsonRecordsMock.mockImplementation(async (_s: string, stream: string) =>
+      (stream === 'logsJson'
+        ? { ...batch('on'), records: [unreducible, nativeRecord], byteLength: Buffer.byteLength(unreducible) + 1 + Buffer.byteLength(nativeRecord) + 1 }
+        : null));
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', false, credentials);
+
+    const bodies = fetchMock.mock.calls.map(([, init]) => String((init as { body: unknown }).body));
+    expect(bodies.some((body) => body.includes('private prompt'))).toBe(false);
+    expect(bodies).toHaveLength(1);
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'logsJson', Buffer.byteLength(unreducible) + 1);
+  });
+
+  it('drops already-spooled protobuf of a reduced session without sending it', async () => {
+    snapshotPendingNdjsonRecordsMock.mockResolvedValue(null);
+    snapshotPendingBytesMock.mockImplementation(async (_s: string, stream: string) =>
+      (stream === 'logs' ? { project: 'Proj A', cursor: 7, bytes: Buffer.from('pbpb'), more: false, reduction: 'on' } : null));
+    const { forwardSession } = await import('../forwarder.js');
+
+    await forwardSession('s1', false, credentials);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(advanceCursorMock).toHaveBeenCalledWith('s1', 'logs', 11);
+  });
+});

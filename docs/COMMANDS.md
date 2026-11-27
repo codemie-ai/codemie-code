@@ -29,6 +29,8 @@ codemie docs <command>           # Manage documentation & knowledge tools
 codemie version                  # Show version information
 ```
 
+`codemie setup` ends with an **Analytics privacy** step: it shows what analytics sends and hides, the current setting for all projects and for this project, and asks "Hide prompts in analytics?" with the choices Off, On for all projects, and On for this project only. See [PROXY-AND-ANALYTICS.md](PROXY-AND-ANALYTICS.md#hide-prompts-in-analytics-prompt-reduction).
+
 ## Codebase Memory Commands
 
 ```bash
@@ -781,6 +783,7 @@ codemie analytics --last 7d                     # Last 7 days
 codemie analytics --verbose                     # Detailed session breakdown
 codemie analytics --export json                 # Write the costed report as JSON
 codemie analytics --include-external always     # Also count agents run directly (plain claude, codex, …)
+codemie analytics --unreduced                   # Full local data even when prompt reduction is on (sync stays reduced)
 
 # HTML dashboard (self-contained, no server)
 codemie analytics --export                      # Write codemie-analytics-YYYY-MM-DD.html

@@ -18,7 +18,7 @@ import {
 } from './session-project.js';
 import { readOrCreateEpoch } from './epoch.js';
 import { warnConflictStarted, warnDiscardOnce, warnNoProjectDiscardOnce } from './spool-warnings.js';
-import { fileExists, hooksFileState, readHookProjectNames, readRange } from './spool-files.js';
+import { fileExists, hooksFileState, readHookProjectNames, readHookReduction, readRange } from './spool-files.js';
 
 export { forwarderIdentity, pendingHooksMarkedLocked } from './spool-evidence.js';
 
@@ -37,6 +37,7 @@ export async function resolveLegacyProjectLocked(
 ): Promise<void> {
   const hadConflict = Boolean(status.projectConflict);
   applyProjectDecision(status, decideProject(await readHookProjectNames(sessionId), status));
+  if (await readHookReduction(sessionId)) status.reduction = true;
   status.projectScanned = true;
   if (!hadConflict && status.projectConflict) warnConflictStarted(sessionId, status);
 }
@@ -263,6 +264,8 @@ interface AppendSpoolOptions {
   carriedSince?: number;
   /** Skip the append if this check, evaluated under the session lock, returns true. */
   skipIf?: () => Promise<boolean>;
+  /** Hooks only: a hook of this batch stamped `analytics_reduction: true`; bound to the session beside its project. */
+  reduced?: boolean;
 }
 
 /**
@@ -276,7 +279,7 @@ export async function appendSpool(
   stream: SpoolStream,
   data: string | Buffer,
   projectNames?: string[],
-  { carriedSince, skipIf }: AppendSpoolOptions = {}
+  { carriedSince, skipIf, reduced }: AppendSpoolOptions = {}
 ): Promise<boolean> {
   let appended = true;
   await withSessionLock(sessionId, async () => {
@@ -324,6 +327,7 @@ export async function appendSpool(
       }
       const hadConflict = Boolean(status.projectConflict);
       applyProjectDecision(status, decideProject(projectNames, status), sizeBefore);
+      if (reduced) status.reduction = true;
       if (recreated) {
         // A new file is a new incarnation: a seal of the old one must not point into it.
         status.cursors.hooks = 0;
@@ -354,7 +358,19 @@ export async function appendSpool(
 
 /* --------------------------------------------------------------- consumers --- */
 
+/**
+ * The session's reduction decision as a snapshot reports it (EPMCDME-17748). `on`: a hook stamped it. Absent (`off`): the
+ * session's hooks were scanned and none did, so it is sent exactly as on `main`. `unbound`: no hook has been scanned yet (an
+ * evidence session whose hooks have not arrived), so the decision may still come; nothing may leave until it does.
+ */
+function reductionField(status: SessionStatus): { reduction?: 'on' | 'unbound' } {
+  if (status.reduction) return { reduction: 'on' };
+  return status.projectScanned ? {} : { reduction: 'unbound' };
+}
+
 export interface PendingBytes {
+  /** The session's reduction decision at snapshot time; absent = `off` (as on `main`). */
+  reduction?: 'on' | 'unbound';
   /** Project the session is bound to; sent as `X-CodeMie-Project`. */
   project: string;
   /** Cursor the snapshot was taken from — pass it back when acknowledging. */
@@ -384,7 +400,7 @@ export async function snapshotPendingBytes(
     if (!gate) return null;
     const cursor = status.cursors[stream];
     const bytes = await readRange(sessionId, stream, cursor, limit === undefined ? undefined : cursor + limit);
-    return bytes ? { project: gate.project, cursor, bytes, more: limit !== undefined && bytes.length >= limit } : null;
+    return bytes ? { ...reductionField(status), project: gate.project, cursor, bytes, more: limit !== undefined && bytes.length >= limit } : null;
   });
 }
 
@@ -459,6 +475,8 @@ export async function snapshotPendingHookRecords(
 }
 
 export interface PendingNdjsonBatch {
+  /** The session's reduction decision at snapshot time; absent = `off` (as on `main`). */
+  reduction?: 'on' | 'unbound';
   /** Project the session is bound to; sent as `X-CodeMie-Project`. */
   project: string;
   /** Cursor the snapshot was taken from — pass it back when acknowledging. */
@@ -497,6 +515,6 @@ export async function snapshotPendingNdjsonRecords(
       .split('\n')
       .filter((line) => line.trim().length > 0);
 
-    return { project: gate.project, cursor, records, byteLength: complete.length };
+    return { ...reductionField(status), project: gate.project, cursor, records, byteLength: complete.length };
   });
 }

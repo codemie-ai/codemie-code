@@ -280,6 +280,27 @@ export async function findNearestConfigDir(startDir: string): Promise<string> {
 }
 
 /**
+ * Every directory holding a project config from `startDir` up to the git worktree root, nearest first. A nested
+ * `.codemie` (a monorepo package with its own profile) must not shadow the repository's own settings, so a setting
+ * that is "on if any layer is on" reads all of them. Returns `[startDir]` when none is found.
+ */
+export async function findAllConfigDirs(startDir: string): Promise<string[]> {
+  const root = await gitWorktreeRoot(startDir);
+  const dirs: string[] = [];
+  let dir = startDir;
+  for (;;) {
+    if (await ConfigLoader.hasLocalConfig(dir) && (dir === startDir || !isGlobalConfigFile(dir))) {
+      dirs.push(dir);
+    }
+    if (dir === root || !root) break;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return dirs.length > 0 ? dirs : [startDir];
+}
+
+/**
  * Each identity source on its own, with no ranking and no `user.name` fallback for git,
  * so `git_email` is always a real email. Never throws.
  */

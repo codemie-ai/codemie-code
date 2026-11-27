@@ -16,6 +16,17 @@
 5. Built-in Defaults  (Lowest)   → Hardcoded in ConfigLoader
 ```
 
+### Settings that are not profile fields: `analytics`
+
+`analytics.promptReduction` (EPMCDME-17748) sits beside `profiles` in the same files but is **not** part of a profile and does not follow the priority order above: it is on if **either** the global or the project file has it on, and it is read by `src/utils/analytics-reduction-setting.ts`, not by `ConfigLoader.load`. See [CONFIGURATION.md](CONFIGURATION.md#analytics-privacy-prompt-reduction).
+
+Rules for code that touches these files:
+
+- **Carry the `analytics` block over.** Any code that rewrites a config file from scratch (as `initProjectConfig` did) erases the setting, and the user's data then goes out unreduced without a warning. Load the existing file and keep `analytics`, or write through `writeProjectReductionFlag` / `writeGlobalReductionFlag`, which merge a single key and keep indentation. `MultiProviderConfig` has an optional `analytics` field for this reason.
+- **A project file may hold only `analytics`.** `loadLocalMultiProviderConfig` reads it as an empty config that keeps the block; it must never throw "Unrecognized config format" for it, and it never changes which profile is active.
+- **An unreadable file is "on".** An unreadable project config is never overwritten: the rewrite (`initProjectConfig`) fails with a `ConfigurationError` and writes nothing, and every reader treats the file as "on".
+- **Read every level.** The hook, report and metrics decisions use `findAllConfigDirs`, so a nested `.codemie` without the key does not shadow the repository root's.
+
 ---
 
 ## 2. Parameter Flow Diagram

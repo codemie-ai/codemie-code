@@ -1,11 +1,15 @@
 /**
  * The Cowork event builders: inner-transcript lines of the synthetic fixture session in, wire events out.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   buildCoworkEvents,
   emptyCoworkEventState,
+  resolveCoworkReduction,
   stampCoworkEvent,
   type CoworkEnvelope,
 } from '../cowork-events.js';
@@ -234,5 +238,74 @@ describe('stampCoworkEvent', () => {
     const stamped = stampCoworkEvent({ type: 'agent.prompt.submit', timestamp: '2026-11-10T11:00:00.000Z', event_id: 'x:1' }, { ...ENVELOPE, branch: 'a' }, '');
 
     expect(stamped['event_id']).toBe('x:1');
+  });
+});
+
+describe('Cowork prompt reduction (EPMCDME-17748)', () => {
+  let home: string;
+  const savedHome = process.env.CODEMIE_HOME;
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'cowork-reduction-'));
+    process.env.CODEMIE_HOME = home;
+  });
+  afterEach(async () => {
+    if (savedHome === undefined) delete process.env.CODEMIE_HOME;
+    else process.env.CODEMIE_HOME = savedHome;
+    await rm(home, { recursive: true, force: true });
+  });
+  const withDir = (workingDirectory: string): CoworkEnvelope => ({ ...ENVELOPE, workingDirectory });
+  const writeList = (value: string): Promise<void> => writeFile(join(home, 'analytics-reduction-projects.json'), value);
+
+  it('is off with no global flag and no list', async () => {
+    expect(await resolveCoworkReduction(withDir('/work/proj'))).toBe(false);
+  });
+
+  it('is on when the global flag is on', async () => {
+    await writeFile(join(home, 'codemie-cli.config.json'), JSON.stringify({ analytics: { promptReduction: true } }));
+    expect(await resolveCoworkReduction(withDir('/work/other'))).toBe(true);
+    expect(await resolveCoworkReduction(ENVELOPE)).toBe(true);
+  });
+
+  it('is on when the working directory is a listed project or inside one, and off for a sibling with a shared prefix', async () => {
+    await writeList(JSON.stringify(['/work/proj']));
+    expect(await resolveCoworkReduction(withDir('/work/proj'))).toBe(true);
+    expect(await resolveCoworkReduction(withDir('/work/proj/sub/dir'))).toBe(true);
+    expect(await resolveCoworkReduction(withDir('/work/proj-two'))).toBe(false);
+    expect(await resolveCoworkReduction(withDir('/work/unlisted'))).toBe(false);
+    expect(await resolveCoworkReduction(ENVELOPE)).toBe(false);
+  });
+
+  it('reduces when the opted-in list or the global flag file is corrupt', async () => {
+    await writeList('{not json');
+    expect(await resolveCoworkReduction(withDir('/work/unlisted'))).toBe(true);
+    await rm(join(home, 'analytics-reduction-projects.json'));
+    await writeFile(join(home, 'codemie-cli.config.json'), '{broken');
+    expect(await resolveCoworkReduction(withDir('/work/unlisted'))).toBe(true);
+  });
+
+  it('stamps a reduced event: no free text, kept analytics_reduction, id from the unreduced payload', () => {
+    const event = { type: 'agent.prompt.submit', timestamp: '2026-11-10T11:00:00.000Z', prompt_body: 'fix the secret billing bug' };
+    const plain = stampCoworkEvent({ ...event }, { ...ENVELOPE, branch: 'feature/EPMCDME-1234-x' }, '');
+    const reduced = stampCoworkEvent({ ...event }, { ...ENVELOPE, branch: 'feature/EPMCDME-1234-x' }, '', { reduced: true });
+
+    expect(plain).not.toHaveProperty('analytics_reduction');
+    expect(plain['prompt_body']).toBe('fix the secret billing bug');
+    expect(reduced['analytics_reduction']).toBe(true);
+    expect(JSON.stringify(reduced)).not.toContain('billing');
+    expect(reduced['git_branch']).toBe('EPMCDME-1234');
+    expect(reduced['session_id']).toBe(CLI);
+    expect(typeof reduced['event_id']).toBe('string');
+  });
+
+  it('strips injected IDE blocks and system reminders before reducing a prompt (CR-031)', () => {
+    const prompt = '<ide_opened_file>The user opened /repo/ABC-777.ts in the IDE.</ide_opened_file>\n'
+      + '<system-reminder>Plan for acme bank #888</system-reminder>\nplease fix XYZ-5 and !42';
+    const reduced = stampCoworkEvent(
+      { type: 'agent.prompt.submit', timestamp: '2026-11-10T11:00:00.000Z', prompt_body: prompt },
+      ENVELOPE, '', { reduced: true }
+    );
+    expect(reduced['prompt_body']).toBe('XYZ-5 !42 REDACTED:REST_PROMPT');
+    expect(JSON.stringify(reduced)).not.toContain('ABC-777');
+    expect(JSON.stringify(reduced)).not.toContain('acme');
   });
 });

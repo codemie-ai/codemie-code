@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "task": "Add an opt-in analytics prompt reduction (EPMCDME-17748), set globally or per project with a setup step. Prompts become the command name plus ticket/MR refs, or REDACTED:PROMPT. A fixed keep-list applies on every analytics route (hook collectors, proxy OTLP JSON/protobuf, Cowork, Copilot enrichment, local report, analytics sync), and the branch is cut to its ticket keys.",
+  "generated": "2026-11-24T13:40:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 6, "label": "XXL" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 6, "label": "XXL" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 5, "label": "XL" }
+  },
+  "total": 29,
+  "size": "XL",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "split-required",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Base XL. The change adds a new keep-list reduction abstraction and a prompt reducer (command, ticket/MR refs, auto-prompt markers). They apply at six or more independent build points: OtlpAgentAdapter.buildEvent with the claude-code-otlp, copilot-cli-otlp and copilot-chat-otlp adapters, the unhooked-tools path, stampCoworkEvent, the Copilot usage enrichment, OtlpInterceptor/maskOtlpJson, and the report/sync buildPayload. It also needs a new setting in ConfigLoader/MultiProviderConfig and a new setup step. The task touches the shared leaf otlp-field-limits and ticket-parser utilities, and it affects several agents and workflows." },
+    { "dimension": "requirements_clarity", "reason": "The story is detailed (AC1-17, D1-D15, NG1-NG5), but several points are open or contradicted. AC1 assumes an analytics step that general setup.ts does not have. The continuation-after-reset marker (AC7) and whether /clear reaches the hook (AC4) are unverified. The keep-list does not say what happens to envelope identifiers (session_id, event_id, platform, prompt_source). It is unclear whether conversations sync and managed metrics error text count as 'every analytics route'. The TICKET_RE case-insensitivity conflicts with the AC16 false-positive expectations." },
+    { "dimension": "technical_risk", "reason": "There is no keep-list precedent, so the work moves from a deny-list (TEXT_FIELD_LIMITS) to a keep-list. Any build point that is missed leaks content. The nearest pattern, maskAndBoundFields/maskOtlpJson, covers secret masking only and has no field allow-listing. Protobuf OTLP is byte-blind, so reduction can be bypassed there. Branch reduction has to happen after mergeCommonFields derives the story (AC14). The event_id content hash changes, which affects backend dedup. Project resolution in daemon producers works with a frozen cwd. AC15 requires a fail-closed REDACTED:FAILED path. This is privacy-sensitive egress work, and the ACs list edge cases (MR forms, paths that look like commands, auto-prompt markers) with no existing tests for them." },
+    { "dimension": "file_change_estimate", "reason": "Likely 16 or more modified files across src/agents/core, three plugin dirs, the proxy plugins and otlp-spool, telemetry/runtime/cowork, cli/commands/analytics/report and sync, cli/commands/setup and the provider setup steps, and utils/config and env/types. Several new files are expected: a reducer leaf module, an MR-ref detector and their tests. Shared foundations are touched." },
+    { "dimension": "affected_layers", "reason": "The change reaches every layer. CLI/UI (setup step, the analytics --unreduced option, the report). Service (adapters, reducer). Persistence (global and project config keys). Infrastructure (proxy daemon OTLP ingest, the spool producers). External egress (the analytics API and sync targets). Reduction is a cross-cutting concern added in each of these. Calibration: the project L example profile-provider-decoupling scored 23 for 14 files over 6 areas. This task is broader in both build points and egress routes, which supports XL over L." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from XL to XXL: touches core shared utilities (otlp-field-limits, ticket-parser, OtlpAgentAdapter) and affects multiple agents and workflows (capped at 6)",
+    "Technical Risk bumped from XL to XXL: security and compliance requirement (privacy reduction of all analytics egress, fail-closed REDACTED:FAILED)",
+    "Technical Risk security-pattern divergence noted: the nearest pattern (secret masking deny-list) does not cover field allow-listing. This was already part of the XL base and the score is capped at 6"
+  ],
+  "split_recommendation": {
+    "strategy": "by-dependency",
+    "secondary_strategy": "by-feature",
+    "ordering_note": "All slices live in the single codemie-code repo. Build the setting and the shared reducer and keep-list on the hook-collector path first. The daemon-side routes and the report/sync routes both depend on it, and they can run in either order.",
+    "slices": [
+      {
+        "title": "Reduction setting, core reducer and hook collectors",
+        "slice_slug": "reduction-core",
+        "component": "codemie-code",
+        "feature": "analytics-prompt-reduction",
+        "scope": "Add the global and per-project reduction setting with the setup step, plus a leaf reducer module: prompt to command and ticket/MR refs, auto-prompt markers, the field keep-list, branch to ticket keys, and REDACTED:<KIND> placeholders. Apply it in OtlpAgentAdapter.buildEvent and the unhooked-tools path for the Claude, Copilot CLI and Copilot Chat adapters, keeping attribution computed from the raw values.",
+        "depends_on": null
+      },
+      {
+        "title": "Daemon-side routes: proxy OTLP, Cowork and Copilot enrichment",
+        "slice_slug": "daemon-routes",
+        "component": "codemie-code",
+        "feature": "analytics-prompt-reduction",
+        "scope": "Apply the shared reducer to native OTLP JSON ingest as an attribute keep-list, and handle protobuf when reduction is on. Also apply it to the Cowork producer, the Copilot usage enrichment and managed metrics, resolving project settings without a hook-time cwd. Add the fail-closed REDACTED:FAILED handling.",
+        "depends_on": "Reduction setting, core reducer and hook collectors"
+      },
+      {
+        "title": "Reduced local report and analytics sync",
+        "slice_slug": "report-sync",
+        "component": "codemie-code",
+        "feature": "analytics-prompt-reduction",
+        "scope": "Make the local analytics report and --output reduced by default when the setting is on, with a --unreduced override for the local report only. Make analytics sync always send reduced payloads.",
+        "depends_on": "Reduction setting, core reducer and hook collectors"
+      }
+    ]
+  }
+}

@@ -20,12 +20,14 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { ConfigLoader } from '@/utils/config.js';
 import { logger } from '@/utils/logger.js';
 import { detectGitBranch, detectGitRemoteRepo } from '@/utils/processes.js';
 import { getDirname } from '@/utils/paths.js';
+import { reduceBranch } from '@/agents/core/analytics-reduction.js';
+import { isReductionOn, readOptedInProjects } from '@/utils/analytics-reduction-setting.js';
 import { encodeAttributionHeader, rawProjectHeader } from '@/utils/header-value.js';
 import type { CodeMieConfigOptions } from '@/env/types.js';
 
@@ -172,10 +174,11 @@ async function emit(
   const transport = session.transport;
 
   try {
-    const [branch, repository] = await Promise.all([
+    const [rawBranch, repository] = await Promise.all([
       detectGitBranch(session.workingDirectory),
       detectGitRemoteRepo(session.workingDirectory),
     ]);
+    const branch = await branchToSend(rawBranch, session.workingDirectory);
 
     const baseBody: Omit<SkillEventBody, 'skill_name' | 'skill_slug' | 'skill_id' | 'agent'> = {
       session_id: session.sessionId,
@@ -257,6 +260,30 @@ function buildEventBodies(
     }
   }
   return bodies;
+}
+
+/**
+ * The branch as it is sent: cut to its ticket keys when prompt reduction is on for the working directory (read now,
+ * never cached). A directory that is gone has no config to read, so it is reduced when any project opted in.
+ */
+async function branchToSend(branch: string | undefined, workingDirectory: string): Promise<string | undefined> {
+  if (!branch) return branch;
+  let reduce: boolean;
+  if (existsSync(workingDirectory)) {
+    let configDirs = [workingDirectory];
+    try {
+      // Lazy: identity-fields pulls in ConfigLoader and the proxy graph
+      const { findAllConfigDirs } = await import('@/agents/core/event-fields/identity-fields.js');
+      configDirs = await findAllConfigDirs(workingDirectory);
+    } catch {
+      // an unreadable directory falls back to the start directory; the global flag still applies
+    }
+    reduce = await isReductionOn({ configDirs });
+  } else {
+    const optedIn = await readOptedInProjects();
+    reduce = (await isReductionOn({ configDirs: [] })) || optedIn === 'unreadable' || optedIn.length > 0;
+  }
+  return reduce ? reduceBranch(branch) : branch;
 }
 
 async function postOne(transport: SkillEventTransport, body: SkillEventBody): Promise<void> {

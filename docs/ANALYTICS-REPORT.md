@@ -364,6 +364,8 @@ Export flags:
   --open                     Open the generated HTML report in the default browser
                               (implies --export html when --export is not given)
   --redact                   Omit prompt text and absolute paths from the exported report
+  --unreduced                Show full local data even when analytics prompt reduction is on
+                              (local report only; see "Prompt reduction" below)
 
 Filter flags:
   --last <duration>         Last N days/hours/minutes: 7d, 24h, 30m
@@ -381,6 +383,12 @@ Source flags:
 Other flags:
   -v, --verbose             Session-level breakdown in the terminal output
 ```
+
+### Prompt reduction
+
+When analytics prompt reduction is on for a session's project (or globally), the report **reduces that session by default**, in the terminal and in every export: the title becomes the command name plus ticket and MR numbers (or `REDACTED:PROMPT`), the branch is cut to its ticket keys (`REDACTED:BRANCH` when it has none, except shared names such as `main` or `develop`), the project is shown as its folder name, and every free-text field is replaced by `REDACTED:<FIELD>`. Metrics, models, tools and costs are unchanged. The decision is made per session from that session's own project, so a report that spans projects reduces only the ones that opted in; the terminal summary is reduced when any project on the machine opted in.
+
+Pass `--unreduced` to see the full data for yourself. It applies to the local report only: `analytics sync` is always reduced. With reduction on, `--redact` is superseded by reduction. See [PROXY-AND-ANALYTICS.md](PROXY-AND-ANALYTICS.md#hide-prompts-in-analytics-prompt-reduction).
 
 The report-generation flags shown above are the complete set. Any other flag name is rejected as unknown, and an unsupported `--export` value is reported as an invalid-format error.
 

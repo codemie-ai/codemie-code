@@ -112,6 +112,7 @@ async function install(plan: InstallPlan, job: Scheduler = scheduler(), extra: P
     restoreSettingsRaw: (raw) => store.restoreSyncSettingsRaw(raw),
     resolveIdentity: async () => 'dev@example.com',
     isTTY: false,
+    reductionStatus: async () => 'off',
     promptEmail: async () => 'dev@example.com',
     promptTaskName: async () => '',
     confirmOverwrite: async () => false,

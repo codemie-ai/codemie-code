@@ -1,0 +1,249 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const debugSpy = vi.hoisted(() => vi.fn());
+vi.mock('@/utils/logger.js', () => ({
+  logger: { debug: debugSpy, info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+import { HOOK_EVENT_KEEP_LIST } from '../hook-event-keep-list.js';
+import { placeholder, reduceBranch, reducePrompt, reduceRecord, type KeepList } from '../analytics-reduction.js';
+
+describe('placeholder', () => {
+  it('maps camelCase and snake_case to upper kebab case', () => {
+    expect(placeholder('gitBranch')).toBe('REDACTED:GIT-BRANCH');
+    expect(placeholder('error_messages')).toBe('REDACTED:ERROR-MESSAGES');
+    expect(placeholder('foo_bar')).toBe('REDACTED:FOO-BAR');
+  });
+});
+
+describe('reduceBranch', () => {
+  it('keeps ticket keys as written, de-duplicated, space-joined', () => {
+    expect(reduceBranch('feature/EPMCDME-12-secret-client')).toBe('EPMCDME-12');
+    expect(reduceBranch('feature/epmcdme-12-x-EPMCDME-12-ABC-3')).toBe('epmcdme-12 ABC-3');
+  });
+  it('redacts branches without ticket keys', () => {
+    expect(reduceBranch('feature/acme-bank-migration')).toBe('REDACTED:BRANCH');
+  });
+  it('sends shared branch names (main, master, develop, dev, qa, test, testing, perf, stage, staging, prod) as they are', () => {
+    for (const name of ['main', 'master', 'develop', 'dev', 'qa', 'test', 'testing', 'perf', 'stage', 'staging', 'prod', 'Main']) {
+      expect(reduceBranch(name)).toBe(name);
+    }
+  });
+  it('matches shared names exactly: a prefix or suffix is still redacted', () => {
+    expect(reduceBranch('feature/main')).toBe('REDACTED:BRANCH');
+    expect(reduceBranch('test-acme-bank')).toBe('REDACTED:BRANCH');
+    expect(reduceBranch('qa/acme-EPMCDME-5')).toBe('EPMCDME-5');
+  });
+  it('passes undefined through', () => {
+    expect(reduceBranch(undefined)).toBeUndefined();
+  });
+});
+
+describe('reduceRecord', () => {
+  beforeEach(() => debugSpy.mockClear());
+  const keep: KeepList = {
+    keep: new Set(['id', 'tool']),
+    nested: { meta: { keep: new Set(['ok']) } },
+  };
+
+  it('keeps listed keys and numbers/booleans', () => {
+    const out = reduceRecord({ id: 'a', tool: 'Bash', n: 3, flag: false }, keep);
+    expect(out).toEqual({ id: 'a', tool: 'Bash', n: 3, flag: false });
+  });
+
+  it('redacts unlisted future strings, string arrays and objects', () => {
+    const out = reduceRecord(
+      { id: 'a', foo_bar: 'secret', tags: ['x', 'y'], blob: { a: 1 } },
+      keep
+    ) as Record<string, unknown>;
+    expect(out.foo_bar).toBe('REDACTED:FOO-BAR');
+    expect(out.tags).toEqual(['REDACTED:TAGS']);
+    expect(out.blob).toBe('REDACTED:BLOB');
+  });
+
+  it('recurses into nested entries', () => {
+    const out = reduceRecord({ meta: { ok: 'yes', secret: 's' } }, keep) as Record<string, unknown>;
+    expect(out.meta).toEqual({ ok: 'yes', secret: 'REDACTED:SECRET' });
+  });
+
+  it('passes null and undefined through', () => {
+    const out = reduceRecord({ a: null, b: undefined } as Record<string, unknown>, keep);
+    expect(out).toEqual({ a: null, b: undefined });
+  });
+
+  it('sets a throwing field to REDACTED:FAILED and logs name only', () => {
+    const rec: Record<string, unknown> = { id: 'a' };
+    Object.defineProperty(rec, 'bad', {
+      enumerable: true,
+      get() {
+        throw new TypeError('SECRET-VALUE');
+      },
+    });
+    const out = reduceRecord(rec, keep) as Record<string, unknown>;
+    expect(out.bad).toBe('REDACTED:FAILED');
+    expect(out.id).toBe('a');
+    const logged = JSON.stringify(debugSpy.mock.calls);
+    expect(logged).toContain('bad');
+    expect(logged).toContain('TypeError');
+    expect(logged).not.toContain('SECRET-VALUE');
+  });
+});
+
+describe('reducePrompt', () => {
+  const CONT = 'This session is being continued from a previous conversation';
+  it.each([
+    ['/review-pr !456 check auth', {}, '/review-pr !456 REDACTED:REST_PROMPT'],
+    ['/review-pr !456', {}, '/review-pr !456'],
+    ['  EPMCDME-5   !42 ', {}, 'EPMCDME-5 !42'],
+    ['/review', {}, '/review'],
+    ['fix EPMCDME-123 see !456', {}, 'EPMCDME-123 !456 REDACTED:REST_PROMPT'],
+    ['epmcdme-123 and EPMCDME-123', {}, 'epmcdme-123 REDACTED:REST_PROMPT'],
+    ['hello', {}, 'REDACTED:PROMPT'],
+    ['<task-notification><x>secret EPMCDME-1</x>', {}, '<task-notification>'],
+    ['<agent-message from=a>hi', {}, '<agent-message'],
+    [`${CONT}. Summary: secret EPMCDME-5`, {}, CONT],
+    ['run /usr/bin/node', {}, 'REDACTED:PROMPT'],
+    ['#fff', {}, 'REDACTED:PROMPT'],
+    ['# Plan', {}, 'REDACTED:PROMPT'],
+    ['v1.2.3', {}, 'REDACTED:PROMPT'],
+    ['https://github.com/o/r/pull/24', {}, 'pull/24 REDACTED:REST_PROMPT'],
+    ['/clear', {}, '/clear'],
+    ['/sdlc-factory:sdlc-standard do it for AB#12', {}, '/sdlc-factory:sdlc-standard AB#12 REDACTED:REST_PROMPT'],
+    ['The user asked something', { commandName: 'fleet' }, '/fleet REDACTED:REST_PROMPT'],
+    ['anything', { autoMarker: '<task-notification>' }, '<task-notification>'],
+    ['Caveat: The messages below were generated by the user while running local commands. DO NOT respond', {},
+      'Caveat: The messages below were generated by the user while running local commands'],
+    ['<command-name>/clear</command-name> <command-message>clear</command-message>', {}, '<command-name>/clear</command-name>'],
+  ])('reduces %j', (raw, opts, expected) => {
+    expect(reducePrompt(raw, opts)).toBe(expected);
+  });
+
+  it('keeps the cut marker inside the 200 character limit', () => {
+    const refs = Array.from({ length: 40 }, (_, i) => `EPMCDME-${1000 + i}`).join(' ');
+    const out = reducePrompt(refs, {});
+    expect(out.length).toBeLessThanOrEqual(200);
+    expect(out.endsWith(' REDACTED:REST_PROMPT')).toBe(true);
+  });
+
+  it('never cuts a ref in the middle to make room for the cut marker', () => {
+    // 15 refs of 13 characters fill 209 characters; the marker leaves 179, so the last whole ref that fits is kept
+    const refs = Array.from({ length: 15 }, (_, i) => `EPMCDME-${10000 + i}`);
+    const out = reducePrompt(`${refs.join(' ')} and more`, {});
+    const sent = out.replace(' REDACTED:REST_PROMPT', '').split(' ');
+    expect(out.length).toBeLessThanOrEqual(200);
+    expect(sent.length).toBeGreaterThan(0);
+    for (const ref of sent) {
+      expect(refs).toContain(ref);
+    }
+  });
+
+  it('adds no cut marker when the prompt held only the kept parts, in any order', () => {
+    expect(reducePrompt('!456 EPMCDME-123', {})).toBe('EPMCDME-123 !456');
+    expect(reducePrompt('EPMCDME-123 EPMCDME-123', {})).toBe('EPMCDME-123');
+    expect(reducePrompt('!456 EPMCDME-123 please', {})).toBe('EPMCDME-123 !456 REDACTED:REST_PROMPT');
+  });
+
+  it('never adds the cut marker to a fully redacted prompt', () => {
+    expect(reducePrompt('hello there', {})).toBe('REDACTED:PROMPT');
+  });
+
+  it('keeps a ref at the end of a 100 KB prompt, in linear time', () => {
+    const raw = `${'lorem ipsum dolor sit amet '.repeat(4000)}EPMCDME-9`;
+    const start = performance.now();
+    const out = reducePrompt(raw, {});
+    expect(performance.now() - start).toBeLessThan(50);
+    expect(out).toBe('EPMCDME-9 REDACTED:REST_PROMPT');
+  });
+
+  it('bounds the output to 200 characters', () => {
+    const raw = `/${'a'.repeat(50)} ${Array.from({ length: 100 }, (_, i) => `PROJ-${i + 1}`).join(' ')}`;
+    expect(reducePrompt(raw, {}).length).toBeLessThanOrEqual(200);
+  });
+});
+
+describe('never-throwing prompt and branch reduction (CR-001)', () => {
+  it('reducePrompt degrades to REDACTED:FAILED when the input breaks it', () => {
+    const hostile = { toString: () => { throw new Error('boom'); } } as unknown as string;
+    expect(reducePrompt(hostile)).toBe('REDACTED:FAILED');
+  });
+  it('reduceBranch degrades to REDACTED:FAILED when the input breaks it', () => {
+    const hostile = { matchAll: () => { throw new Error('boom'); } } as unknown as string;
+    expect(reduceBranch(hostile)).toBe('REDACTED:FAILED');
+  });
+});
+
+describe('kept keys with non-string values (CR-002)', () => {
+  const keep: KeepList = { keep: new Set(['tools', 'cwd']) };
+  it('keeps a string verbatim and identifiers nested in a kept container', () => {
+    const out = reduceRecord({ cwd: '/a b/c', tools: [{ name: 'Bash', count: 2 }, 'Read'] }, keep);
+    expect(out).toEqual({ cwd: '/a b/c', tools: [{ name: 'Bash', count: 2 }, 'Read'] });
+  });
+  it('replaces free text nested in a kept container', () => {
+    const out = reduceRecord({ tools: [{ note: 'my secret client plan' }, ['more free text']] }, keep);
+    expect(JSON.stringify(out)).not.toContain('secret');
+    expect(JSON.stringify(out)).not.toContain('free text');
+    expect(out).toEqual({ tools: [{ note: 'REDACTED:NOTE' }, ['REDACTED:TOOLS']] });
+  });
+});
+
+describe('HOOK_EVENT_KEEP_LIST: prompt_id', () => {
+  it('keeps prompt_id with tool_use_id so skill dispatch can be attributed', () => {
+    const out = reduceRecord({ prompt_id: 'P-1a2b', tool_use_id: 'toolu_01xyz', description: 'private text' }, HOOK_EVENT_KEEP_LIST);
+    expect(out.prompt_id).toBe('P-1a2b');
+    expect(out.tool_use_id).toBe('toolu_01xyz');
+    expect(out.description).toBe('REDACTED:DESCRIPTION');
+  });
+});
+
+describe('HOOK_EVENT_KEEP_LIST: model usage and session summary', () => {
+  it('keeps model names and usage enums so a reduced request can still be priced', () => {
+    const out = reduceRecord({
+      type: 'agent.usage.request', session_id: 's', request_id: 'req_1', message_id: 'msg_1',
+      model_raw: 'claude-opus-4-5-20251101', model: 'claude-opus-4-5', speed: 'standard',
+      inference_geo: 'us', service_tier: 'standard', stop_reason: 'end_turn', scope_kind: 'skill',
+      scope_name: 'commit', input_tokens: 10, output_tokens: 5,
+    }, HOOK_EVENT_KEEP_LIST);
+    expect(out.model_raw).toBe('claude-opus-4-5-20251101');
+    expect(out.model).toBe('claude-opus-4-5');
+    expect(out.speed).toBe('standard');
+    expect(out.stop_reason).toBe('end_turn');
+    expect(out.input_tokens).toBe(10);
+  });
+  it('keeps timestamps and name lists of a session summary but still redacts the title', () => {
+    const out = reduceRecord({
+      type: 'agent.session.summary', started_at: '2026-01-01T00:00:00Z', ended_at: '2026-01-01T01:00:00Z',
+      models: ['claude-opus-4-5'], primary_model: 'claude-opus-4-5', commands: ['commit'],
+      tools: { Bash: { calls: 2, errors: 0 } }, title: 'Fix acme bank migration', branch_dominant: 'feature/acme-bank',
+    }, HOOK_EVENT_KEEP_LIST);
+    expect(out.started_at).toBe('2026-01-01T00:00:00Z');
+    expect(out.models).toEqual(['claude-opus-4-5']);
+    expect(out.tools).toEqual({ Bash: { calls: 2, errors: 0 } });
+    expect(out.title).toBe('REDACTED:TITLE');
+    expect(out.branch_dominant).toBe('REDACTED:BRANCH-DOMINANT');
+  });
+  it('does not let free text ride along inside a kept list', () => {
+    const out = reduceRecord({ commands: ['commit', 'summarise the acme bank contract for me'] }, HOOK_EVENT_KEEP_LIST);
+    expect(out.commands).toEqual(['commit', 'REDACTED:COMMANDS']);
+  });
+});
+
+describe('reducePrompt: commands and refs (CR-009, CR-006)', () => {
+  it('does not read a path as a command when the adapter reports no command', () => {
+    expect(reducePrompt('/tmp is full', { commandName: '' })).toBe('REDACTED:PROMPT');
+    expect(reducePrompt('/usr/bin/node run it', { commandName: '' })).toBe('REDACTED:PROMPT');
+  });
+  it('still derives the command itself when no adapter value is supplied', () => {
+    expect(reducePrompt('/review-pr !456 secret')).toBe('/review-pr !456 REDACTED:REST_PROMPT');
+  });
+  it('keeps short tracker prefixes and org/repo refs, not long bare words', () => {
+    expect(reducePrompt('see AB#123 and org/repo#7 and #9', { commandName: '' })).toBe('AB#123 org/repo#7 #9 REDACTED:REST_PROMPT');
+    expect(reducePrompt('call secretproject#5 now', { commandName: '' })).toBe('REDACTED:PROMPT');
+  });
+});
+
+describe('nested undefined (CR-039)', () => {
+  it('keeps an undefined value inside a kept container instead of turning it into a redacted string', () => {
+    const out = reduceRecord({ tools: { Bash: { calls: 2, errors: undefined } } }, HOOK_EVENT_KEEP_LIST);
+    expect(out.tools).toEqual({ Bash: { calls: 2, errors: undefined } });
+  });
+});

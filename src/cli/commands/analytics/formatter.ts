@@ -2,6 +2,8 @@
  * Console output formatter for analytics
  */
 
+import { reduceBranch } from '@/agents/core/analytics-reduction.js';
+import { projectBasename } from './report/redact.js';
 import chalk from 'chalk';
 import { agentLabel } from './agent-labels.js';
 import type {
@@ -18,8 +20,11 @@ import type { CostSummary } from './cost/types.js';
 export class AnalyticsFormatter {
   private verbose: boolean;
 
-  constructor(verbose = false) {
+  private readonly reduced: boolean;
+
+  constructor(verbose = false, reduced = false) {
     this.verbose = verbose;
+    this.reduced = reduced;
   }
 
   /**
@@ -102,7 +107,7 @@ export class AnalyticsFormatter {
    */
   private displayProject(project: ProjectAnalytics): void {
     console.log(chalk.bold.green(`\n${'='.repeat(60)}`));
-    console.log(chalk.bold.green(`PROJECT: ${project.projectPath}`));
+    console.log(chalk.bold.green(`PROJECT: ${this.reduced ? projectBasename(project.projectPath) : project.projectPath}`));
     console.log(chalk.bold.green(`${'='.repeat(60)}`));
 
     this.displayStats(project, '  ');
@@ -148,7 +153,7 @@ export class AnalyticsFormatter {
    */
   private displayBranch(branch: BranchAnalytics): void {
     console.log(chalk.bold.magenta(`\n  ${'+'.repeat(56)}`));
-    console.log(chalk.bold.magenta(`  BRANCH: ${branch.branchName}`));
+    console.log(chalk.bold.magenta(`  BRANCH: ${this.reduced ? (reduceBranch(branch.branchName) ?? branch.branchName) : branch.branchName}`));
     console.log(chalk.bold.magenta(`  ${'+'.repeat(56)}`));
 
     this.displayStats(branch, '    ');
@@ -219,7 +224,8 @@ export class AnalyticsFormatter {
     // Files
     if (session.files.length > 0) {
       console.log(chalk.yellow(`\n      Files Changed (${session.files.length}):`));
-      for (const file of session.files.slice(0, 10)) {
+      // Reduced: file names are dropped (AC10); only the count above is shown.
+      for (const file of this.reduced ? [] : session.files.slice(0, 10)) {
         const filename = file.filePath.split('/').pop() || file.filePath;
         console.log(chalk.gray(`        ${filename}`));
         console.log(chalk.gray(`          Operations: ${file.operationCount}`));
@@ -227,7 +233,7 @@ export class AnalyticsFormatter {
         console.log(chalk.gray(`          Lines Removed: ${file.linesRemoved}`));
         console.log(chalk.gray(`          Net Changed: ${file.netLinesChanged}`));
       }
-      if (session.files.length > 10) {
+      if (!this.reduced && session.files.length > 10) {
         console.log(chalk.gray(`        ... and ${session.files.length - 10} more`));
       }
     }

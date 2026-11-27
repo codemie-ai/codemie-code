@@ -38,6 +38,7 @@ import {
 import { lookbackText, webhookHost } from './format.js';
 import { EMAIL_REGEX, realIdentityDeps, resolveSyncIdentity } from './identity.js';
 import { errorMessage, redactSecrets } from './redact.js';
+import { reductionStatusText } from './reduction-status.js';
 import {
   createRealSchedulerDeps,
   createScheduler,
@@ -70,6 +71,8 @@ export interface InstallDeps {
    * `SyncIdentityMissingError` when neither resolves. */
   resolveIdentity(): Promise<string>;
   isTTY: boolean;
+  /** The `Prompt reduction:` summary text (`./reduction-status.ts`); never throws. */
+  reductionStatus(): Promise<string>;
   /** Only called when `isTTY` is true and `resolveIdentity()` throws. */
   promptEmail(): Promise<string>;
   /** Only called when `isTTY` is true and no `--task-name` was given. `defaultName` is the
@@ -100,6 +103,7 @@ function printSummary(
   email: string,
   collectorPresent: boolean,
   registerResult: RegisterResult,
+  reduction: string,
   planSummary: string[]
 ): void {
   deps.print('Analytics sync installed.');
@@ -119,6 +123,7 @@ function printSummary(
     }
   }
   deps.print(`  Email:            ${email}`);
+  deps.print(`  Prompt reduction: ${reduction}`);
   for (const line of planSummary) {
     deps.print(line);
   }
@@ -363,7 +368,7 @@ export async function runInstall(opts: InstallOptions, deps: InstallDeps): Promi
     return 1;
   }
 
-  printSummary(deps, settings, email, collectorPresent, registerResult, planRun.summary);
+  printSummary(deps, settings, email, collectorPresent, registerResult, await deps.reductionStatus(), planRun.summary);
   return 0;
 }
 
@@ -380,6 +385,7 @@ export function createRealInstallDeps(plan: InstallPlan): InstallDeps {
     restoreSettingsRaw: (raw: string) => restoreSyncSettingsRaw(raw),
     resolveIdentity: () => resolveSyncIdentity(realIdentityDeps),
     isTTY: Boolean(process.stdin.isTTY),
+    reductionStatus: reductionStatusText,
     promptEmail: async (): Promise<string> => {
       const inquirer = (await import('inquirer')).default;
       const { email } = await inquirer.prompt<{ email: string }>([

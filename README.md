@@ -33,6 +33,7 @@ CodeMie CLI is the all-in-one AI coding assistant for developers.
 - 🧩 **CodeMie Assistants in Claude** - Connect your available CodeMie assistants as Claude subagents or skills.
 - 🛠️ **CodeMie Platform Skills** - Install CodeMie platform skills directly as Claude Code slash commands with auto-sync.
 - 📊 **Usage Analytics** - Track and analyze AI usage across all agents with detailed insights.
+- 🔒 **Analytics Privacy** - Opt in (`codemie setup`) to send commands and ticket numbers instead of prompt text, file paths and branch names. See [Proxy and analytics](docs/PROXY-AND-ANALYTICS.md#hide-prompts-in-analytics-prompt-reduction).
 - 🔧 **CI/CD Workflows** - Automated code review, fixes, and feature implementation.
 
 Perfect for developers seeking a powerful alternative to GitHub Copilot or Cursor.

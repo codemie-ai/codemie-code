@@ -72,6 +72,7 @@ function makeDeps(overrides: Partial<InstallDeps> & { scheduler?: Scheduler } = 
     }),
     testGitPush,
     removeWorkingCopy,
+    reductionStatus: async () => 'off globally',
     print: (line: string): void => {
       printed.push(line);
     },

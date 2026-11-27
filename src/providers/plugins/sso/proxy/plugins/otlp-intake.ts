@@ -11,6 +11,9 @@ import { sanitizeLogArgs } from '@/utils/security.js';
 import { maskOtlpJson } from './otlp-json-masking.js';
 import { OTEL_JSON_STREAM_BY_SIGNAL } from './otlp-spool/spool-paths.js';
 import { appendSpool } from './otlp-spool/spool-io.js';
+import { hookEventReduced } from './otlp-spool/session-project.js';
+import { noteJsonRequestSeen, noteProtobufDropped } from './otlp-spool/protobuf-drop.js';
+import { readStatus } from './otlp-spool/session-status.js';
 import type { OtlpHookBatchRequest, OtlpHookSpoolData } from './otlp.plugin.js';
 
 const UUID_V4_RE = /[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
@@ -215,6 +218,7 @@ class SpoolIntake implements OtlpIntake {
     let sessionId = '';
     const lines: string[] = [];
     const written: Record<string, unknown>[] = [];
+    let reduced = false;
     for (const event of batch.hookEvents) {
       const eventSessionId = String((event as Record<string, unknown> | null)?.['session_id'] ?? '');
       if (!eventSessionId) {
@@ -232,6 +236,7 @@ class SpoolIntake implements OtlpIntake {
       const spoolRecord: OtlpHookSpoolData = { agentName: batch.agentName, hookEvent: JSON.stringify(event), ...(batch.evidence_v === 1 ? { evidence_v: 1 as const } : {}) };
       lines.push(JSON.stringify(spoolRecord));
       written.push(event);
+      reduced ||= hookEventReduced(event);
     }
 
     if (lines.length === 0) {
@@ -245,6 +250,7 @@ class SpoolIntake implements OtlpIntake {
     try {
       await appendSpool(sessionId, 'hooks', lines.join('\n') + '\n', this.parts.projectNamesOf(written), {
         skipIf: this.parts.skipHooksWrite?.(sessionId, batch.agentName, batch.hookEvents),
+        reduced,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -296,6 +302,7 @@ class SpoolIntake implements OtlpIntake {
     res: ServerResponse,
     signal: 'logs' | 'metrics' | 'traces'
   ): Promise<true> {
+    noteJsonRequestSeen();
     const text = body.toString('utf8');
     const jsonMatch = UUID_V4_RE.exec(text);
     const sessionId = jsonMatch ? jsonMatch[0] : '';
@@ -349,6 +356,15 @@ class SpoolIntake implements OtlpIntake {
 
     if (!sessionId) {
       logger.debug('[otlp-ingest] no session id in payload, dropping', ...sanitizeLogArgs({ signal, bytes: bytes.length }));
+      res.statusCode = 200;
+      res.end();
+      return true;
+    }
+
+    // A session whose hook decided reduction sends no protobuf: it is never decoded, so it cannot be reduced. A decision
+    // bound later is applied at forward time, to what is already spooled.
+    if ((await readStatus(sessionId))?.reduction) {
+      noteProtobufDropped();
       res.statusCode = 200;
       res.end();
       return true;
