@@ -54,6 +54,7 @@ function makeDeps(overrides: Partial<StatusDeps> = {}): Harness {
     print: (line: string): void => {
       printed.push(line);
     },
+    modeLines: () => [],
     ...overrides,
   };
 
@@ -212,6 +213,18 @@ describe('parseLastFailure', () => {
 });
 
 describe('runStatus', () => {
+  it('prints the mode\'s lines right after the first line of an installed status', async () => {
+    const { deps, printed } = makeDeps({ modeLines: () => ['Mode: local — delivers the OTLP files of ~/.codemie/analytics/sessions beside the JSON report'] });
+
+    const code = await runStatus(deps);
+
+    expect(code).toBe(0);
+    expect(printed.slice(0, 2)).toEqual([
+      'Analytics sync: enabled',
+      'Mode: local — delivers the OTLP files of ~/.codemie/analytics/sessions beside the JSON report',
+    ]);
+  });
+
   it('reports "not installed" with the install command and exits 0 when there are no settings', async () => {
     const { deps, printed } = makeDeps({ loadSettings: async () => null });
 

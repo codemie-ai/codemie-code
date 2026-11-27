@@ -1,0 +1,484 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "request-changes",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "approve (the story owner, 2026-11-26)"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "The fifth round asked for fix-ups: the places the mode is told apart (D3) and three files over 500 lines that grew; the fix-up commit 1f0e1361 followed."
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "approve (the story owner, 2026-11-26)"
+    }
+  ],
+  "reviewed_head": "1f0e13619a031dc8bbd41a38b5d918347f3b9b38",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "Targeted check of 3 blocking findings: CR-001 resolved (technical-analysis.md:6 now names only repository and commit) and CR-003 resolved by the story owner's recorded decision (doctor now resolves once in its action; D3 restated). CR-002 is unresolved: it is a code finding, its files are not in changed_files and still sit at 537/968/822 lines; an owner decision cannot resolve a code finding, so waive it by leaving it out of the fix set if intended. No fix_set_ids were supplied, so no advisory_status entries were graded.",
+  "confidence": "low",
+  "check_confidence": "medium",
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 0,
+    "moot": 0,
+    "decided": 2,
+    "wont_fix": 1
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "docs/stories/2026-11-25-local-analytics-mode/technical-analysis.md",
+      "line": 6,
+      "title": "Workstation path and username in committed doc",
+      "problem": "The committed technical analysis names the reviewer's absolute workstation path, including the local OS username, as its Workspace line, plus a local commit reference. Source: blind.",
+      "impact": "Personal and environment details of a developer land in the repository history of a published project; the line is confirmed present at HEAD.",
+      "recommendation": "Replace the absolute workspace path with a repository-relative reference (e.g. `codemie-code` @ `<commit>`), and drop the local OS username from every committed story artifact.",
+      "status": "decided",
+      "check_notes": "HEAD technical-analysis.md:6 reads repository `codemie-code` @ fc983e00; no /Users/, /home/ or username in the story/spec dirs",
+      "decision": {
+        "outcome": "fixed in the fix-up commit 1f0e1361: the line names the repository and its commit, nothing of a machine",
+        "rationale": "docs/stories/2026-11-25-local-analytics-mode/technical-analysis.md:6 reads `**Workspace**: repository codemie-code @ fc983e00`; git grep for /Users/, /home/ and the user name over docs/stories/2026-11-25-local-analytics-mode and docs/superpowers/tasks/2026-11-25-local-analytics-mode finds nothing."
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/index.ts",
+      "title": "Over-limit files grow past 500 lines",
+      "problem": "code-quality.md says files stay under 500 lines; this change adds lines to files already over it instead of placing the new local-mode logic in the new analytics-collection modules: src/cli/commands/analytics/index.ts 508->537, src/agents/core/types.ts 951->968, src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts 801->822. Source: standards.",
+      "impact": "code-quality is a blocking standard of this repository and no automated gate enforces the file-size rule; the change moves three files further past the documented limit.",
+      "recommendation": "Move the added local-mode wiring (e.g. the sync command wiring in src/cli/commands/analytics/index.ts, the additions to src/agents/core/types.ts and claude-code-otlp.plugin.ts) into the new src/cli/commands/shared/analytics-collection/ modules so these files stop growing, or record an explicit exception for these legacy files.",
+      "status": "wont-fix",
+      "check_notes": "kind code; analytics/index.ts, core/types.ts, claude-code-otlp.plugin.ts not in changed_files, still 537/968/822 lines; owner kept-as-is decision is not code proof",
+      "decision": {
+        "outcome": "kept as is by the story owner: the three files were over the limit before this change",
+        "rationale": "src/cli/commands/analytics/index.ts (508 lines), src/agents/core/types.ts (951) and src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts (801) were above 500 lines on origin/main; the 500-line rule was not kept there before this change. What this change adds to them is the wiring at their own seams (the sync commands' options, the adapter's type members, the plugin's hook members); every new file of the change is under 500 lines, and the two files the change itself had pushed over the limit were split. Moving the existing commands out of these files is a refactoring of code this change does not otherwise touch."
+      },
+      "disposition": {
+        "rationale": "wont-fix (the story owner): the three files were over 500 lines before this change; the limit was not kept there.",
+        "source": "hitl",
+        "action": "wont-fix"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "decision",
+      "severity": "critical",
+      "triage": "decision_needed",
+      "file": "src/cli/commands/doctor/checks/ProxyCheck.ts",
+      "line": 21,
+      "title": "Mode resolved below process entries (D3)",
+      "problem": "D3 requires the modes to be told apart once per process, at its entry, with no 'if local' branch below. The collection is also resolved inside ProxyCheck.run (ProxyCheck.ts:21) and inside the Claude plugin's pre-spawn refresh (claude.plugin.ts:630, stated as deliberate in the PR), and backend code branches on the mode: adoptLiveDaemon has `if (state.mode === 'local') return false;` (otlp-cold-start.ts:139). Source: acceptance.",
+      "impact": "An approved design decision is only partly met; each placement has a plausible reason (a doctor check, a launcher refresh, refusing to adopt a foreign local daemon), so whether they are acceptable exceptions needs the story owner's intent.",
+      "recommendation": "Decide whether D3 admits these three placements: resolveCollection() inside ProxyCheck.run (src/cli/commands/doctor/checks/ProxyCheck.ts:21), inside the Claude plugin's pre-spawn refresh (src/agents/plugins/claude/claude.plugin.ts:630), and the `state.mode === 'local'` branch in backend adoptLiveDaemon (src/cli/commands/proxy/otlp-cold-start.ts:139). Either record them as accepted exceptions in the story's D3, or pass the resolved collection in from the process entry and expose the daemon's adoptability through the collection instead of a mode check.",
+      "status": "decided",
+      "check_notes": "decision mapped with outcome and rationale; ProxyCheck.ts no longer calls resolveCollection, doctor/index.ts:95 resolves once",
+      "decision": {
+        "outcome": "decided by the story owner: one placement fixed in the fix-up commit 1f0e1361, D3 restated for the other two",
+        "rationale": "`codemie doctor` now resolves the collection once in its action, before it builds its checks, and hands the doctor plan to ProxyCheck (src/cli/commands/doctor/index.ts, checks/ProxyCheck.ts takes the plan; it calls no resolveCollection). D3 of the story and of the spec now states the rule as the code keeps it: the modes are told apart once per process \u2014 at the command's entry; in an agent launcher, which has no command entry of its own for the analytics, at the one place before the client is spawned (carrying the collection through the launcher shared by every agent would change all of them for one caller); after that nothing branches on this process's mode. The check in adoptLiveDaemon reads what ANOTHER process's daemon is, as the same function reads that daemon's version: it is not a branch on this process's mode."
+      }
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "type": "question",
+      "file": "src/agents/core/copilot-analytics-gate.ts",
+      "line": 22,
+      "title": "scope-disabled left out of filter reasons",
+      "problem": "COPILOT_FILTER_REASONS holds analytics-disabled, project-excluded and scope-untracked but not scope-disabled, while Claude's FILTER_REASONS includes disabled. A Copilot hook refused as scope-disabled never writes an exclusion mark. Source: blind.",
+      "impact": "Only matters if scope-disabled is meant as a developer filter; trigger is a connector scope record with enabled=false on a local machine, which the local install itself writes enabled.",
+      "recommendation": "Question: is scope-disabled deliberately not a developer filter (connector never enabled)? If so, say so in the COPILOT_FILTER_REASONS comment; if not, add it.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "no gate row: recommended action",
+        "source": "default",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/commands/analytics/sync/otlp-file-builder.ts",
+      "line": 125,
+      "title": "Git target keeps stale same-day part files",
+      "problem": "The OTLP file name depends on the run's part count (`part-k-of-n`, or no part suffix for one file), and GitTarget.deliver only writes files (git-target.ts:93) without removing the day's earlier set. Source: edge.",
+      "impact": "Narrow trigger: two runs on the same UTC day whose part count differs (a multi-part export needs more than 70 MB gzipped) leave an earlier set next to the new one; line ids keep the overlap deduplicable.",
+      "recommendation": "Before writing, remove this developer's existing `codemie-analytics-<slug>-<date>*.otlp.jsonl.gz` files for the run date in the git working copy.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "no gate row: recommended action",
+        "source": "default",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "type": "question",
+      "file": "src/cli/commands/shared/analytics-collection/local.ts",
+      "line": 58,
+      "title": "Uninstall drops spool sessions still in grace",
+      "problem": "teardown removes localSpoolRoot() after resolveMarkers() without a final sweep, so sessions still inside their 15/60-minute grace are deleted and never reach the analytics folder. AC16 only requires the already-stored sessions to stay. Source: edge.",
+      "impact": "Sessions active within the last hour before uninstall are lost; workaround is to wait an hour after the last session before uninstalling.",
+      "recommendation": "Question: is dropping not-yet-finished spool sessions on uninstall intended? If not, run sweepToFolder() ignoring grace before removing the spool.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "no gate row: recommended action",
+        "source": "default",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/commands/shared/analytics-collection/local.ts",
+      "line": 74,
+      "title": "Folder build failure also blocks JSON report",
+      "problem": "LocalExportSource.build awaits the OTLP folder build before the JSON report with no catch, so any throw from OtlpFolderSource (an oversized single line, EACCES on a folder file) aborts the JSON report too. Source: edge.",
+      "impact": "Narrow trigger (a single line over the gzip cap, or an unreadable file in the 0o700 folder), but then D20's JSON report is not delivered either, on every later run while the cause persists.",
+      "recommendation": "Build the JSON report independently of the folder build (e.g. Promise.allSettled), deliver what succeeded and report the folder failure separately, without moving the OTLP marker.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "no gate row: recommended action",
+        "source": "default",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-008",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/providers/plugins/sso/proxy/plugins/otlp-spool/analytics-folder.ts",
+      "line": 287,
+      "title": "Resumed move ignores a later exclusion mark",
+      "problem": "resumeMove copies and finishes a marked session without checking isSessionExcluded, while startMove (analytics-folder.ts:253) drops excluded sessions. Source: edge.",
+      "impact": "Reachability unconfirmed: needs a move interrupted after its marker was written and a hook from that session firing in an excluded folder before the next sweep; only lines up to the marker's bounds are copied.",
+      "recommendation": "In resumeMove, when isSessionExcluded(sessionId), cut the folder back to the marker lengths, delete the spool session and remove the marker instead of copying.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "no gate row: recommended action",
+        "source": "default",
+        "action": "fix-later"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "AC1: no-profile machine — sync install turns local mode on, gathers Claude Code/Copilot CLI/Copilot Chat with no login, sends nothing",
+      "status": "pass",
+      "notes": "resolveInstallCollection + localInstallPlan; local daemon has no upstream; LocalPolicy skips sign-in"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC2: launched sessions gathered; direct sessions only when --include-external covers the platform",
+      "status": "pass",
+      "notes": "LocalPolicy.admit: includeExternal or launched"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC3: --include-external never + direct client gathers nothing, no warning",
+      "status": "pass",
+      "notes": "admit stops before any write/daemon start"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC4: excluded-folder session never gathered; moved data stays, unmoved spool data dropped",
+      "status": "pass",
+      "notes": "exclusion mark on filter; startMove deletes excluded spool session"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC5: finished session stored under ~/.codemie as OTLP JSON lines with line ids",
+      "status": "pass",
+      "notes": "isPastGrace 15/60 min; encodeHookRecord + addLineId"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC6: each target gets that run's gzip file(s) <=70 MB, email+date in name, JSON report beside",
+      "status": "pass",
+      "notes": "OtlpFolderSource part-k-of-n; LocalExportSource appends ReportSource"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC7: same line same id across runs; different lines never share an id",
+      "status": "pass",
+      "notes": "id = folder file name + byte offset on append-only folder"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC8: nothing stored -> no OTLP file; neither has anything -> nothing sent, log says so",
+      "status": "pass",
+      "notes": "null sources; run-sync logs skip"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC9: sync bootstrap commands, flags and steps unchanged",
+      "status": "pass",
+      "notes": "no new flag or step"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC10: proxy not running -> next client event restarts it",
+      "status": "pass",
+      "notes": "launcher -> ensureLocalOtlpProxy under daemon lock"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC11: proxy doctor shows local health with hints, none naming a refused command",
+      "status": "pass",
+      "notes": "localDoctorPlan rows; LOCAL_REMEDIES"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC12: profile or backend proxy present -> local mode off, one-line reason, JSON report as today",
+      "status": "pass",
+      "notes": "resolveInstallCollection notes"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC13: pre-change install stays JSON-only until reinstall; local stays local on reinstall",
+      "status": "pass",
+      "notes": "local only when settings.local===true"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC14: --export json prints one stderr deprecation notice; hooks and scheduled run print none",
+      "status": "pass",
+      "notes": "guarded by !silent"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC15: proxy start/restart act on local proxy, --profile refused; connect/disconnect refuse",
+      "status": "pass",
+      "notes": "localCollection.daemon; guardProxyCommand"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC16: uninstall removes mode, job, CodeMie client entries; keeps stored sessions; failed step re-runnable",
+      "status": "pass",
+      "notes": "teardown order; removeInstall last"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC17: foreign-telemetry client skipped and listed; no client set up -> install fails and undoes",
+      "status": "pass",
+      "notes": "ConfigurationError -> skipped; undoSteps"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC18: earlier-CLI hooks on a local machine behave as specified",
+      "status": "pass",
+      "notes": "intake accepts shared default key batches"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC19: docs cover commands, local proxy lifecycle, limitations, file contents, clients",
+      "status": "pass",
+      "notes": "docs/ANALYTICS-SYNC.md local mode sections"
+    },
+    {
+      "kind": "spec",
+      "item": "NG1: no change to backend or to what a profile machine sends",
+      "status": "pass",
+      "notes": "backend intake moved as-is"
+    },
+    {
+      "kind": "spec",
+      "item": "NG2: nothing gathered for Codex, Gemini, Pi, Cowork, model-request apps",
+      "status": "pass",
+      "notes": "LOCAL_CLIENTS limited; NoUpstreamPlugin"
+    },
+    {
+      "kind": "spec",
+      "item": "NG3: whatever reads the delivered file",
+      "status": "na",
+      "notes": "out of scope; nothing to implement"
+    },
+    {
+      "kind": "spec",
+      "item": "NG4: no OS service, fixed port, new schedule or cleanup",
+      "status": "pass",
+      "notes": "existing scheduler reused"
+    },
+    {
+      "kind": "spec",
+      "item": "NG5: no cutting of file content; no protobuf telemetry",
+      "status": "pass",
+      "notes": ".bin streams excluded"
+    },
+    {
+      "kind": "spec",
+      "item": "D1: local when global config holds no profile and no backend proxy runs; decided once at install",
+      "status": "pass",
+      "notes": "loadMultiProviderConfig on global config"
+    },
+    {
+      "kind": "spec",
+      "item": "D2: --include-external default stays never, no warning",
+      "status": "pass",
+      "notes": "defaults unchanged"
+    },
+    {
+      "kind": "spec",
+      "item": "D3: modes told apart once per process at its entry; no 'if local' branch below",
+      "status": "partial",
+      "notes": "also resolved in ProxyCheck.run and Claude pre-spawn refresh; adoptLiveDaemon checks state.mode==='local' (CR-003)"
+    },
+    {
+      "kind": "spec",
+      "item": "D4: one story, one release",
+      "status": "na",
+      "notes": "release-process decision"
+    },
+    {
+      "kind": "spec",
+      "item": "D5: hook-record encoder built here, used for stored lines only",
+      "status": "pass",
+      "notes": "forwarder output unchanged"
+    },
+    {
+      "kind": "spec",
+      "item": "D6: finished = 15 min after end, else 1 h after last event",
+      "status": "pass",
+      "notes": "spool-config defaults 15/60"
+    },
+    {
+      "kind": "spec",
+      "item": "D7: no user email per line on a no-login machine; email in file name",
+      "status": "pass",
+      "notes": "user.email only when non-empty"
+    },
+    {
+      "kind": "spec",
+      "item": "D8: include-external rule applied at gather time; Claude telemetry stored whole",
+      "status": "pass",
+      "notes": "admit at hook time"
+    },
+    {
+      "kind": "spec",
+      "item": "D9: foreign-telemetry clients skipped; uninstall removes only CodeMie entries",
+      "status": "pass",
+      "notes": "hasEntries gate"
+    },
+    {
+      "kind": "spec",
+      "item": "D10: install asks, consents and notifies nothing",
+      "status": "pass",
+      "notes": "no prompt in plan"
+    },
+    {
+      "kind": "spec",
+      "item": "D11: deprecation notice names no replacement or date",
+      "status": "pass",
+      "notes": "notice text verified by lens"
+    },
+    {
+      "kind": "spec",
+      "item": "D12: earlier-CLI hooks left as they work; docs name it",
+      "status": "pass",
+      "notes": "docs Limitations section"
+    },
+    {
+      "kind": "spec",
+      "item": "D13: proxy start/restart act on local proxy; only connect/disconnect refuse",
+      "status": "pass",
+      "notes": "startLocalDaemon/restartLocalDaemon"
+    },
+    {
+      "kind": "spec",
+      "item": "D14: <=70 MB per file, part-k-of-n, marker moves only when every file accepted",
+      "status": "pass",
+      "notes": "webhook per-file post; git one commit"
+    },
+    {
+      "kind": "spec",
+      "item": "D15: launched = hook env holds the launcher's session id",
+      "status": "pass",
+      "notes": "launchMode / isManagedSession"
+    },
+    {
+      "kind": "spec",
+      "item": "D16: local hints name codemie analytics sync install",
+      "status": "pass",
+      "notes": "LOCAL_REMEDIES"
+    },
+    {
+      "kind": "spec",
+      "item": "D17: unloadable sync settings = no local mode",
+      "status": "pass",
+      "notes": "resolveCollection catch -> backend"
+    },
+    {
+      "kind": "spec",
+      "item": "D18: a local machine's hook replaces any other CodeMie proxy",
+      "status": "pass",
+      "notes": "stopDaemon before spawn"
+    },
+    {
+      "kind": "spec",
+      "item": "D19: exclusion marks and unresumable move markers cleared only by uninstall",
+      "status": "pass",
+      "notes": "teardown resolveMarkers + rm excluded root"
+    },
+    {
+      "kind": "spec",
+      "item": "D20: local machine still delivers the JSON report beside the OTLP files",
+      "status": "pass",
+      "notes": "LocalExportSource appends ReportSource"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "2 subjects in range both feat(analytics): ...; type and scope in commitlint enum, headers 97 and 80 chars (limit 100), no body line over 300"
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "new non-test files are all under 500 lines, use .js relative imports, typed exported functions, no new any or require; but code-quality.md 'Files: under 500 lines' is moved further from in files already over it: src/cli/commands/analytics/index.ts 508->537, src/agents/core/types.ts 951->968, src/agents/plugins/claude-code-otlp/claude-code-otlp.plugin.ts 801->822. New console.log calls are user-facing CLI output, not debug output, matching the existing command pattern"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "local intake keeps the gatewayKeyValidated 401 gate, isSafeSessionId / UUID-v4 session ids before spool path joins, sanitizeLogArgs on every new log call; analytics folder made 0o700 under getCodemiePath; no attribution header touched; gateway key in daemon argv and status line is the pre-existing pattern (daemon-manager.ts at base), not new"
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "Oversized diff (~1.1 MB): the blind lens spent its budget (lens_truncated) after the docs, core adapter, client adapters, Claude launcher and start of daemon-components.ts, so the local daemon, analytics plugin, folder sweep, sync install/uninstall/run, gzip splitting, doctor and proxy guards had no context-free pass; one decision_needed remains (D3 partial: the mode is also resolved below process entries) and code-quality is partial on the 500-line rule. 8 findings (3 blocking, 5 advisory), 0 deferred, 15 dismissed (see code-review-dismissed.local.md).",
+    "confidence": "low",
+    "risk_flags": []
+  }
+}

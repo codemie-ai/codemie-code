@@ -4,7 +4,9 @@
  * paths are redirected to a temp dir — nothing about the gate logic itself is mocked).
  * @group unit
  */
+import { BackendPolicy } from '@/agents/core/collection-policy.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+const backendPolicy = new BackendPolicy();
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -126,8 +128,8 @@ describe('regression: EPMCDME-16396 — analytics disable matrix', () => {
   });
 
   async function fire(cwd: string): Promise<void> {
-    await plugin.processOtlpEvent(event('SessionStart', cwd), { ensureOtlpProxy, forwardOtlpEventsToSpool });
-    await plugin.processOtlpEvent(event('UserPromptSubmit', cwd), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+    await plugin.processOtlpEvent(event('SessionStart', cwd), { policy: backendPolicy, ensureOtlpProxy, forwardOtlpEventsToSpool });
+    await plugin.processOtlpEvent(event('UserPromptSubmit', cwd), { policy: backendPolicy, ensureOtlpProxy, forwardOtlpEventsToSpool });
   }
 
   /** AC1: a blocked event forwards nothing, starts no proxy and never triggers SSO. */

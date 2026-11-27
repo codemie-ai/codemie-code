@@ -398,11 +398,33 @@ export async function loadSyncSettings(path: string = getSyncSettingsPath()): Pr
     }
   }
 
+  if (stored.local !== undefined) {
+    if (stored.local !== true) {
+      throw new SyncConfigError(`Sync settings at ${path} has an invalid local: expected true.`);
+    }
+    settings.local = true;
+  }
+
+  if (stored.localJob !== undefined) {
+    const job = stored.localJob as unknown;
+    if (!isLocalJob(job)) {
+      throw new SyncConfigError(`Sync settings at ${path} has an invalid localJob: expected non-empty node and entry.`);
+    }
+    settings.localJob = { node: job.node, entry: job.entry };
+  }
+
   return settings;
 }
 
+function isLocalJob(value: unknown): value is { node: string; entry: string } {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const { node, entry } = value as Record<string, unknown>;
+  return typeof node === 'string' && node !== '' && typeof entry === 'string' && entry !== '';
+}
+
 /**
- * Write `settings` to `path` (defaults to `getSyncSettingsPath()`), mode `0o600`.
+ * Write `settings` to `path` (defaults to `getSyncSettingsPath()`), mode `0o600`, through a
+ * temporary file renamed over it.
  *
  * Always a whole-file overwrite: a pre-existing file at `path` — including one written by
  * the standalone collector, with a different shape — is replaced entirely.
@@ -427,7 +449,7 @@ export async function readSyncSettingsRaw(path: string = getSyncSettingsPath()):
   }
 }
 
-/** Put back a settings file read by {@link readSyncSettingsRaw}, mode `0o600`. */
+/** Put back a settings file read by {@link readSyncSettingsRaw}, mode `0o600`, through a temporary file renamed over it. */
 export async function restoreSyncSettingsRaw(raw: string, path: string = getSyncSettingsPath()): Promise<void> {
   await writePrivateText(path, raw);
 }

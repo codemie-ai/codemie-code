@@ -297,6 +297,25 @@ describe('consent grant / revoke / list actions', () => {
     });
   });
 
+  it('in the local mode grant and grant --all hint the local install, never proxy connect', async () => {
+    await writeFile(join(tempDir, 'analytics-sync.json'), JSON.stringify({
+      webhookUrl: 'https://example.invalid/hook?sig=FAKE',
+      format: 'json',
+      includeExternal: 'never',
+      at: '03:00',
+      local: true,
+      localJob: { node: '/usr/bin/node', entry: '/opt/codemie/bin/codemie.js' },
+    }));
+
+    await run(['consent', 'grant', work, '--project', 'Proj-A', '--yes']);
+    expect(said(out)).toContain('codemie analytics sync install');
+    expect(said(out)).not.toContain('proxy connect');
+    out.mockClear();
+    await run(['consent', 'grant', '--all', '--yes']);
+    expect(said(out)).toContain('codemie analytics sync install');
+    expect(said(out)).not.toContain('proxy connect');
+  });
+
   it('output without --all is unchanged (c)', async () => {
     await run(['consent', 'grant', work, '--project', 'Proj-A', '--yes']);
     expect(said(out)).toContain(`Folder:  ${work}`);

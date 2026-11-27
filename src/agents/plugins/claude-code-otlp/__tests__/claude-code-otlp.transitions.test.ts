@@ -1,4 +1,6 @@
+import { BackendPolicy } from '@/agents/core/collection-policy.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+const backendPolicy = new BackendPolicy();
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -111,6 +113,16 @@ describe('hook-side transitions', () => {
     expect(await t.gate(hook())).toBe('stop');
   });
 
+  it.each(['not-in-allowlist', 'allowlist-unresolved'])('an already-known session answered %s is stopped as scope_excluded', async (reason) => {
+    const t = await setup();
+    await t.record();
+    gateMock.mockResolvedValue({ tracked: false, reason });
+    await t.untracked(hook());
+    expect(await t.sm.isStopped(t.key())).toBe(true);
+    const [stopFile] = evidenceFiles().filter((f) => f.endsWith('.stop.json'));
+    expect(JSON.parse(readFileSync(join(home, 'analytics', 'state', 'evidence', stopFile), 'utf-8')).reason).toBe('scope_excluded');
+  });
+
   it('resume / any later hook with no record stops with a marker; startup and /clear start fresh', async () => {
     const t = await setup();
     expect(await t.gate(hook({ hook_event_name: 'SessionStart', source: 'startup' }))).toBe('continue');
@@ -178,7 +190,7 @@ describe('hook-side transitions', () => {
 
   it('a stop is surfaced once as a user systemMessage, no project or path text; Claude is not blocked', async () => {
     const t = await setup();
-    const deps = { ensureOtlpProxy: vi.fn(), forwardOtlpEventsToSpool: vi.fn() };
+    const deps = { policy: backendPolicy, ensureOtlpProxy: vi.fn(), forwardOtlpEventsToSpool: vi.fn() };
     const raw = JSON.stringify(hook({ hook_event_name: 'SessionStart', source: 'resume' }));
     await t.plugin.processOtlpEvent(raw, deps as never);
     await t.plugin.processOtlpEvent(raw, deps as never);
@@ -228,7 +240,7 @@ describe('hook-side transitions', () => {
         reason: 'no valid CodeMie SSO credentials found',
         loginOutcome: 'started',
       });
-      const deps = { ensureOtlpProxy: vi.fn(), forwardOtlpEventsToSpool: vi.fn() };
+      const deps = { policy: backendPolicy, ensureOtlpProxy: vi.fn(), forwardOtlpEventsToSpool: vi.fn() };
 
       await t.plugin.processOtlpEvent(JSON.stringify(hook({ session_id: 'unknown' })), deps as never);
 
@@ -244,7 +256,7 @@ describe('hook-side transitions', () => {
     it('authenticates but still stops an unknown ownerless mid-session prompt', async () => {
       const t = await setup();
       identityMock.mockResolvedValue(null);
-      const deps = { ensureOtlpProxy: vi.fn(), forwardOtlpEventsToSpool: vi.fn() };
+      const deps = { policy: backendPolicy, ensureOtlpProxy: vi.fn(), forwardOtlpEventsToSpool: vi.fn() };
 
       await t.plugin.processOtlpEvent(JSON.stringify(hook({ session_id: 'unknown' })), deps as never);
 
@@ -271,7 +283,7 @@ describe('hook-side transitions', () => {
     };
     const runHook = async (over: Record<string, unknown> = {}) => {
       const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
-      const deps = { ensureOtlpProxy: vi.fn(), forwardOtlpEventsToSpool: vi.fn().mockResolvedValue(true) };
+      const deps = { policy: backendPolicy, ensureOtlpProxy: vi.fn(), forwardOtlpEventsToSpool: vi.fn().mockResolvedValue(true) };
       await new ClaudeCodeOtlpPlugin().processOtlpEvent(JSON.stringify(hook(over)), deps as never); // a hook is its own process
       return deps;
     };
@@ -397,7 +409,7 @@ describe('hook-side transitions', () => {
         reason: 'no valid CodeMie SSO credentials found',
         loginOutcome: 'started',
       });
-      const deps = { ensureOtlpProxy: vi.fn(), forwardOtlpEventsToSpool: vi.fn() };
+      const deps = { policy: backendPolicy, ensureOtlpProxy: vi.fn(), forwardOtlpEventsToSpool: vi.fn() };
 
       await t.plugin.processOtlpEvent(JSON.stringify(hook()), deps as never);
 

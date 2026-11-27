@@ -19,6 +19,7 @@ vi.mock('../spool-io.js', async (importOriginal) => {
 });
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -43,7 +44,9 @@ import { updateSessionState } from '@/agents/plugins/copilot-cli-otlp/copilot-cl
  * /v1/analytics/hooks handler does, and the recovery pass is the one the daemon tick runs.
  * The events.jsonl content is synthetic (hand-built lines in Copilot's event shapes).
  */
-const SID = 'c73ecba6-c21a-415d-b40f-cb0cdb416155';
+// A session id of its own per test: the enrichment a pass schedules is not awaited, and one still running when the
+// next test starts must not write into that test's spool file.
+let SID = 'c73ecba6-c21a-415d-b40f-cb0cdb416155';
 const T0 = Date.parse('2026-10-20T06:25:00.000Z');
 const at = (ms: number): string => new Date(T0 + ms).toISOString();
 const NOW = T0 + 10 * 60_000;
@@ -112,6 +115,7 @@ const count = (events: Record<string, unknown>[], type: string): number => event
 const toolIds = (events: Record<string, unknown>[], type: string): unknown[] => events.filter((e) => e['type'] === type).map((e) => e['tool_use_id']).sort();
 
 beforeEach(async () => {
+  SID = randomUUID();
   dir = await mkdtemp(join(tmpdir(), 'cop-end-recovery-'));
   process.env.CODEMIE_HOME = join(dir, 'codemie');
   delete process.env.COPILOT_HOME;

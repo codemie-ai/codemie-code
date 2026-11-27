@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { SyncGitError, SyncIdentityMissingError, SyncSchedulerUnsupportedError } from '@/utils/errors.js';
 import { getCodemiePath } from '@/utils/paths.js';
@@ -9,6 +12,7 @@ import { defaultSchedulerName } from '../scheduler/index.js';
 import type { RegisterResult, Scheduler } from '../scheduler/index.js';
 import { gitHint } from '../targets/git-client.js';
 import type { InstallOptions } from '../types.js';
+import type { InstallPlan, InstallStep } from '../../../shared/analytics-collection/types.js';
 
 const FAKE_WEBHOOK = 'https://hooks.example.invalid/abc?sig=SUPERSECRET123';
 const FAKE_GIT_REPO = 'https://example.invalid/team/repo.git';
@@ -71,6 +75,7 @@ function makeDeps(overrides: Partial<InstallDeps> & { scheduler?: Scheduler } = 
     print: (line: string): void => {
       printed.push(line);
     },
+    plan: { steps: () => [], settingsExtras: () => ({}), conclude: () => ({ summary: [] }) },
     ...overrides,
   };
 
@@ -686,5 +691,210 @@ describe('runInstall — replacing and restoring jobs under saved names', () => 
 
     expect(code).toBe(0);
     expect([...byName.keys()].sort()).toEqual([CUSTOM_NAME, DEFAULT_NAME].sort());
+  });
+});
+
+describe('runInstall — install plan', () => {
+  const previousRaw = JSON.stringify({ webhookUrl: 'https://old.example.invalid/x?sig=OLD', at: '04:30' });
+
+  /** A step that records its apply and undo in `events`; `onApply` runs inside its apply. */
+  function recordingStep(name: string, events: string[], onApply?: () => void, undoError?: Error): InstallStep {
+    return {
+      name,
+      apply: async () => {
+        events.push(`apply:${name}`);
+        onApply?.();
+        return { name, state: 'done' };
+      },
+      undo: async () => {
+        events.push(`undo:${name}`);
+        if (undoError) throw undoError;
+      },
+    };
+  }
+
+  function plan(steps: InstallStep[], conclude: InstallPlan['conclude'] = () => ({ summary: ['  Mode:             test'] })): InstallPlan {
+    return {
+      steps: () => steps,
+      settingsExtras: (job) => ({ local: true, localJob: { node: job.node, entry: job.entry } }),
+      conclude,
+    };
+  }
+
+  it('runs the steps before the job is replaced, writes the plan\'s extras and prints its summary', async () => {
+    const events: string[] = [];
+    const scheduler = makeScheduler({
+      register: vi.fn(async (): Promise<RegisterResult> => {
+        events.push('register');
+        return {};
+      }),
+    });
+    const harness = makeDeps({ scheduler, plan: plan([recordingStep('a', events), recordingStep('b', events)]) });
+    harness.writeSettings.mockImplementation(async () => {
+      events.push('write');
+    });
+
+    const code = await runInstall(VALID_OPTS, harness.deps);
+
+    expect(code).toBe(0);
+    expect(events).toEqual(['apply:a', 'apply:b', 'write', 'register']);
+    expect(harness.writeSettings).toHaveBeenCalledWith(expect.objectContaining({
+      webhookUrl: FAKE_WEBHOOK,
+      local: true,
+      localJob: { node: '/usr/bin/node', entry: '/home/dev/.codemie/bin/codemie.js' },
+    }));
+    expect(harness.printed).toContain('  Mode:             test');
+  });
+
+  it('a failure the plan concludes undoes the applied steps in reverse, registers nothing and exits 1', async () => {
+    const events: string[] = [];
+    const harness = makeDeps({
+      plan: plan([recordingStep('a', events), recordingStep('b', events)], () => ({ summary: [], failure: 'No supported client could be set up.' })),
+    });
+
+    const code = await runInstall(VALID_OPTS, harness.deps);
+
+    expect(code).toBe(1);
+    expect(events).toEqual(['apply:a', 'apply:b', 'undo:b', 'undo:a']);
+    expect(harness.scheduler.register).not.toHaveBeenCalled();
+    expect(harness.writeSettings).not.toHaveBeenCalled();
+    expect(harness.printed).toContain('No supported client could be set up.');
+  });
+
+  it('a plan that stands down undoes its steps in reverse, saves none of its extras, prints its summary and exits 0', async () => {
+    const events: string[] = [];
+    const scheduler = makeScheduler({
+      register: vi.fn(async (): Promise<RegisterResult> => {
+        events.push('register');
+        return {};
+      }),
+    });
+    const harness = makeDeps({
+      scheduler,
+      plan: plan([recordingStep('a', events), recordingStep('b', events)], () => ({ summary: ['  Local mode:       not turned on'], standDown: { undoFailed: 'the stub plan could not be undone' } })),
+    });
+
+    const code = await runInstall(VALID_OPTS, harness.deps);
+
+    expect(code).toBe(0);
+    expect(events).toEqual(['apply:a', 'apply:b', 'undo:b', 'undo:a', 'register']);
+    expect(harness.writeSettings).toHaveBeenCalledWith(expect.objectContaining({ webhookUrl: FAKE_WEBHOOK }));
+    for (const [written] of harness.writeSettings.mock.calls) {
+      expect(written).not.toHaveProperty('local');
+      expect(written).not.toHaveProperty('localJob');
+    }
+    expect(harness.printed).toContain('  Local mode:       not turned on');
+  });
+
+  it('a plan that stands down with an undo that throws fails: both lines printed, nothing registered or written, exit 1', async () => {
+    const events: string[] = [];
+    const harness = makeDeps({
+      plan: plan(
+        [recordingStep('a', events), recordingStep('b', events, undefined, new Error('settings locked'))],
+        () => ({ summary: ['  Local mode:       not turned on'], standDown: { undoFailed: 'the stub plan could not be undone' } })
+      ),
+    });
+
+    const code = await runInstall(VALID_OPTS, harness.deps);
+
+    expect(code).toBe(1);
+    expect(events).toEqual(['apply:a', 'apply:b', 'undo:b', 'undo:a']);
+    expect(harness.printed).toContain('Could not undo "b": settings locked');
+    expect(harness.printed).toContain('Install failed: the stub plan could not be undone');
+    expect(harness.scheduler.register).not.toHaveBeenCalled();
+    expect(harness.writeSettings).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['settings there before: restored', previousRaw],
+    ['no settings before: deleted', null],
+  ])('a plan that stands down whose register throws fails and puts back the install of before (%s)', async (_name, before) => {
+    const events: string[] = [];
+    const register = vi.fn(async (): Promise<RegisterResult> => {
+      throw new Error('launchctl bootstrap failed: boom');
+    });
+    const harness = makeDeps({
+      scheduler: makeScheduler({ register }),
+      readSettingsRaw: async () => before,
+      plan: plan([recordingStep('a', events)], () => ({ summary: ['  Local mode:       not turned on'], standDown: { undoFailed: 'the stub plan could not be undone' } })),
+    });
+
+    const code = await runInstall(VALID_OPTS, harness.deps);
+
+    expect(code).toBe(1);
+    expect(events).toEqual(['apply:a', 'undo:a']);
+    expect(harness.printed).toContain('Install failed: launchctl bootstrap failed: boom');
+    if (before === null) {
+      expect(harness.deleteSettings).toHaveBeenCalled();
+      expect(harness.restoreSettingsRaw).not.toHaveBeenCalled();
+    } else {
+      expect(harness.restoreSettingsRaw).toHaveBeenCalledWith(previousRaw);
+    }
+  });
+
+  it('a register that throws undoes the steps in reverse and restores the settings and the job of before the run', async () => {
+    const events: string[] = [];
+    let stored = previousRaw;
+    const register = vi.fn(async (): Promise<RegisterResult> => ({}))
+      .mockRejectedValueOnce(new Error('launchctl bootstrap failed: boom'));
+    const scheduler = makeScheduler({ register, query: vi.fn(async () => 'enabled' as const) });
+    // The first step writes the settings of this install, as the local mode's does.
+    const step = recordingStep('settings', events, () => {
+      stored = JSON.stringify({ webhookUrl: FAKE_WEBHOOK, at: '03:00', local: true });
+    });
+    const harness = makeDeps({ scheduler, readSettingsRaw: async () => stored, plan: plan([step, recordingStep('daemon', events)]) });
+
+    const code = await runInstall(VALID_OPTS, harness.deps);
+
+    expect(code).toBe(1);
+    expect(events).toEqual(['apply:settings', 'apply:daemon', 'undo:daemon', 'undo:settings']);
+    expect(harness.restoreSettingsRaw).toHaveBeenCalledWith(previousRaw);
+    expect(register).toHaveBeenLastCalledWith(expect.anything(), '04:30');
+  });
+
+  it('an undo that throws is printed and the earlier steps are still undone', async () => {
+    const events: string[] = [];
+    const harness = makeDeps({
+      plan: plan(
+        [recordingStep('a', events), recordingStep('b', events, undefined, new Error('settings locked'))],
+        () => ({ summary: [], failure: 'stop' })
+      ),
+    });
+
+    const code = await runInstall(VALID_OPTS, harness.deps);
+
+    expect(code).toBe(1);
+    expect(events).toEqual(['apply:a', 'apply:b', 'undo:b', 'undo:a']);
+    expect(harness.printed).toContain('Could not undo "b": settings locked');
+  });
+});
+
+describe('runInstall — over a settings file that is not JSON', () => {
+  let home: string;
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'install-corrupt-'));
+    vi.stubEnv('CODEMIE_HOME', home);
+  });
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    await (await import('@/utils/logger.js')).logger.close();
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('completes and writes the new settings', async () => {
+    await writeFile(join(home, 'analytics-sync.json'), '{not json');
+    const store = await import('../config-store.js');
+    const previous = await store.loadSyncSettings().catch(() => null);
+    const harness = makeDeps({
+      readSettingsRaw: () => store.readSyncSettingsRaw(),
+      writeSettings: (settings) => store.writeSyncSettings(settings),
+      restoreSettingsRaw: (raw) => store.restoreSyncSettingsRaw(raw),
+    });
+
+    const code = await runInstall(VALID_OPTS, harness.deps);
+
+    expect(previous).toBeNull();
+    expect(code).toBe(0);
+    expect(await store.loadSyncSettings()).toMatchObject({ webhookUrl: FAKE_WEBHOOK });
   });
 });

@@ -1,4 +1,6 @@
+import { BackendPolicy } from '@/agents/core/collection-policy.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+const backendPolicy = new BackendPolicy();
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,7 +35,7 @@ describe('Copilot CLI tool metrics: 3 calls, 2 succeed, 1 fails', () => {
   const send = (codemieEventName: string, extra: Record<string, unknown>): Promise<void> =>
     plugin.processOtlpEvent(
       JSON.stringify({ sessionId: SID, cwd: '/repo', timestamp: 1700000000000, codemieEventName, ...extra }),
-      { ensureOtlpProxy, forwardOtlpEventsToSpool: forward }
+      { policy: backendPolicy, ensureOtlpProxy, forwardOtlpEventsToSpool: forward }
     );
   const forwarded = (): Array<Record<string, unknown>> => forward.mock.calls.flatMap((call) => call[0]);
 
@@ -103,7 +105,7 @@ describe('Copilot CLI tool metrics: lines_added/lines_removed/file_path on agent
   const send = (codemieEventName: string, extra: Record<string, unknown>): Promise<void> =>
     plugin.processOtlpEvent(
       JSON.stringify({ sessionId: SID, cwd: '/repo', timestamp: 1700000000000, codemieEventName, ...extra }),
-      { ensureOtlpProxy, forwardOtlpEventsToSpool: forward }
+      { policy: backendPolicy, ensureOtlpProxy, forwardOtlpEventsToSpool: forward }
     );
   const lastEnd = (): Record<string, unknown> => forward.mock.calls.at(-1)![0].find((e: Record<string, unknown>) => e.type === 'agent.tool.end');
 
@@ -183,7 +185,7 @@ describe('Copilot CLI slash commands through the hook', () => {
     forward.mockClear();
     await plugin.processOtlpEvent(
       JSON.stringify({ sessionId: SID, cwd: '/repo', timestamp: 1700000000000, codemieEventName: 'userPromptTransformed', ...extra }),
-      { ensureOtlpProxy, forwardOtlpEventsToSpool: forward }
+      { policy: backendPolicy, ensureOtlpProxy, forwardOtlpEventsToSpool: forward }
     );
     return forward.mock.calls[0][0][0];
   };

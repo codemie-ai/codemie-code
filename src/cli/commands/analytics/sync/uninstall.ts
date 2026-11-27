@@ -7,7 +7,8 @@
  * for the git target) and the run log are never touched — removing delivery is not the same
  * as forgetting history, and a later re-install should not re-send or duplicate what was
  * already sent. Every side effect is injected via {@link UninstallDeps} so tests run without
- * touching the real scheduler or filesystem.
+ * touching the real scheduler or filesystem. The job and settings removal runs inside the
+ * mode's `teardown`, which calls it once; a teardown that throws before that leaves both.
  *
  * `runUninstall` never throws and never calls `process.exit`.
  */
@@ -37,17 +38,23 @@ export interface UninstallDeps {
    * meaningful), then `rm(gitWorkingCopyPath(), { recursive: true, force: true })`. */
   removeWorkingCopy(): Promise<boolean>;
   print(line: string): void;
+  /** The mode's own removal around the uninstall's: it calls the given removal once, and answers whether its own
+   * removal took anything away. */
+  teardown(removeInstall: () => Promise<void>): Promise<boolean>;
 }
 
 export async function runUninstall(deps: UninstallDeps): Promise<number> {
-  let unregistered: boolean;
-  let deleted: boolean;
+  let unregistered = false;
+  let deleted = false;
   let workingCopyRemoved: boolean;
+  let tornDown: boolean;
   try {
     const settings = await deps.loadSettings();
     const name = resolveSchedulerName(settings ?? {}, process.platform);
-    unregistered = await deps.schedulerFor(name).unregister();
-    deleted = await deps.deleteSettings();
+    tornDown = await deps.teardown(async () => {
+      unregistered = await deps.schedulerFor(name).unregister();
+      deleted = await deps.deleteSettings();
+    });
     workingCopyRemoved = await deps.removeWorkingCopy();
   } catch (err) {
     // Nothing after a failure is removed: settings and working copy are kept so the job name
@@ -56,13 +63,15 @@ export async function runUninstall(deps: UninstallDeps): Promise<number> {
     return 1;
   }
 
-  if (!unregistered && !deleted && !workingCopyRemoved) {
+  if (!unregistered && !deleted && !workingCopyRemoved && !tornDown) {
     deps.print('Nothing to remove: analytics sync is not installed.');
     return 0;
   }
 
   deps.print('Analytics sync uninstalled.');
-  deps.print('  The OS job and the sync settings were removed.');
+  if (unregistered || deleted) {
+    deps.print('  The OS job and the sync settings were removed.');
+  }
   if (workingCopyRemoved) {
     deps.print('  The local git working copy was removed.');
   }
@@ -71,9 +80,10 @@ export async function runUninstall(deps: UninstallDeps): Promise<number> {
 }
 
 /** Real dependencies for `runUninstall`: the real scheduler and settings store, the git
- * target's working-copy removal, and `console.log`. */
-export function createRealUninstallDeps(): UninstallDeps {
+ * target's working-copy removal, `console.log`, and the mode's `teardown`. */
+export function createRealUninstallDeps(teardown: UninstallDeps['teardown']): UninstallDeps {
   return {
+    teardown,
     loadSettings: () => loadSyncSettings(),
     schedulerFor: (name: string) => createScheduler(createRealSchedulerDeps(), name),
     deleteSettings: () => deleteSyncSettings(),

@@ -96,6 +96,7 @@ src/
 Handles argument parsing, user prompts, and command routing. Does **not** contain business logic or direct plugin access.
 
 - Reference: `src/cli/commands/install.ts:15`
+- `src/cli/commands/shared/analytics-collection/` holds the object of a collection mode (`AnalyticsCollection`: `backendCollection`, `localCollection`) and its three resolvers, `resolveCollection()`, `resolveInstallCollection()` and `resolveUninstallCollection()` — the one place in the CLI where the mode (backend or the local analytics mode) is looked at. Hooks, `sync` runners, the proxy commands and the doctor take their parts from the object; no code below it reads the mode, nor a flag or config value that stands for it. It is the one folder that knows both the `analytics` and the `proxy` commands, so neither command's folder imports the other's.
 
 ### Registry Layer — Orchestration
 

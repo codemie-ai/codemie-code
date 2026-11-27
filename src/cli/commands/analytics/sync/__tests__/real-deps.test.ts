@@ -26,11 +26,13 @@ vi.mock('../targets/git-target.js', async (importOriginal) => {
 });
 
 const { realSyncDeps } = await import('../run-sync.js');
+const { ReportSource } = await import('../report-builder.js');
+const COLLECTION = { exportSource: () => new ReportSource() };
 const { createRealStatusDeps } = await import('../status.js');
 
 const NOW = new Date('2026-11-03T12:00:00.000Z');
 const SENT_AT = new Date('2026-11-03T03:00:00.000Z');
-const REPORT: SyncReport = { fileName: 'r.report.json', bytes: Buffer.from('{}') };
+const REPORT: SyncReport = { fileName: 'r.report.json', bytes: Buffer.from('{}'), contentType: 'application/json' };
 const SETTINGS: SyncSettings = {
   webhookUrl: 'https://example.invalid/hook?sig=FAKE',
   git: { repoUrl: 'https://example.invalid/team/repo.git' },
@@ -67,7 +69,7 @@ describe('real sync/status deps: per-target marker routing and delivery dispatch
   });
 
   it('writes the git marker to analytics-last-sent-git and leaves the webhook marker untouched', async () => {
-    const deps = realSyncDeps();
+    const deps = realSyncDeps(COLLECTION);
 
     await deps.writeMarker('git', SENT_AT);
 
@@ -78,7 +80,7 @@ describe('real sync/status deps: per-target marker routing and delivery dispatch
   });
 
   it('writes the webhook marker to the collector-compatible analytics-last-sent only', async () => {
-    const deps = realSyncDeps();
+    const deps = realSyncDeps(COLLECTION);
 
     await deps.writeMarker('webhook', SENT_AT);
 
@@ -89,22 +91,24 @@ describe('real sync/status deps: per-target marker routing and delivery dispatch
   });
 
   it('status reads each target from its own marker file', async () => {
-    await realSyncDeps().writeMarker('git', SENT_AT);
-    const statusDeps = createRealStatusDeps();
+    await realSyncDeps(COLLECTION).writeMarker('git', SENT_AT);
+    const modeLines = (): string[] => ['mode: test'];
+    const statusDeps = createRealStatusDeps(modeLines);
 
+    expect(statusDeps.modeLines).toBe(modeLines);
     await expect(statusDeps.readMarker('git', NOW)).resolves.toEqual(SENT_AT);
     await expect(statusDeps.readMarker('webhook', NOW)).resolves.toBeNull();
   });
 
   it('dispatches webhook delivery to sendWebhook and git delivery to GitTarget.deliver', async () => {
-    const deps = realSyncDeps();
+    const deps = realSyncDeps(COLLECTION);
 
-    await deps.deliver('webhook', SETTINGS, 'jane@example.com', REPORT);
-    expect(mocks.sendWebhook).toHaveBeenCalledWith(SETTINGS.webhookUrl, REPORT);
+    await deps.deliver('webhook', SETTINGS, 'jane@example.com', [REPORT]);
+    expect(mocks.sendWebhook).toHaveBeenCalledWith(SETTINGS.webhookUrl, [REPORT]);
     expect(mocks.gitDeliver).not.toHaveBeenCalled();
 
-    await deps.deliver('git', SETTINGS, 'jane@example.com', REPORT);
-    expect(mocks.gitDeliver).toHaveBeenCalledWith(REPORT);
+    await deps.deliver('git', SETTINGS, 'jane@example.com', [REPORT]);
+    expect(mocks.gitDeliver).toHaveBeenCalledWith([REPORT]);
     expect(mocks.gitTargetCtor.mock.calls[0]?.[0]).toEqual(SETTINGS.git);
     expect(mocks.gitTargetCtor.mock.calls[0]?.[1]).toBe('jane@example.com');
     expect(mocks.sendWebhook).toHaveBeenCalledTimes(1);
