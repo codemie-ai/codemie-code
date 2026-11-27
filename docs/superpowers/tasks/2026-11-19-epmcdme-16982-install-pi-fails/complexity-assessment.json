@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "task": "Fix Windows `codemie install pi` spawn ENOENT by passing shell on win32 in installRequiredPiPackages and skip redundant Pi package reinstall when Pi is already installed.",
+  "generated": "2026-11-19T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 10,
+  "size": "S",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Confined to the Pi plugin (pi.packages.ts and PiPlugin.additionalInstallation); install.ts is shared with Claude and should stay untouched." },
+    { "dimension": "technical_risk", "reason": "The shell: isWindows pattern already exists in processes.ts. Windows-only behavior has no tests, and CODEMIE_PI_BIN paths with spaces are unquoted under shell:true. Keeping the change local avoids the broad exec() consumer set." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

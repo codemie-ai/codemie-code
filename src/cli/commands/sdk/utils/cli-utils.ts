@@ -7,6 +7,7 @@ import { getAuthenticatedClient } from "@/utils/auth.js";
 import { ConfigurationError } from "@/utils/errors.js";
 import { logger } from "@/utils/logger.js";
 import { sanitizeLogArgs } from "@/utils/security.js";
+import { takeNetworkError } from "@/utils/network-error-capture.js";
 import z, { ZodError } from "zod";
 
 /**
@@ -83,6 +84,18 @@ export function outputJson(data: unknown): void {
 }
 
 /**
+ * The SDK reports response-less network failures as an empty-body "HTTP 500 error".
+ */
+function isGenericNetworkFailure(error: ApiError, status: number | undefined): boolean {
+  if (status !== 500 || error.message !== "HTTP 500 error") {
+    return false;
+  }
+  const response = error.response;
+  return response === undefined || response === null
+    || (typeof response === "object" && Object.keys(response).length === 0);
+}
+
+/**
  * Handle API errors with user-friendly messages and exit
  */
 export function handleSdkError(error: unknown, operation: string): never {
@@ -106,6 +119,10 @@ export function handleSdkError(error: unknown, operation: string): never {
       console.error(
         chalk.red(`❌ Not found: The requested resource does not exist.`),
       );
+    } else if (isGenericNetworkFailure(error, status)) {
+      const network = takeNetworkError();
+      const detail = network ? `${network.code}${network.message ? `: ${network.message}` : ""}` : msg;
+      console.error(chalk.red(`❌ API error: ${detail}`));
     } else {
       console.error(chalk.red(`❌ API error: ${msg}`));
     }

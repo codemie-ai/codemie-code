@@ -14,6 +14,7 @@ import {
   installStatusline,
   isStatuslineInstalled,
 } from '@/agents/plugins/claude/statusline-installer.js';
+import { formatNotOnPathHint, formatShadowWarning, type ShadowVerdict } from '@/utils/path-shadow.js';
 import ora from 'ora';
 import chalk from 'chalk';
 
@@ -26,6 +27,23 @@ async function loadActiveProfile(): Promise<ProviderSettingsProfile | undefined>
   } catch (error: unknown) {
     logger.debug(`Could not load the active profile for the provider settings check: ${getErrorMessage(error)}`);
     return undefined;
+  }
+}
+
+/** Print the PATH shadow warning or not-on-PATH hint for an agent; silent for every other verdict. */
+async function printPathShadowAdvice(agent: { checkPathShadow?: (opts?: { resolvePrefix?: boolean }) => Promise<ShadowVerdict> }): Promise<void> {
+  if (!agent.checkPathShadow) return;
+  try {
+    const verdict = await agent.checkPathShadow({ resolvePrefix: true });
+    let lines: string[] = [];
+    if (verdict.status === 'shadowed') lines = formatShadowWarning(verdict);
+    else if (verdict.status === 'missing-on-path') lines = formatNotOnPathHint(verdict);
+    if (lines.length === 0) return;
+    console.log();
+    for (const line of lines) console.log(chalk.yellow(line));
+    console.log();
+  } catch (error: unknown) {
+    logger.debug('PATH shadow check failed', error);
   }
 }
 
@@ -127,10 +145,10 @@ export function createInstallCommand(): Command {
                 'exit'
               )
             : null;
-          const runAdditionalInstallation = async (): Promise<void> => {
+          const runAdditionalInstallation = async (extra?: { alreadyInstalled?: boolean }): Promise<void> => {
             await settingsSwitch?.apply();
             try {
-              await agent.additionalInstallation?.(options);
+              await agent.additionalInstallation?.({ ...options, ...extra });
             } catch (error: unknown) {
               settingsSwitch?.printBackupNote();
               throw error;
@@ -167,10 +185,11 @@ export function createInstallCommand(): Command {
             if (actualVersionToInstall && installedVersion) {
               if (installedVersion === actualVersionToInstall) {
                 console.log(chalk.blueBright(`${agent.displayName} v${installedVersion} is already installed`));
+                await printPathShadowAdvice(agent);
 
                 // Run additional installation steps (e.g., sounds)
                 if (agent.additionalInstallation) {
-                  await runAdditionalInstallation();
+                  await runAdditionalInstallation({ alreadyInstalled: true });
                 }
 
                 return;
@@ -178,6 +197,7 @@ export function createInstallCommand(): Command {
                 // Different version installed, ask to reinstall
                 const versionDisplay = options?.supported ? `${actualVersionToInstall} (supported)` : actualVersionToInstall;
                 console.log(chalk.yellow(`${agent.displayName} v${installedVersion} is already installed (requested: ${versionDisplay})`));
+                await printPathShadowAdvice(agent);
                 const inquirer = (await import('inquirer')).default;
                 const { confirm } = await inquirer.prompt([
                   {
@@ -196,10 +216,11 @@ export function createInstallCommand(): Command {
             } else if (!actualVersionToInstall) {
               // No specific version requested, already installed
               console.log(chalk.blueBright(`${agent.displayName} is already installed`));
+              await printPathShadowAdvice(agent);
 
               // Run additional installation steps (e.g., sounds)
               if (agent.additionalInstallation) {
-                await runAdditionalInstallation();
+                await runAdditionalInstallation({ alreadyInstalled: true });
               }
 
               return;
@@ -253,6 +274,8 @@ export function createInstallCommand(): Command {
             } else {
               spinner.succeed(`${agent.displayName}${installedVersionStr} installed successfully`);
             }
+
+            await printPathShadowAdvice(agent);
 
             // Run additional installation steps (e.g., sounds)
             if (agent.additionalInstallation) {

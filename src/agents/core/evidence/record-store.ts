@@ -41,6 +41,8 @@ export interface EvidenceFields {
   negotiate_publication?: true;
   /** Frozen `collection_generation` at the first stamp; absent = 0. */
   collection_generation?: number;
+  /** Agent whose own collection controls govern this record; absent = the Claude controls (generation). */
+  agent?: 'copilot-cli-otlp';
   /** Frozen reference of the explicit work-consent entry that applied at the first stamp (no path); absent = no consent. */
   consent_ref?: string;
   /**
@@ -163,6 +165,7 @@ function validate(key: string, raw: string): EvidenceRecord | undefined {
   if (r.funding_route !== undefined && !['api_based', 'subscription', 'unknown'].includes(r.funding_route as string)) return undefined;
   if (r.negotiate_publication !== undefined && (r.negotiate_publication !== true || r.funding_route === undefined)) return undefined;
   if (r.collection_generation !== undefined && !(Number.isSafeInteger(r.collection_generation) && (r.collection_generation as number) >= 0)) return undefined;
+  if (r.agent !== undefined && r.agent !== 'copilot-cli-otlp') return undefined;
   if (r.consent_ref !== undefined && !(typeof r.consent_ref === 'string' && /^[0-9a-f]{16}$/.test(r.consent_ref))) return undefined;
   if (r.consent_ref !== undefined && r.funding_route === undefined) return undefined; // consent exists only on the new contract
   if (r.session_folder !== undefined && (typeof r.session_folder !== 'string' || r.session_folder.length === 0)) return undefined;

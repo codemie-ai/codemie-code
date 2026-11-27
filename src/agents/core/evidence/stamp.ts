@@ -22,6 +22,8 @@ export interface EvidenceInputs {
   /** New publication contract: supplied by the adapter, frozen at the first stamp. Absent = legacy recording. */
   funding_route?: FundingRoute;
   collection_generation?: number;
+  /** Set by an agent with its own collection controls: the record is then not tied to the Claude generation. */
+  agent?: 'copilot-cli-otlp';
 }
 
 /**
@@ -58,6 +60,7 @@ async function hookTimeFields(
     profile: hookConfig?.config.name,
     projectBinding: projectBindingFor(project),
     ...(inputs.funding_route !== undefined ? { funding_route: inputs.funding_route, negotiate_publication: true as const } : {}),
+    ...(inputs.agent ? { agent: inputs.agent } : {}),
     // The generation is scope evidence in its own right (a new-contract stamp always has one); never invented for a stamp without it.
     ...(inputs.funding_route !== undefined || inputs.collection_generation !== undefined ? { collection_generation: inputs.collection_generation ?? 0 } : {}),
   };
