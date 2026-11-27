@@ -181,6 +181,22 @@ describe('hook command stored-credentials wiring', () => {
   }
 
   async function runStop(sessionId: string, config: Partial<HookProcessingConfig> = {}): Promise<Record<string, unknown>> {
+    // Stop is deferred while no session record exists, so write the record SessionStart would have created.
+    rmSync(getSessionPath(sessionId), { force: true });
+    writeFileSync(
+      getSessionPath(sessionId),
+      JSON.stringify({
+        sessionId,
+        agentName: 'claude',
+        provider: 'ai-run-sso',
+        startTime: Date.now() - 1000,
+        workingDirectory: process.cwd(),
+        gitBranch: 'record-branch',
+        status: 'active',
+        activeDurationMs: 0,
+        correlation: { status: 'matched', agentSessionId: `agent-${sessionId}`, agentSessionFile: join(TMP, 'x.jsonl'), retryCount: 0 },
+      })
+    );
     const processSession = vi.fn().mockResolvedValue({ success: true, totalRecords: 0, failedProcessors: [], processors: {} });
     vi.spyOn(AgentRegistry, 'getAgent').mockReturnValue({ getSessionAdapter: () => ({ processSession }) } as never);
     const event = {

@@ -11,6 +11,7 @@ import {
   disconnectAllFolders,
   disconnectFolder,
   listConsents,
+  lookupConsent,
   resolveConsent,
 } from '../consent-store.js';
 
@@ -41,6 +42,18 @@ describe('consent-store', () => {
     expect(await resolveConsent({ ...scope, api_identity: 'https://other.example.com' }, work)).toBeUndefined();
     expect(await resolveConsent(scope, join(home, 'moved'))).toBeUndefined();
     expect(await resolveConsent({ ...scope, project: ' ' }, work)).toBeUndefined();
+  });
+
+  it('without a known folder only the all-folders entry grants consent', async () => {
+    await connectFolder(scope, work);
+    expect(await lookupConsent(scope, undefined)).toEqual({ kind: 'none' });
+    await connectAllFolders(scope);
+    const any = await lookupConsent(scope, undefined);
+    expect(any).toMatchObject({ kind: 'found', ref: expect.stringMatching(/^[0-9a-f]{16}$/) });
+    // A known folder still prefers its folder-bound entry.
+    const inFolder = await lookupConsent(scope, join(work, 'sub', 'deep'));
+    expect(inFolder).toMatchObject({ kind: 'found' });
+    expect(inFolder).not.toEqual(any);
   });
 
   it('a cloned .codemie workspace config grants nothing', async () => {

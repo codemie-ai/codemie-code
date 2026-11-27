@@ -171,7 +171,7 @@ describe('owner-pending handover keeps the original age as an exact range', () =
 
   it.each(['session hold', 'endpoint mismatch'])('%s: at the carried deadline only the carried hook bytes are dropped; fresh hooks/logs/metrics keep their own windows', async (kind) => {
     const d = await daemon();
-    await d.appendSpool(SESSION, 'hooks', rawLine(1), ['A'], T0); // carried; evidence record missing / endpoint wrong
+    await d.appendSpool(SESSION, 'hooks', rawLine(1), ['A'], { carriedSince: T0 }); // carried; evidence record missing / endpoint wrong
     const carriedEnd = (await d.readStatus(SESSION))!.carriedAge!.hooks![0].end;
     at(DAY - MIN);
     await d.appendSpool(SESSION, 'hooks', rawLine(2), ['A']); // fresh hook behind the carried one
@@ -195,7 +195,7 @@ describe('owner-pending handover keeps the original age as an exact range', () =
 
   it('stale credentials: the carried range still expires at its own deadline through the tick; younger bytes stay and nothing is sent', async () => {
     const d = await daemon();
-    await d.appendSpool(SESSION, 'hooks', rawLine(1), ['A'], T0); // carried, original age T0
+    await d.appendSpool(SESSION, 'hooks', rawLine(1), ['A'], { carriedSince: T0 }); // carried, original age T0
     const carriedEnd = (await d.readStatus(SESSION))!.carriedAge!.hooks![0].end;
     at(DAY - MIN);
     await d.appendSpool(SESSION, 'hooks', rawLine(2), ['A']); // younger hook behind it
@@ -217,7 +217,7 @@ describe('owner-pending handover keeps the original age as an exact range', () =
 
   it('stale credentials, before the deadline: nothing expires', async () => {
     const d = await daemon();
-    await d.appendSpool(SESSION, 'hooks', rawLine(1), ['A'], T0);
+    await d.appendSpool(SESSION, 'hooks', rawLine(1), ['A'], { carriedSince: T0 });
     stale.value = true;
     at(DAY - MIN);
     await d.processSessionTick(SESSION, credentials as never);
@@ -232,7 +232,7 @@ describe('owner-pending handover keeps the original age as an exact range', () =
     let accepted = 0;
     for (let n = 0; n < 65; n++) {
       at(n * 1000);
-      if (await d.appendSpool(SESSION, 'hooks', rawLine(n), ['A'], T0 + n * 1000)) accepted++;
+      if (await d.appendSpool(SESSION, 'hooks', rawLine(n), ['A'], { carriedSince: T0 + n * 1000 })) accepted++;
     }
     const st = (await d.readStatus(SESSION))!;
     expect(accepted).toBe(64);
@@ -240,7 +240,7 @@ describe('owner-pending handover keeps the original age as an exact range', () =
     expect(new Set(st.carriedAge!.hooks!.map((x) => x.since)).size).toBe(64); // distinct clocks, none merged
     st.cursors.hooks = await hooksSize(); // everything pending acknowledged
     await d.writeStatus(SESSION, st);
-    expect(await d.appendSpool(SESSION, 'hooks', rawLine(64), ['A'], T0 + 64_000)).toBe(true);
+    expect(await d.appendSpool(SESSION, 'hooks', rawLine(64), ['A'], { carriedSince: T0 + 64_000 })).toBe(true);
     const last = (await d.readStatus(SESSION))!.carriedAge!.hooks!;
     expect(last).toEqual([expect.objectContaining({ since: T0 + 64_000 })]);
   });

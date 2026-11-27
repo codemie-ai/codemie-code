@@ -1,0 +1,72 @@
+{
+  "schema": 1,
+  "branch": "fix/EPMCDME-16963-isolate-opencode-config",
+  "head": "3d7e5890d9da3e5323204176321f9aa2f0d8d48e",
+  "runner": "npm",
+  "started_at": "2026-11-20T00:00:00Z",
+  "completed_at": "2026-11-20T00:00:00Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1000,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2000,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3000,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 6000,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "secrets",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 2000,
+      "command": "npm run validate:secrets",
+      "exit_code": null,
+      "notes": "Output: \"No staged changes to scan\" (scans staged only; nothing staged). Pre-commit hook ran gitleaks at 3d7e5890; CI re-runs it."
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "npx vitest run --project unit",
+      "exit_code": null,
+      "notes": "repo policy: tests only on explicit user request"
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "npx vitest run --project cli",
+      "exit_code": null,
+      "notes": "repo policy: tests only on explicit user request"
+    }
+  ],
+  "failures": {}
+}

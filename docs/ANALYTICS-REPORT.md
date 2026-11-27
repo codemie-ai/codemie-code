@@ -288,7 +288,7 @@ All metrics (tokens, cost, turns, tools, models, durations) are unchanged. `meta
 
 ## Automatic Per-Session Report on Exit
 
-When an interactive agent session exits — `codemie-claude`, `codemie-codex`, `codemie-opencode`, `codemie-pi`, or `codemie-copilot` — CodeMie automatically writes a JSON analytics report for that session to `./docs/codemie/analytics/codemie-analytics-<session_id>.json`.
+When an interactive agent session exits — `codemie-claude`, `codemie-codex`, `codemie-opencode`, `codemie-pi`, or `codemie-copilot` — CodeMie automatically writes a JSON analytics report for that session to `<CODEMIE_HOME or ~/.codemie>/analytics/codemie-analytics-[<email>-]<session_id>.json` (`CODEMIE_HOME` overrides `~/.codemie`). Nothing is written into the working repository.
 
 - **Enabled by default** — it runs in-process as part of session finalization, not as a separate command.
 - **Disable per run** with `--no-analytics-report`, e.g. `codemie claude --no-analytics-report ...` (the flag is available on every agent that supports the feature).
@@ -516,6 +516,10 @@ access to that same folder with a small placeholder file before anything is regi
 | macOS | `~/Library/LaunchAgents/com.epam.codemie.analytics-sync.plist` — a launchd `LaunchAgent` (`StartCalendarInterval` from `--at`, `RunAtLoad=false`) | launchd re-runs a missed `StartCalendarInterval` fire once the Mac wakes |
 | Linux | `~/.config/systemd/user/codemie-analytics-sync.{service,timer}` — a systemd user timer (`Type=oneshot`, `OnCalendar=*-*-* HH:MM:00`, `Persistent=true`, `RandomizedDelaySec=300`) | `Persistent=true` fires the missed run once the user session is next active; install also runs `loginctl enable-linger $USER` so the timer fires even while the user is logged out |
 | Windows | Task Scheduler task `CodeMie Analytics Sync` (UTF-16LE+BOM XML, `StartWhenAvailable`, `IgnoreNew`, runs as the logged-in user at `InteractiveToken`/`LeastPrivilege`, runs on battery, `ExecutionTimeLimit PT30M`) | `StartWhenAvailable` fires the missed run once the machine is next on |
+
+The names above are the defaults. `--task-name <name>` (or the interactive prompt) replaces
+them with a full name used as-is on every platform; it is saved as `taskName`, and `status`
+prints the resolved `OS job name`. Manual `launchctl`/`systemctl`/`schtasks` calls must use it.
 
 Installing replaces an existing job with the same identity: macOS `launchctl bootout` then
 `bootstrap gui/<uid>`; Linux `systemctl --user daemon-reload` then `enable --now`; Windows

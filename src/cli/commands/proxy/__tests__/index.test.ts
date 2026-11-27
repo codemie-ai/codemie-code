@@ -84,6 +84,7 @@ vi.mock('../connectors/desktop.js', async (importOriginal) => ({
   describeManagedSettingsOverride: vi.fn().mockReturnValue(null),
   getDesktopBaseDir: vi.fn().mockReturnValue('/mock/desktop/base'),
   getDesktopConfigPath: vi.fn(async () => '/mock/desktop/base/configLibrary/applied.json'),
+  getCodeMieDesktopConfigPath: vi.fn(async () => '/mock/desktop/base/configLibrary/codemie.json'),
   mapCanonicalToDesktop: vi.fn().mockReturnValue([]),
   summarizeManagedOauthShapes: vi.fn().mockReturnValue({ oauthConfigured: 0, oauthFlagged: 0, noAuth: 0 }),
   readDesktopGateway: vi.fn().mockResolvedValue(null),
@@ -352,11 +353,47 @@ describe('proxy connect --claude-desktop', () => {
 
     expect(spawnDaemon).not.toHaveBeenCalled();
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("No SSO credentials found for profile 'codemie-new'.")
+      expect.stringContaining("No active CodeMie session for profile 'codemie-new'.")
     );
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       '  Sign in first — run: codemie profile login --url https://codemie.lab.epam.com'
     );
+  });
+
+  it('prints the bare login command when the selected profile is the active profile', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { ProviderRegistry } = await import('../../../../providers/index.js');
+    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValue('codemie-new');
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'codemie-new',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+      codeMieUrl: 'https://codemie.lab.epam.com',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+    vi.mocked(ProviderRegistry.getProvider).mockReturnValue({
+      name: 'ai-run-sso',
+      authType: 'sso',
+    } as ReturnType<typeof ProviderRegistry.getProvider>);
+    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
+      return {
+        getStoredCredentials: vi.fn().mockResolvedValue(null),
+      };
+    } as unknown as typeof CodeMieSSO);
+
+    const command = createProxyCommand();
+    await expect(
+      command.parseAsync(['connect', '--claude-desktop', '--profile', 'codemie-new'], { from: 'user' })
+    ).rejects.toThrow('process.exit:1');
+
+    expect(spawnDaemon).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith('  Sign in first — run: codemie profile login');
+    expect(consoleErrorSpy).not.toHaveBeenCalledWith(expect.stringContaining('--url'));
+    vi.mocked(ConfigLoader.getActiveProfileName).mockReset();
   });
 
   it('checks both credential URLs and suggests the selected profile URL when workspace URL differs', async () => {
@@ -462,7 +499,7 @@ describe('proxy connect --claude-desktop', () => {
       expect.stringContaining('Failed to verify credentials: keychain locked')
     );
     expect(consoleErrorSpy).not.toHaveBeenCalledWith(
-      expect.stringContaining('No SSO credentials found')
+      expect.stringContaining('No active CodeMie session')
     );
   });
 
@@ -498,7 +535,7 @@ describe('proxy connect --claude-desktop', () => {
       startedAt: new Date().toISOString(),
       telemetryMode: 'claude-desktop',
     } as Awaited<ReturnType<typeof spawnDaemon>>);
-    vi.mocked(writeDesktopConfig).mockResolvedValue('/path/to/config');
+    vi.mocked(writeDesktopConfig).mockResolvedValue({ configPath: '/path/to/config', activated: false });
 
     const command = createProxyCommand();
     await command.parseAsync(['connect', '--claude-desktop', '--profile', 'test-profile'], { from: 'user' });
@@ -537,7 +574,7 @@ describe('proxy connect --claude-desktop', () => {
       startedAt: new Date().toISOString(),
       telemetryMode: 'claude-desktop',
     } as Awaited<ReturnType<typeof spawnDaemon>>);
-    vi.mocked(writeDesktopConfig).mockResolvedValue('/path/to/config');
+    vi.mocked(writeDesktopConfig).mockResolvedValue({ configPath: '/path/to/config', activated: false });
     vi.mocked(describeManagedSettingsOverride).mockReturnValue(
       '/etc/claude-desktop/managed-settings.json exists. Claude Desktop applies managed settings instead of local configuration, so this write may have no effect.'
     );
@@ -581,7 +618,7 @@ describe('proxy connect --claude-desktop', () => {
       startedAt: new Date().toISOString(),
       telemetryMode: 'claude-desktop',
     } as Awaited<ReturnType<typeof spawnDaemon>>);
-    vi.mocked(writeDesktopConfig).mockResolvedValue('/path/to/config');
+    vi.mocked(writeDesktopConfig).mockResolvedValue({ configPath: '/path/to/config', activated: false });
     vi.mocked(describeManagedSettingsOverride).mockReturnValue(null);
 
     await createProxyCommand().parseAsync(['connect', '--claude-desktop', '--profile', 'test-profile'], {
@@ -622,7 +659,7 @@ describe('proxy connect --claude-desktop', () => {
       startedAt: new Date().toISOString(),
       telemetryMode: 'claude-desktop',
     } as Awaited<ReturnType<typeof spawnDaemon>>);
-    vi.mocked(writeDesktopConfig).mockResolvedValue('/path/to/config');
+    vi.mocked(writeDesktopConfig).mockResolvedValue({ configPath: '/path/to/config', activated: false });
 
     await createProxyCommand().parseAsync(['connect', '--claude-desktop'], { from: 'user' });
 
@@ -640,7 +677,7 @@ describe('proxy command registration', () => {
     const analytics = proxy.commands.find((c) => c.name() === 'analytics');
     expect(analytics).toBeDefined();
     const subcommandNames = analytics!.commands.map((c) => c.name()).sort();
-    expect(subcommandNames).toEqual(['connect-folder', 'consent', 'disable', 'disconnect-folder', 'enable', 'exclude', 'include', 'status']);
+    expect(subcommandNames).toEqual(['connect-folder', 'consent', 'disable', 'disconnect-folder', 'enable', 'exclude', 'include', 'resend', 'status']);
   });
 });
 

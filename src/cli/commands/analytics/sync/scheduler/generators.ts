@@ -9,12 +9,75 @@
 
 import { realpath } from 'fs/promises';
 
+import { SyncConfigError } from '@/utils/errors.js';
+
 /** launchd job label, shared with the standalone collector so install replaces its job. */
 export const LAUNCHD_LABEL = 'com.epam.codemie.analytics-sync';
 /** systemd user unit base name (service + timer share it), collector-compatible. */
 export const SYSTEMD_UNIT_NAME = 'codemie-analytics-sync';
 /** Windows Task Scheduler task name, collector-compatible. */
 export const WINDOWS_TASK_NAME = 'CodeMie Analytics Sync';
+
+const NAME_MAX_LENGTH = 100;
+/** Control characters (incl. C1, line/paragraph separators) and lone surrogates. */
+const NAME_FORBIDDEN_CHARS = /[\p{Cc}\p{Cs}\u2028\u2029]/u;
+
+/**
+ * Validates a scheduler task name and returns it unchanged. The name is used as-is on every
+ * platform (launchd label and plist file name, systemd unit base name, Windows `schtasks /TN`).
+ * Callers trim user input first; this function itself rejects names with leading or trailing
+ * whitespace. Throws `SyncConfigError` naming the broken rule: empty, surrounding whitespace,
+ * control characters, `/` or `\`, `..`, a leading `-` or `.`, or more than 100 characters.
+ * Spaces and other printable characters are allowed here; {@link assertNameSupportedOnPlatform}
+ * adds the limits an individual OS imposes.
+ */
+export function validateSchedulerName(name: string): string {
+  if (name === '') {
+    throw new SyncConfigError('Scheduler task name must not be empty.');
+  }
+  if (name !== name.trim()) {
+    throw new SyncConfigError('Scheduler task name must not start or end with whitespace.');
+  }
+  if (NAME_FORBIDDEN_CHARS.test(name)) {
+    throw new SyncConfigError('Scheduler task name must not contain control characters.');
+  }
+  if (name.includes('/') || name.includes('\\')) {
+    throw new SyncConfigError('Scheduler task name must not contain "/" or "\\".');
+  }
+  if (name.includes('..')) {
+    throw new SyncConfigError('Scheduler task name must not contain "..".');
+  }
+  if (name.startsWith('-') || name.startsWith('.')) {
+    throw new SyncConfigError('Scheduler task name must not start with "-" or ".".');
+  }
+  if ([...name].length > NAME_MAX_LENGTH) {
+    throw new SyncConfigError(`Scheduler task name must be at most ${NAME_MAX_LENGTH} characters long.`);
+  }
+  return name;
+}
+
+/** systemd unit names allow only these characters (`@` is excluded: it makes a template instance). */
+const SYSTEMD_NAME_ALLOWED = /^[A-Za-z0-9:_.-]+$/;
+/** Characters Windows Task Scheduler rejects in a task name. */
+const WINDOWS_NAME_FORBIDDEN = /[:*?"<>|]/;
+
+/**
+ * Throws `SyncConfigError` when the OS cannot take an otherwise valid `name` as a job name:
+ * systemd unit names cannot hold spaces or most punctuation, Task Scheduler rejects
+ * `: * ? " < > |`. Runs at install time, before any existing job is touched.
+ */
+export function assertNameSupportedOnPlatform(name: string, platform: NodeJS.Platform): void {
+  if (platform === 'linux' && !SYSTEMD_NAME_ALLOWED.test(name)) {
+    throw new SyncConfigError(
+      `Scheduler task name "${name}" is not valid for systemd: only letters, digits, ":", "_", "." and "-" are allowed on Linux.`
+    );
+  }
+  if (platform === 'win32' && WINDOWS_NAME_FORBIDDEN.test(name)) {
+    throw new SyncConfigError(
+      `Scheduler task name "${name}" is not valid for Windows Task Scheduler: it must not contain : * ? " < > |`
+    );
+  }
+}
 
 /** The job command: absolute node binary, absolute CLI entry script, and its argv. */
 export interface JobCommand {
@@ -92,7 +155,7 @@ function windowsQuote(value: string, always = false): string {
  * pointed at `logPath` — a launchd-only log, never the run log: `run` already appends its
  * own outcome line there, so sharing it would write every line twice.
  */
-export function launchdPlist(cmd: JobCommand, at: string, logPath: string): string {
+export function launchdPlist(cmd: JobCommand, at: string, logPath: string, label: string): string {
   const { hour, minute } = parseAt(at);
   const args = programArguments(cmd)
     .map((value) => `        ${plistString(value)}`)
@@ -103,7 +166,7 @@ export function launchdPlist(cmd: JobCommand, at: string, logPath: string): stri
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>${LAUNCHD_LABEL}</string>
+    ${plistString(label)}
     <key>ProgramArguments</key>
     <array>
 ${args}

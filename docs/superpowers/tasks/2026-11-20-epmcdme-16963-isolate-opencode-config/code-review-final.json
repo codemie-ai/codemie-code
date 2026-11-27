@@ -1,0 +1,98 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.final",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "User approved: review approve, 0 findings"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "User approved: review approve, 0 findings"
+    }
+  ],
+  "reviewed_head": "3d7e5890d9da3e5323204176321f9aa2f0d8d48e",
+  "rounds": [
+    "final"
+  ],
+  "rationale": "Compact profile: edge-case and acceptance lenses ran; all spec items pass, gates G1/G2 and local engine checks remain pending-stage-7. 3 edge-case candidates dismissed as noise (abort-before-enrichArgs restore, single-process capture overwrite, config dir creation left to the engine); 0 deferred.",
+  "confidence": "high",
+  "check_confidence": null,
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 0,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "1. getOpenCodeConfigBase() helper honouring CODEMIE_HOME",
+      "status": "pass",
+      "notes": "Helper and comment present in opencode.paths.ts."
+    },
+    {
+      "kind": "spec",
+      "item": "2. XDG_CONFIG_HOME assignment above early returns in beforeRun",
+      "status": "pass",
+      "notes": "Assigned at top of beforeRun."
+    },
+    {
+      "kind": "spec",
+      "item": "3. Capture in beforeRun, restore first in enrichArgs, delete when unset",
+      "status": "pass",
+      "notes": "Implemented; skipped when nothing captured."
+    },
+    {
+      "kind": "spec",
+      "item": "4. Plain opencode agents untouched",
+      "status": "pass",
+      "notes": "Only a comment added in the paths file."
+    },
+    {
+      "kind": "spec",
+      "item": "5. CHANGELOG Unreleased/Changed entry with project .opencode note",
+      "status": "pass",
+      "notes": "Entry present with known gaps."
+    },
+    {
+      "kind": "spec",
+      "item": "Gates G1/G2, Q5, Q6 local engine checks",
+      "status": "pending-stage-7",
+      "notes": "Manual runtime verification, not provable from diff."
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "na",
+      "notes": "Standards audit not part of the compact profile."
+    },
+    {
+      "kind": "code-quality",
+      "status": "na",
+      "notes": "Standards audit not part of the compact profile."
+    },
+    {
+      "kind": "security",
+      "status": "na",
+      "notes": "Standards audit not part of the compact profile."
+    }
+  ],
+  "final_round": {
+    "decision": "approve",
+    "rationale": "Compact profile: edge-case and acceptance lenses ran; all spec items pass, gates G1/G2 and local engine checks remain pending-stage-7. 3 edge-case candidates dismissed as noise (abort-before-enrichArgs restore, single-process capture overwrite, config dir creation left to the engine); 0 deferred.",
+    "confidence": "high",
+    "risk_flags": []
+  }
+}

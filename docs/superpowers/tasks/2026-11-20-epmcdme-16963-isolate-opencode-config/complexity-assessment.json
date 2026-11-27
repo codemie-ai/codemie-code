@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "task": "Isolate the embedded OpenCode engine's global config location (XDG_CONFIG_HOME) from the user's global OpenCode config for codemie-code / codemie --task runs, mirroring the existing XDG_DATA_HOME isolation (EPMCDME-16963, single repo codemie-code).",
+  "generated": "2026-11-19T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 14,
+  "size": "S",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "technical_risk",
+      "reason": "Closest pattern is the XDG_DATA_HOME isolation in the codemie-code beforeRun hook (getOpenCodeStorageBase under CODEMIE_HOME). It covers the mechanism but not the behavioural unknowns: the embedded engine's config loading and first-run self-install of @opencode-ai/plugin in an empty config dir are unverified, the early-return branch before the XDG assignment leaves runs exposed, and Object.assign(process.env, env) in BaseAgentAdapter would leak the isolated value into the wrapper process (AC6). The ACs enumerate edge cases (missing/unreadable config, no global config, plain opencode agent unchanged), and no existing test template covers env-isolation assertions for beforeRun, so Technical Risk is bumped to L. No example in the calibration folders was available to cross-check."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped to L: the closest existing pattern (XDG_DATA_HOME isolation) does not cover the config-specific unknowns, and AC edge cases have no existing defensive test template",
+    "Clarity: open questions Q1-Q4 (loss of user global config, first-run install, early-return branch, unverified repro) keep Requirements Clarity at M"
+  ],
+  "split_recommendation": null
+}

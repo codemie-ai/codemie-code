@@ -8,6 +8,7 @@
  */
 import chalk from 'chalk';
 import { ConfigLoader } from '../../../utils/config.js';
+import { resolveLoginUrl, resolveProfileCodeMieUrl } from '../../../providers/core/login-url.js';
 import { ProviderRegistry } from '../../../providers/index.js';
 import { displaySetupInstructions } from '../../../providers/integration/setup-ui.js';
 import {
@@ -38,7 +39,8 @@ import { describeProjectBinding, sanitizeDisplayText, type ProjectBindingState }
 import {
   writeDesktopConfig,
   getDesktopBaseDir,
-  getDesktopConfigPath,
+  getCodeMieDesktopConfigPath,
+  CODEMIE_DESKTOP_CONFIG_NAME,
   readDesktopGateway,
   mapCanonicalToDesktop,
   describeManagedSettingsOverride,
@@ -413,14 +415,17 @@ export async function resolveSsoProxyConfig(
 export async function assertSsoCredentials(
   baseUrl: string,
   profileName: string,
-  codeMieUrl?: string
+  codeMieUrl?: string,
+  provider?: string
 ): Promise<void> {
   let loginUrl: string | null = null;
   try {
     const { getStoredPlatformCredentials } = await import('../../../providers/core/codemie-auth-helpers.js');
-    const creds = await getStoredPlatformCredentials({ provider: 'ai-run-sso', baseUrl, codeMieUrl });
+    const creds = await getStoredPlatformCredentials({ provider: provider ?? 'ai-run-sso', baseUrl, codeMieUrl });
     if (!creds) {
-      loginUrl = resolveProfileCodeMieUrl(baseUrl, codeMieUrl);
+      // Bare `profile login` targets the active profile; any other profile needs its own host.
+      const activeProfileName = await resolveActiveProfileName();
+      loginUrl = activeProfileName === profileName ? '' : ` --url ${resolveLoginUrl(baseUrl, codeMieUrl)}`;
     }
   } catch (err) {
     throw new ConfigurationError(`Failed to verify credentials: ${(err as Error).message}`);
@@ -428,8 +433,8 @@ export async function assertSsoCredentials(
   // Thrown outside the try so the missing-login error is never re-wrapped.
   if (loginUrl !== null) {
     throw new ConfigurationError(
-      `No SSO credentials found for profile '${profileName}'.\n` +
-      `  ${renderHint({ reason: 'Sign in first', command: `codemie profile login --url ${loginUrl}` })}`
+      `No active CodeMie session for profile '${profileName}'.\n` +
+      `  ${renderHint({ reason: 'Sign in first', command: `codemie profile login${loginUrl}` })}`
     );
   }
 }
@@ -439,10 +444,11 @@ export async function verifySsoCredentials(
   baseUrl: string,
   profileName: string,
   codeMieUrl?: string,
+  provider?: string,
   beforeExit?: () => void
 ): Promise<void> {
   try {
-    await assertSsoCredentials(baseUrl, profileName, codeMieUrl);
+    await assertSsoCredentials(baseUrl, profileName, codeMieUrl, provider);
   } catch (err) {
     beforeExit?.();
     const [firstLine, ...rest] = (err as Error).message.split('\n');
@@ -454,12 +460,12 @@ export async function verifySsoCredentials(
   }
 }
 
-function resolveProfileCodeMieUrl(baseUrl: string, codeMieUrl?: string): string {
-  const profileOrigin = new URL(baseUrl).origin;
-  if (codeMieUrl && new URL(codeMieUrl).origin === profileOrigin) {
-    return codeMieUrl;
+async function resolveActiveProfileName(): Promise<string | null> {
+  try {
+    return await ConfigLoader.getActiveProfileName(process.cwd());
+  } catch {
+    return null;
   }
-  return profileOrigin;
 }
 
 export function printProxyError(error: unknown, label: string): never {
@@ -496,12 +502,13 @@ function resolveVsCodeSettingsFiles(insiders: boolean): string[] {
 /** The client files this run is about to configure, or null when no Claude target is selected. */
 async function claudeConnectTargets(
   targets: ConnectTargets,
-  insiders: boolean
+  insiders: boolean,
+  desktopConfigFile: string | undefined
 ): Promise<ProviderSettingsConnectTargets | null> {
   if (!targets.claudeDesktop && !targets.vscodeClaudeCode && !targets.claudeCodeOtlp) return null;
   return {
-    ...(targets.claudeDesktop
-      ? { desktop: { configFile: await getDesktopConfigPath(), managedFile: getClaudeDesktopManagedSettingsPath() } }
+    ...(targets.claudeDesktop && desktopConfigFile !== undefined
+      ? { desktop: { configFile: desktopConfigFile, managedFile: getClaudeDesktopManagedSettingsPath() } }
       : {}),
     ...(targets.vscodeClaudeCode ? { vscodeSettingsFiles: resolveVsCodeSettingsFiles(insiders) } : {}),
     claudeCodeOtlp: targets.claudeCodeOtlp,
@@ -516,10 +523,10 @@ async function claudeConnectTargets(
 async function checkClaudeProviderSettings(
   targets: ConnectTargets,
   profile: ProviderSettingsProfile,
-  options: { silent: boolean; insiders: boolean }
+  options: { silent: boolean; insiders: boolean; desktopConfigFile: string | undefined }
 ): Promise<ProviderSettingsSwitch | null> {
-  const { silent, insiders } = options;
-  const connect = await claudeConnectTargets(targets, insiders);
+  const { silent, insiders, desktopConfigFile } = options;
+  const connect = await claudeConnectTargets(targets, insiders, desktopConfigFile);
   if (!connect) return null;
   const { AgentRegistry } = await import('@/agents/registry.js');
   const claude = AgentRegistry.getAgent(CLAUDE_AGENT);
@@ -766,7 +773,12 @@ function printFailures(results: TargetResult[]): void {
   }
 }
 
-async function runClaudeDesktop(state: DaemonState, verbose: boolean): Promise<TargetResult> {
+/** `desktopConfigFile` is the CodeMie entry the provider-settings gate inspected; the write targets the same file. */
+async function runClaudeDesktop(
+  state: DaemonState,
+  verbose: boolean,
+  desktopConfigFile: string | undefined
+): Promise<TargetResult> {
   try {
     const canonical = state.syncCodeMieUrl
       ? await fetchManagedMcpServers('claude-desktop', state.syncCodeMieUrl)
@@ -786,13 +798,14 @@ async function runClaudeDesktop(state: DaemonState, verbose: boolean): Promise<T
         noAuthCount: oauthShapes.noAuth,
       })
     );
-    const configPath = await writeDesktopConfig(
+    const { configPath, switchedFrom } = await writeDesktopConfig(
       state.url,
       state.gatewayKey,
       getDesktopBaseDir(),
       orgMcpServers,
       undefined, // default managed-MCP state path
-      state.project
+      state.project,
+      desktopConfigFile
     );
     logger.info(
       '[proxy] Claude Desktop proxy configuration written',
@@ -817,6 +830,12 @@ async function runClaudeDesktop(state: DaemonState, verbose: boolean): Promise<T
       console.log(`  Config:  ${configPath}`);
       console.log(`  Gateway: ${state.url}`);
       console.log(chalk.dim('  Telemetry: metrics and conversations will sync as claude-desktop.'));
+    }
+    if (switchedFrom !== undefined) {
+      console.log(chalk.yellow(
+        `  Switched Claude Desktop's active configuration from "${sanitizeDisplayText(switchedFrom)}" ` +
+        `to "${CODEMIE_DESKTOP_CONFIG_NAME}".`
+      ));
     }
     console.log(chalk.yellow('  Restart Claude Desktop to apply changes.'));
     return { label: 'Claude Desktop', ok: true };
@@ -1186,6 +1205,8 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   let agreement: ClaudeCodeOtlpAgreement | undefined;
   let projectBinding: ProjectBindingState | undefined;
   let settingsSwitch: ProviderSettingsSwitch | null = null;
+  /** The CodeMie Claude Desktop entry this run inspects and writes; resolved once, before the provider-settings gate. */
+  let desktopConfigFile: string | undefined;
   let scopeBaselines: ScopeBaselines;
   try {
     // Pre-lock phase: the scope confirmation runs before SSO, the daemon or any config is touched,
@@ -1243,13 +1264,20 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       config.baseUrl,
       profile,
       config.codeMieUrl,
+      config.provider,
       () => printFailures(results)
     );
 
     // Before anything is started or written: Bedrock settings in Claude's own configuration would send
     // Claude traffic around the gateway this command is about to connect. Only the clients that will be
     // configured (an aggregate flag leaves out the ones not found on this machine) are checked.
-    settingsSwitch = await checkClaudeProviderSettings(activeTargets, config, { silent: Boolean(opts.yes), insiders });
+    // Resolved once: the gate inspects this Desktop entry and the write below targets it, whichever key each would read.
+    desktopConfigFile = activeTargets.claudeDesktop ? await getCodeMieDesktopConfigPath() : undefined;
+    settingsSwitch = await checkClaudeProviderSettings(
+      activeTargets,
+      config,
+      { silent: Boolean(opts.yes), insiders, desktopConfigFile }
+    );
 
     if (activeTargets.claudeCodeOtlp && otlpDisplay) {
       const confirmed = await confirmClaudeCodeOtlp(
@@ -1326,7 +1354,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   };
   const editionFlag = (flag: string): string => (insiders ? `${flag} --insiders` : flag);
   if (activeTargets.claudeDesktop) {
-    await runClient('--claude-desktop', runClaudeDesktop(state, verbose), 'claudeDesktop');
+    await runClient('--claude-desktop', runClaudeDesktop(state, verbose, desktopConfigFile), 'claudeDesktop');
   }
   if (activeTargets.vscode) {
     await runClient(editionFlag('--vscode'), runVscodeByok(state, insiders, config, verbose, projectBinding));

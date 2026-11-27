@@ -10,7 +10,7 @@ import type { BaseExtensionInstaller } from '../core/extension/BaseExtensionInst
 import { installGlobal, uninstallGlobal, wrapperOwnerFromEnv } from '../../utils/processes.js';
 import { OpenCodeSessionAdapter } from './opencode/opencode.session.js';
 import type { LocatedRun } from './opencode/opencode.run-session.js';
-import { getOpenCodeStorageBase } from './opencode/opencode.paths.js';
+import { getOpenCodeStorageBase, getOpenCodeConfigBase } from './opencode/opencode.paths.js';
 import { resolveCodemieOpenCodeBinary, getPlatformPackage } from './codemie-code-binary.js';
 import { getHooksPluginFileUrl, cleanupHooksPlugin } from './codemie-code-hooks/index.js';
 import { getReasoningSanitizerPluginUrl, cleanupReasoningSanitizerPlugin } from './reasoning-sanitizer/index.js';
@@ -37,6 +37,9 @@ export function buildDefaultHooks(binary: string): Record<string, unknown[]> {
 
 // Must match the @codemieai/codemie-opencode dependency in package.json.
 const CODEMIE_CODE_SUPPORTED_VERSION = '0.0.47';
+
+// Rule for any later XDG redirect (e.g. XDG_STATE_HOME): capture the user's value in beforeRun, restore it in enrichArgs.
+let capturedUserXdgConfigHome: { value: string | undefined } | undefined;
 
 const OPENCODE_SUBCOMMANDS = ['run', 'chat', 'config', 'init', 'help', 'version'];
 
@@ -198,6 +201,7 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
   npmPackage: '@codemieai/codemie-opencode',
   supportedVersion: CODEMIE_CODE_SUPPORTED_VERSION,
   cliCommand: resolvedBinary || null,
+  pathShadowCheck: false, // cliCommand is a resolved binary path, not a PATH shim
 
   dataPaths: {
     home: '.opencode'
@@ -246,6 +250,10 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
     },
 
     async beforeRun(env: NodeJS.ProcessEnv, config: AgentConfig) {
+      capturedUserXdgConfigHome = { value: process.env.XDG_CONFIG_HOME };
+      env.XDG_CONFIG_HOME = getOpenCodeConfigBase();
+      logger.debug(`[codemie-code] Setting XDG_CONFIG_HOME=${env.XDG_CONFIG_HOME} to isolate OpenCode config`);
+
       const sessionId = env.CODEMIE_SESSION_ID;
       if (sessionId) {
         // ensureSessionFile handles its own errors internally
@@ -384,6 +392,17 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
     },
 
     enrichArgs: (args: string[], _config: AgentConfig) => {
+      // BaseAgentAdapter merges beforeRun's env into process.env and spawns the child from its own env object,
+      // so restoring here keeps the user's XDG_CONFIG_HOME for the wrapper while the child keeps the redirect.
+      if (capturedUserXdgConfigHome) {
+        if (capturedUserXdgConfigHome.value === undefined) {
+          delete process.env.XDG_CONFIG_HOME;
+        } else {
+          process.env.XDG_CONFIG_HOME = capturedUserXdgConfigHome.value;
+        }
+        capturedUserXdgConfigHome = undefined;
+      }
+
       if (args.length > 0 && OPENCODE_SUBCOMMANDS.includes(args[0])) {
         return args;
       }

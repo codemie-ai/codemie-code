@@ -15,11 +15,13 @@ import {
  * Durable per-session evidence records. NOT spool state: spool cleanup removes pending bytes and
  * cursors only and never touches this directory. Only `sweepRecords` evicts, and never a record a
  * pending spool range still relies on. The backend session binding outlives this local retention.
+ * Records are user-local and never sent as such: only named fields become request headers (`evidenceHeaders`), so a
+ * local-only fact such as `session_folder` or `projectBinding` never leaves the machine.
  */
 
 const DAY_MS = 86_400_000;
 const RECORD_RE = /^[0-9a-f]{64}\.json$/;
-const MAX_LEN = { organization: 256, project: 256, profile: 128, repo_key: 512, session_id: 200 };
+const MAX_LEN = { organization: 256, project: 256, profile: 128, repo_key: 512, session_id: 200, session_folder: 512 };
 
 export interface EvidenceFields {
   session_id: string;
@@ -39,8 +41,16 @@ export interface EvidenceFields {
   negotiate_publication?: true;
   /** Frozen `collection_generation` at the first stamp; absent = 0. */
   collection_generation?: number;
+  /** Agent whose own collection controls govern this record; absent = the Claude controls (generation). */
+  agent?: 'copilot-cli-otlp';
   /** Frozen reference of the explicit work-consent entry that applied at the first stamp (no path); absent = no consent. */
   consent_ref?: string;
+  /**
+   * Local-only: the canonical folder the session started in, so a work consent granted later can be matched to it
+   * (`codemie proxy analytics resend`). Stamped only on new-contract records without consent; never sent. Absent on
+   * records stamped by older builds, or when it would not fit the record limit.
+   */
+  session_folder?: string;
   /** Local-only: how the launcher bound `project` (CODEMIE_PROJECT_BINDING); never sent to the backend. */
   projectBinding?: ProjectBindingState;
 }
@@ -155,8 +165,10 @@ function validate(key: string, raw: string): EvidenceRecord | undefined {
   if (r.funding_route !== undefined && !['api_based', 'subscription', 'unknown'].includes(r.funding_route as string)) return undefined;
   if (r.negotiate_publication !== undefined && (r.negotiate_publication !== true || r.funding_route === undefined)) return undefined;
   if (r.collection_generation !== undefined && !(Number.isSafeInteger(r.collection_generation) && (r.collection_generation as number) >= 0)) return undefined;
+  if (r.agent !== undefined && r.agent !== 'copilot-cli-otlp') return undefined;
   if (r.consent_ref !== undefined && !(typeof r.consent_ref === 'string' && /^[0-9a-f]{16}$/.test(r.consent_ref))) return undefined;
   if (r.consent_ref !== undefined && r.funding_route === undefined) return undefined; // consent exists only on the new contract
+  if (r.session_folder !== undefined && (typeof r.session_folder !== 'string' || r.session_folder.length === 0)) return undefined;
   if (r.projectBinding !== undefined && !parseProjectBinding(r.projectBinding)) return undefined;
   if (typeof r.created !== 'number' || typeof r.last_used !== 'number') return undefined;
   if (limitViolation(r, raw)) return undefined;
@@ -303,6 +315,40 @@ export async function touch(key: string, now: number = Date.now()): Promise<void
   } catch (err) {
     logger.debug(`[evidence-record] touch failed: ${code(err) ?? 'error'}`);
   }
+}
+
+/** Whether a record with these fields stays within the limits a read enforces (timestamps included). */
+export function recordFits(fields: EvidenceFields): boolean {
+  const now = Date.now();
+  const record = { schema: 1, ...fields, created: now, last_used: now };
+  return limitViolation(record as unknown as Record<string, unknown>, JSON.stringify(record)) === undefined;
+}
+
+/** Outcome of freezing a consent granted after the first stamp. */
+export type AttachConsentResult = 'attached' | 'already_consented' | 'not_eligible' | 'unavailable';
+
+/**
+ * Freezes a work consent granted after the first stamp onto a record that froze none: the one explicit change a
+ * recorded session gets (`codemie proxy analytics resend`). Only a new-contract record with a project can carry a
+ * consent; every other field is kept. Read back after the write, so a concurrent `touch` that replaced the record reads
+ * as `unavailable` (retry), never as attached. Never throws.
+ */
+export async function attachConsentRef(key: string, ref: string): Promise<AttachConsentResult> {
+  const found = await readValidated(key);
+  if (!found || found.kind !== 'existing') return 'unavailable';
+  const { record } = found;
+  if (record.consent_ref) return 'already_consented';
+  if (record.funding_route === undefined || !record.project) return 'not_eligible';
+  const content = JSON.stringify({ ...record, consent_ref: ref });
+  if (!validate(key, content)) return 'not_eligible';
+  try {
+    await atomicReplace(join(evidenceDir(), `${key}.json`), content);
+  } catch (err) {
+    logger.debug(`[evidence-record] consent attach failed: ${code(err) ?? 'error'}`);
+    return 'unavailable';
+  }
+  const after = await readValidated(key);
+  return after?.kind === 'existing' && after.record.consent_ref === ref ? 'attached' : 'unavailable';
 }
 
 export async function sweepRecords(

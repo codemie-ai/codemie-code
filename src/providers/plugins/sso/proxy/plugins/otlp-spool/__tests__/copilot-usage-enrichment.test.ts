@@ -9,6 +9,8 @@ vi.mock('@/utils/logger.js', () => ({
 }));
 
 import { logger } from '@/utils/logger.js';
+import { readSessionState, updateSessionState } from '@/agents/plugins/copilot-cli-otlp/copilot-cli-otlp.state.js';
+import { appendSpool } from '../spool-io.js';
 
 import {
   COPILOT_CLI_OTLP_AGENT,
@@ -256,6 +258,48 @@ describe('enrichSessionUsage', () => {
     const resumed = sessionEnd({ timestamp: new Date(resumedEndMs).toISOString() });
 
     expect(await enrichSessionUsage(resumed, clock.sleep, clock.now)).toBe('enriched');
+  });
+
+  it('enriches a delayed native end only through its own shutdown and preserves the resumed run state', async () => {
+    const firstShutdown = END_MS + 1_200;
+    const resumeStart = END_MS + 10_000;
+    const sessionStateRoot = join(dir, 'custom', 'session-state');
+    await mkdir(join(sessionStateRoot, SID), { recursive: true });
+    expect(await updateSessionState(SID, { sessionStateRoot })).toBe(true);
+    const at = (ms: number) => new Date(ms).toISOString();
+    const transcriptEvent = (type: string, ms: number, data: Record<string, unknown>) =>
+      JSON.stringify({ type, timestamp: at(ms), data });
+    const tool = (toolCallId: string, ms: number) => [
+      transcriptEvent('tool.execution_start', ms, { toolCallId, toolName: 'read_agent', arguments: {} }),
+      transcriptEvent('tool.execution_complete', ms + 1, { toolCallId, success: true }),
+    ];
+    await writeFile(join(sessionStateRoot, SID, 'events.jsonl'), [
+      startLine,
+      transcriptEvent('hook.start', END_MS - 300, { hookType: 'preToolUse', input: { toolCallId: 'hooked-tool' } }),
+      ...tool('hooked-tool', END_MS - 200),
+      ...tool('first-run-tool', END_MS - 100),
+      shutdownLine(firstShutdown),
+      transcriptEvent('session.resume', resumeStart, {}),
+      ...tool('resumed-run-tool', resumeStart + 100),
+      shutdownLine(resumeStart + 1_200),
+    ].join('\n') + '\n');
+    const firstEnd = sessionEnd();
+    const spool = [firstEnd, {
+      type: 'agent.session.start', session_id: SID, timestamp: at(resumeStart), source: 'resume',
+    }].map((event) => JSON.stringify({ agentName: COPILOT_CLI_OTLP_AGENT, hookEvent: JSON.stringify(event) }));
+    await appendSpool(SID, 'hooks', spool.join('\n') + '\n');
+
+    const clock = fakeClock();
+    expect(await enrichSessionUsage(firstEnd, clock.sleep, clock.now)).toBe('enriched');
+
+    const events = await spooled();
+    const summaries = events.filter((event) => event.type === 'agent.session.summary');
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toMatchObject({ ended_at: at(firstShutdown), is_final: true, tool_calls: 2 });
+    for (const type of ['agent.tool.start', 'agent.tool.end']) {
+      expect(events.filter((event) => event.type === type).map((event) => event.tool_use_id)).toEqual(['first-run-tool']);
+    }
+    expect(readSessionState(SID).sessionStateRoot).toBe(sessionStateRoot);
   });
 
   it('rejects an unsafe session id before any filesystem read or spool append', async () => {
