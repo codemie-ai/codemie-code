@@ -1,5 +1,4 @@
 import { readConnectionRecord, readState } from '@/cli/commands/proxy/daemon-manager.js';
-import { ConfigLoader } from '@/utils/config.js';
 import type { SSOCredentials } from '@/providers/core/types.js';
 import { withVerifiedOwner } from '@/providers/core/credential-owner.js';
 import { CodeMieSSO } from '@/providers/plugins/sso/sso.auth.js';
@@ -17,17 +16,17 @@ import { logger } from '@/utils/logger.js';
  *
  * Side effect: `getStoredCredentials` clears expired SSO credentials, as it does at daemon start.
  *
- * With no daemon state (a daemon still starting, or one that has not written it yet) the same two URLs come from the
- * profile `proxy connect` recorded in proxy-connection.json — the profile a hook cold start brings the daemon up on —
- * so the login that daemon will use is the one stamped here.
+ * With no daemon state (a daemon still starting) and only for a caller that asks (`recordedProfile`: the fresh-session
+ * recovery of a start the daemon cannot take yet), the same two URLs come from the profile the hook cold start brings the
+ * daemon up on, selected by the cold start's own `resolveColdStartProfile`, so the login stamped here is the one that daemon uses.
  *
  * Carries the signed-in email (`withVerifiedOwner`) so oauth2-proxy logins have an owner.
  *
  * Never throws; `null` makes identity fall through to the git, codemie_cli and os tiers.
  */
-export async function resolveHookCredentials(): Promise<SSOCredentials | null> {
+export async function resolveHookCredentials(opts: { recordedProfile?: boolean } = {}): Promise<SSOCredentials | null> {
   try {
-    const state = (await readState()) ?? (await urlsOfRecordedProfile());
+    const state = (await readState()) ?? (opts.recordedProfile ? await urlsOfRecordedProfile() : null);
     const sso = new CodeMieSSO();
     const syncCredentials = state?.syncCodeMieUrl ? await sso.getStoredCredentials(state.syncCodeMieUrl) : null;
     const credentials =
@@ -43,7 +42,8 @@ export async function resolveHookCredentials(): Promise<SSOCredentials | null> {
 async function urlsOfRecordedProfile(): Promise<{ syncCodeMieUrl?: string; targetUrl?: string } | null> {
   const record = await readConnectionRecord();
   if (!record) return null;
-  // A name the configs do not know loads as another profile: then there is nothing to name.
-  const config = await ConfigLoader.load(process.cwd(), { name: record.profile });
-  return config.name === record.profile ? { syncCodeMieUrl: config.codeMieUrl, targetUrl: config.baseUrl } : null;
+  // Lazy: the cold start pulls in the whole connect machinery, which ordinary hooks never need.
+  const { resolveColdStartProfile } = await import('@/cli/commands/proxy/otlp-cold-start.js');
+  const { config } = await resolveColdStartProfile(record.profile);
+  return config ? { syncCodeMieUrl: config.codeMieUrl, targetUrl: config.baseUrl } : null;
 }

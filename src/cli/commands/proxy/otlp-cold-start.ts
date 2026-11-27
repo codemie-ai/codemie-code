@@ -102,7 +102,7 @@ async function ssoCredentialsProblem(config: LoadedConfig, name: string): Promis
  * Loads the recorded profile (a repo-local one wins over the global one) and checks it can
  * start a daemon. Returns the config, or the reason it cannot, with the scope that was found.
  */
-async function resolveColdStartProfile(
+export async function resolveColdStartProfile(
   name: string
 ): Promise<{ scope?: 'local' | 'global'; config?: LoadedConfig; skipReason?: string }> {
   const cwd = process.cwd();

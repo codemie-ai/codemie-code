@@ -90,14 +90,17 @@ describe('forwardOtlpEventsToSpool', () => {
     await expect(forwardOtlpEventsToSpool([{ type: 'x' }], 'claude-code-otlp')).resolves.toBe(false);
   });
 
-  it('EPMCDME-17854: flags a batch as undelivered only when no daemon state or a refused connection proves nothing was sent', async () => {
+  it('EPMCDME-17854: flags a batch as undelivered only when no daemon state or a refused connection proves nothing was sent (a reset, 5xx or timeout may follow a spool)', async () => {
     const flag = () => ({ value: false });
     const noState = flag();
     readStateMock.mockResolvedValueOnce(null);
     await forwardOtlpEventsToSpool([{ type: 'x' }], 'a', { undelivered: noState });
     const refused = flag();
-    fetchMock.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    fetchMock.mockRejectedValueOnce(Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('connect'), { code: 'ECONNREFUSED' }) }));
     await forwardOtlpEventsToSpool([{ type: 'x' }], 'a', { undelivered: refused });
+    const reset = flag();
+    fetchMock.mockRejectedValueOnce(Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('read'), { code: 'ECONNRESET' }) }));
+    await forwardOtlpEventsToSpool([{ type: 'x' }], 'a', { undelivered: reset });
     const rejected = flag();
     fetchMock.mockResolvedValueOnce(new Response('{}', { status: 500 }));
     await forwardOtlpEventsToSpool([{ type: 'x' }], 'a', { undelivered: rejected });
@@ -105,7 +108,7 @@ describe('forwardOtlpEventsToSpool', () => {
     fetchMock.mockRejectedValueOnce(new DOMException('Aborted', 'AbortError'));
     await forwardOtlpEventsToSpool([{ type: 'x' }], 'a', { undelivered: aborted });
 
-    expect([noState.value, refused.value, rejected.value, aborted.value]).toEqual([true, true, false, false]);
+    expect([noState.value, refused.value, reset.value, rejected.value, aborted.value]).toEqual([true, true, false, false, false]);
   });
 
   it('aborts and returns false after the fixed 3s timeout', async () => {

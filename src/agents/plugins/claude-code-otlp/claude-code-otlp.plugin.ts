@@ -153,6 +153,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
         routing,
         funding_route: fundingRoute({ ...routingInput, apiKeyHelper: settings.apiKeyHelper }, routing),
         collection_generation: prefs.kind === 'ok' ? prefs.value.collectionGeneration : 0,
+        ...(this.holdsUntilDelivered(hookInput) ? { recoverWithoutDaemon: true as const } : {}),
       };
     });
     return {

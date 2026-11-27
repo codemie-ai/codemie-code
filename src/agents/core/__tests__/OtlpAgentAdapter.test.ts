@@ -1307,6 +1307,15 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
         expect(finalize).toHaveBeenCalledWith(true);
       });
 
+      it('asks for the recorded-profile login only when the start recovers without a daemon', async () => {
+        for (const recover of [true, undefined]) {
+          resolveHookCredentialsMock.mockClear();
+          (adapter as HoldAdapter).inputs = { routing: { routed: true, routing_proof: 'proven' }, ...(recover ? { recoverWithoutDaemon: true as const } : {}) } as never;
+          await start();
+          expect(resolveHookCredentialsMock).toHaveBeenCalledWith({ recordedProfile: recover === true });
+        }
+      });
+
       it('does not hold when delivery is ambiguous (the daemon may have spooled the batch)', async () => {
         unreachable(false);
         await start();

@@ -782,7 +782,7 @@ export interface OtlpAdapterDeps {
     opts?: {
       evidenceV?: 1;
       evidenceLoss?: { sessionId: string; reason: string; events: number };
-      /** Set to true when the batch certainly reached no daemon (no daemon state, or the connection failed before a response). */
+      /** Set to true when the batch certainly reached no daemon (no daemon state, or a refused connection). */
       undelivered?: { value: boolean };
     }
   ) => Promise<boolean>;

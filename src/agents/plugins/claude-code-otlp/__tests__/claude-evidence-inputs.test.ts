@@ -56,6 +56,16 @@ describe('ClaudeCodeOtlpPlugin.extractHookContext', () => {
     expect(readSettingsMock).toHaveBeenCalledWith('/x');
   });
 
+  it('EPMCDME-17854: only a fresh session start may recover its login without daemon state; sibling hooks and resumes may not', async () => {
+    const inputsFor = async (input: Record<string, unknown>) =>
+      (await (plugin as unknown as { extractHookContext: (i: unknown) => Promise<{ evidenceInputs: Record<string, unknown> }> }).extractHookContext({ cwd: '/x', session_id: 's1', ...input })).evidenceInputs;
+    expect(await inputsFor({ hook_event_name: 'SessionStart', source: 'startup' })).toMatchObject({ recoverWithoutDaemon: true });
+    expect(await inputsFor({ hook_event_name: 'SessionStart', source: 'clear' })).toMatchObject({ recoverWithoutDaemon: true });
+    for (const input of [{ hook_event_name: 'SessionStart', source: 'resume' }, { hook_event_name: 'PostToolUse' }, { hook_event_name: 'UserPromptSubmit' }, { hook_event_name: 'SessionEnd' }]) {
+      expect(await inputsFor(input)).not.toHaveProperty('recoverWithoutDaemon');
+    }
+  });
+
   describe('organization only when the saved OAuth login is what pays (review finding 2)', () => {
     afterEach(() => {
       for (const k of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY']) delete process.env[k];

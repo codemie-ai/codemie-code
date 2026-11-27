@@ -4,6 +4,11 @@ import { logger } from '../../utils/logger.js';
 
 const FORWARD_TIMEOUT_MS = 3_000;
 
+function isConnectionRefused(err: unknown): boolean {
+  const code = (error: unknown): unknown => (typeof error === 'object' && error !== null ? Reflect.get(error, 'code') : undefined);
+  return code(err) === 'ECONNREFUSED' || (err instanceof Error && code(err.cause) === 'ECONNREFUSED');
+}
+
 /**
  * Forward one hook invocation's complete, wire-ready events to the local proxy daemon's
  * analytics spool endpoint, as a single batch so the outcome is all-or-nothing.
@@ -55,8 +60,8 @@ export async function forwardOtlpEventsToSpool(
       clearTimeout(timeout);
     }
   } catch (err) {
-    // A refused connection delivered nothing; a timeout may have (the daemon can still have spooled the batch).
-    if (opts?.undelivered && !(err instanceof Error && err.name === 'AbortError')) opts.undelivered.value = true;
+    // Only a refused connection proves nothing was sent; a timeout or a reset may come after the daemon spooled the batch.
+    if (opts?.undelivered && isConnectionRefused(err)) opts.undelivered.value = true;
     const reason = err instanceof Error && err.name === 'AbortError' ? 'timeout' : err instanceof Error ? err.message : String(err);
     logger.debug(`forwardOtlpEventsToSpool: ${reason}`);
     return false;

@@ -3,10 +3,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const readStateMock = vi.fn();
 const getStoredCredentialsMock = vi.fn();
 const readRecordMock = vi.fn();
-const loadConfigMock = vi.fn();
+const coldStartProfileMock = vi.fn();
 
 vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({ readState: readStateMock, readConnectionRecord: readRecordMock }));
-vi.mock('@/utils/config.js', () => ({ ConfigLoader: { load: loadConfigMock } }));
+vi.mock('@/cli/commands/proxy/otlp-cold-start.js', () => ({ resolveColdStartProfile: coldStartProfileMock }));
 vi.mock('@/providers/plugins/sso/sso.auth.js', () => ({
   CodeMieSSO: class {
     getStoredCredentials = getStoredCredentialsMock;
@@ -56,23 +56,33 @@ describe('resolveHookCredentials', () => {
     expect(getStoredCredentialsMock).not.toHaveBeenCalled();
   });
 
-  it('without daemon state uses the URLs of the profile proxy connect recorded (EPMCDME-17854)', async () => {
+  it('without daemon state, only for the recorded-profile caller, uses the cold start profile selection itself (EPMCDME-17854)', async () => {
     readStateMock.mockResolvedValue(null);
     readRecordMock.mockResolvedValue({ profile: 'work' });
-    loadConfigMock.mockResolvedValue({ name: 'work', codeMieUrl: 'https://sync', baseUrl: 'https://target' });
+    coldStartProfileMock.mockResolvedValue({ scope: 'global', config: { name: 'work', codeMieUrl: 'https://sync', baseUrl: 'https://target' } });
     getStoredCredentialsMock.mockImplementation(async (url: string) => creds(url));
 
-    await expect(resolveHookCredentials()).resolves.toMatchObject({ apiUrl: 'https://sync' });
-    expect(loadConfigMock).toHaveBeenCalledWith(process.cwd(), { name: 'work' });
+    await expect(resolveHookCredentials({ recordedProfile: true })).resolves.toMatchObject({ apiUrl: 'https://sync' });
+    expect(coldStartProfileMock).toHaveBeenCalledWith('work');
   });
 
-  it('without daemon state ignores a recorded profile the configs do not know (it loads as another one)', async () => {
+  it('a sibling hook (no recordedProfile) never reads the recorded profile without daemon state', async () => {
     readStateMock.mockResolvedValue(null);
-    readRecordMock.mockResolvedValue({ profile: 'gone' });
-    loadConfigMock.mockResolvedValue({ name: 'default', codeMieUrl: 'https://sync', baseUrl: 'https://target' });
-    getStoredCredentialsMock.mockImplementation(async (url: string) => creds(url));
+    readRecordMock.mockResolvedValue({ profile: 'work' });
+    coldStartProfileMock.mockResolvedValue({ scope: 'global', config: { name: 'work', codeMieUrl: 'https://sync', baseUrl: 'https://target' } });
 
     await expect(resolveHookCredentials()).resolves.toBeNull();
+    expect(readRecordMock).not.toHaveBeenCalled();
+    expect(coldStartProfileMock).not.toHaveBeenCalled();
+  });
+
+  it('an unusable recorded profile (the cold start would skip it) gives no credentials', async () => {
+    readStateMock.mockResolvedValue(null);
+    readRecordMock.mockResolvedValue({ profile: 'gone' });
+    coldStartProfileMock.mockResolvedValue({ skipReason: 'profile not found' });
+    getStoredCredentialsMock.mockImplementation(async (url: string) => creds(url));
+
+    await expect(resolveHookCredentials({ recordedProfile: true })).resolves.toBeNull();
     expect(getStoredCredentialsMock).not.toHaveBeenCalled();
   });
 
@@ -81,7 +91,7 @@ describe('resolveHookCredentials', () => {
     readRecordMock.mockResolvedValue({ profile: 'work' });
     getStoredCredentialsMock.mockImplementation(async (url: string) => creds(url));
 
-    await expect(resolveHookCredentials()).resolves.toMatchObject({ apiUrl: 'https://target' });
+    await expect(resolveHookCredentials({ recordedProfile: true })).resolves.toMatchObject({ apiUrl: 'https://target' });
     expect(readRecordMock).not.toHaveBeenCalled();
   });
 

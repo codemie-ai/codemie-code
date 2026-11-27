@@ -24,6 +24,8 @@ export interface EvidenceInputs {
   collection_generation?: number;
   /** Set by an agent with its own collection controls: the record is then not tied to the Claude generation. */
   agent?: 'copilot-cli-otlp';
+  /** A fresh session's start: its login may be resolved from the recorded profile while the daemon has no state yet. */
+  recoverWithoutDaemon?: true;
 }
 
 /**
@@ -140,7 +142,7 @@ export async function stampEvidence(
   const sessionId = context.sessionId;
   if (!sessionId) return { ok: false, reason: 'session_id_absent' };
   try {
-    const credentials = await resolveHookCredentials();
+    const credentials = await resolveHookCredentials({ recordedProfile: inputs.recoverWithoutDaemon === true });
     if (!credentials?.apiUrl) return { ok: false, reason: 'no_credentials' };
     const email = resolveEmailFromCredentials(credentials);
     if (!email) return { ok: false, reason: 'no_owner', ...(await pendingFor(credentials, context, inputs, sessionId, policy)) };
