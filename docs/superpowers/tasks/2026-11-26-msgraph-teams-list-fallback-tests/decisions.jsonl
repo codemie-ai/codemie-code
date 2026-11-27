@@ -1,0 +1,1 @@
+{"ts":"2026-11-26T12:11:55Z","gate_id":"plan.approved","mode":"hitl","verdict":{"decision":"approve","rationale":"User approved plan after requesting four edits (route matching, --json test, repro.md step, staging constraints)","follow_ups":[],"confidence":"high","source":"hitl"},"escalated":false}
