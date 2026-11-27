@@ -72,7 +72,7 @@ The CodeMie Proxy is a **plugin-based HTTP streaming proxy** that sits between A
 │  │  [5]   Endpoint Blocker       → block unwanted endpoints early│
 │  │  [7]   Gateway Key            → validate local daemon bearer key│
 │  │  [10]  SSO Auth / JWT Auth    → Inject cookies / bearer token│
-│  │  [14]  Claude/Kimi/Codex Normalizers → per-agent body fixes │
+│  │  [14]  Claude/Kimi/Codex Normalizers, Tools Guard → body fixes│
 │  │  [15]  Request Sanitizer      → strip unsupported reasoning params│
 │  │  [16]  Codex/Copilot Encrypted-Content Sanitizers → reasoning replay retry│
 │  │  [17]  VS Code Request Normalizer → constrain user identifiers│
@@ -199,7 +199,7 @@ The CodeMie Proxy is a **plugin-based HTTP streaming proxy** that sits between A
 
 - **0-3**: MCP protocol handling (MCP Auth: 3)
 - **4-10**: Endpoint blocking, gateway/local auth, and upstream authentication (Endpoint Blocker: 5, Gateway Key: 7, SSO Auth: 10, JWT Auth: 10)
-- **11-19**: Per-agent request normalization and sanitization (Claude/Kimi/Codex Normalizers: 14, Request Sanitizer: 15, Codex/Copilot Encrypted-Content Sanitizers: 16, VS Code Request Normalizer: 17)
+- **11-19**: Per-agent request normalization and sanitization (Claude/Kimi/Codex Normalizers: 14, Tools Guard: 14, Request Sanitizer: 15, Codex/Copilot Encrypted-Content Sanitizers: 16, VS Code Request Normalizer: 17)
 - **20-50**: Header manipulation and observability (Header Injection: 20, Logging: 50)
 - **100**: Session sync (SSO Session Sync: 100)
 
@@ -593,13 +593,14 @@ It implements `handleRequest`, not `onRequest`: clients send these requests with
 ### 6.6 Per-Agent Request Normalizers
 
 **Priority**: 14
-**Files**: `claude-request-normalizer.plugin.ts`, `kimi-request-normalizer.plugin.ts`, `codex-request-normalizer.plugin.ts`
+**Files**: `claude-request-normalizer.plugin.ts`, `kimi-request-normalizer.plugin.ts`, `codex-request-normalizer.plugin.ts`, `tools-guard.plugin.ts` (helper: `claude-tools-guard.ts`)
 
 **Purpose**: Fix up agent-specific request body quirks before the request reaches upstream. A normalizer runs for the requests of its own clients; in the daemon a request's client is the one its gateway key names (§6.3):
 
 - **Claude**: normalizes `thinking` params for Claude models
 - **Kimi**: caps Kimi output-token requests to stay within upstream limits
 - **Codex**: maps the Codex app's undated model names onto dated CodeMie deployments
+- **Tools Guard** (clients: `codemie-code`, `codemie-claude`, `codemie-claude-acp`, `codemie-opencode`, `codemie-opencode-acp`, `codemie-copilot`, Claude Desktop, VS Code Claude Code; generation endpoints only — `/messages`, `/chat/completions`, `/responses`, so `count_tokens` is untouched): when a body carries tool history (Anthropic `tool_use`/`tool_result` blocks, OpenAI Chat `role: "tool"`/`tool_calls`, or OpenAI Responses `function_call`/`function_call_output` input items) but `tools` is absent or empty, injects one inert placeholder tool in the matching wire shape and drops any `tool_choice` that would force a tool call. The trigger is body shape only (no model or Bedrock detection), deliberately: the proxy sees client-side model aliases and cannot reliably tell Bedrock from other upstreams, and a request with tool history but no `tools` is invalid on most providers anyway, so a placeholder tool is low-risk there. "Non-Bedrock requests stay unchanged" therefore holds for requests that already define `tools`; the shape-only behavior for a non-Bedrock model is pinned by a test. The rejecting layer is LiteLLM's Bedrock Converse transformation. `modify_params: true` was added to the `codemie` repo's `litellm_config.yaml` for this same error (EPMCDME-13136) and the symptom was reported again in EPMCDME-13808, so the flag evidently does not prevent the rejection for these requests. The cause is not yet confirmed (candidates: the flag is not applied to the Claude aliases, the Converse check runs before it, or a LiteLLM version difference); it must be diagnosed in the `codemie` repo and a follow-up ticket there linked here. This is a compatibility shim (owner: proxy plugin owner); remove it once `modify_params` is verified effective for the Claude aliases, e.g. a tool-history request without `tools` sent to a Claude alias through the gateway without this plugin is accepted.
 
 ### 6.7 Request Sanitizer Plugin
 
@@ -1046,6 +1047,8 @@ src/providers/plugins/sso/proxy/
     ├── claude-request-normalizer.plugin.ts            # priority 14
     ├── kimi-request-normalizer.plugin.ts               # priority 14
     ├── codex-request-normalizer.plugin.ts              # priority 14
+    ├── tools-guard.plugin.ts                           # priority 14
+    ├── claude-tools-guard.ts                           # helper for tools-guard
     ├── request-sanitizer.plugin.ts                     # priority 15
     ├── codex-encrypted-content-sanitizer.plugin.ts      # priority 16
     ├── copilot-encrypted-content-sanitizer.plugin.ts    # priority 16
