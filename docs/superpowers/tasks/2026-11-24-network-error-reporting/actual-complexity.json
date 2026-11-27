@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "generated": "2026-11-24T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 16,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 9,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "technical_risk", "reason": "No precedent: wraps the global axios default adapter with module-level captured state, relying on axios instance creation order and a single shared axios copy. Message sanitization masks URLs and secrets. Failure modes include silent no-op if a nested axios copy exists." },
+    { "dimension": "file_change_estimate", "reason": "9 files changed: 3 modified source files (cli-utils.ts, auth.ts, sdk-client.ts), 1 new module (network-error-capture.ts), and 5 mostly new test files. Diffstat count of 9 maps to L (7-10)." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped: security-sensitive error message sanitization and a gap in existing patterns (no prior adapter wrapper)"
+  ],
+  "split_recommendation": null
+}

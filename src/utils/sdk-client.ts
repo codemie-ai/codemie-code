@@ -13,6 +13,7 @@ import { ConfigLoader } from './config.js';
 import { ConfigurationError } from './errors.js';
 import { logger } from './logger.js';
 import { applySystemProxyEnvironment } from './system-proxy.js';
+import { installNetworkErrorCapture } from './network-error-capture.js';
 
 /**
  * Get authenticated CodeMieClient instance
@@ -88,6 +89,9 @@ export async function getCodemieClient(quiet = false): Promise<CodeMieClient> {
   // The SDK talks over axios, which resolves proxies from the environment per
   // request; on Windows the corporate proxy lives in Internet Settings only.
   await applySystemProxyEnvironment(credentials.apiUrl);
+
+  // Must precede the constructor: axios.create() copies the default adapter.
+  installNetworkErrorCapture();
 
   try {
     const client = new CodeMieClient({
