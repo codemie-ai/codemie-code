@@ -174,7 +174,7 @@ interface ClaudeRoutePlan {
   /** Clients left as configured, with the line that says so; their target is cleared. */
   skipped: { member: AnalyticsMember; line: string }[];
   /** For a refreshed route: the way back to the client's own login. */
-  refreshHints: string[];
+  refreshHints: { member: AnalyticsMember; line: string }[];
 }
 
 /** The line printed under a client's `configured` line once its model requests go through the proxy. */
@@ -183,12 +183,16 @@ export function routeBillingLine(): string {
 }
 
 const EXTENSION_SKIP_LINE =
-  '✓ VS Code Claude Code extension: analytics on (uses your Claude login; model routing unchanged)';
+  '✓ VS Code Claude Code extension configured (uses your Claude login; model routing unchanged)';
 const EXTENSION_OTHER_GATEWAY_SKIP_LINE =
-  '✓ VS Code Claude Code extension: analytics on (uses another gateway or key; model routing unchanged)';
+  '✓ VS Code Claude Code extension configured (uses another gateway or key; model routing unchanged)';
 const EXTENSION_SWITCH_HINT = '  To route it through the proxy: codemie proxy connect --vscode-claude-code';
-const DESKTOP_SWITCH_HINT =
-  'Desktop analytics needs the gateway; to switch it: codemie proxy connect --claude-desktop';
+const DESKTOP_PERSONAL_ROUTE_SKIP =
+  'Claude Desktop is still using your personal subscription, so its sessions aren\'t included in CodeMie analytics. ' +
+  'To use the CodeMie proxy instead, run `codemie proxy connect --claude-desktop` and restart Claude Desktop.';
+const DESKTOP_OTHER_GATEWAY_ROUTE_SKIP =
+  'Claude Desktop is using another gateway, so its sessions aren\'t included in CodeMie analytics. ' +
+  'To use the CodeMie proxy instead, run `codemie proxy connect --claude-desktop` and restart Claude Desktop.';
 
 function disconnectToLoginHint(flag: string): string {
   return `To use your Claude login instead: codemie proxy disconnect ${flag}`;
@@ -217,7 +221,12 @@ async function resolveClaudeRoutes(
       plan.skipped.push({ member: 'vscodeClaudeCode', line });
     } else {
       plan.routed.push('vscodeClaudeCode');
-      if (decision === 'refresh') plan.refreshHints.push(disconnectToLoginHint('--vscode-claude-code'));
+      if (decision === 'refresh') {
+        plan.refreshHints.push({
+          member: 'vscodeClaudeCode',
+          line: disconnectToLoginHint('--vscode-claude-code'),
+        });
+      }
     }
   }
 
@@ -231,11 +240,18 @@ async function resolveClaudeRoutes(
     }
     if (decision === 'skip-1p' || decision === 'skip-other-gateway') {
       activeTargets.claudeDesktop = false;
-      const why = decision === 'skip-1p' ? 'uses your own Claude account' : 'it uses another gateway';
-      plan.skipped.push({ member: 'claudeDesktop', line: `– Claude Desktop: skipped — ${why}. ${DESKTOP_SWITCH_HINT}` });
+      const line = decision === 'skip-1p'
+        ? DESKTOP_PERSONAL_ROUTE_SKIP
+        : DESKTOP_OTHER_GATEWAY_ROUTE_SKIP;
+      plan.skipped.push({ member: 'claudeDesktop', line });
     } else {
       plan.routed.push('claudeDesktop');
-      if (decision === 'refresh') plan.refreshHints.push(disconnectToLoginHint('--claude-desktop'));
+      if (decision === 'refresh') {
+        plan.refreshHints.push({
+          member: 'claudeDesktop',
+          line: disconnectToLoginHint('--claude-desktop'),
+        });
+      }
     }
   }
   return plan;
@@ -265,13 +281,15 @@ function dropDeclinedClaudeRoutes(
 function printClaudeRoutePlan(plan: ClaudeRoutePlan): void {
   for (const { member, line } of plan.skipped) {
     if (member !== 'vscodeClaudeCode') {
-      console.log(chalk.yellow(line));
+      console.log(chalk.yellow(`  ${line}`));
       continue;
     }
     console.log(chalk.green(line));
     console.log(chalk.dim(EXTENSION_SWITCH_HINT));
   }
-  for (const hint of plan.refreshHints) console.log(chalk.dim(hint));
+  for (const { member, line } of plan.refreshHints) {
+    if (member === 'vscodeClaudeCode') console.log(chalk.dim(line));
+  }
 }
 
 /**
@@ -756,13 +774,14 @@ export interface TargetResult {
   skipped?: true;
 }
 
-/**
- * The outcome of a vendor-flag member whose writer threw `ClientNotInstalledError`: one `skipped` line naming the host
- * application and the command to re-run once it is installed.
- */
-function skippedResult(label: string, host: string, rerun: string): TargetResult {
-  console.log(chalk.yellow(`${label}: skipped — ${host} not installed; re-run \`${rerun}\` after installing`));
-  return { label, ok: false, skipped: true };
+function vscodeClaudeCodeNotInstalledResult(host: string, rerun: string): TargetResult {
+  console.log(
+    chalk.yellow(
+      `  ${host} is not installed, so Claude Code extension sessions aren't included in CodeMie analytics. ` +
+      `To use the CodeMie proxy instead, install ${host} and run \`${rerun}\`.`
+    )
+  );
+  return { label: 'VS Code Claude Code extension', ok: false, skipped: true };
 }
 
 function printFailures(results: TargetResult[]): void {
@@ -777,7 +796,8 @@ function printFailures(results: TargetResult[]): void {
 async function runClaudeDesktop(
   state: DaemonState,
   verbose: boolean,
-  desktopConfigFile: string | undefined
+  desktopConfigFile: string | undefined,
+  refreshHint?: string
 ): Promise<TargetResult> {
   try {
     const canonical = state.syncCodeMieUrl
@@ -838,6 +858,7 @@ async function runClaudeDesktop(
       ));
     }
     console.log(chalk.yellow('  Restart Claude Desktop to apply changes.'));
+    if (refreshHint) console.log(chalk.dim(`  ${refreshHint}`));
     return { label: 'Claude Desktop', ok: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -925,7 +946,7 @@ async function runVscodeClaudeCode(state: DaemonState, insiders: boolean, skipRe
   } catch (error) {
     if (skipRerun && error instanceof ClientNotInstalledError) {
       logger.debug('[proxy] VS Code Claude Code extension skipped: VS Code is not installed', ...sanitizeLogArgs({ insiders }));
-      return skippedResult('VS Code Claude Code extension', insiders ? 'VS Code Insiders' : 'VS Code', skipRerun);
+      return vscodeClaudeCodeNotInstalledResult(insiders ? 'VS Code Insiders' : 'VS Code', skipRerun);
     }
     const message = error instanceof Error ? error.message : String(error);
     logger.warn(
@@ -1354,7 +1375,12 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   };
   const editionFlag = (flag: string): string => (insiders ? `${flag} --insiders` : flag);
   if (activeTargets.claudeDesktop) {
-    await runClient('--claude-desktop', runClaudeDesktop(state, verbose, desktopConfigFile), 'claudeDesktop');
+    const desktopRefreshHint = routePlan.refreshHints.find(({ member }) => member === 'claudeDesktop')?.line;
+    await runClient(
+      '--claude-desktop',
+      runClaudeDesktop(state, verbose, desktopConfigFile, desktopRefreshHint),
+      'claudeDesktop'
+    );
   }
   if (activeTargets.vscode) {
     await runClient(editionFlag('--vscode'), runVscodeByok(state, insiders, config, verbose, projectBinding));
