@@ -1,0 +1,12 @@
+{"schema":1,"branch":"fix/EPMCDME-14384-acp-line-metrics","head":"cbbeeffd2c06f1c5ad8e3290b2db800df919c925","runner":"npm","started_at":"2026-11-27T10:39:13Z","completed_at":"2026-11-27T10:44:00Z","status":"PASSED","drift_detected":false,
+"gates":[
+{"id":"license-check","source":"guide","status":"PASS","duration_ms":2000,"command":"npm run license-check","exit_code":0,"notes":"run outside sandbox"},
+{"id":"lint","source":"guide","status":"PASS","duration_ms":3000,"command":"npm run lint","exit_code":0},
+{"id":"typecheck","source":"guide","status":"PASS","duration_ms":3000,"command":"npm run typecheck","exit_code":0},
+{"id":"build","source":"guide","status":"PASS","duration_ms":6000,"command":"npm run build","exit_code":0},
+{"id":"unit","source":"guide","status":"PASS","duration_ms":164000,"command":"npx vitest run --project unit","exit_code":0,"notes":"693 files, 13120 tests passed; outside sandbox"},
+{"id":"integration","source":"guide","status":"PASS","duration_ms":38000,"command":"npx vitest run --project cli","exit_code":0,"notes":"49 files passed, 2 skipped; 394 tests passed, 12 skipped; outside sandbox"},
+{"id":"commitlint","source":"guide","status":"PASS","duration_ms":1000,"command":"npm run commitlint:last","exit_code":0},
+{"id":"secrets","source":"hook","status":"PASS","duration_ms":1000,"command":"npm run validate:secrets","exit_code":0,"notes":"npm script scans only staged diff and nothing is staged ('No staged changes to scan'), so it did no scanning. Ran the same gitleaks v8.30.1 container with .gitleaks.toml on 'git diff origin/main...HEAD' (46909 bytes): 'no leaks found'."}
+],
+"failures":{}}

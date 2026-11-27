@@ -1,0 +1,210 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "User approved check round: CR-001..CR-004 resolved, remaining fix set empty; CR-005/CR-006 fix-later"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "User accepted all recommended: fix-now CR-001..CR-004, fix-later CR-005/CR-006"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "User approved check round: CR-001..CR-004 resolved, remaining fix set empty; CR-005/CR-006 fix-later"
+    }
+  ],
+  "reviewed_head": "cbbeeffd2c06f1c5ad8e3290b2db800df919c925",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "All 4 fix-set blocking findings resolved: onSessionEnd split via processLocatedTranscripts, locateTranscript windows on first-event time, AC4 test uses distinct transcripts, commit subjects carry no ticket key (Refs footer). Advisory CR-005/CR-006 were not in the fix set.",
+  "confidence": "medium",
+  "check_confidence": "high",
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 4,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/claude-acp.plugin.ts",
+      "line": 103,
+      "title": "onSessionEnd exceeds 50-line function limit",
+      "problem": "code-quality.md requires functions under 50 lines; onSessionEnd is about 65 lines and does id resolution, transcript location, processing and SessionEnd dispatch.",
+      "impact": "Documented code-quality rule is incompletely met and the function is harder to test and change.",
+      "recommendation": "Extract the transcript processing loop and the SessionEnd dispatch into helper functions.",
+      "status": "resolved",
+      "check_notes": "Loop extracted to processLocatedTranscripts; onSessionEnd shrinks by ~28 lines",
+      "fix": {
+        "change": "Extracted processLocatedTranscripts helper from onSessionEnd",
+        "test": "claude-acp.lifecycle.test.ts"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/claude.session.ts",
+      "line": 159,
+      "title": "Run window filters on mtime, not start time",
+      "problem": "locateTranscript filters on file mtimeMs, but the spec says birth/first-event time. A transcript begun before the run (a resumed session) and touched during it is included, so its earlier lines are counted into this run. One begun in-run but last written after the next record's start is dropped. A second unclaimed Claude session in the same cwd inside the window is also attributed to this record.",
+      "impact": "Line metrics are over-counted or misattributed, or missed. Trigger: resumed session, or concurrent claude in the same cwd. Confirmed by reading the filter at lines 159-165.",
+      "recommendation": "Window by birth/first-event time as the spec states, and skip lines older than record.startTime when processing. Optionally check the first-line cwd/sessionId.",
+      "status": "resolved",
+      "check_notes": "transcriptStartTime reads first-event timestamp, falls back to mtime; new windowing test added",
+      "fix": {
+        "change": "locateTranscript windows by first-event timestamp (mtime fallback)",
+        "test": "claude.locate-transcript.test.ts"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "claude-acp.lifecycle.test.ts",
+      "title": "Two-transcript test cannot fail on single-file loop",
+      "problem": "The two-transcript lifecycle test (AC4) copies one fixture twice, so dedupe by recordId yields 7/2 even if only one file is processed.",
+      "impact": "AC4 summing across transcripts is not demonstrated by the test, so a regression in the processing loop would go unnoticed.",
+      "recommendation": "Use two distinct transcripts, as the spike test does, and assert the summed totals.",
+      "status": "resolved",
+      "check_notes": "Second transcript is a distinct rewritten copy; totals asserted 14/4",
+      "fix": {
+        "change": "Two-transcript test uses distinct transcripts, asserts 14/4",
+        "test": "claude-acp.lifecycle.test.ts"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "unknown",
+      "title": "Ticket key in all commit subjects",
+      "problem": "All 6 commit subjects in the range embed EPMCDME-14384; git-workflow.md Anti-Patterns says to put the ticket in the body footer when scope conveys context.",
+      "impact": "Documented commit-format rule is broken across the range and blocks the workflow.",
+      "recommendation": "Reword the subjects without the ticket key and put the reference in the body footer. With Squash-and-Merge, keep the key out of the PR title.",
+      "status": "resolved",
+      "check_notes": "git log shows all 6 subjects without ticket key and Refs: EPMCDME-14384 in body",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/agents/plugins/claude/claude.session.ts",
+      "line": 65,
+      "title": "Long cwd encoding may not match Claude's",
+      "problem": "encodeClaudeProjectDir does not truncate and hash-suffix very long paths the way Claude Code may.",
+      "impact": "Only for a cwd over about 200 characters; locateTranscript returns [] and no metrics are recorded. Reachability unconfirmed.",
+      "recommendation": "Verify Claude Code's long-path behavior and mirror it if it exists.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/agents/plugins/claude/claude-acp.plugin.ts",
+      "line": 84,
+      "title": "Stale active record skips SessionStart",
+      "problem": "A leftover active record with the same id and no endTime, for example after a crash, makes onSessionStart skip.",
+      "impact": "Narrow trigger: a crashed earlier run with the same id. The old startTime widens the window. Reachability unconfirmed.",
+      "recommendation": "Also check process liveness or a heartbeat before skipping.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "Step 4: locateTranscript run window by birth/first-event time",
+      "status": "partial",
+      "notes": "claude.session.ts:159 uses file mtimeMs, not birth/first-event time"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC4: two transcripts, summed",
+      "status": "partial",
+      "notes": "lifecycle test uses the same fixture twice; dedupe hides whether the second file is processed"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC9: manual harness run gives 7/2 in _metrics.jsonl",
+      "status": "pending-stage-7",
+      "notes": "runtime evidence from the harness run"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "partial",
+      "notes": "6 subjects embed the ticket key EPMCDME-14384; git-workflow.md says put it in the body footer"
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "onSessionEnd is about 65 lines; guide says under 50"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "no logged secrets; paths only listed and stat-ed under the Claude projects dir"
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "Edge-case, acceptance and standards ran; 4 blocking, 2 advisory findings; 1 dismissed (only-first-transcript correlation is the spec'd behavior), 0 deferred. Two advisory items had unconfirmed reachability. AC9 is pending-stage-7.",
+    "confidence": "medium",
+    "risk_flags": []
+  }
+}

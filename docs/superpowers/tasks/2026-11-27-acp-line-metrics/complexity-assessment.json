@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "task": "Give claude-acp sessions a CodeMie session record via wrapper-run lifecycle in ClaudeAcpPluginMetadata plus ClaudeSessionAdapter.locateTranscript so line-change metrics are no longer 0 (EPMCDME-14384).",
+  "generated": "2026-11-27T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 15,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "technical_risk", "reason": "Codex/opencode lifecycle is a close pattern, but there is no Claude cwd-encoding helper. The wrapper cannot see the IDE session cwd or Claude's own session id. recordTranscriptCorrelation and processSession are one-file-per-record while several ACP sessions per process are wanted. onSessionEnd is skipped on a hard kill, so reconciliation depends on locateTranscript, which also reaches plain claude records. The edge cases listed (cwd mismatch, no transcript found, several transcripts) have no existing test template. Bumped to L." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk set to L: the closest pattern (codex/opencode) does not cover transcript attribution by cwd and time, or several transcripts per record"
+  ],
+  "split_recommendation": null
+}

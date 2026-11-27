@@ -1,5 +1,66 @@
 import type {AgentMetadata, ProviderSettingsCheckInput, ProviderSettingsCheckOutcome} from '../../core/types.js';
 import {ClaudePlugin, ClaudePluginMetadata} from './claude.plugin.js';
+import type {HookProcessingConfig} from '../../../cli/commands/hook.js';
+import {sendPathApiUrl} from '../../core/session/send-path.js';
+import {recordTranscriptCorrelation} from '../../core/session/no-transcript-correlation.js';
+import {wrapperOwnerFromEnv} from '../../../utils/processes.js';
+import {logger} from '../../../utils/logger.js';
+import type {Session} from '../../core/session/types.js';
+import {basename} from 'path';
+
+/**
+ * Hook config for the wrapper-side lifecycle (same shape as codex/opencode). clientType comes from
+ * CODEMIE_CLIENT_TYPE, which the base adapter sets from ssoConfig ('codemie-claude-acp').
+ */
+function buildHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcessingConfig {
+  return {
+    agentName: env.CODEMIE_AGENT || 'claude-acp',
+    sessionId,
+    provider: env.CODEMIE_PROVIDER,
+    apiBaseUrl: env.CODEMIE_BASE_URL,
+    ssoUrl: env.CODEMIE_URL,
+    env,
+    syncApiUrl: env.CODEMIE_SYNC_API_URL,
+    version: env.CODEMIE_CLI_VERSION,
+    profileName: env.CODEMIE_PROFILE_NAME,
+    project: env.CODEMIE_PROJECT,
+    model: env.CODEMIE_MODEL,
+    clientType: env.CODEMIE_CLIENT_TYPE || 'codemie-claude-acp',
+    ...wrapperOwnerFromEnv(env),
+  };
+}
+
+
+/** Locate the run's transcripts and record their line metrics; failures are logged, never thrown. */
+async function processLocatedTranscripts(record: Session | null, sessionId: string, env: NodeJS.ProcessEnv): Promise<void> {
+  const { ClaudeSessionAdapter } = await import('./claude.session.js');
+  const adapter = new ClaudeSessionAdapter(ClaudePluginMetadata);
+  const transcripts = record ? await adapter.locateTranscript(record) : [];
+  if (transcripts.length === 0) {
+    logger.warn('[claude-acp] No transcript matched the current run, skipping metrics');
+    return;
+  }
+  await recordTranscriptCorrelation(sessionId, transcripts[0]);
+  for (const transcript of transcripts) {
+    try {
+      const result = await adapter.processSession(transcript, sessionId, {
+        sessionId,
+        agentSessionId: basename(transcript, '.jsonl'),
+        apiBaseUrl: sendPathApiUrl(env) || '',
+        cookies: '',
+        clientType: env.CODEMIE_CLIENT_TYPE || 'codemie-claude-acp',
+        version: env.CODEMIE_CLI_VERSION || '1.0.0',
+        dryRun: false,
+        finalPass: true,
+      });
+      if (!result.success) {
+        logger.warn(`[claude-acp] Metrics processing had failures: ${result.failedProcessors.join(', ')}`);
+      }
+    } catch (error) {
+      logger.error(`[claude-acp] Transcript processing failed (non-blocking): ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
 
 /**
  * Claude Code ACP Plugin Metadata
@@ -40,6 +101,73 @@ export const ClaudeAcpPluginMetadata: AgentMetadata = {
 
   // No flag mappings - ACP protocol handles everything via stdio
   flagMappings: {},
+
+  // Keep the Claude beforeRun/afterRun; the ACP adapter runs no Claude hooks, so the wrapper
+  // creates the session record at start and processes the transcripts at exit.
+  lifecycle: {
+    ...ClaudePluginMetadata.lifecycle,
+
+    async onSessionStart(sessionId: string, env: NodeJS.ProcessEnv) {
+      try {
+        // A hook may already have created the live record under the agent's own session id; a start
+        // under the CodeMie id would read as a new generation and move that record aside.
+        const { SessionStore } = await import('../../core/session/SessionStore.js');
+        const live = await new SessionStore().loadSession(sessionId);
+        if (live && live.status === 'active' && live.endTime === undefined) {
+          logger.debug(`[claude-acp] Live record exists for session ${sessionId}; SessionStart skipped`);
+          return;
+        }
+        const { processEvent } = await import('../../../cli/commands/hook.js');
+        await processEvent({
+          hook_event_name: 'SessionStart',
+          session_id: sessionId,
+          transcript_path: '',
+          permission_mode: 'default',
+          cwd: process.cwd(),
+          source: 'startup',
+        }, buildHookConfig(env, sessionId));
+        logger.info(`[claude-acp] SessionStart hook completed for session ${sessionId}`);
+      } catch (error) {
+        logger.error(`[claude-acp] SessionStart hook failed (non-blocking): ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+
+    async onSessionEnd(exitCode: number, env: NodeJS.ProcessEnv) {
+      const sessionId = env.CODEMIE_SESSION_ID;
+      if (!sessionId) {
+        logger.debug('[claude-acp] No CODEMIE_SESSION_ID in environment, skipping session end processing');
+        return;
+      }
+
+      // The agent's own id when a hook already correlated the record: SessionEnd under another id
+      // would be read as a different generation and split the record.
+      let endSessionId = sessionId;
+      try {
+        const { SessionStore } = await import('../../core/session/SessionStore.js');
+        const record = await new SessionStore().loadSession(sessionId);
+        const nativeId = record?.correlation?.agentSessionId;
+        if (nativeId && nativeId !== 'unknown') endSessionId = nativeId;
+        await processLocatedTranscripts(record, sessionId, env);
+      } catch (error) {
+        logger.error(`[claude-acp] Transcript lookup failed (non-blocking): ${error instanceof Error ? error.message : String(error)}`);
+      }
+
+      try {
+        const { processEvent } = await import('../../../cli/commands/hook.js');
+        await processEvent({
+          hook_event_name: 'SessionEnd',
+          session_id: endSessionId,
+          transcript_path: '',
+          permission_mode: 'default',
+          cwd: process.cwd(),
+          reason: exitCode === 0 ? 'exit' : `exit(${exitCode})`,
+        }, buildHookConfig(env, sessionId));
+        logger.info(`[claude-acp] SessionEnd hook completed for session ${sessionId}`);
+      } catch (error) {
+        logger.error(`[claude-acp] SessionEnd hook failed (non-blocking): ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
 
   // Silent mode for ACP - stdout is JSON-RPC protocol
   silentMode: true,
