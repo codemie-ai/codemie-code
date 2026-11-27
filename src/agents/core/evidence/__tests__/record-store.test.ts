@@ -277,6 +277,18 @@ describe('session_folder', () => {
     expect(await readRecord(keyOf(f))).toMatchObject({ kind: 'existing', record: { session_folder: '/work/repo' } });
   });
 
+  // @case add-codemie-proxy-analytics-resend_TC_005
+  it('is optional: a record with no session_folder still parses, and a 512-char folder (the MAX_LEN bound) is accepted', async () => {
+    const f = contract('d'); // no session_folder at all, as an older build would write
+    await createOrRead(keyOf(f), f);
+    expect(await readRecord(keyOf(f))).toMatchObject({ kind: 'existing' });
+    expect((await readRecord(keyOf(f)))?.record).not.toHaveProperty('session_folder');
+
+    const atMax = contract('e', { session_folder: 'x'.repeat(512) });
+    await createOrRead(keyOf(atMax), atMax);
+    expect((await readRecord(keyOf(atMax)))?.kind).toBe('existing');
+  });
+
   it('an empty, non-string or over-long folder makes the record invalid (fail closed)', async () => {
     expect((await createOrRead(keyOf(contract('a')), contract('a', { session_folder: '' }))).kind).toBe('stamp_invalid');
     expect((await createOrRead(keyOf(contract('b')), contract('b', { session_folder: 'x'.repeat(513) }))).kind).toBe('stamp_invalid');

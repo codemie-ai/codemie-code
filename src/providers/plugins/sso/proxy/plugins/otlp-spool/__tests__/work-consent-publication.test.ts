@@ -6,7 +6,7 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -463,5 +463,111 @@ describe('codemie proxy analytics resend: held sessions are released once what h
     await connect(m);
     expect(await release(m, { reasons: ['classification_unresolved'] })).toEqual([]);
     expect(await release(m, { reasons: [HELD] })).toEqual([{ sessionId: 's1', reason: HELD, outcome: 'released' }]);
+  });
+
+  // @case add-codemie-proxy-analytics-resend_TC_001
+  it('resend releases a session held in the consented folder, and one held in a sub-folder of it', async () => {
+    const m = await load();
+    const sub = join(work, 'sub');
+    mkdirSync(sub);
+    await heldPersonal(m, 's1', work);
+    await heldPersonal(m, 's2', sub);
+    await connect(m);
+
+    expect(await release(m)).toEqual(
+      expect.arrayContaining([
+        { sessionId: 's1', reason: HELD, outcome: 'released' },
+        { sessionId: 's2', reason: HELD, outcome: 'released' },
+      ])
+    );
+    await drain(m, 's1');
+    await drain(m, 's2');
+    expect(posts().filter((p) => p.headers['X-CodeMie-Work-Consent'] === 'explicit-folder').length).toBe(2);
+  });
+
+  // @case add-codemie-proxy-analytics-resend_TC_002
+  it('consent grant --all releases both a folder-stored session and a legacy session recorded before session_folder existed', async () => {
+    const m = await load();
+    await heldPersonal(m, 's1');
+    await heldPersonal(m, 's2');
+    const r = JSON.parse(readFileSync(recordFile(m, 's2'), 'utf-8'));
+    delete r.session_folder;
+    writeFileSync(recordFile(m, 's2'), JSON.stringify(r));
+
+    await m.consent.connectAllFolders({ owner_hash: identity(m).owner_hash, api_identity: identity(m).api_identity });
+    expect(await release(m)).toEqual(
+      expect.arrayContaining([
+        { sessionId: 's1', reason: HELD, outcome: 'released' },
+        { sessionId: 's2', reason: HELD, outcome: 'released' },
+      ])
+    );
+  });
+
+  // @case add-codemie-proxy-analytics-resend_TC_003
+  it("a reason with no releaser, a stopped session, and another account's session are all left untouched by resend", async () => {
+    const m = await load();
+    h.be.policy = { status: 500, body: {} };
+    await stamp(m, 'a', 'Gmail Personal', 'subscription');
+    await hook(m, 'a');
+    await drain(m, 'a');
+    expect((await m.st.readStatus('a'))!.holds?.session?.reason).toBe('classification_unresolved');
+    // The failed probe above put the shared per-namespace policy cache into a 5-minute backoff (policy-cache.ts
+    // BACKOFF_MS): a real fetch is skipped while it holds, so without clearing it 'b'/'c' would reuse the same
+    // unresolved state regardless of the mock policy below. Drop the cache file to force a fresh probe for them.
+    for (const f of readdirSync(m.rec.evidenceDir())) if (f.endsWith('.policy.json')) rmSync(join(m.rec.evidenceDir(), f));
+    h.be.policy = { status: 200, body: { organizations: ['corp'], version: 'v1', publication_contracts: ['1'] } }; // restore so 'b'/'c' hold on work consent, not on the unavailable policy
+
+    await heldPersonal(m, 'b');
+    await m.stop.writeStop(keyOf(m, 'b'), 'consent_revoked', 'b');
+
+    await heldPersonal(m, 'c');
+    const other = { ...identity(m), owner_hash: 'f'.repeat(64) };
+
+    await connect(m);
+    const results = await release(m);
+    expect(results.find((res) => res.sessionId === 'a')).toBeUndefined(); // no releaser for this hold reason: left out entirely
+    expect(results).toEqual(expect.arrayContaining([{ sessionId: 'b', reason: HELD, outcome: 'stopped' }]));
+    expect(await m.release.releaseHeldSessions(other)).toEqual(
+      expect.arrayContaining([{ sessionId: 'c', reason: HELD, outcome: 'kept', detail: 'not_eligible' }])
+    );
+    await drain(m, 'a');
+    await drain(m, 'b');
+    expect(posts()).toEqual([]);
+  });
+
+  // @case add-codemie-proxy-analytics-resend_TC_004
+  it('a second resend run after release makes no further writes to the record', async () => {
+    const m = await load();
+    await heldPersonal(m, 's1');
+    await connect(m);
+    expect(await release(m)).toEqual([{ sessionId: 's1', reason: HELD, outcome: 'released' }]);
+    const before = readFileSync(recordFile(m, 's1'), 'utf-8');
+
+    expect(await release(m)).toEqual([{ sessionId: 's1', reason: HELD, outcome: 'released' }]);
+    expect(readFileSync(recordFile(m, 's1'), 'utf-8')).toBe(before);
+  });
+
+  // @case add-codemie-proxy-analytics-resend_TC_006
+  it('a release never logs the session folder', async () => {
+    const m = await load();
+    await heldPersonal(m, 's1');
+    await connect(m);
+    const { logger } = (await import('@/utils/logger.js')) as unknown as { logger: Record<string, ReturnType<typeof vi.fn>> };
+
+    expect(await release(m)).toEqual([{ sessionId: 's1', reason: HELD, outcome: 'released' }]);
+    await drain(m, 's1');
+
+    expect(Object.values(posts()[0].headers).join(' ')).not.toContain(work);
+    const loggedArgs = [...logger.debug.mock.calls, ...logger.info.mock.calls].flat().map((a) => JSON.stringify(a)).join(' ');
+    expect(loggedArgs).not.toContain(work);
+  });
+
+  // @case add-codemie-proxy-analytics-resend_TC_009
+  it('releaseHoldLocked also honors the reasons filter directly, not just releaseHeldSessions', async () => {
+    const m = await load();
+    await heldPersonal(m, 's1');
+    await connect(m);
+    expect(await m.release.releaseHoldLocked('s1', identity(m), { reasons: ['classification_unresolved'] })).toBeUndefined();
+    expect(await m.release.releaseHoldLocked('s1', identity(m), { reasons: [HELD] })).toEqual({ sessionId: 's1', reason: HELD, outcome: 'released' });
   });
 });
