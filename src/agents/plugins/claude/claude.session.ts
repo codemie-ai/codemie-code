@@ -7,7 +7,7 @@
 
 import { join, dirname, basename, resolve } from 'path';
 import { homedir } from 'os';
-import { existsSync } from 'fs';
+import { existsSync, realpathSync } from 'fs';
 import { readdir, readFile, stat } from 'fs/promises';
 import { latestRecordTime, type SessionAdapter, type ParsedSession, type AggregatedResult } from '../../core/session/BaseSessionAdapter.js';
 import type { SessionDiscoveryOptions, SessionDescriptor } from '../../core/session/discovery-types.js';
@@ -29,8 +29,22 @@ import { isCountedTranscriptLine, keepFirstAcrossCompaction } from './session/tr
  * Claude encodes the cwd by replacing every '/' with '-'; the encoding is lossy when the
  * original path contains '-', so this is only a hint (exact cwd is read from session messages).
  */
-function decodeClaudeProjectDir(encoded: string): string {
+export function decodeClaudeProjectDir(encoded: string): string {
   return '/' + encoded.replace(/^-+/, '').replace(/-/g, '/');
+}
+
+/**
+ * The directory name Claude Code uses under projects/ for a cwd: the realpath (the input when it
+ * does not exist) with every non-alphanumeric character replaced by '-'.
+ */
+export function encodeClaudeProjectDir(cwd: string): string {
+  let resolved = cwd;
+  try {
+    resolved = realpathSync(cwd);
+  } catch {
+    // A cwd that no longer exists is encoded as given
+  }
+  return resolved.replace(/[^a-zA-Z0-9]/g, '-');
 }
 
 /**
