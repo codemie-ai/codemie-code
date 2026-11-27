@@ -1972,11 +1972,13 @@ codemie hook --agent <name> [--event <name>]
 echo '{"session_id":"...","hook_event_name":"SessionStart"}' | codemie hook --agent claude
 ```
 
+The example takes effect only inside a CodeMie-managed session, where `CODEMIE_SESSION_ID` and `CODEMIE_AGENT` are set. In any other shell it exits `0` without doing anything or printing anything. An OTLP agent name such as `claude-code-otlp` skips that check.
+
 **Options:**
 - `--agent <name>` - Agent name for hook attribution
 - `--event <name>` - Event name for hosts whose hook payload carries none (for example Copilot CLI)
 
-**Exit codes:** exit code `2` is a blocking error. The hook host feeds the message printed on stderr back to the agent. It is used when the hook input is invalid (not JSON, or missing `session_id` or `hook_event_name`) and when analytics sync is configured but authentication is known to be broken.
+**Exit codes:** exit code `2` is a blocking error. The hook host feeds the message printed on stderr back to the agent. It is used when the hook input is invalid (not JSON, or missing `session_id` or `hook_event_name`), when `transcript_path` is missing on any event other than `SessionStart` and `SessionEnd`, and when analytics sync is configured but authentication is known to be broken. Any other handler failure exits `1` and prints a one-line reason on stderr. Runs outside a CodeMie-managed session and runs for OTLP agents skip the field checks and exit `0`.
 
 See [HOOKS.md](HOOKS.md) for the hook events and configuration.
 
