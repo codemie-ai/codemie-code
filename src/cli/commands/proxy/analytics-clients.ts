@@ -22,9 +22,10 @@ import type { DoctorRemedies } from './doctor/plan.js';
 import { CLAUDE_OTLP_FLAG, COPILOT_OTLP_FLAG, vendorFlag, type FlagRow } from './flag-list.js';
 import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
 import { readCodeMieDesktopGateway, readDesktopGateway } from './connectors/desktop.js';
-import { readVsCodeClaudeCodeGateway } from './connectors/vscode-claude-code.js';
+import { readVsCodeClaudeCodeGateway, readVsCodeClaudeCodeRouteState } from './connectors/vscode-claude-code.js';
 import { getVsCodeProductDir, type ConnectorGateway } from './connectors/vscode.js';
-import type { DaemonState } from './daemon-manager.js';
+import { DEFAULT_GATEWAY_KEY, readState, type DaemonState } from './daemon-manager.js';
+import { hasOwnApiKeyInShell } from './claude-client-config-state.js';
 import type { ConnectTargets, TargetResult } from './connect-orchestrator.js';
 
 /** A `which` / `where.exe` lookup still running at this deadline is killed and counts as found. */
@@ -139,7 +140,10 @@ export interface AnalyticsClientRow {
   /** Its analytics are on: the hooks for Claude Code and the extension, the gateway for Desktop, the scope for Copilot. */
   connected: boolean;
   flag: string;
-  /** Desktop's applied config is a loopback gateway with a key this proxy does not accept. */
+  /**
+   * Desktop's applied config is a loopback gateway with a key this proxy does not accept; the extension uses another
+   * gateway or a key of its own (VS Code settings or the shell's `ANTHROPIC_API_KEY`) rather than a Claude login.
+   */
   otherGateway: boolean;
   /** Its model requests go through the proxy: the extension's route, Desktop's gateway. */
   routed: boolean;
@@ -334,25 +338,27 @@ function row({ client, label, lookedUp, connected, aggregateFlag, otherGateway =
 }
 
 /**
- * Whether the extension's route in VS Code's settings (stable or Insiders) is this proxy's: at the daemon's port with a
- * key it accepts while it runs; any loopback route with no daemon.
+ * Whether the extension's route in VS Code's settings (stable or Insiders) is this proxy's: a loopback route with a key
+ * the proxy accepts, at the daemon's port while it runs. With no daemon the port is not known, the key still decides:
+ * a loopback gateway of another tool is not routed through this proxy.
  */
 function isExtensionRouted(routes: (ConnectorGateway | null)[], state: DaemonState | null): boolean {
   return routes.some((route) =>
-    route !== null && (state === null || (route.port === state.port && route.key !== 'refused')));
+    route !== null && route.key !== 'refused' && (state === null || route.port === state.port));
 }
 
 /**
  * The five analytics clients `proxy connect` turns on, found and connected. With `state` null (no daemon) Claude
- * Desktop is not connected and its gateway config is not read. The extension is connected when the hooks are in
- * place; its route in VS Code's settings (routed through the proxy) is `routed`, a
- * separate fact. Reads files only; never rejects.
+ * Desktop is not connected. Routes are judged by the key of the daemon, else the last one recorded, else the shared
+ * default, so another tool's gateway reads the same with or without a daemon. The extension is connected when the
+ * hooks are in place; its route in VS Code's settings (routed through the proxy) is `routed`, a separate fact. Reads
+ * files and the shell's own `ANTHROPIC_API_KEY`; runs nothing, so a key only `claude auth status` reveals (an
+ * `apiKeyHelper`) is not seen here. Never rejects.
  */
 export async function collectAnalyticsClients(state: DaemonState | null): Promise<AnalyticsClientRow[]> {
-  // With no daemon the route's key is not judged.
-  const routeKey = state?.gatewayKey ?? '';
+  const routeKey = state?.gatewayKey ?? (await read('daemon state', null, readState))?.gatewayKey ?? DEFAULT_GATEWAY_KEY;
   const [claudeBinary, stableDir, insidersDir, desktopApp, copilotBinary, hooks, gateway, chatOn, cliOn, stableRoute,
-    insidersRoute] =
+    insidersRoute, stableState, insidersState] =
     await Promise.all([
       findClaudeCodeBinary(),
       findVsCodeDir(false),
@@ -360,26 +366,30 @@ export async function collectAnalyticsClients(state: DaemonState | null): Promis
       findClaudeDesktopApp(),
       findCopilotCliBinary(),
       read('Claude Code hooks', false, hasClaudeCodeOtlpHooks),
-      state
-        ? read<DesktopGateway | null>('Claude Desktop gateway', null, () => readDesktopGatewayConfig())
-        : Promise.resolve(null),
+      read<DesktopGateway | null>('Claude Desktop gateway', null, () => readDesktopGatewayConfig()),
       read('Copilot Chat scope', false, () => isConnectorActive(COPILOT_CHAT_OTLP_AGENT_NAME)),
       read('Copilot CLI scope', false, () => isConnectorActive(COPILOT_CLI_OTLP_AGENT_NAME)),
       readVsCodeClaudeCodeGateway(routeKey, false),
       readVsCodeClaudeCodeGateway(routeKey, true),
+      readVsCodeClaudeCodeRouteState(routeKey, false),
+      readVsCodeClaudeCodeRouteState(routeKey, true),
     ]);
   const [claude, copilot] = ANALYTICS_AGGREGATES.map((aggregate) => aggregate.flag);
   const vscode = stableDir || insidersDir;
   const desktopConnected = state !== null && isDesktopConnectedTo(gateway, state.gatewayKey, state.port);
-  const otherGateway = state !== null && gateway !== null && !isDesktopPointedAtLocalProxy(gateway, state.gatewayKey);
+  const desktopOtherGateway = gateway !== null && !isDesktopPointedAtLocalProxy(gateway, routeKey);
+  const extensionRouted = isExtensionRouted([stableRoute, insidersRoute], state);
+  // Another gateway, or a key or provider of the user's own, in VS Code's settings or the shell: not a Claude login.
+  const extensionOtherGateway = !extensionRouted &&
+    (stableState === 'foreign' || insidersState === 'foreign' || hasOwnApiKeyInShell());
   return [
     row({ client: 'claude-code', label: 'Claude Code', lookedUp: claudeBinary,
       connected: hooks, aggregateFlag: claude }),
     row({ client: 'vscode-claude-code', label: 'VS Code Claude Code extension',
-      lookedUp: vscode, connected: hooks, routed: isExtensionRouted([stableRoute, insidersRoute], state),
+      lookedUp: vscode, connected: hooks, routed: extensionRouted, otherGateway: extensionOtherGateway,
       aggregateFlag: insidersDir && !stableDir ? `${claude} --insiders` : claude }),
     row({ client: 'claude-desktop', label: 'Claude Desktop', lookedUp: desktopApp,
-      connected: desktopConnected, aggregateFlag: claude, otherGateway, routed: desktopConnected }),
+      connected: desktopConnected, aggregateFlag: claude, otherGateway: desktopOtherGateway, routed: desktopConnected }),
     row({ client: 'copilot-chat', label: 'Copilot Chat', lookedUp: stableDir,
       connected: chatOn, aggregateFlag: copilot }),
     row({ client: 'copilot-cli', label: 'Copilot CLI', lookedUp: copilotBinary,
@@ -396,8 +406,15 @@ export const ANALYTICS_CLIENT_TARGET_IDS: Record<AnalyticsClientRow['client'], s
   'copilot-cli': COPILOT_CLI_OTLP_AGENT_NAME,
 };
 
-/** The extension whose hooks are on and whose model route is not CodeMie's. */
-export const EXTENSION_ANALYTICS_ON = 'analytics on (uses your Claude login; model routing unchanged)';
+/** What an extension, or Desktop, that is not routed through CodeMie uses: the words `connect` and `proxy clients` share. */
+export const USES_CLAUDE_LOGIN = 'uses your Claude login';
+export const USES_OTHER_GATEWAY = 'uses another gateway or key';
+
+/** The extension whose hooks are on and whose model route is not CodeMie's, on a Claude login. */
+export const EXTENSION_ANALYTICS_ON = `analytics on (${USES_CLAUDE_LOGIN}; model routing unchanged)`;
+
+/** The extension whose hooks are on and whose model requests use another gateway or a key of its own. */
+export const EXTENSION_ANALYTICS_ON_OTHER_GATEWAY = `analytics on (${USES_OTHER_GATEWAY}; model routing unchanged)`;
 
 /** The note of an extension routed through CodeMie, with the command that gives it back its Claude login. */
 export function routedExtensionNote(flag: string, remedies: DoctorRemedies): string {
@@ -414,15 +431,20 @@ export function routedExtensionNote(flag: string, remedies: DoctorRemedies): str
  */
 export function analyticsClientHint(row: AnalyticsClientRow, commands: boolean, remedies: DoctorRemedies): string | undefined {
   if (row.client === 'vscode-claude-code' && row.connected) {
-    return row.routed ? routedExtensionNote(row.flag, remedies) : EXTENSION_ANALYTICS_ON;
+    if (row.routed) return routedExtensionNote(row.flag, remedies);
+    if (!row.otherGateway) return EXTENSION_ANALYTICS_ON;
+    const insiders = row.flag.endsWith('--insiders') ? ' --insiders' : '';
+    return commands
+      ? `${EXTENSION_ANALYTICS_ON_OTHER_GATEWAY} — to route it through the proxy: ${remedies.connect(`--vscode-claude-code${insiders}`)}`
+      : EXTENSION_ANALYTICS_ON_OTHER_GATEWAY;
   }
   if (row.connected) return undefined;
   if (row.found && !commands) return 'not connected';
   const command = remedies.connect(row.flag);
-  if (row.otherGateway && commands) {
+  if (row.client === 'claude-desktop' && row.otherGateway && commands) {
     return renderHint({
-      reason: 'points at a local gateway with a key this proxy does not accept',
-      action: `if it should use CodeMie, run: ${command}`,
+      reason: 'uses another gateway',
+      command: remedies.connect('--claude-desktop'),
     });
   }
   return renderHint({ reason: row.found ? 'not connected' : 'not found', command });

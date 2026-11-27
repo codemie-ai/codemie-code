@@ -106,23 +106,31 @@ function routingVariablesToStrip(): string[] {
   return hasOwnApiKeyInShell() ? names.filter(name => name !== 'ANTHROPIC_API_KEY') : names;
 }
 
-function hasOwnApiKeyInShell(): boolean {
+/** The shell holds an `ANTHROPIC_API_KEY` of the user's own: one with no `ANTHROPIC_BASE_URL` beside it. */
+export function hasOwnApiKeyInShell(): boolean {
   return Boolean(process.env.ANTHROPIC_API_KEY) && !process.env.ANTHROPIC_BASE_URL;
 }
 
+export interface ClaudeAuth {
+  state: ClaudeLoginState;
+  /** What the user has is a first-party API key of their own (`authMethod: "api_key"`), not a Claude login. */
+  ownApiKey: boolean;
+}
+
 /**
- * Whether the user has a Claude login or key of their own: `claude auth status --json` run with the routing
+ * Whether the user has a Claude login or key of their own, and which: `claude auth status --json` run with the routing
  * variables of this shell stripped (see {@link routingVariablesToStrip}), so they do not hide the stored login. `authMethod: "none"` is
- * `logged-out` (the command exits 1 then, so the exit code is ignored); any other method, a timed-out run or output that does not parse is `configured`. Without a
- * `claude` binary the answer comes from the shell's own `ANTHROPIC_API_KEY`, else `~/.claude.json` (an `oauthAccount` key
- * means configured).
+ * `logged-out` (the command exits 1 then, so the exit code is ignored); `api_key` is `configured` with `ownApiKey`;
+ * any other method, a timed-out run or output that does not parse is `configured`. Without a `claude` binary the
+ * shell's own `ANTHROPIC_API_KEY` is `configured` with `ownApiKey`, else `~/.claude.json` decides (an `oauthAccount`
+ * key means configured).
  */
-export async function detectClaudeLogin(seams: ClaudeClientConfigSeams = {}): Promise<ClaudeLoginState> {
+export async function detectClaudeAuth(seams: ClaudeClientConfigSeams = {}): Promise<ClaudeAuth> {
   const run = seams.exec ?? exec;
   const binary = await (seams.resolveClaudeBinary ?? resolveClaudeBinary)();
   if (!binary) {
-    if (hasOwnApiKeyInShell()) return 'configured';
-    return loginFromClaudeJson(seams.claudeJsonPath ?? resolveHomeDir('.claude.json'));
+    if (hasOwnApiKeyInShell()) return { state: 'configured', ownApiKey: true };
+    return { state: await loginFromClaudeJson(seams.claudeJsonPath ?? resolveHomeDir('.claude.json')), ownApiKey: false };
   }
 
   try {
@@ -132,25 +140,33 @@ export async function detectClaudeLogin(seams: ClaudeClientConfigSeams = {}): Pr
     });
     // `claude auth status` exits 1 when nobody is logged in, and still prints the JSON; the output decides, not the code.
     const parsed: unknown = JSON.parse(result.stdout);
-    return isRecord(parsed) && parsed.authMethod === 'none' ? 'logged-out' : 'configured';
+    const authMethod = isRecord(parsed) ? parsed.authMethod : undefined;
+    return { state: authMethod === 'none' ? 'logged-out' : 'configured', ownApiKey: authMethod === 'api_key' };
   } catch (error) {
     logger.debug('[proxy] claude auth status not usable; counting Claude as configured', ...sanitizeLogArgs({ error: String(error) }));
-    return 'configured';
+    return { state: 'configured', ownApiKey: false };
   }
+}
+
+/** Whether the user has a Claude login or key of their own; see {@link detectClaudeAuth} for which. */
+export async function detectClaudeLogin(seams: ClaudeClientConfigSeams = {}): Promise<ClaudeLoginState> {
+  return (await detectClaudeAuth(seams)).state;
 }
 
 /**
  * What `--claude-otlp` does to the VS Code extension's model route: our own route (a loopback gateway with the daemon's
- * key) is refreshed, another route or key in the extension's settings (a loopback gateway with another key included)
- * is left alone as `skip-other-gateway`, a Claude login or key of the user's own is left alone as `skip`, and a route
- * is written only for a user with neither.
+ * key) is refreshed, another route or key in the extension's settings (a loopback gateway with another key included) and
+ * an API key of the user's own are left alone as `skip-other-gateway`, a Claude login is left alone as `skip`, and a
+ * route is written only for a user with neither.
  */
 export async function decideVsCodeRoute(insiders: boolean, seams: ClaudeClientConfigSeams = {}): Promise<VsCodeRouteDecision> {
   const key = seams.gatewayKey ?? (await readState())?.gatewayKey ?? DEFAULT_GATEWAY_KEY;
   const state = await readVsCodeClaudeCodeRouteState(key, insiders);
   if (state === 'ours') return 'refresh';
   if (state === 'foreign') return 'skip-other-gateway';
-  return (await detectClaudeLogin(seams)) === 'logged-out' ? 'route' : 'skip';
+  const auth = await detectClaudeAuth(seams);
+  if (auth.state === 'logged-out') return 'route';
+  return auth.ownApiKey ? 'skip-other-gateway' : 'skip';
 }
 
 /**

@@ -37,6 +37,11 @@ vi.mock('../connectors/desktop.js', async (importOriginal) => ({
   readCodeMieDesktopGateway: vi.fn(async () => null),
 }));
 
+vi.mock('../daemon-manager.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../daemon-manager.js')>()),
+  readState: vi.fn(async () => null),
+}));
+
 vi.mock('../connectors/claude-code-otlp.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../connectors/claude-code-otlp.js')>()),
   hasClaudeCodeOtlpHooks: vi.fn(async () => false),
@@ -53,6 +58,7 @@ const { readDesktopGatewayConfig } = await import('@/telemetry/clients/claude-de
 const { hasClaudeCodeOtlpHooks } = await import('../connectors/claude-code-otlp.js');
 const { readCodeMieDesktopGateway, readDesktopGateway } = await import('../connectors/desktop.js');
 const { readCopilotConnectorScope } = await import('@/agents/core/copilot-connector-scope.js');
+const { readState } = await import('../daemon-manager.js');
 const { getVsCodeProductDir } = await import('../connectors/vscode.js');
 const { writeVsCodeClaudeCodeConfigAtPath } = await import('../connectors/vscode-claude-code.js');
 const {
@@ -62,6 +68,7 @@ const {
   ANALYTICS_AGGREGATES,
   analyticsClientHint,
   ANALYTICS_CLIENT_TARGET_IDS,
+  EXTENSION_ANALYTICS_ON_OTHER_GATEWAY,
   isMemberConfigured,
   isMemberFound,
   membersOf,
@@ -93,6 +100,12 @@ const insidersDir = () => mkdir(join(root, 'Code - Insiders'), { recursive: true
 /** The extension's route in an edition's settings, as `--vscode-claude-code` writes it for gateway key `key`. */
 const route = (edition: 'Code' | 'Code - Insiders', port: number, key = 'codemie-proxy') =>
   writeVsCodeClaudeCodeConfigAtPath(join(root, edition, 'User', 'settings.json'), `http://127.0.0.1:${port}`, key);
+/** The extension's own settings, as the user wrote them (stable VS Code). */
+async function settings(content: unknown): Promise<void> {
+  const path = join(root, 'Code', 'User', 'settings.json');
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(content));
+}
 const desktopApp = () => mkdir(join(root, 'Applications', 'Claude.app'), { recursive: true });
 const binaries = (claude: boolean, copilot: boolean) =>
   vi.mocked(getCommandPath).mockImplementation(async (command) =>
@@ -120,6 +133,9 @@ beforeEach(async () => {
   vi.mocked(readDesktopGatewayConfig).mockReset().mockResolvedValue(null);
   vi.mocked(readDesktopGateway).mockReset().mockResolvedValue(null);
   vi.mocked(readCodeMieDesktopGateway).mockReset().mockResolvedValue(null);
+  vi.mocked(readState).mockReset().mockResolvedValue(null);
+  vi.stubEnv('ANTHROPIC_API_KEY', '');
+  vi.stubEnv('ANTHROPIC_BASE_URL', '');
 });
 
 afterEach(async () => {
@@ -187,14 +203,18 @@ describe('collectAnalyticsClients', () => {
     expect(pick(rows, 'copilot-chat')).toMatchObject({ found: false, flag: '--copilot-otlp' });
   });
 
-  it('reads no gateway config and no Desktop connection with no daemon', async () => {
+  it('reads no Desktop connection with no daemon, whoever owns the gateway config', async () => {
     await desktopApp();
     vi.mocked(readDesktopGatewayConfig).mockResolvedValue({ port: 4001, apiKey: 'codemie-proxy' });
+    expect(pick(await collectAnalyticsClients(null), 'claude-desktop'))
+      .toMatchObject({ found: true, connected: false, routed: false, otherGateway: false });
+  });
 
-    const rows = await collectAnalyticsClients(null);
-
-    expect(pick(rows, 'claude-desktop')).toMatchObject({ found: true, connected: false, otherGateway: false });
-    expect(readDesktopGatewayConfig).not.toHaveBeenCalled();
+  it('reads Desktop on another tool\'s gateway as another gateway with no daemon too', async () => {
+    await desktopApp();
+    vi.mocked(readDesktopGatewayConfig).mockResolvedValue({ port: 4999, apiKey: 'other-tool-key' });
+    expect(pick(await collectAnalyticsClients(null), 'claude-desktop'))
+      .toMatchObject({ connected: false, routed: false, otherGateway: true });
   });
 
   it('reads Desktop on another port than the daemon as not connected, no other gateway', async () => {
@@ -263,13 +283,69 @@ describe('collectAnalyticsClients', () => {
       .toMatchObject({ connected: true, routed: false });
   });
 
-  it('with no daemon reads any stable loopback route as routed, and no route as not routed', async () => {
+  it('with no daemon reads a loopback route with CodeMie\'s key as routed, whatever its port, and no route as not routed', async () => {
     await stableDir();
     vi.mocked(hasClaudeCodeOtlpHooks).mockResolvedValue(true);
     expect(pick(await collectAnalyticsClients(null), 'vscode-claude-code')).toMatchObject({ connected: true, routed: false });
 
-    await route('Code', 4999, 'someone-else');
+    await route('Code', 4999);
     expect(pick(await collectAnalyticsClients(null), 'vscode-claude-code')).toMatchObject({ connected: true, routed: true });
+  });
+
+  it('with no daemon reads a loopback route with another tool\'s key as not routed, on another gateway', async () => {
+    await stableDir();
+    vi.mocked(hasClaudeCodeOtlpHooks).mockResolvedValue(true);
+    await route('Code', 8123, 'litellm-key');
+
+    expect(pick(await collectAnalyticsClients(null), 'vscode-claude-code'))
+      .toMatchObject({ connected: true, routed: false, otherGateway: true });
+  });
+
+  it('with no daemon judges the route by the key of the last daemon recorded', async () => {
+    await stableDir();
+    vi.mocked(hasClaudeCodeOtlpHooks).mockResolvedValue(true);
+    vi.mocked(readState).mockResolvedValue({ ...state, gatewayKey: 'recorded-key' });
+    await route('Code', 4001, 'recorded-key');
+
+    expect(pick(await collectAnalyticsClients(null), 'vscode-claude-code')).toMatchObject({ routed: true, otherGateway: false });
+  });
+
+  it('with a daemon reads a route on another tool\'s gateway as another gateway', async () => {
+    await stableDir();
+    vi.mocked(hasClaudeCodeOtlpHooks).mockResolvedValue(true);
+    await route('Code', 8123, 'litellm-key');
+
+    expect(pick(await collectAnalyticsClients(state), 'vscode-claude-code'))
+      .toMatchObject({ routed: false, otherGateway: true });
+  });
+
+  it.each([
+    ['ANTHROPIC_API_KEY', { name: 'ANTHROPIC_API_KEY', value: 'sk-ant-own' }],
+    ['CLAUDE_CODE_USE_BEDROCK', { name: 'CLAUDE_CODE_USE_BEDROCK', value: '1' }],
+  ])('reads an extension with its own %s in VS Code settings as another gateway or key', async (_name, envVar) => {
+    await stableDir();
+    vi.mocked(hasClaudeCodeOtlpHooks).mockResolvedValue(true);
+    await settings({ 'claudeCode.environmentVariables': [envVar] });
+
+    expect(pick(await collectAnalyticsClients(state), 'vscode-claude-code'))
+      .toMatchObject({ routed: false, otherGateway: true });
+  });
+
+  it('reads an extension whose shell holds an ANTHROPIC_API_KEY of its own as another gateway or key, not a Claude login', async () => {
+    await stableDir();
+    vi.mocked(hasClaudeCodeOtlpHooks).mockResolvedValue(true);
+    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-ant-own');
+
+    expect(pick(await collectAnalyticsClients(state), 'vscode-claude-code')).toMatchObject({ otherGateway: true });
+  });
+
+  it('reads a shell ANTHROPIC_API_KEY beside an ANTHROPIC_BASE_URL as a gateway\'s key, still a Claude login', async () => {
+    await stableDir();
+    vi.mocked(hasClaudeCodeOtlpHooks).mockResolvedValue(true);
+    vi.stubEnv('ANTHROPIC_API_KEY', 'gateway-key');
+    vi.stubEnv('ANTHROPIC_BASE_URL', 'https://gw.example.com');
+
+    expect(pick(await collectAnalyticsClients(state), 'vscode-claude-code')).toMatchObject({ otherGateway: false });
   });
 
   it('reads the extension not connected by its route without the hooks', async () => {
@@ -513,16 +589,29 @@ describe('analyticsClientHint', () => {
     expect(hint).toContain('codemie proxy disconnect --vscode-claude-code --insiders');
   });
 
-  it('names another local gateway for Desktop', () => {
+  it('names another gateway for Desktop, with the command that switches it', () => {
     expect(analyticsClientHint(row('claude-desktop', 'Claude Desktop', true, false, '--claude-otlp', true), true, BACKEND_REMEDIES))
-      .toBe('points at a local gateway with a key this proxy does not accept — ' +
-        'if it should use CodeMie, run: codemie proxy connect --claude-otlp');
+      .toBe('uses another gateway — run: codemie proxy connect --claude-desktop');
+  });
+
+  it('says an extension on another gateway or key uses it, with the command that routes it', () => {
+    expect(analyticsClientHint(
+      row('vscode-claude-code', 'VS Code Claude Code extension', true, true, '--claude-otlp', true), true, BACKEND_REMEDIES))
+      .toBe(`${EXTENSION_ANALYTICS_ON_OTHER_GATEWAY} — to route it through the proxy: codemie proxy connect --vscode-claude-code`);
+    expect(analyticsClientHint(
+      row('vscode-claude-code', 'VS Code Claude Code extension', true, true, '--claude-otlp --insiders', true), true, BACKEND_REMEDIES))
+      .toContain('codemie proxy connect --vscode-claude-code --insiders');
+  });
+
+  it('names no command for an extension on another gateway without commands, and never a disconnect', () => {
+    const hint = analyticsClientHint(
+      row('vscode-claude-code', 'VS Code Claude Code extension', true, true, '--claude-otlp', true), false, BACKEND_REMEDIES);
+    expect(hint).toBe(EXTENSION_ANALYTICS_ON_OTHER_GATEWAY);
   });
 
   it.each([
     [false, 'not found — run: codemie proxy connect --claude-otlp'],
-    [true, 'points at a local gateway with a key this proxy does not accept — ' +
-      'if it should use CodeMie, run: codemie proxy connect --claude-otlp'],
+    [true, 'uses another gateway — run: codemie proxy connect --claude-desktop'],
   ])('a not found Desktop row on another local gateway, commands %s', (commands, hint) => {
     const desktop = row('claude-desktop', 'Claude Desktop', false, false, '--claude-otlp', true);
     expect(analyticsClientHint(desktop, commands, BACKEND_REMEDIES)).toBe(hint);

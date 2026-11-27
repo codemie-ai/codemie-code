@@ -14,7 +14,7 @@ vi.mock('../connectors/vscode-claude-code.js', async (importOriginal) => ({
 }));
 
 const { readVsCodeClaudeCodeRouteState } = await import('../connectors/vscode-claude-code.js');
-const { detectClaudeLogin, decideVsCodeRoute, decideDesktopRoute } = await import('../claude-client-config-state.js');
+const { detectClaudeAuth, detectClaudeLogin, decideVsCodeRoute, decideDesktopRoute } = await import('../claude-client-config-state.js');
 
 type ExecFn = NonNullable<NonNullable<Parameters<typeof detectClaudeLogin>[0]>['exec']>;
 
@@ -79,6 +79,31 @@ describe('claude-client-config-state', () => {
       expect(options.unsetEnv).toContain('ANTHROPIC_MODEL');
     });
 
+    it.each([
+      ['none', { state: 'logged-out', ownApiKey: false }],
+      ['claude.ai', { state: 'configured', ownApiKey: false }],
+      ['oauth_token', { state: 'configured', ownApiKey: false }],
+      ['api_key', { state: 'configured', ownApiKey: true }],
+    ])('detectClaudeAuth tells a key of the user\'s own from a login: authMethod %s', async (authMethod, expected) => {
+      const exec = execReturning(JSON.stringify({ authMethod }), authMethod === 'none' ? 1 : 0);
+      expect(await detectClaudeAuth({ exec: exec as unknown as ExecFn, resolveClaudeBinary: binary })).toEqual(expected);
+    });
+
+    it('detectClaudeAuth reads a shell ANTHROPIC_API_KEY of its own as a key, not a login, without a claude binary', async () => {
+      vi.stubEnv('ANTHROPIC_BASE_URL', '');
+      vi.stubEnv('ANTHROPIC_API_KEY', 'sk-ant-own');
+      const seams = { resolveClaudeBinary: async (): Promise<string | null> => null, claudeJsonPath: join(scratch, 'absent.json') };
+      expect(await detectClaudeAuth(seams)).toEqual({ state: 'configured', ownApiKey: true });
+      vi.stubEnv('ANTHROPIC_BASE_URL', 'https://gw.example.com');
+      expect(await detectClaudeAuth(seams)).toEqual({ state: 'logged-out', ownApiKey: false });
+    });
+
+    it('detectClaudeAuth counts a claude that cannot be run as a login, not a key', async () => {
+      const rejecting = vi.fn(async () => { throw new Error('Command timed out after 5000ms'); });
+      expect(await detectClaudeAuth({ exec: rejecting as unknown as ExecFn, resolveClaudeBinary: binary }))
+        .toEqual({ state: 'configured', ownApiKey: false });
+    });
+
     it('counts as configured when exec rejects, times out, prints nothing or prints junk', async () => {
       const rejecting = vi.fn(async () => { throw new Error('Command timed out after 5000ms'); });
       expect(await detectClaudeLogin({ exec: rejecting as unknown as ExecFn, resolveClaudeBinary: binary })).toBe('configured');
@@ -113,6 +138,16 @@ describe('claude-client-config-state', () => {
       vi.mocked(readVsCodeClaudeCodeRouteState).mockResolvedValue(state);
       const exec = login === 'logged-out' ? loggedOut : loggedIn;
       expect(await decideVsCodeRoute(false, { exec, resolveClaudeBinary: binary })).toBe(expected);
+    });
+
+    it('an API key of the user\'s own is skip-other-gateway, as the extension\'s own settings are: it is not a Claude login', async () => {
+      const apiKey = execReturning(JSON.stringify({ authMethod: 'api_key' })) as unknown as ExecFn;
+      expect(await decideVsCodeRoute(false, { exec: apiKey, resolveClaudeBinary: binary })).toBe('skip-other-gateway');
+
+      vi.stubEnv('ANTHROPIC_BASE_URL', '');
+      vi.stubEnv('ANTHROPIC_API_KEY', 'sk-ant-own');
+      expect(await decideVsCodeRoute(false, { resolveClaudeBinary: async () => null, claudeJsonPath: join(scratch, 'absent.json') }))
+        .toBe('skip-other-gateway');
     });
 
     it('reads the route state with the given gateway key', async () => {
