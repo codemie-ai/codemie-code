@@ -7,7 +7,8 @@ describe('OpenCodeAcpPluginMetadata', () => {
   it('has ACP-specific identity, reusing the same opencode binary', () => {
     expect(OpenCodeAcpPluginMetadata.name).toBe('opencode-acp');
     expect(OpenCodeAcpPluginMetadata.cliCommand).toBe(OpenCodePluginMetadata.cliCommand);
-    expect(OpenCodeAcpPluginMetadata.npmPackage).toBe('opencode-ai');
+    expect(OpenCodePluginMetadata.npmPackage).toBe('@opencode/cli');
+    expect(OpenCodeAcpPluginMetadata.npmPackage).toBe('@opencode/cli');
   });
 
   it('uses the ACP-specific SSO client type', () => {

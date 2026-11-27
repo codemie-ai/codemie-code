@@ -163,7 +163,7 @@ export const OpenCodePluginMetadata: AgentMetadata = {
   name: 'opencode',
   displayName: 'OpenCode CLI',
   description: 'OpenCode - open-source AI coding assistant',
-  npmPackage: 'opencode-ai',  // Official npm package (npm i -g opencode-ai)
+  npmPackage: '@opencode/cli',
   cliCommand: process.env.CODEMIE_OPENCODE_BIN || 'opencode',
 
   sessionAnalyticsReport: true,
@@ -608,7 +608,7 @@ export class OpenCodePlugin extends BaseAgentAdapter {
       // Actual user-facing message is handled by AgentCLI layer
       logger.debug('[opencode-plugin] OpenCode not installed. Install with:');
       logger.debug('[opencode-plugin]   codemie install opencode');
-      logger.debug('[opencode-plugin]   Or directly: npm i -g opencode-ai');
+      logger.debug('[opencode-plugin]   Or directly: npm i -g @opencode/cli');
     }
 
     return installed;
