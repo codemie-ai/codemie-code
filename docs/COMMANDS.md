@@ -10,10 +10,22 @@ codemie --task "task"            # Execute single task with built-in agent and e
 codemie setup                    # Interactive configuration wizard
 codemie setup skills             # Manage CodeMie platform skills (register/unregister)
 codemie setup assistants         # Manage CodeMie assistants as Claude subagents or skills
+codemie assistants chat          # Chat with a registered CodeMie assistant
+codemie skill <command>          # Manage skills for CodeMie agents
+codemie skills <command>         # Install, manage and discover skills via the upstream skills CLI
+codemie sdk <group>              # Manage CodeMie platform assets via the SDK
+codemie models list              # List models available for the current provider
 codemie profile <command>        # Manage provider profiles
 codemie analytics [options]      # View usage analytics (add --export for an HTML/JSON report)
 codemie log [options]            # View and manage debug logs and sessions
 codemie workflow <command>       # Manage CI/CD workflows
+codemie proxy <command>          # Manage the CodeMie local gateway proxy daemon
+codemie opencode-metrics         # Process OpenCode sessions and extract metrics to JSONL
+codemie test-metrics             # Send a test metric to verify CodeMie API connectivity
+codemie hook                     # Unified hook event handler (called by agent plugins)
+codemie sound <event>            # Play a random sound for a hook event
+codemie tips [options]           # Browse the feature tips shown at session start and end
+codemie whatsnew [version]       # Show release notes from CHANGELOG.md
 codemie list [options]           # List all available agents
 codemie install [agent]          # Install an agent
 codemie uninstall [agent]        # Uninstall an agent
