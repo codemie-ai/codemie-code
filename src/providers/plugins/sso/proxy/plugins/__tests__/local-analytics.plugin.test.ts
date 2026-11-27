@@ -211,6 +211,22 @@ describe('LocalAnalyticsPlugin', () => {
     await second.interceptor.onProxyStop?.();
   });
 
+  it('a stop right after a start returns only once the sweep the start began has moved the session', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    const first = await started();
+    await first.post('/v1/analytics/hooks', { agentName: 'claude-code-otlp', hookEvents: [{ type: 'agent.session.end', session_id: SID }] });
+    await first.interceptor.onProxyStop?.();
+    vi.setSystemTime(Date.now() + 30 * MINUTE);
+
+    const second = await started();
+    await second.interceptor.onProxyStop?.();
+
+    const folder = join(home, 'analytics', 'sessions');
+    expect(existsSync(join(folder, `${SID}.hooks.jsonl`))).toBe(true);
+    expect(existsSync(join(folder, `${SID}.moving`))).toBe(false);
+    expect(readdirSync(localSpool()).filter((name) => name.startsWith(SID))).toEqual([]);
+  });
+
   describe('a JSON export goes to the file of the session each record names', () => {
     const B = '11111111-2222-4333-8444-777777777777';
     const JSON_TYPE = { 'content-type': 'application/json' };

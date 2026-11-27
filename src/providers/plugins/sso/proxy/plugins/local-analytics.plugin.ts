@@ -26,6 +26,7 @@ class LocalAnalyticsInterceptor implements ProxyInterceptor {
   name = 'local-analytics';
 
   private sweepHandle?: NodeJS.Timeout;
+  private sweeping?: Promise<void>;
   private readonly intake = createOtlpIntake({
     projectNamesOf: () => undefined,
     // A late end hook of a Copilot CLI session whose end the sweep already recovered is accepted and not written.
@@ -45,13 +46,22 @@ class LocalAnalyticsInterceptor implements ProxyInterceptor {
   async onProxyStart(): Promise<void> {
     useSpoolRoot(localSpoolRoot());
     // A session that ended, or a move left half-done, while no proxy ran is taken now, not an interval later.
-    void this.runSweep();
-    this.sweepHandle = setInterval(() => void this.runSweep(), sweepIntervalMs());
+    this.sweep();
+    this.sweepHandle = setInterval(() => this.sweep(), sweepIntervalMs());
   }
 
   async onProxyStop(): Promise<void> {
     if (this.sweepHandle) clearInterval(this.sweepHandle);
     this.sweepHandle = undefined;
+    // A stop waits for the sweep under way, so no file of a move is still being written once the proxy has stopped.
+    await this.sweeping;
+  }
+
+  /** One sweep at a time: a tick that comes while one runs is dropped. */
+  private sweep(): void {
+    this.sweeping ??= this.runSweep().finally(() => {
+      this.sweeping = undefined;
+    });
   }
 
   private async runSweep(): Promise<void> {
