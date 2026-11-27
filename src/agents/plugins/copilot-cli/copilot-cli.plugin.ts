@@ -7,6 +7,8 @@ import { CopilotCliSessionAdapter } from './copilot-cli.session.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { commandExists, exec, wrapperOwnerFromEnv } from '../../../utils/processes.js';
 import { logger } from '../../../utils/logger.js';
+// Tests mock processes.js only, so VERSION_PROBE_OPTIONS stays real by living in exec.js.
+import { VERSION_PROBE_OPTIONS } from '@/utils/exec.js';
 import {
   COPILOT_CLI_AGENT_NAME,
   COPILOT_CLI_CLIENT_TYPE,
@@ -446,10 +448,11 @@ export class CopilotCliPlugin extends BaseAgentAdapter {
     }
 
     try {
-      const result = await exec(this.metadata.cliCommand, ['--version']);
+      const result = await exec(this.metadata.cliCommand, ['--version'], VERSION_PROBE_OPTIONS);
       const match = result.stdout.trim().match(/(\d+\.\d+\.\d+)/);
-      return match ? match[1] : result.stdout.trim() || null;
-    } catch {
+      return match ? match[1] : null;
+    } catch (error) {
+      logger.debug(`Version probe failed for ${this.metadata.cliCommand}: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
   }
