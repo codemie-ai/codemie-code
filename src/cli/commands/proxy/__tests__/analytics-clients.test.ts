@@ -2,6 +2,7 @@
  * The analytics clients of `proxy status`: found, connected, the remedy flag, the block.
  * @group unit
  */
+import { BACKEND_REMEDIES } from '../doctor/backend-plan.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -477,7 +478,7 @@ describe('analyticsClientHint', () => {
   ];
 
   it('names the vendor flag for a found client and for one not found, nothing for a connected one but the extension', () => {
-    expect(rows.map((r) => analyticsClientHint(r, true))).toEqual([
+    expect(rows.map((r) => analyticsClientHint(r, true, BACKEND_REMEDIES))).toEqual([
       undefined,
       'analytics on (uses your Claude login; model routing unchanged)',
       'not connected — run: codemie proxy connect --claude-otlp',
@@ -487,7 +488,7 @@ describe('analyticsClientHint', () => {
   });
 
   it('names no command for a found client without commands', () => {
-    expect(rows.slice(2).map((r) => analyticsClientHint(r, false))).toEqual([
+    expect(rows.slice(2).map((r) => analyticsClientHint(r, false, BACKEND_REMEDIES))).toEqual([
       'not connected',
       'not connected',
       'not found — run: codemie proxy connect --copilot-otlp',
@@ -495,25 +496,25 @@ describe('analyticsClientHint', () => {
   });
 
   it('says a connected extension that is not routed keeps the Claude login', () => {
-    expect(analyticsClientHint(row('vscode-claude-code', 'VS Code Claude Code extension', true, true, '--claude-otlp'), true))
+    expect(analyticsClientHint(row('vscode-claude-code', 'VS Code Claude Code extension', true, true, '--claude-otlp'), true, BACKEND_REMEDIES))
       .toBe('analytics on (uses your Claude login; model routing unchanged)');
   });
 
   it('says a routed extension goes through the proxy, with the disconnect command', () => {
     const hint = analyticsClientHint(
-      row('vscode-claude-code', 'VS Code Claude Code extension', true, true, '--claude-otlp', false, true), true);
+      row('vscode-claude-code', 'VS Code Claude Code extension', true, true, '--claude-otlp', false, true), true, BACKEND_REMEDIES);
     expect(hint).toBe('routed through the proxy — ' +
       'to use your Claude login: codemie proxy disconnect --vscode-claude-code');
   });
 
   it('names --insiders in the disconnect command of an Insiders-only extension', () => {
     const hint = analyticsClientHint(
-      row('vscode-claude-code', 'VS Code Claude Code extension', true, true, '--claude-otlp --insiders', false, true), true);
+      row('vscode-claude-code', 'VS Code Claude Code extension', true, true, '--claude-otlp --insiders', false, true), true, BACKEND_REMEDIES);
     expect(hint).toContain('codemie proxy disconnect --vscode-claude-code --insiders');
   });
 
   it('names another local gateway for Desktop', () => {
-    expect(analyticsClientHint(row('claude-desktop', 'Claude Desktop', true, false, '--claude-otlp', true), true))
+    expect(analyticsClientHint(row('claude-desktop', 'Claude Desktop', true, false, '--claude-otlp', true), true, BACKEND_REMEDIES))
       .toBe('points at a local gateway with a key this proxy does not accept — ' +
         'if it should use CodeMie, run: codemie proxy connect --claude-otlp');
   });
@@ -524,7 +525,16 @@ describe('analyticsClientHint', () => {
       'if it should use CodeMie, run: codemie proxy connect --claude-otlp'],
   ])('a not found Desktop row on another local gateway, commands %s', (commands, hint) => {
     const desktop = row('claude-desktop', 'Claude Desktop', false, false, '--claude-otlp', true);
-    expect(analyticsClientHint(desktop, commands)).toBe(hint);
+    expect(analyticsClientHint(desktop, commands, BACKEND_REMEDIES)).toBe(hint);
+  });
+
+  it('with the local mode\'s remedies names codemie analytics sync install, never a proxy connect or disconnect', async () => {
+    const { LOCAL_REMEDIES } = await import('../../shared/analytics-collection/local-doctor.js');
+    const hints = [...rows, row('vscode-claude-code', 'VS Code Claude Code extension', true, true, '--claude-otlp', false, true)]
+      .map((r) => analyticsClientHint(r, true, LOCAL_REMEDIES));
+
+    expect(hints[2]).toBe('not connected — run: codemie analytics sync install');
+    expect(hints.filter((hint) => /proxy (connect|disconnect)/.test(hint ?? ''))).toEqual([]);
   });
 
   it('maps every analytics client onto one client-target row', async () => {

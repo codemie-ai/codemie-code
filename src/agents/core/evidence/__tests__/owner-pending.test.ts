@@ -5,7 +5,9 @@
  * record-store, forwarderIdentity. Mocked: stored-credential read, daemon state, `/v1/user`, processSessionTick (no HTTP).
  * @group unit
  */
+import { BackendPolicy } from '@/agents/core/collection-policy.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+const backendPolicy = new BackendPolicy();
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -101,7 +103,7 @@ class HookAdapter extends OtlpAgentAdapter<{ cwd: string; payload: Record<string
 let home = '';
 const priorHome = process.env.CODEMIE_HOME;
 const sent = vi.fn();
-const deps = { ensureOtlpProxy: async () => undefined, forwardOtlpEventsToSpool: async (...a: unknown[]) => { sent(...a); return true; } };
+const deps = { policy: backendPolicy, ensureOtlpProxy: async () => undefined, forwardOtlpEventsToSpool: async (...a: unknown[]) => { sent(...a); return true; } };
 const hook = (a: HookAdapter, n = 1) =>
   a.processOtlpEvent(JSON.stringify({ cwd: home, payload: [{ session_id: SESSION, n, timestamp: '2026-11-03T10:00:00.000Z' }] }), deps as never);
 const pendingFiles = () => (existsSync(pendingOwnerDir()) ? readdirSync(pendingOwnerDir()).flatMap((d) => readdirSync(join(pendingOwnerDir(), d)).map((f) => join(pendingOwnerDir(), d, f))) : []);

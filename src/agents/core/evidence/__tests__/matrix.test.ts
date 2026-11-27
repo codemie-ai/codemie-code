@@ -1,4 +1,6 @@
+import { BackendPolicy } from '@/agents/core/collection-policy.js';
 import { evidenceDir } from '../record-store.js';
+const backendPolicy = new BackendPolicy();
 /**
  * AC1/AC11 matrix: all four classifications (routed, corporate, personal, unknown) and their bases x managed/native x
  * user / project-in-allowlist / project-outside, plus the analytics opt-out (disabled, excluded project), through the
@@ -147,6 +149,7 @@ describe('AC1 routing x launch mode x scope matrix', () => {
         const forward = vi.fn(async () => true);
         const proxy = vi.fn(async () => {});
         await new Adapter().processOtlpEvent(JSON.stringify({ cwd: '/repo', sessionId: 's1' }), {
+          policy: backendPolicy,
           ensureOtlpProxy: proxy,
           forwardOtlpEventsToSpool: forward,
         });

@@ -8,10 +8,58 @@
 import { createServer, type Server } from 'http';
 import { URL } from 'url';
 import { logger } from '../../utils/logger.js';
+import { getMcpAuthTimings } from '../constants.js';
 
 export interface CallbackResult {
   code: string;
   state?: string;
+}
+
+/** Thrown when no OAuth callback arrives within the configured timeout. */
+export class CallbackTimeoutError extends Error {
+  readonly timeoutMs: number;
+
+  constructor(timeoutMs: number) {
+    super(`OAuth authorization timed out after ${timeoutMs / 1000}s`);
+    this.name = 'CallbackTimeoutError';
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/** Thrown when the authorization server redirects back with an `error` parameter. */
+export class OAuthCallbackError extends Error {
+  readonly oauthError: string;
+  readonly description?: string;
+
+  constructor(oauthError: string, description?: string) {
+    super(`OAuth error: ${oauthError}${description ? ` — ${description}` : ''}`);
+    this.name = 'OAuthCallbackError';
+    this.oauthError = oauthError;
+    this.description = description;
+  }
+}
+
+const MAX_CALLBACK_FIELD_LENGTH = 200;
+
+const SECURITY_HEADERS = {
+  'Content-Security-Policy': "default-src 'none'",
+  'X-Content-Type-Options': 'nosniff',
+} as const;
+
+/** Strip control characters and cap the length of untrusted callback text. */
+function sanitize(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  const stripped = text.replace(/[\u0000-\u001f\u007f-\u009f]/g, '');
+  return Array.from(stripped).slice(0, MAX_CALLBACK_FIELD_LENGTH).join('');
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 /**
@@ -30,7 +78,7 @@ export async function startCallbackServer(options?: {
   waitForCallback: Promise<CallbackResult>;
   close: () => void;
 }> {
-  const timeoutMs = options?.timeoutMs ?? 120_000; // 2 minutes default
+  const timeoutMs = options?.timeoutMs ?? getMcpAuthTimings().callbackTimeoutMs;
 
   let settled = false;
   let resolveCallback: (result: CallbackResult) => void;
@@ -50,7 +98,7 @@ export async function startCallbackServer(options?: {
     const url = new URL(req.url || '/', `http://localhost`);
 
     if (url.pathname !== '/callback') {
-      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.writeHead(404, { 'Content-Type': 'text/plain', ...SECURITY_HEADERS });
       res.end('Not found');
       return;
     }
@@ -60,14 +108,20 @@ export async function startCallbackServer(options?: {
     const errorDescription = url.searchParams.get('error_description');
 
     if (error) {
-      res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end('<html><body><h2>Authorization failed</h2><p>You can close this tab.</p></body></html>');
-      settle(() => rejectCallback(new Error(`OAuth error: ${error}${errorDescription ? ` — ${errorDescription}` : ''}`)));
+      const safeError = sanitize(error);
+      const safeDescription = errorDescription ? sanitize(errorDescription) || undefined : undefined;
+      res.writeHead(200, { 'Content-Type': 'text/html', ...SECURITY_HEADERS });
+      res.end(
+        '<html><body><h2>Authorization failed</h2>' +
+          `<p>${escapeHtml(safeError)}${safeDescription ? ` — ${escapeHtml(safeDescription)}` : ''}</p>` +
+          '<p>You can close this tab.</p></body></html>'
+      );
+      settle(() => rejectCallback(new OAuthCallbackError(safeError, safeDescription)));
       return;
     }
 
     if (!code) {
-      res.writeHead(400, { 'Content-Type': 'text/html' });
+      res.writeHead(400, { 'Content-Type': 'text/html', ...SECURITY_HEADERS });
       res.end('<html><body><h2>Missing authorization code</h2></body></html>');
       settle(() => rejectCallback(new Error('Missing authorization code in callback')));
       return;
@@ -75,7 +129,7 @@ export async function startCallbackServer(options?: {
 
     const state = url.searchParams.get('state') || undefined;
 
-    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.writeHead(200, { 'Content-Type': 'text/html', ...SECURITY_HEADERS });
     res.end('<html><body><h2>Authorization successful</h2><p>You can close this tab.</p></body></html>');
 
     settle(() => resolveCallback({ code, state }));
@@ -111,7 +165,7 @@ export async function startCallbackServer(options?: {
 
   // Timeout: reject if no callback received within timeoutMs
   const timer = setTimeout(() => {
-    settle(() => rejectCallback(new Error(`OAuth authorization timed out after ${timeoutMs / 1000}s`)));
+    settle(() => rejectCallback(new CallbackTimeoutError(timeoutMs)));
     server.close();
   }, timeoutMs);
 

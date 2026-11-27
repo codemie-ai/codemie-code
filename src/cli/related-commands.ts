@@ -147,11 +147,16 @@ export function applyRelatedHelp(root: Command): void {
  * scheduled run, and never once the command has set a non-zero exit code.
  */
 export function printNext(path: string, outcome?: string, ctx: { json?: boolean } = {}): void {
+  const next = RELATED[path]?.next;
+  const command = (outcome !== undefined ? next?.byOutcome?.[outcome] : undefined) ?? next?.default;
+  printNextSteps(command ? [command] : [], ctx);
+}
+
+/** Print one `Next: <command>` line per step, under the same conditions as {@link printNext}. */
+export function printNextSteps(steps: string[], ctx: { json?: boolean } = {}): void {
   if (process.exitCode !== undefined && Number(process.exitCode) !== 0) return;
   if (!process.stdout.isTTY) return;
   const { json, silent } = getInvocationContext({ json: ctx.json });
   if (json || silent) return;
-  const next = RELATED[path]?.next;
-  const command = (outcome !== undefined ? next?.byOutcome?.[outcome] : undefined) ?? next?.default;
-  if (command) process.stdout.write(`Next: ${command}\n`);
+  for (const command of steps) process.stdout.write(`Next: ${command}\n`);
 }

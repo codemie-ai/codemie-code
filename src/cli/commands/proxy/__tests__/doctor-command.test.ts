@@ -1,3 +1,4 @@
+import { backendDoctorPlan } from '../doctor/backend-plan.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { stripVTControlCharacters } from 'node:util';
 
@@ -72,7 +73,7 @@ describe('proxy doctor command', () => {
   it('passes the authenticated probe and verbose options to compose', async () => {
     composeProxyDoctor.mockResolvedValue(report([]));
     await run(['--verbose']);
-    expect(composeProxyDoctor).toHaveBeenCalledWith({ authProbe: true, verbose: true });
+    expect(composeProxyDoctor).toHaveBeenCalledWith({ authProbe: true, verbose: true, plan: backendDoctorPlan });
   });
 
   it('--json prints one parseable document with every section', async () => {
@@ -161,5 +162,39 @@ describe('proxy doctor command', () => {
     composeProxyDoctor.mockResolvedValue(report([{ id: 'clients', status: 'info', message: 'nothing', hint: 'h' }], { nothingConnected: true }));
     await run([]);
     expect(process.exitCode ?? 0).toBe(0);
+  });
+});
+
+describe('proxy doctor command in the local mode', () => {
+  let home: string;
+  beforeEach(async () => {
+    const { mkdtemp, writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    home = await mkdtemp(join(tmpdir(), 'doctor-command-local-'));
+    vi.stubEnv('CODEMIE_HOME', home);
+    await writeFile(join(home, 'analytics-sync.json'), JSON.stringify({
+      webhookUrl: 'https://hooks.example.invalid/x?sig=FAKE', format: 'json', includeExternal: 'never', at: '03:00', local: true,
+    }));
+  });
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    const { rm } = await import('node:fs/promises');
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it('passes the local plan and renders its local rows under their group, with a stopped daemon', async () => {
+    composeProxyDoctor.mockResolvedValue(report([
+      { id: 'daemon', status: 'warn', message: 'Proxy is not running; analytics hooks start it on their next event' },
+      { id: 'local', status: 'ok', message: 'Local analytics folder: 2 sessions, newest 2026-11-20T10:00:00.000Z' },
+    ]));
+
+    await run([]);
+
+    const { plan } = composeProxyDoctor.mock.calls[0][0] as { plan: { daemonLabel: () => string } };
+    expect(plan.daemonLabel()).toBe('local analytics mode');
+    const text = stripVTControlCharacters(out);
+    expect(text).toContain('Local analytics');
+    expect(text).toContain('Local analytics folder: 2 sessions, newest 2026-11-20T10:00:00.000Z');
   });
 });

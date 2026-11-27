@@ -2,6 +2,7 @@
  * Tests for the single analytics gate combining preferences and the allowlist.
  * @group unit
  */
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const readClaudeAnalyticsPreferences = vi.fn();
@@ -63,10 +64,47 @@ describe('evaluateClaudeAnalyticsGate', () => {
     expect(await evaluateClaudeAnalyticsGate('/proj')).toEqual({ tracked: false, reason: 'project-excluded' });
   });
 
-  it('returns not-in-allowlist when isProjectTracked is false', async () => {
-    isProjectTracked.mockResolvedValue(false);
+  it('returns not-in-allowlist for a folder outside a readable list', async () => {
+    const { isProjectTracked: realIsProjectTracked } =
+      await vi.importActual<typeof import('@/agents/core/project-allowlist.js')>('@/agents/core/project-allowlist.js');
+    isProjectTracked.mockImplementation(realIsProjectTracked);
+    readAllowlistState.mockResolvedValue({ kind: 'valid', paths: [resolve('allowed-project')] });
     const { evaluateClaudeAnalyticsGate } = await import('../claude-code-otlp.gate.js');
-    expect(await evaluateClaudeAnalyticsGate('/proj')).toEqual({ tracked: false, reason: 'not-in-allowlist' });
+    expect(await evaluateClaudeAnalyticsGate(resolve('elsewhere'))).toEqual({ tracked: false, reason: 'not-in-allowlist' });
+  });
+
+  it('returns allowlist-unresolved when the list cannot be read', async () => {
+    readAllowlistState.mockResolvedValue({ kind: 'invalid' });
+    const { evaluateClaudeAnalyticsGate } = await import('../claude-code-otlp.gate.js');
+    expect(await evaluateClaudeAnalyticsGate('/proj')).toEqual({ tracked: false, reason: 'allowlist-unresolved' });
+  });
+
+  it.each([
+    ['undefined', undefined],
+    ['empty', ''],
+  ])('returns allowlist-unresolved for a non-empty list and a %s cwd', async (_label, cwd) => {
+    readAllowlistState.mockResolvedValue({ kind: 'valid', paths: [resolve('allowed-project')] });
+    const { evaluateClaudeAnalyticsGate } = await import('../claude-code-otlp.gate.js');
+    expect(await evaluateClaudeAnalyticsGate(cwd)).toEqual({ tracked: false, reason: 'allowlist-unresolved' });
+  });
+
+  it('an earlier answer wins over an unreadable list: disabled', async () => {
+    readClaudeAnalyticsPreferences.mockResolvedValue({
+      kind: 'ok',
+      value: { version: 1, enabled: false, excludedProjects: [] },
+    });
+    readAllowlistState.mockResolvedValue({ kind: 'invalid' });
+    const { evaluateClaudeAnalyticsGate } = await import('../claude-code-otlp.gate.js');
+    expect(await evaluateClaudeAnalyticsGate('/proj')).toEqual({ tracked: false, reason: 'disabled' });
+  });
+
+  it('an empty readable list with no cwd is tracked', async () => {
+    const { isProjectTracked: realIsProjectTracked } =
+      await vi.importActual<typeof import('@/agents/core/project-allowlist.js')>('@/agents/core/project-allowlist.js');
+    isProjectTracked.mockImplementation(realIsProjectTracked);
+    readAllowlistState.mockResolvedValue({ kind: 'valid', paths: [] });
+    const { evaluateClaudeAnalyticsGate } = await import('../claude-code-otlp.gate.js');
+    expect(await evaluateClaudeAnalyticsGate(undefined)).toEqual({ tracked: true, reason: 'tracked' });
   });
 
   it('returns tracked when nothing blocks it', async () => {

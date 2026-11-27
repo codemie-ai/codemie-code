@@ -12,6 +12,7 @@ import type { CodeMieConfigOptions } from '@/env/types.js';
 import { ProviderRegistry } from '@/providers/core/registry.js';
 import { handleAuthValidationFailure } from '@/providers/core/auth-validation.js';
 import { applySystemProxyEnvironment } from '@/utils/system-proxy.js';
+import { installNetworkErrorCapture } from '@/utils/network-error-capture.js';
 
 export interface AuthenticationOptions {
   /**
@@ -52,6 +53,8 @@ export async function getAuthenticatedClient(
     // The SDK talks over axios, which resolves proxies from the environment per
     // request; on Windows the corporate proxy lives in Internet Settings only.
     await applySystemProxyEnvironment(config.baseUrl);
+    // Must precede the constructor: axios.create() copies the default adapter.
+    installNetworkErrorCapture();
     return new CodeMieClient({
       codemie_api_domain: config.baseUrl,
       external_token: token,

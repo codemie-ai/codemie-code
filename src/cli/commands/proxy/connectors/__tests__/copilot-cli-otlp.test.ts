@@ -3,7 +3,7 @@
 import { existsSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { logger } from '@/utils/logger.js';
 import { getDirname } from '@/utils/paths.js';
@@ -21,6 +21,7 @@ import {
   CLI_HOOK_TIMEOUT_SECONDS,
   buildHookFileContent,
   getCopilotCliHookFilePath,
+  hasCopilotCliOtlpHooks,
   readCopilotCliHookInstall,
   removeCopilotCliOtlpConfig,
   writeCopilotCliOtlpConfig,
@@ -199,6 +200,31 @@ describe('copilot-cli-otlp connector (temp COPILOT_HOME / CODEMIE_HOME)', () => 
     await expect(writeCopilotCliOtlpConfig()).rejects.toThrow(/corrupt/);
 
     expect(await readFile(getCopilotConnectorsConfigPath(), 'utf-8')).toBe('{ not json');
+  });
+
+  describe('hasCopilotCliOtlpHooks', () => {
+    it('answers true for the hook file alone', async () => {
+      await mkdir(dirname(getCopilotCliHookFilePath()), { recursive: true });
+      await writeFile(getCopilotCliHookFilePath(), '{}', 'utf-8');
+
+      await expect(hasCopilotCliOtlpHooks()).resolves.toBe(true);
+    });
+
+    it('answers true for an enabled scope record alone', async () => {
+      await writeCopilotConnectorScope('copilot-cli-otlp', { enabled: true, scope: 'user' });
+
+      await expect(hasCopilotCliOtlpHooks()).resolves.toBe(true);
+    });
+
+    it('answers false with neither, a disabled record or one that does not parse', async () => {
+      await expect(hasCopilotCliOtlpHooks()).resolves.toBe(false);
+
+      await writeCopilotConnectorScope('copilot-cli-otlp', { enabled: false });
+      await expect(hasCopilotCliOtlpHooks()).resolves.toBe(false);
+
+      await writeFile(getCopilotConnectorsConfigPath(), '{ not json', 'utf-8');
+      await expect(hasCopilotCliOtlpHooks()).resolves.toBe(false);
+    });
   });
 
   describe('keepProjectList', () => {

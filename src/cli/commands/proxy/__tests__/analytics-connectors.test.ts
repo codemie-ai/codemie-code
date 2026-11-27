@@ -2,6 +2,7 @@
  * Analytics connector table tests
  * @group unit
  */
+import { BACKEND_REMEDIES } from '../doctor/backend-plan.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -90,8 +91,8 @@ describe('ANALYTICS_CONNECTORS', () => {
     const collected = await entry.collect();
 
     expect(collectClaudeAnalyticsStatus).toHaveBeenCalledWith();
-    await expect(entry.format(collected)).resolves.toBe('claude text');
-    expect(formatClaudeAnalyticsStatus).toHaveBeenCalledWith(status);
+    await expect(entry.format(collected, BACKEND_REMEDIES)).resolves.toBe('claude text');
+    expect(formatClaudeAnalyticsStatus).toHaveBeenCalledWith(status, BACKEND_REMEDIES);
   });
 
   it('delegates collect and format to the Copilot status helpers with the connector id', async () => {
@@ -103,8 +104,8 @@ describe('ANALYTICS_CONNECTORS', () => {
     const collected = await entry.collect();
 
     expect(collectCopilotAnalyticsStatus).toHaveBeenCalledWith('copilot-chat-otlp');
-    await expect(entry.format(collected)).resolves.toBe('copilot text');
-    expect(formatCopilotAnalyticsStatus).toHaveBeenCalledWith(status);
+    await expect(entry.format(collected, BACKEND_REMEDIES)).resolves.toBe('copilot text');
+    expect(formatCopilotAnalyticsStatus).toHaveBeenCalledWith(status, BACKEND_REMEDIES);
   });
 });
 

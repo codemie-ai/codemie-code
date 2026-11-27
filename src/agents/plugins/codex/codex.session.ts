@@ -22,7 +22,7 @@
 
 import { readdir, stat } from 'fs/promises';
 import { existsSync } from 'fs';
-import { join, dirname } from 'path';
+import { join } from 'path';
 import {
   latestRecordTime,
   type SessionAdapter,
@@ -47,7 +47,7 @@ import { sanitizeLogArgs } from '../../../utils/security.js';
 import { CodexMetricsProcessor } from './session/processors/codex.metrics-processor.js';
 import { CodexConversationsProcessor } from './session/processors/codex.conversations-processor.js';
 import { extractCodexMetrics } from './session/codex-metrics-extractor.js';
-import { extractCodexSpawnLinks } from './session/codex-collab-links.js';
+import { loadLinkedSubagentRollouts, type LinkedSubagentRollout } from './session/codex-rollout-family.js';
 
 /** Regex to extract UUID from rollout filename: rollout-{ISO8601}-{uuid}.jsonl */
 const ROLLOUT_UUID_REGEX = /rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/;
@@ -302,6 +302,7 @@ export class CodexSessionAdapter implements SessionAdapter {
         repository: sessionMeta.git?.repository_url,
         branch: sessionMeta.git?.branch,
         codexSessionId: sessionMeta.id,
+        rolloutPath: filePath,
         model: resolvedModel,
         cliVersion: sessionMeta.cli_version,
       };
@@ -330,44 +331,11 @@ export class CodexSessionAdapter implements SessionAdapter {
    * Load child rollout files referenced by spawn/wait collaboration so analytics
    * can price sub-agent dispatches and include child token usage in the session total.
    */
-  private async loadLinkedSubagentRollouts(
+  private loadLinkedSubagentRollouts(
     parentFilePath: string,
     records: CodexRolloutRecord[]
-  ): Promise<Array<{ agentId: string; filePath: string; toolUseId?: string; agentType?: string; messages: unknown[] }>> {
-    const dayDir = dirname(parentFilePath);
-    const links = extractCodexSpawnLinks(records);
-    if (!links.length) {
-      return [];
-    }
-
-    let files: string[];
-    try {
-      files = await readdir(dayDir);
-    } catch {
-      return [];
-    }
-
-    const out: Array<{ agentId: string; filePath: string; toolUseId?: string; agentType?: string; messages: unknown[] }> = [];
-    for (const link of links) {
-      const match = files.find((f) => f.includes(link.threadId) && f.endsWith('.jsonl'));
-      if (!match) {
-        continue;
-      }
-      const childPath = join(dayDir, match);
-      try {
-        const childRecords = await readCodexJsonlTolerant<CodexRolloutRecord>(childPath);
-        out.push({
-          agentId: link.threadId,
-          filePath: childPath,
-          toolUseId: link.spawnCallId,
-          agentType: link.agentType,
-          messages: childRecords,
-        });
-      } catch {
-        logger.debug(`[codex-adapter] Could not read child rollout: ${childPath}`);
-      }
-    }
-    return out;
+  ): Promise<LinkedSubagentRollout[]> {
+    return loadLinkedSubagentRollouts(parentFilePath, records);
   }
 
   /**
@@ -472,3 +440,10 @@ async function isDirectory(p: string): Promise<boolean> {
     return false;
   }
 }
+
+export {
+  loadLinkedSubagentRollouts,
+  resolveParentRollout,
+  loadRolloutFamilyRecords,
+  type LinkedSubagentRollout,
+} from './session/codex-rollout-family.js';

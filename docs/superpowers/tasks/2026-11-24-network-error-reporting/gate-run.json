@@ -1,0 +1,66 @@
+{
+ "schema": 1,
+ "branch": "fix/EPMCDME-16977-network-error-reporting",
+ "head": "484f35309acc8090ebf75467bb19d43fdab23e15",
+ "runner": "npm",
+ "started_at": "2026-11-24T14:30:23Z",
+ "completed_at": "2026-11-24T14:32:00Z",
+ "status": "PASSED",
+ "drift_detected": false,
+ "gates": [
+  {
+   "id": "license-check",
+   "source": "guide",
+   "status": "SKIPPED",
+   "command": "npm run license-check",
+   "exit_code": 1,
+   "notes": "npx could not fetch license-checker (registry blocked / root-owned ~/.npm cache); CI runs it"
+  },
+  {
+   "id": "lint",
+   "source": "guide",
+   "status": "PASS",
+   "command": "npm run lint",
+   "exit_code": 0
+  },
+  {
+   "id": "typecheck",
+   "source": "guide",
+   "status": "PASS",
+   "command": "npm run typecheck",
+   "exit_code": 0
+  },
+  {
+   "id": "build",
+   "source": "guide",
+   "status": "PASS",
+   "command": "npm run build",
+   "exit_code": 0
+  },
+  {
+   "id": "unit",
+   "source": "guide",
+   "status": "PASS",
+   "command": "npx vitest run --project unit <affected files>",
+   "exit_code": 0,
+   "notes": "narrow run of 8 affected files incl. auth.test, sdk-client.test, sdk-client.api.test, network-error-sdk.test; full suite not run per user constraint"
+  },
+  {
+   "id": "integration",
+   "source": "guide",
+   "status": "SKIPPED",
+   "command": "npx vitest run --project cli",
+   "exit_code": null,
+   "notes": "full suite not run per user constraint"
+  },
+  {
+   "id": "secrets",
+   "source": "hook",
+   "status": "SKIPPED",
+   "command": "npm run validate:secrets",
+   "exit_code": 0,
+   "notes": "Output: 'No staged changes to scan' (nothing scanned); docker socket also denied in sandbox. CI scans unconditionally."
+  }
+ ],
+ "failures": {}
+}

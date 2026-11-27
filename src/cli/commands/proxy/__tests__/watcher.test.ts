@@ -30,6 +30,7 @@ function makeCallbacks(): WatcherCallbacks & {
   onGiveUp: ReturnType<typeof vi.fn>;
 } {
   return {
+    check: () => checkProxyHealth({ port: 4001, gatewayKey: 'k', deep: true }),
     restart: vi.fn().mockResolvedValue(undefined),
     onHealthy: vi.fn().mockResolvedValue(undefined),
     onGiveUp: vi.fn().mockResolvedValue(undefined),
@@ -208,6 +209,19 @@ describe('ProxyWatcher', () => {
     watcher.stop();
     await vi.advanceTimersByTimeAsync(5000);
 
+    expect(mockedHealth).not.toHaveBeenCalled();
+  });
+
+  it('runs the check it was given, not a check of its own', async () => {
+    const shallow: ProxyHealthResult = { healthy: true, level: 'shallow', code: 'ok' };
+    const cb = { ...makeCallbacks(), check: vi.fn().mockResolvedValue(shallow) };
+    const watcher = new ProxyWatcher({ port: 4001, intervalMs: 1000 }, cb);
+
+    watcher.start();
+    await vi.advanceTimersByTimeAsync(1000);
+    watcher.stop();
+
+    expect(cb.onHealthy).toHaveBeenCalledWith(shallow);
     expect(mockedHealth).not.toHaveBeenCalled();
   });
 });

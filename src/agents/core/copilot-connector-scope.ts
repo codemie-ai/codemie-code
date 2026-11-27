@@ -107,6 +107,12 @@ export async function readCopilotConnectorScope(
   return { kind: 'ok', value: record };
 }
 
+/** Whether the connector's scope record reads and turns collection on: the gate collects by it. Never throws. */
+export async function isCopilotConnectorEnabled(connectorId: string): Promise<boolean> {
+  const scope = await readCopilotConnectorScope(connectorId);
+  return scope.kind === 'ok' && scope.value.enabled;
+}
+
 /** The scope a write that keeps the project list stores: an enabled project-scope record as it is, else scope `user`. */
 export async function readKeptCopilotConnectorScope(connectorId: string): Promise<CopilotConnectorScope> {
   const existing = await readCopilotConnectorScope(connectorId);
