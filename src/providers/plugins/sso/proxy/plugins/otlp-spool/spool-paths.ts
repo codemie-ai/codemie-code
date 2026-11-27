@@ -2,12 +2,28 @@ import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getCodemiePath } from '@/utils/paths.js';
 
+/** The spool directory an analytics plugin named at its start; none in a process that starts no analytics plugin. */
+let namedRoot: string | undefined;
+
+/** The proxy's spool directory, `~/.codemie/proxy/otlp-spool`. */
+export function proxySpoolRoot(): string {
+  return getCodemiePath('proxy', 'otlp-spool');
+}
+
 /**
- * Root directory where all OTLP analytics spool files are stored.
- * Resolves to `~/.codemie/proxy/otlp-spool`.
+ * Names the spool directory of this process. Called by an analytics plugin as the first statement of its
+ * `onProxyStart`, and by nothing else.
+ */
+export function useSpoolRoot(dir: string): void {
+  namedRoot = dir;
+}
+
+/**
+ * Root directory where all OTLP analytics spool files are stored: the one an analytics plugin named, else the
+ * proxy's (a CLI process that starts no plugin reads the proxy's spool).
  */
 export function spoolRoot(): string {
-  return getCodemiePath('proxy', 'otlp-spool');
+  return namedRoot ?? proxySpoolRoot();
 }
 
 /** OTEL binary streams (protobuf payloads produced by the agent runtime). */

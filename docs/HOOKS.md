@@ -582,6 +582,8 @@ The filter runs in the hook process. The plugin (`src/agents/plugins/claude-code
 
 Claude Code OTel telemetry is still exported globally, so untracked sessions reach the daemon as OTEL-only data. The daemon never sends OTEL-only sessions (completeness gate decision `skip`); they are skipped after `OTLP_SEND_MAX_ATTEMPTS` ticks and deleted by the sweeper after `OTLP_ABANDONED_SESSION_GRACE_MINUTES`. Details: [ARCHITECTURE-PROXY.md](ARCHITECTURE-PROXY.md#614-claude-code-otlp-per-project-allowlist).
 
+In the local analytics mode of `codemie analytics sync` (a machine with no CLI profile) the hook's policy is `LocalPolicy`: a tracked session is gathered when the `--include-external` answer allows it, with no SSO check, and a hook in a folder the filters leave out leaves an exclusion mark (`~/.codemie/analytics/excluded/<sessionId>`), after which nothing more of that session is gathered. A Claude Code settings file that cannot be read or does not parse, a project filter in it that is not a list of absolute paths, or a hook that names no folder while that filter is not empty is not a filter (the gate's `allowlist-unresolved`): that hook is not gathered and no mark is left. The daemon it ensures is the local one; a session with no hook event is deleted with its telemetry.
+
 A Claude Desktop Cowork session runs no CodeMie hook. The proxy daemon builds its plugin events from the session's transcript and writes them into the spool's `hooks` stream itself, so the session is sent without the hook-time allowlist; `codemie proxy analytics disable` and the excluded folders still apply to it.
 
 ## Environment Variables

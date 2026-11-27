@@ -19,7 +19,7 @@ import {
   readStatus,
   type Discard,
 } from './session-status.js';
-import { OtlpHookSpoolData } from '../otlp.plugin.js';
+import { parseHookEnvelope } from './hook-record-format.js';
 import { holdForIdleReopen } from './reopen-hold.js';
 import { deliveryGate, ENDED_MARKER_UNWRITTEN, recordUnacknowledged, type HoldExpiry } from './delivery-state.js';
 import {
@@ -334,25 +334,18 @@ export function unwrapHookRecords(records: string[]): HookPayload {
   let malformed = 0;
 
   for (const record of records) {
-    let serialized: string;
-    let wireEvent: Record<string, unknown>;
-    let historicalEnd: boolean;
-    try {
-      const envelope = JSON.parse(record) as OtlpHookSpoolData;
-      serialized = envelope.hookEvent;
-      historicalEnd = envelope.historicalEnd === true;
-      wireEvent = JSON.parse(serialized) as Record<string, unknown>;
-    } catch {
+    const envelope = parseHookEnvelope(record);
+    if (!envelope) {
       // Complete but unusable record: dropped deliberately. Its bytes are still
       // acknowledged with the batch so the cursor can never get stuck on it.
       malformed += 1;
       continue;
     }
 
-    if (wireEvent['type'] === SESSION_END_EVENT_TYPE && !historicalEnd) {
+    if (envelope.event['type'] === SESSION_END_EVENT_TYPE && !envelope.historicalEnd) {
       containsSessionEnd = true;
     }
-    unwrapped.push(serialized);
+    unwrapped.push(envelope.raw);
   }
 
   return {

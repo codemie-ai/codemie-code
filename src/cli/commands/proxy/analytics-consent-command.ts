@@ -31,6 +31,8 @@ import {
   withErrorHandling,
   type ConnectorOptions,
 } from './analytics-targets.js';
+import type { DoctorRemedies } from './doctor/plan.js';
+import { resolveCollection } from '../shared/analytics-collection/resolve.js';
 
 /** The folder-management actions apply to Claude Code only; the Copilot connectors have no work consent. */
 export function assertClaudeOnly(opts: ConnectorOptions): void {
@@ -58,7 +60,7 @@ async function confirmGrant(opts: { yes?: boolean }, message: string, refusal: s
   return ok;
 }
 
-async function connectAllWorkFolders(path: string | undefined, opts: GrantOptions): Promise<void> {
+async function connectAllWorkFolders(path: string | undefined, opts: GrantOptions, remedies: DoctorRemedies): Promise<void> {
   await withErrorHandling(async () => {
     assertClaudeOnly(opts);
     if (path !== undefined || opts.project !== undefined) {
@@ -72,12 +74,13 @@ async function connectAllWorkFolders(path: string | undefined, opts: GrantOption
     console.log(chalk.green('✓ Authorized every repository. Applies to sessions that start after this.'));
     console.log(chalk.dim(`Sessions already held for lack of consent: ${RESEND_COMMAND}`));
     console.log(chalk.dim('Authorizing does not turn collection on and does not change what is collected; it only authorizes sending analytics from personal Claude subscriptions.'));
-    await reportEffectiveState(CLAUDE_CODE_OTLP_AGENT_NAME, resolveProjectRoot());
+    await reportEffectiveState(CLAUDE_CODE_OTLP_AGENT_NAME, resolveProjectRoot(), remedies);
   });
 }
 
 async function connectWorkFolder(path: string | undefined, opts: GrantOptions): Promise<void> {
-  if (opts.all) return connectAllWorkFolders(path, opts);
+  const { remedies } = (await resolveCollection()).doctor;
+  if (opts.all) return connectAllWorkFolders(path, opts, remedies);
   await withErrorHandling(async () => {
     assertClaudeOnly(opts);
     const target = path ?? resolveProjectRoot();
@@ -93,7 +96,7 @@ async function connectWorkFolder(path: string | undefined, opts: GrantOptions): 
     console.log(chalk.green(`✓ Connected ${saved} to project ${project}. Applies to sessions that start after this.`));
     console.log(chalk.dim(`Sessions already held for lack of consent: ${RESEND_COMMAND}`));
     console.log(chalk.dim('Connecting does not turn collection on and does not change what is collected; it only authorizes this folder.'));
-    await reportEffectiveState(CLAUDE_CODE_OTLP_AGENT_NAME, saved);
+    await reportEffectiveState(CLAUDE_CODE_OTLP_AGENT_NAME, saved, remedies);
   });
 }
 

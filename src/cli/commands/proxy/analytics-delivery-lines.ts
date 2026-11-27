@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import { realpath } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { DaemonState } from './daemon-manager.js';
+import type { DoctorRemedies } from './doctor/plan.js';
 import { readDesktopGateway } from './connectors/desktop.js';
 import { CLIENT_TARGETS, type ClientGatewaySpec } from './client-targets.js';
 import { CLAUDE_OTLP_FLAG } from './flag-list.js';
@@ -26,13 +27,13 @@ export interface DesktopCollection {
  * the daemon has noticed Desktop connected to it (`desktopConnectedSince`) and analytics are on; null when Desktop has
  * no CodeMie gateway, or the daemon is one of an older CLI (its state has no `version`).
  */
-export async function collectDesktopCollection(state: DaemonState): Promise<DesktopCollection | null> {
+export async function collectDesktopCollection(state: DaemonState, remedies: DoctorRemedies): Promise<DesktopCollection | null> {
   if (!state.version) return null;
   const gateway = await readDesktopGateway();
-  return gateway ? describeDesktopCollection(state, gateway.port) : null;
+  return gateway ? describeDesktopCollection(state, gateway.port, remedies) : null;
 }
 
-async function describeDesktopCollection(state: DaemonState, gatewayPort: number): Promise<DesktopCollection> {
+async function describeDesktopCollection(state: DaemonState, gatewayPort: number, remedies: DoctorRemedies): Promise<DesktopCollection> {
   if (state.desktopConnectedSince) {
     const analytics = await readClaudeAnalyticsSwitch();
     if (analytics === 'off') {
@@ -58,7 +59,7 @@ async function describeDesktopCollection(state: DaemonState, gatewayPort: number
       connected: true,
       collecting: false,
       reason: `Claude Desktop points at port ${gatewayPort}, the proxy listens on ${state.port}`,
-      remedy: 'run: codemie proxy connect --claude-desktop',
+      remedy: `run: ${remedies.connect('--claude-desktop')}`,
     };
   }
   return { connected: true, collecting: false, reason: 'Desktop is not connected to this proxy yet' };
@@ -138,7 +139,7 @@ async function ownInstallDir(): Promise<string | null> {
   }
 }
 
-async function collectHooksOfAnotherInstall(): Promise<{ entries: HooksOfAnotherInstall[]; lines: string[] }> {
+async function collectHooksOfAnotherInstall(remedies: DoctorRemedies): Promise<{ entries: HooksOfAnotherInstall[]; lines: string[] }> {
   const entries: HooksOfAnotherInstall[] = [];
   const lines: string[] = [];
   const own = await ownInstallDir();
@@ -148,13 +149,13 @@ async function collectHooksOfAnotherInstall(): Promise<{ entries: HooksOfAnother
     const dir = path ? await installDirOf(path) : null;
     if (!path || !dir || isSamePath(dir, own)) continue;
     entries.push({ connector, path, flag });
-    let remedy = `run: codemie proxy connect ${flag}`;
+    let remedy = `run: ${remedies.connect(flag)}`;
     if (connector === CLAUDE_CODE_OTLP_AGENT_NAME) {
       // A connect pins Claude Code's hooks to the first `codemie` on PATH.
       const active = await findActiveCli();
       const activeDir = active.status === 'found' ? await installDirOf(active.active.path) : null;
       if (activeDir && isSamePath(activeDir, dir)) {
-        remedy = `put this install first on PATH, then run: codemie proxy connect ${flag}`;
+        remedy = `put this install first on PATH, then run: ${remedies.connect(flag)}`;
       }
     }
     lines.push(chalk.yellow(`  ${label}: run another install (${path}) — ${remedy}`));
@@ -168,7 +169,7 @@ async function collectHooksOfAnotherInstall(): Promise<{ entries: HooksOfAnother
  * does not accept, and the hooks that run another install. A config that cannot be read names nothing. A state
  * without `version` names no key: that daemon accepts the shared key alone, and its remedy is a restart. Only reads.
  */
-export async function collectClientNotices(state: DaemonState): Promise<ClientNotices> {
+export async function collectClientNotices(state: DaemonState, remedies: DoctorRemedies): Promise<ClientNotices> {
   const clientPortMismatch: ClientPortMismatch[] = [];
   const clientSharedKey: ClientSharedKey[] = [];
   const portLines: string[] = [];
@@ -176,7 +177,7 @@ export async function collectClientNotices(state: DaemonState): Promise<ClientNo
   for (const config of CLIENT_CONFIGS) {
     const gateway = await config.read(state);
     if (!gateway) continue;
-    const run = `run: codemie proxy connect ${config.flag}`;
+    const run = `run: ${remedies.connect(config.flag)}`;
     if (!config.portNamedElsewhere && gateway.port !== state.port) {
       clientPortMismatch.push({ client: config.client, configuredPort: gateway.port, flag: config.flag });
       portLines.push(chalk.yellow(
@@ -187,12 +188,12 @@ export async function collectClientNotices(state: DaemonState): Promise<ClientNo
       const refused = gateway.key === 'refused';
       clientSharedKey.push({ client: config.client, flag: config.flag, ...(refused && { refused: true as const }) });
       keyLines.push(chalk.yellow(refused
-        ? `  ${config.label}: points at a local gateway with a key this proxy does not accept — if it should use CodeMie, run: codemie proxy connect ${config.flag}`
+        ? `  ${config.label}: points at a local gateway with a key this proxy does not accept — if it should use CodeMie, run: ${remedies.connect(config.flag)}`
         : `  ${config.label}: uses the shared key — ${run}`
       ));
     }
   }
-  const hooks = await collectHooksOfAnotherInstall();
+  const hooks = await collectHooksOfAnotherInstall(remedies);
   return {
     clientPortMismatch,
     clientSharedKey,

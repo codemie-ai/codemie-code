@@ -110,7 +110,11 @@ URL in `~/.codemie/analytics-sync.json` (mode `0o600`), not `CredentialStore`: t
 unattended job must read it without an OS keychain/credential prompt. The signed `sig=`
 query parameter is still secret — every printed or logged string that may contain the URL
 goes through `redactSecrets()` (`src/cli/commands/analytics/sync/redact.ts`) first, and
-`status`/the install summary show only the webhook's host.
+`status`/the install summary show only the webhook's host. The same file holds, in the local
+analytics mode, `local: true` and `localJob` (the `node` and CLI entry the job was registered
+with); every write goes to a temporary file renamed over the target and sets mode `0o600`
+whatever the old file had (`writePrivateText()`, `src/cli/commands/analytics/sync/private-file.ts`),
+so a hook never reads a half-written file.
 
 The same exception covers `codemie analytics sync bootstrap`'s lead state,
 `~/.codemie/analytics-sync-bootstrap.json` (mode `0o600`, written via `writePrivateJson()` in

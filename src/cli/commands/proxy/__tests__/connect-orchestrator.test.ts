@@ -36,7 +36,6 @@ vi.mock('../daemon-manager.js', async (importOriginal) => {
     checkStatus: vi.fn(),
     readState: vi.fn(),
     writeState: vi.fn(),
-    spawnDaemon: vi.fn(),
     stopDaemon: vi.fn(),
     readConnectionRecord: vi.fn(),
     writeConnectionRecord: vi.fn(),
@@ -45,6 +44,7 @@ vi.mock('../daemon-manager.js', async (importOriginal) => {
     seedConnectionRecord: vi.fn(),
   };
 });
+vi.mock('../daemon-spawn.js', () => ({ spawnDaemon: vi.fn() }));
 // The CLI's own version is read from its package.json: every test pins it.
 vi.mock('@/utils/cli-updater.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/utils/cli-updater.js')>()),
@@ -384,7 +384,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
 
   it('bare connect: prints the target list, writes nothing, exits non-zero', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { connectTargets } = await import('../connect-orchestrator.js');
 
     await connectTargets({ targets: {} });
@@ -409,7 +410,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
 
   it('does not start the proxy when Claude Code analytics confirmation is declined', async () => {
     await setupHappyMocks();
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { promptAnalyticsConfirmation } = await import('../prompts/analytics-confirmation.js');
     const { resolveRepositoryName } = await import('@/utils/processes.js');
     vi.mocked(promptAnalyticsConfirmation).mockResolvedValueOnce('cancel');
@@ -430,7 +432,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
 
   it('shows the prompt without a project name when scope is omitted and a declined default writes nothing', async () => {
     await setupHappyMocks();
-    const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+    const { checkStatus, stopDaemon } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { writeClaudeCodeOtlpConfig } = await import('../connectors/claude-code-otlp.js');
     const { promptAnalyticsConfirmation } = await import('../prompts/analytics-confirmation.js');
     const { resolveRepositoryName } = await import('@/utils/processes.js');
@@ -451,7 +454,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
 
   it('leaves an already running daemon running when the confirmation is declined', async () => {
     await setupHappyMocks();
-    const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+    const { checkStatus, stopDaemon } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { writeClaudeCodeOtlpConfig } = await import('../connectors/claude-code-otlp.js');
     const { promptAnalyticsConfirmation } = await import('../prompts/analytics-confirmation.js');
     vi.mocked(checkStatus).mockResolvedValue({
@@ -470,7 +474,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
 
   it('--yes without a scope skips the prompt and writes the Global scope', async () => {
     await setupHappyMocks();
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { writeClaudeCodeOtlpConfig } = await import('../connectors/claude-code-otlp.js');
     const { promptAnalyticsConfirmation } = await import('../prompts/analytics-confirmation.js');
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
@@ -491,7 +496,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
 
   it('--scope project --yes skips the prompt and writes the Project scope', async () => {
     await setupHappyMocks();
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { writeClaudeCodeOtlpConfig } = await import('../connectors/claude-code-otlp.js');
     const { promptAnalyticsConfirmation } = await import('../prompts/analytics-confirmation.js');
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
@@ -513,7 +519,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     it(`errors before anything starts or is written when non-interactive without --yes (scope: ${scope ?? 'omitted'})`, async () => {
       await setupHappyMocks();
       const { ConfigLoader } = await import('../../../../utils/config.js');
-      const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+      const { checkStatus } = await import('../daemon-manager.js');
+      const { spawnDaemon } = await import('../daemon-spawn.js');
       const { writeClaudeCodeOtlpConfig } = await import('../connectors/claude-code-otlp.js');
       const { promptAnalyticsConfirmation } = await import('../prompts/analytics-confirmation.js');
       const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
@@ -537,7 +544,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
 
   it('--yes still stops on an invalid allowlist, naming --overwrite, unless --overwrite is passed', async () => {
     await setupHappyMocks();
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { writeClaudeCodeOtlpConfig } = await import('../connectors/claude-code-otlp.js');
     const { readAllowlistState } = await import('@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js');
     // Two calls (one per connect attempt); Once-values never leak into later tests.
@@ -564,7 +572,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
 
   it('--insiders with only --claude-desktop warns and continues', async () => {
     await setupHappyMocks();
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
     vi.mocked(spawnDaemon).mockResolvedValue(
       daemonState({ telemetryMode: 'claude-desktop', syncCodeMieUrl: 'https://x.example.com' }) as Awaited<ReturnType<typeof spawnDaemon>>
@@ -579,7 +588,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
 
   it.each([4001, 62380])('reuses a healthy matching daemon on port %i (no stop, no spawn)', async (port) => {
     await setupHappyMocks();
-    const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+    const { checkStatus, stopDaemon } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { checkProxyHealth } = await import('../health-check.js');
     vi.mocked(checkStatus).mockResolvedValue({ running: true, state: matchingDesktopState({ port, url: `http://127.0.0.1:${port}` }) as Awaited<ReturnType<typeof checkStatus>>['state'] });
     vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'deep', code: 'ok' });
@@ -593,7 +603,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
 
   it('restarts when the running daemon does not match the request', async () => {
     await setupHappyMocks();
-    const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+    const { checkStatus, stopDaemon } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     vi.mocked(checkStatus).mockResolvedValue({
       running: true,
       state: daemonState({ profile: 'other', provider: 'ai-run-sso', targetUrl: 'https://x.example.com/api', project: 'proj', telemetryMode: 'claude-desktop' }) as Awaited<ReturnType<typeof checkStatus>>['state'],
@@ -617,7 +628,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
 
   it('keeps the fallback port when connecting to a hook-respawned OTLP daemon', async () => {
     await setupHappyMocks();
-    const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+    const { checkStatus, stopDaemon } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { checkProxyHealth } = await import('../health-check.js');
     vi.mocked(checkStatus).mockResolvedValue({ running: true, state: daemonState({
       port: 62380,
@@ -637,7 +649,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
 
   it('restarts when the profile model changed against an otherwise-matching daemon', async () => {
     await setupHappyMocks({ model: 'gpt-5' });
-    const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+    const { checkStatus, stopDaemon } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { checkProxyHealth } = await import('../health-check.js');
     // A healthy daemon that matches on every field EXCEPT the (now-changed) model.
     vi.mocked(checkStatus).mockResolvedValue({
@@ -658,7 +671,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
 
   it('restartDaemon (the deprecated --force) restarts even a matching running daemon (skips health check)', async () => {
     await setupHappyMocks();
-    const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+    const { checkStatus, stopDaemon } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { checkProxyHealth } = await import('../health-check.js');
     vi.mocked(checkStatus).mockResolvedValue({ running: true, state: matchingDesktopState() as Awaited<ReturnType<typeof checkStatus>>['state'] });
     vi.mocked(spawnDaemon).mockResolvedValue(
@@ -680,7 +694,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
 
   it('verbose cold start reports the spawned proxy url through the logger', async () => {
     await setupHappyMocks();
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
     vi.mocked(spawnDaemon).mockResolvedValue(
       daemonState({ url: 'http://127.0.0.1:4777', telemetryMode: 'claude-desktop', syncCodeMieUrl: 'https://x.example.com' }) as Awaited<ReturnType<typeof spawnDaemon>>
@@ -698,7 +713,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
 
   it('restarts when a matching daemon is unhealthy', async () => {
     await setupHappyMocks();
-    const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+    const { checkStatus, stopDaemon } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { checkProxyHealth } = await import('../health-check.js');
     vi.mocked(checkStatus).mockResolvedValue({ running: true, state: matchingDesktopState() as Awaited<ReturnType<typeof checkStatus>>['state'] });
     vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: false, level: 'deep', code: 'unauthorized', reason: 'expired' });
@@ -723,7 +739,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
 
   it('reuses a live daemon whose state holds another client type and the same version', async () => {
     await setupHappyMocks();
-    const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+    const { checkStatus, stopDaemon } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { checkProxyHealth } = await import('../health-check.js');
     vi.mocked(checkStatus).mockResolvedValue({
       running: true,
@@ -740,7 +757,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
 
   it('reuses a daemon that wrote the same model into its state', async () => {
     await setupHappyMocks({ model: 'gpt-5' });
-    const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+    const { checkStatus, stopDaemon } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { checkProxyHealth } = await import('../health-check.js');
     vi.mocked(checkStatus).mockResolvedValue({
       running: true,
@@ -767,7 +785,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     ['a version, beside an unreadable own version', { version: '0.16.0' }, null, false],
   ] as const)('a matching healthy daemon with %s is replaced only when older', async (_label, versionField, ownVersion, replaced) => {
     await setupHappyMocks();
-    const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+    const { checkStatus, stopDaemon } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { checkProxyHealth } = await import('../health-check.js');
     const { getCurrentCliVersion } = await import('@/utils/cli-updater.js');
     vi.mocked(getCurrentCliVersion).mockResolvedValue(ownVersion);
@@ -797,7 +816,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
 
   it('asks for the port recorded with the clients when no daemon runs', async () => {
     await setupHappyMocks();
-    const { checkStatus, readConnectionRecord, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus, readConnectionRecord } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     vi.mocked(readConnectionRecord).mockResolvedValue({ version: 1, profile: 'p', updatedAt: '', port: 52311 });
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
     vi.mocked(spawnDaemon).mockResolvedValue(matchingDesktopState({ port: 52311, url: 'http://127.0.0.1:52311' }) as Awaited<ReturnType<typeof spawnDaemon>>);
@@ -814,7 +834,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
 
   it('writes the targets for the port of a matching daemon on a fallback port and records that port', async () => {
     await setupHappyMocks();
-    const { checkStatus, readConnectionRecord, spawnDaemon, writeConnectionRecord } = await import('../daemon-manager.js');
+    const { checkStatus, readConnectionRecord, writeConnectionRecord } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { checkProxyHealth } = await import('../health-check.js');
     const { writeDesktopConfig } = await import('../connectors/desktop.js');
     const onFallback = matchingDesktopState({ port: 60122, url: 'http://127.0.0.1:60122' });
@@ -841,7 +862,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
       ssoConfig: { apiUrl: 'https://s' }, codeMieUrl: 'https://c',
     });
     const { ConfigLoader } = await import('../../../../utils/config.js');
-    const { checkStatus, readState, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+    const { checkStatus, readState, stopDaemon } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     vi.mocked(readState).mockResolvedValue(null);
     vi.mocked(ConfigLoader.resolveProfileIdentity).mockResolvedValue(
       { state: 'own', profileName: 'p', shared: {}, identity: {} } as unknown as Awaited<ReturnType<typeof ConfigLoader.resolveProfileIdentity>>
@@ -879,7 +901,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
   describe('the daemon lock', () => {
     it('fails with the lock message and exit 1, stopping and spawning nothing, when the lock stays held past its budget', async () => {
       await setupHappyMocks();
-      const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+      const { checkStatus, stopDaemon } = await import('../daemon-manager.js');
+      const { spawnDaemon } = await import('../daemon-spawn.js');
       vi.mocked(checkStatus).mockResolvedValue({ running: true, state: daemonState({ profile: 'other' }) as Awaited<ReturnType<typeof checkStatus>>['state'] });
       const { connectTargets } = await import('../connect-orchestrator.js');
 
@@ -900,7 +923,8 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
 
     it('a waiter that gets the lock reads the daemon the holder started and spawns none', async () => {
       await setupHappyMocks();
-      const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+      const { checkStatus, stopDaemon } = await import('../daemon-manager.js');
+      const { spawnDaemon } = await import('../daemon-spawn.js');
       const { checkProxyHealth } = await import('../health-check.js');
       const { isOwnerAlive } = await import('@/utils/processes.js');
       vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'deep', code: 'ok' });
@@ -1003,7 +1027,8 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
   /** No daemon runs; the one this run spawns is the one the state file names afterwards. */
   async function withFreshDaemon(): Promise<void> {
     await setupHappyMocks();
-    const { checkStatus, readState, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus, readState } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const spawned = daemonState({ syncCodeMieUrl: 'https://x.example.com' }) as Awaited<ReturnType<typeof spawnDaemon>>;
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
     vi.mocked(spawnDaemon).mockResolvedValue(spawned);
@@ -1012,7 +1037,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
 
   it('declined Claude Code analytics alongside another target: skips only that target, the daemon spawned with no identity', async () => {
     await withFreshDaemon();
-    const { spawnDaemon } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { writeClaudeCodeOtlpConfig } = await import('../connectors/claude-code-otlp.js');
     const { writeVsCodeLanguageModelsConfig } = await import('../connectors/vscode.js');
     const { promptAnalyticsConfirmation } = await import('../prompts/analytics-confirmation.js');
@@ -1202,7 +1227,8 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
 
   it('logs the named key it wrote into the Desktop config, not the shared one', async () => {
     await withFreshDaemon();
-    const { readState, spawnDaemon } = await import('../daemon-manager.js');
+    const { readState } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const spawned = daemonState({ syncCodeMieUrl: 'https://x.example.com', gatewayKey: 'codemie-proxy' }) as Awaited<ReturnType<typeof spawnDaemon>>;
     vi.mocked(spawnDaemon).mockResolvedValue(spawned);
     vi.mocked(readState).mockResolvedValue(spawned);
@@ -1314,7 +1340,8 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
   describe('proxy-connection record', () => {
     it('connect against a running matching daemon records the connection (profile + port)', async () => {
       await setupHappyMocks();
-      const { checkStatus, spawnDaemon, writeConnectionRecord } = await import('../daemon-manager.js');
+      const { checkStatus, writeConnectionRecord } = await import('../daemon-manager.js');
+      const { spawnDaemon } = await import('../daemon-spawn.js');
       const { checkProxyHealth } = await import('../health-check.js');
       const { writeDesktopConfig } = await import('../connectors/desktop.js');
       const matching = matchingDesktopState();
@@ -1332,7 +1359,8 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
 
     it('a fresh spawn defers the write to after wiring (spawnDaemon told not to write)', async () => {
       await withFreshDaemon();
-      const { spawnDaemon, writeConnectionRecord } = await import('../daemon-manager.js');
+      const { writeConnectionRecord } = await import('../daemon-manager.js');
+      const { spawnDaemon } = await import('../daemon-spawn.js');
       const { writeDesktopConfig } = await import('../connectors/desktop.js');
       vi.mocked(writeDesktopConfig).mockResolvedValue({ configPath: '/desktop/config.json', activated: false });
       const { connectTargets } = await import('../connect-orchestrator.js');
@@ -1442,7 +1470,8 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
 
   it('prints only the success line after the proxy starts', async () => {
     await setupHappyMocks({ name: 'preview' });
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { writeClaudeCodeOtlpConfig } = await import('../connectors/claude-code-otlp.js');
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
     vi.mocked(spawnDaemon).mockResolvedValue(
@@ -1488,7 +1517,8 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       promptArgs: Record<string, unknown>;
     }> {
       await setupHappyMocks(configOverrides);
-      const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+      const { checkStatus } = await import('../daemon-manager.js');
+      const { spawnDaemon } = await import('../daemon-spawn.js');
       const { promptAnalyticsConfirmation } = await import('../prompts/analytics-confirmation.js');
       vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
       vi.mocked(spawnDaemon).mockResolvedValue(
@@ -1667,7 +1697,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       const { ConfigurationError } = await import('../../../../utils/errors.js');
       await withFreshDaemon();
       vi.mocked(resolveConsentProject).mockRejectedValue(new ConfigurationError('No CodeMie project resolved for this folder.'));
-      const { spawnDaemon } = await import('../daemon-manager.js');
+      const { spawnDaemon } = await import('../daemon-spawn.js');
       const { connectTargets } = await import('../connect-orchestrator.js');
 
       await expect(
@@ -1844,7 +1874,11 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
 
       expect(vi.mocked(w.writeDesktopConfig).mock.calls[0].slice(0, 2)).toEqual(['http://127.0.0.1:4001', 'gk']);
       expect(w.writeVsCodeClaudeCodeConfig).toHaveBeenCalledWith('http://127.0.0.1:4001', 'gk', false);
-      expect(w.writeClaudeCodeOtlpConfig).toHaveBeenCalledWith({ overwrite: false, keepProjectList: true });
+      expect(w.writeClaudeCodeOtlpConfig).toHaveBeenCalledWith({
+        promptStatus: 'Checking CodeMie sign-in. If a browser sign-in opened, finish it and your prompt will continue automatically',
+        overwrite: false,
+        keepProjectList: true,
+      });
       expect(process.exitCode).toBe(0);
     });
 
@@ -2199,7 +2233,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       await withFreshDaemon();
       await onMachine('desktop', 'claude');
       await writers();
-      const { spawnDaemon } = await import('../daemon-manager.js');
+      const { spawnDaemon } = await import('../daemon-spawn.js');
       const { isNonInteractiveEnvironment } = await import('@/utils/interactive.js');
       vi.mocked(isNonInteractiveEnvironment).mockReturnValueOnce(true);
       const { connectTargets } = await import('../connect-orchestrator.js');
@@ -2214,7 +2248,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       await withFreshDaemon();
       await onMachine('desktop');
       await writers();
-      const { spawnDaemon } = await import('../daemon-manager.js');
+      const { spawnDaemon } = await import('../daemon-spawn.js');
       const { isNonInteractiveEnvironment } = await import('@/utils/interactive.js');
       vi.mocked(isNonInteractiveEnvironment).mockReturnValueOnce(true);
       const { connectTargets } = await import('../connect-orchestrator.js');
@@ -2231,7 +2265,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       const w = await writers();
       const { promptAnalyticsConfirmation } = await import('../prompts/analytics-confirmation.js');
       vi.mocked(promptAnalyticsConfirmation).mockResolvedValueOnce('cancel');
-      const { spawnDaemon } = await import('../daemon-manager.js');
+      const { spawnDaemon } = await import('../daemon-spawn.js');
       const { connectTargets } = await import('../connect-orchestrator.js');
 
       await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
@@ -2486,7 +2520,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       await writers();
       const { readAllowlistState } = await import('@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js');
       vi.mocked(readAllowlistState).mockResolvedValueOnce({ kind: 'invalid' });
-      const { spawnDaemon } = await import('../daemon-manager.js');
+      const { spawnDaemon } = await import('../daemon-spawn.js');
       vi.mocked(spawnDaemon).mockRejectedValue(new Error('Daemon failed to start within 5 seconds'));
       const { connectTargets } = await import('../connect-orchestrator.js');
 
@@ -2696,10 +2730,11 @@ describe('connectTargets — the other clients moved off the shared key', () => 
     console_ = spyConsole();
     await setupHappyMocks();
     const daemon = await import('../daemon-manager.js');
+    const spawner = await import('../daemon-spawn.js');
     const actual = await vi.importActual<typeof import('../daemon-manager.js')>('../daemon-manager.js');
-    const spawned = daemonState({ syncCodeMieUrl: 'https://x.example.com' }) as Awaited<ReturnType<typeof daemon.spawnDaemon>>;
+    const spawned = daemonState({ syncCodeMieUrl: 'https://x.example.com' }) as Awaited<ReturnType<typeof spawner.spawnDaemon>>;
     vi.mocked(daemon.checkStatus).mockResolvedValue({ running: false, state: null });
-    vi.mocked(daemon.spawnDaemon).mockResolvedValue(spawned);
+    vi.mocked(spawner.spawnDaemon).mockResolvedValue(spawned);
     vi.mocked(daemon.readState).mockResolvedValue(spawned);
     vi.mocked(daemon.writeConnectionRecord).mockResolvedValue(true);
     vi.mocked(daemon.readConnectionRecord).mockImplementation(() => actual.readConnectionRecord(recordPath()));
@@ -3130,6 +3165,7 @@ describe('ensureOtlpProxy', () => {
   ) {
     const { ensureOtlpProxy } = await import('../otlp-cold-start.js');
     const daemon = await import('../daemon-manager.js');
+    const spawner = await import('../daemon-spawn.js');
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { logger } = await import('../../../../utils/logger.js');
 
@@ -3139,8 +3175,8 @@ describe('ensureOtlpProxy', () => {
       record as Awaited<ReturnType<typeof daemon.readConnectionRecord>>
     );
     vi.mocked(daemon.checkStatus).mockResolvedValue({ running: false, state: null });
-    vi.mocked(daemon.spawnDaemon).mockResolvedValue(
-      daemonState() as Awaited<ReturnType<typeof daemon.spawnDaemon>>
+    vi.mocked(spawner.spawnDaemon).mockResolvedValue(
+      daemonState() as Awaited<ReturnType<typeof spawner.spawnDaemon>>
     );
     vi.mocked(ConfigLoader.loadLocalConfigProfile).mockResolvedValue(local);
     vi.mocked(ConfigLoader.loadGlobalConfigProfile).mockResolvedValue(global);
@@ -3150,7 +3186,7 @@ describe('ensureOtlpProxy', () => {
     const success = vi.spyOn(logger, 'success').mockImplementation(() => {});
     loggerSpies.push(warn, status, success);
 
-    return { ensureOtlpProxy, daemon, ConfigLoader, warn, status, success };
+    return { ensureOtlpProxy, daemon, spawner, ConfigLoader, warn, status, success };
   }
 
   const warnings = (warn: ReturnType<typeof vi.spyOn>): string[] =>
@@ -3192,7 +3228,7 @@ describe('ensureOtlpProxy', () => {
 
     await s.ensureOtlpProxy(AGENT);
 
-    expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ profile: 'p' }));
+    expect(s.spawner.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ profile: 'p' }));
     expect(await readFile(codexPath, 'utf-8')).toBe(codex);
     expect(await readFile(join(desktopLib, 'cfg.json'), 'utf-8')).toBe(desktopEntry);
     expect(await readFile(recordPath, 'utf-8')).toBe(JSON.stringify(legacy));
@@ -3208,8 +3244,8 @@ describe('ensureOtlpProxy', () => {
       await expect(s.ensureOtlpProxy(AGENT)).resolves.toBeUndefined();
 
       expect(s.ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), { name: 'work' });
-      expect(s.daemon.spawnDaemon).toHaveBeenCalledTimes(1);
-      const [spawned] = vi.mocked(s.daemon.spawnDaemon).mock.calls[0];
+      expect(s.spawner.spawnDaemon).toHaveBeenCalledTimes(1);
+      const [spawned] = vi.mocked(s.spawner.spawnDaemon).mock.calls[0];
       expect(spawned).toMatchObject({ profile: 'work', project: 'proj' });
       expect(spawned).not.toHaveProperty('clientType');
       expect(spawned.writeRecord).not.toBe(false);
@@ -3226,7 +3262,7 @@ describe('ensureOtlpProxy', () => {
       await s.ensureOtlpProxy(AGENT);
 
       expect(s.ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), undefined);
-      expect(s.daemon.spawnDaemon).toHaveBeenCalledTimes(1);
+      expect(s.spawner.spawnDaemon).toHaveBeenCalledTimes(1);
     });
 
     it('still starts, with a warning naming the profile, when SSO credentials are missing', async () => {
@@ -3235,8 +3271,8 @@ describe('ensureOtlpProxy', () => {
 
       await expect(s.ensureOtlpProxy(AGENT)).resolves.toBeUndefined();
 
-      expect(s.daemon.spawnDaemon).toHaveBeenCalledTimes(1);
-      expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ profile: 'work' }));
+      expect(s.spawner.spawnDaemon).toHaveBeenCalledTimes(1);
+      expect(s.spawner.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ profile: 'work' }));
       expect(warnings(s.warn)).toEqual([
         expect.stringContaining("No active CodeMie session for profile 'work'"),
         expect.stringContaining('no recorded proxy connection'),
@@ -3251,7 +3287,7 @@ describe('ensureOtlpProxy', () => {
 
       await expect(s.ensureOtlpProxy(AGENT)).resolves.toBeUndefined();
 
-      expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+      expect(s.spawner.spawnDaemon).not.toHaveBeenCalled();
       expect(s.warn).not.toHaveBeenCalled();
       expectNoConsoleNoExit();
     });
@@ -3269,7 +3305,7 @@ describe('ensureOtlpProxy', () => {
 
       await s.ensureOtlpProxy(AGENT);
 
-      expect(s.daemon.spawnDaemon).toHaveBeenCalledTimes(1);
+      expect(s.spawner.spawnDaemon).toHaveBeenCalledTimes(1);
       expect(warnings(s.warn)[0]).toContain('no recorded proxy connection');
     });
   });
@@ -3279,7 +3315,7 @@ describe('ensureOtlpProxy', () => {
 
     await expect(s.ensureOtlpProxy(AGENT)).resolves.toBeUndefined();
 
-    expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+    expect(s.spawner.spawnDaemon).not.toHaveBeenCalled();
     expect(warnings(s.warn)).toEqual([expect.stringContaining('(profile: p): profile not found')]);
     expect(s.ConfigLoader.load).not.toHaveBeenCalled();
   });
@@ -3289,7 +3325,7 @@ describe('ensureOtlpProxy', () => {
 
     await expect(s.ensureOtlpProxy(AGENT)).resolves.toBeUndefined();
 
-    expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+    expect(s.spawner.spawnDaemon).not.toHaveBeenCalled();
     expect(warnings(s.warn)).toEqual([expect.stringContaining('(profile: p): profile not found')]);
   });
 
@@ -3298,7 +3334,7 @@ describe('ensureOtlpProxy', () => {
 
     await expect(s.ensureOtlpProxy(AGENT)).resolves.toBeUndefined();
 
-    expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+    expect(s.spawner.spawnDaemon).not.toHaveBeenCalled();
     expect(warnings(s.warn)).toEqual([expect.stringContaining('profile: p, local')]);
     expect(warnings(s.warn)[0]).toContain('other');
   });
@@ -3309,7 +3345,7 @@ describe('ensureOtlpProxy', () => {
 
       await expect(s.ensureOtlpProxy(AGENT)).resolves.toBeUndefined();
 
-      expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+      expect(s.spawner.spawnDaemon).not.toHaveBeenCalled();
       expect(warnings(s.warn)).toEqual([expect.stringContaining('(profile: p, local): no baseUrl configured')]);
       expectNoConsoleNoExit();
     });
@@ -3321,8 +3357,8 @@ describe('ensureOtlpProxy', () => {
 
     await expect(s.ensureOtlpProxy(AGENT)).resolves.toBeUndefined();
 
-    expect(s.daemon.spawnDaemon).toHaveBeenCalledTimes(1);
-    expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ profile: 'p' }));
+    expect(s.spawner.spawnDaemon).toHaveBeenCalledTimes(1);
+    expect(s.spawner.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ profile: 'p' }));
     expect(warnings(s.warn)).toEqual([expect.stringContaining("No active CodeMie session for profile 'p'")]);
     expect(warnings(s.warn)[0]).toContain('no SSO credentials (profile: p, local scope)');
     expect(warnings(s.warn)[0]).toContain('holds the port until you sign in');
@@ -3335,7 +3371,7 @@ describe('ensureOtlpProxy', () => {
 
     await expect(s.ensureOtlpProxy(AGENT)).resolves.toBeUndefined();
 
-    expect(s.daemon.spawnDaemon).toHaveBeenCalledTimes(1);
+    expect(s.spawner.spawnDaemon).toHaveBeenCalledTimes(1);
     expect(warnings(s.warn)).toEqual([expect.stringContaining('Failed to verify credentials: keychain locked')]);
     expectNoConsoleNoExit();
   });
@@ -3347,12 +3383,12 @@ describe('ensureOtlpProxy', () => {
 
     expect(s.ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), { name: 'p' });
     expect(s.ConfigLoader.getActiveProfileName).not.toHaveBeenCalled();
-    expect(s.daemon.spawnDaemon).toHaveBeenCalledTimes(1);
-    expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({
+    expect(s.spawner.spawnDaemon).toHaveBeenCalledTimes(1);
+    expect(s.spawner.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({
       profile: 'p',
       targetUrl: 'https://x.example.com/api',
     }));
-    expect(vi.mocked(s.daemon.spawnDaemon).mock.calls[0][0]).not.toHaveProperty('clientType');
+    expect(vi.mocked(s.spawner.spawnDaemon).mock.calls[0][0]).not.toHaveProperty('clientType');
     // A hook's stdout is the agent's protocol channel: status lines go through the logger.
     expect(s.status).toHaveBeenCalledWith('Starting proxy (profile: p)...');
     expect(s.success).toHaveBeenCalledWith('Proxy started');
@@ -3365,7 +3401,7 @@ describe('ensureOtlpProxy', () => {
 
     await s.ensureOtlpProxy(AGENT);
 
-    expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ project: 'proj' }));
+    expect(s.spawner.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ project: 'proj' }));
   });
 
   it('logs the scope the profile was loaded from on a successful cold start', async () => {
@@ -3376,7 +3412,7 @@ describe('ensureOtlpProxy', () => {
     await s.ensureOtlpProxy(AGENT);
 
     expect(info).toHaveBeenCalledWith('[ensureOtlpProxy] cold start (profile: p, global scope)');
-    expect(s.daemon.spawnDaemon).toHaveBeenCalledTimes(1);
+    expect(s.spawner.spawnDaemon).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -3388,7 +3424,7 @@ describe('ensureOtlpProxy', () => {
 
     await s.ensureOtlpProxy(AGENT);
 
-    const [spawned] = vi.mocked(s.daemon.spawnDaemon).mock.calls[0];
+    const [spawned] = vi.mocked(s.spawner.spawnDaemon).mock.calls[0];
     expect(spawned.profile).toBe('p');
     expect(spawned).not.toHaveProperty('clientType');
     expect(spawned).not.toHaveProperty('telemetryMode');
@@ -3432,12 +3468,12 @@ describe('ensureOtlpProxy', () => {
     await expect(s.ensureOtlpProxy(AGENT)).rejects.toThrow('broken config');
 
     expect(warnings(s.warn)).toEqual([expect.stringContaining('(profile: p)')]);
-    expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+    expect(s.spawner.spawnDaemon).not.toHaveBeenCalled();
   });
 
   it('warns with the profile and rethrows when the spawn fails', async () => {
     const s = await arrange();
-    vi.mocked(s.daemon.spawnDaemon).mockRejectedValue(new Error('daemon did not start'));
+    vi.mocked(s.spawner.spawnDaemon).mockRejectedValue(new Error('daemon did not start'));
 
     await expect(s.ensureOtlpProxy(AGENT)).rejects.toThrow('daemon did not start');
 
@@ -3453,8 +3489,20 @@ describe('ensureOtlpProxy', () => {
 
     expect(s.daemon.seedConnectionRecord).toHaveBeenCalledWith(alive);
     expect(s.daemon.readConnectionRecord).not.toHaveBeenCalled();
-    expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+    expect(s.spawner.spawnDaemon).not.toHaveBeenCalled();
     expect(s.warn).not.toHaveBeenCalled();
+  });
+
+  it('does not adopt a live local-mode daemon: no record seeded and Claude Code not re-pointed at it', async () => {
+    const s = await arrange();
+    const local = daemonState({ mode: 'local', profile: '' }) as Awaited<ReturnType<typeof s.daemon.readState>>;
+    vi.mocked(s.daemon.readState).mockResolvedValue(local);
+    const { refreshClaudeCodeOtlpEndpoint } = await import('../connectors/claude-code-otlp-endpoint.js');
+
+    await s.ensureOtlpProxy(AGENT);
+
+    expect(s.daemon.seedConnectionRecord).not.toHaveBeenCalledWith(local);
+    expect(refreshClaudeCodeOtlpEndpoint).not.toHaveBeenCalledWith(local);
   });
 
   it('waits for the lock and adopts the daemon the holder started meanwhile (a restart), stopping nothing', async () => {
@@ -3473,13 +3521,13 @@ describe('ensureOtlpProxy', () => {
     // The first read is lock-free; the second runs while this process holds the daemon lock.
     expect(lockAtRead).toEqual([null, expect.objectContaining({ pid: process.pid })]);
     expect(s.daemon.seedConnectionRecord).toHaveBeenCalledWith(cameUp);
-    expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+    expect(s.spawner.spawnDaemon).not.toHaveBeenCalled();
     expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
   });
 
   it('reuses the daemon a start that timed out left behind, once a later start finds it alive and matching', async () => {
     const s = await arrange();
-    vi.mocked(s.daemon.spawnDaemon).mockRejectedValueOnce(new Error('Daemon failed to start within 5 seconds'));
+    vi.mocked(s.spawner.spawnDaemon).mockRejectedValueOnce(new Error('Daemon failed to start within 5 seconds'));
     await expect(s.ensureOtlpProxy(AGENT)).rejects.toThrow('Daemon failed to start within 5 seconds');
 
     // The child wrote its state after the ready wait: the next start's status read under the lock finds it.
@@ -3487,7 +3535,7 @@ describe('ensureOtlpProxy', () => {
     vi.mocked(s.daemon.checkStatus).mockResolvedValue({ running: true, state: late });
     await s.ensureOtlpProxy(AGENT);
 
-    expect(s.daemon.spawnDaemon).toHaveBeenCalledTimes(1);
+    expect(s.spawner.spawnDaemon).toHaveBeenCalledTimes(1);
     expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
     expect(s.daemon.seedConnectionRecord).toHaveBeenCalledWith(late);
   });
@@ -3506,7 +3554,7 @@ describe('ensureOtlpProxy', () => {
     await s.ensureOtlpProxy(AGENT);
 
     expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
-    expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+    expect(s.spawner.spawnDaemon).not.toHaveBeenCalled();
   });
 
   it('adopts a daemon an older install\'s hook started after the lock was taken, through ensureDaemon', async () => {
@@ -3517,7 +3565,7 @@ describe('ensureOtlpProxy', () => {
     await s.ensureOtlpProxy(AGENT);
 
     expect(s.daemon.seedConnectionRecord).toHaveBeenCalledWith(cameUp);
-    expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+    expect(s.spawner.spawnDaemon).not.toHaveBeenCalled();
     expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
   });
 
@@ -3539,7 +3587,7 @@ describe('ensureOtlpProxy', () => {
 
     expect(s.daemon.seedConnectionRecord).toHaveBeenCalledWith(live);
     expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
-    expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+    expect(s.spawner.spawnDaemon).not.toHaveBeenCalled();
   });
 
   describe('a start from the daemon\'s own state', () => {
@@ -3574,7 +3622,7 @@ describe('ensureOtlpProxy', () => {
     async function arrangeState(state: Record<string, unknown>, record: Record<string, unknown> | null = { version: 1, profile: 'p', updatedAt: '' }) {
       const s = await arrange(record, { name: 'p' }, {}, { codeMieProject: 'C', model: 'm-dir' });
       vi.mocked(s.daemon.readState).mockResolvedValue(daemonState(state) as Awaited<ReturnType<typeof s.daemon.readState>>);
-      vi.mocked(s.daemon.spawnDaemon).mockResolvedValue(daemonState({ port: 52400, url: 'http://127.0.0.1:52400' }) as Awaited<ReturnType<typeof s.daemon.spawnDaemon>>);
+      vi.mocked(s.spawner.spawnDaemon).mockResolvedValue(daemonState({ port: 52400, url: 'http://127.0.0.1:52400' }) as Awaited<ReturnType<typeof s.spawner.spawnDaemon>>);
       return s;
     }
 
@@ -3587,7 +3635,7 @@ describe('ensureOtlpProxy', () => {
 
       await s.ensureOtlpProxy(AGENT);
 
-      expect(vi.mocked(s.daemon.spawnDaemon).mock.calls[0][0]).toEqual({ ...FROM_STATE, port: 52400 });
+      expect(vi.mocked(s.spawner.spawnDaemon).mock.calls[0][0]).toEqual({ ...FROM_STATE, port: 52400 });
       expect(s.ConfigLoader.load).not.toHaveBeenCalled();
       expect(s.daemon.writeConnectionRecord).not.toHaveBeenCalled();
       expect(refreshClaudeCodeOtlpEndpoint).toHaveBeenCalledWith(expect.objectContaining({ port: 52400 }));
@@ -3602,7 +3650,7 @@ describe('ensureOtlpProxy', () => {
 
       await s.ensureOtlpProxy(AGENT);
 
-      expect(vi.mocked(s.daemon.spawnDaemon).mock.calls[0][0]).toEqual({ ...FROM_STATE, port: 52311 });
+      expect(vi.mocked(s.spawner.spawnDaemon).mock.calls[0][0]).toEqual({ ...FROM_STATE, port: 52311 });
       expect(s.ConfigLoader.load).not.toHaveBeenCalled();
     });
 
@@ -3614,12 +3662,12 @@ describe('ensureOtlpProxy', () => {
       const order = (fn: unknown) => vi.mocked(fn as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
       expect(s.daemon.writeState).toHaveBeenCalledWith(expect.objectContaining(OLDER));
       expect(order(s.daemon.stopDaemon)).toBeLessThan(order(s.daemon.writeState));
-      expect(order(s.daemon.writeState)).toBeLessThan(order(s.daemon.spawnDaemon));
+      expect(order(s.daemon.writeState)).toBeLessThan(order(s.spawner.spawnDaemon));
     });
 
     it('a replacement whose spawn fails throws, its written-back state left for the next hook', async () => {
       const s = await arrangeState(OLDER);
-      vi.mocked(s.daemon.spawnDaemon).mockRejectedValue(new Error('Daemon failed to start within 5 seconds'));
+      vi.mocked(s.spawner.spawnDaemon).mockRejectedValue(new Error('Daemon failed to start within 5 seconds'));
 
       await expect(s.ensureOtlpProxy(AGENT)).rejects.toThrow('Daemon failed to start within 5 seconds');
 
@@ -3632,7 +3680,7 @@ describe('ensureOtlpProxy', () => {
 
       await s.ensureOtlpProxy(AGENT);
 
-      const [spawned] = vi.mocked(s.daemon.spawnDaemon).mock.calls[0];
+      const [spawned] = vi.mocked(s.spawner.spawnDaemon).mock.calls[0];
       expect(spawned).toMatchObject({ port: 52311, writeRecord: false });
       expect(spawned).not.toHaveProperty('recordPort');
     });
@@ -3642,7 +3690,7 @@ describe('ensureOtlpProxy', () => {
 
       await s.ensureOtlpProxy(AGENT);
 
-      expect(vi.mocked(s.daemon.spawnDaemon).mock.calls[0][0]).not.toHaveProperty('project');
+      expect(vi.mocked(s.spawner.spawnDaemon).mock.calls[0][0]).not.toHaveProperty('project');
     });
 
     it.each([
@@ -3655,7 +3703,7 @@ describe('ensureOtlpProxy', () => {
       await s.ensureOtlpProxy(AGENT);
 
       expect(s.ConfigLoader.loadGlobalConfigProfile).toHaveBeenCalledWith('p');
-      expect(vi.mocked(s.daemon.spawnDaemon).mock.calls[0][0].model).toBe(model);
+      expect(vi.mocked(s.spawner.spawnDaemon).mock.calls[0][0].model).toBe(model);
     });
 
     it('a state with a version and no model takes the model of the global profile of the state\'s name', async () => {
@@ -3664,7 +3712,7 @@ describe('ensureOtlpProxy', () => {
 
       await s.ensureOtlpProxy(AGENT);
 
-      expect(vi.mocked(s.daemon.spawnDaemon).mock.calls[0][0].model).toBe('m1');
+      expect(vi.mocked(s.spawner.spawnDaemon).mock.calls[0][0].model).toBe('m1');
     });
 
     /** The state of a live older daemon that names no upstream. */
@@ -3692,9 +3740,9 @@ describe('ensureOtlpProxy', () => {
 
       const order = (fn: unknown) => vi.mocked(fn as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
       expect(s.daemon.stopDaemon).toHaveBeenCalledTimes(1);
-      expect(order(s.daemon.stopDaemon)).toBeLessThan(order(s.daemon.spawnDaemon));
+      expect(order(s.daemon.stopDaemon)).toBeLessThan(order(s.spawner.spawnDaemon));
       expect(s.ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), record ? { name: 'p' } : undefined);
-      expect(vi.mocked(s.daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({
+      expect(vi.mocked(s.spawner.spawnDaemon).mock.calls[0][0]).toMatchObject({
         profile: 'p', targetUrl: 'https://x.example.com/api', project: 'C', model: 'm-dir', port: 52311,
       });
       expect(s.daemon.seedConnectionRecord).not.toHaveBeenCalledWith(expect.objectContaining({ version: '0.16.0' }));
@@ -3707,7 +3755,7 @@ describe('ensureOtlpProxy', () => {
       await s.ensureOtlpProxy(AGENT);
 
       expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
-      expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+      expect(s.spawner.spawnDaemon).not.toHaveBeenCalled();
     });
 
     it('keeps: a live older daemon whose state names no upstream, no record and a blank baseUrl — nothing stopped or spawned', async () => {
@@ -3717,7 +3765,7 @@ describe('ensureOtlpProxy', () => {
       await s.ensureOtlpProxy(AGENT);
 
       expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
-      expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+      expect(s.spawner.spawnDaemon).not.toHaveBeenCalled();
     });
 
     it.each(['UserPromptSubmit', 'PostCompact'])(
@@ -3729,7 +3777,7 @@ describe('ensureOtlpProxy', () => {
 
         expect(s.daemon.seedConnectionRecord).toHaveBeenCalledWith(expect.objectContaining(NO_UPSTREAM));
         expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
-        expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+        expect(s.spawner.spawnDaemon).not.toHaveBeenCalled();
       }
     );
 
@@ -3740,7 +3788,7 @@ describe('ensureOtlpProxy', () => {
 
       expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
       expect(s.ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), { name: 'p' });
-      expect(vi.mocked(s.daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({
+      expect(vi.mocked(s.spawner.spawnDaemon).mock.calls[0][0]).toMatchObject({
         profile: 'p', targetUrl: 'https://x.example.com/api', project: 'C', model: 'm-dir',
       });
     });
@@ -3757,7 +3805,7 @@ describe('ensureOtlpProxy', () => {
       await s.ensureOtlpProxy(agent, event);
 
       expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
-      expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+      expect(s.spawner.spawnDaemon).not.toHaveBeenCalled();
       expect(s.daemon.seedConnectionRecord).toHaveBeenCalledWith(expect.objectContaining(UNVERSIONED));
     });
 
@@ -3772,7 +3820,7 @@ describe('ensureOtlpProxy', () => {
       await s.ensureOtlpProxy(agent, event);
 
       expect(s.daemon.stopDaemon).toHaveBeenCalledTimes(1);
-      expect(vi.mocked(s.daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ project: 'B', gatewayKey: 'k' });
+      expect(vi.mocked(s.spawner.spawnDaemon).mock.calls[0][0]).toMatchObject({ project: 'B', gatewayKey: 'k' });
     });
 
     it('claude-code-otlp on UserPromptSubmit with no live daemon starts one', async () => {
@@ -3780,7 +3828,7 @@ describe('ensureOtlpProxy', () => {
 
       await s.ensureOtlpProxy(AGENT, 'UserPromptSubmit');
 
-      expect(vi.mocked(s.daemon.spawnDaemon).mock.calls[0][0]).toMatchObject({ project: 'B', gatewayKey: 'k' });
+      expect(vi.mocked(s.spawner.spawnDaemon).mock.calls[0][0]).toMatchObject({ project: 'B', gatewayKey: 'k' });
     });
 
     it('throws the lock error and stops or spawns nothing when the lock stays held past its budget', async () => {
@@ -3797,7 +3845,7 @@ describe('ensureOtlpProxy', () => {
       });
 
       expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
-      expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+      expect(s.spawner.spawnDaemon).not.toHaveBeenCalled();
     });
   });
 
@@ -3820,7 +3868,7 @@ describe('ensureOtlpProxy', () => {
       vi.mocked(s.ConfigLoader.resolveProfileIdentity).mockReset();
     }
 
-    expect(vi.mocked(s.daemon.spawnDaemon).mock.calls[0][0]).toEqual({
+    expect(vi.mocked(s.spawner.spawnDaemon).mock.calls[0][0]).toEqual({
       targetUrl: 'https://t', provider: 'ai-run-sso', profile: 'p', model: 'm1', port: 4001, project: 'A',
       projectBinding: 'own', syncApiUrl: 'https://s', syncCodeMieUrl: 'https://c', writeRecord: true, recordPort: true,
     });
@@ -3844,11 +3892,11 @@ describe('ensureOtlpProxy', () => {
     vi.mocked(readConfiguredOtlpPort).mockImplementationOnce(actual.readConfiguredOtlpPort);
     vi.mocked(refreshClaudeCodeOtlpEndpoint).mockImplementationOnce(actual.refreshClaudeCodeOtlpEndpoint);
     const respawned = daemonState({ port: 60005, url: 'http://127.0.0.1:60005' });
-    vi.mocked(s.daemon.spawnDaemon).mockResolvedValue(respawned as Awaited<ReturnType<typeof s.daemon.spawnDaemon>>);
+    vi.mocked(s.spawner.spawnDaemon).mockResolvedValue(respawned as Awaited<ReturnType<typeof s.spawner.spawnDaemon>>);
 
     try {
       await s.ensureOtlpProxy(AGENT);
-      expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ port: 62380 }));
+      expect(s.spawner.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ port: 62380 }));
       const saved = JSON.parse(await readFile(settingsPath, 'utf-8'));
       expect(saved.env.OTEL_EXPORTER_OTLP_ENDPOINT).toBe(`${respawned.url}/v1/analytics/otlp`);
       expect(saved.env.OTEL_EXPORTER_OTLP_HEADERS).toBe(`Authorization=Bearer ${respawned.gatewayKey}`);
@@ -3863,11 +3911,11 @@ describe('ensureOtlpProxy', () => {
 
     vi.mocked(s.daemon.readState).mockResolvedValue(daemonState({ pid: 999999, port: 62380 }) as Awaited<ReturnType<typeof s.daemon.readState>>);
     await s.ensureOtlpProxy(AGENT);
-    expect(s.daemon.spawnDaemon).toHaveBeenLastCalledWith(expect.objectContaining({ port: 62380 }));
+    expect(s.spawner.spawnDaemon).toHaveBeenLastCalledWith(expect.objectContaining({ port: 62380 }));
 
     vi.mocked(s.daemon.readState).mockResolvedValue(null);
     await s.ensureOtlpProxy(AGENT);
-    expect(s.daemon.spawnDaemon).toHaveBeenLastCalledWith(expect.objectContaining({ port: 4001 }));
+    expect(s.spawner.spawnDaemon).toHaveBeenLastCalledWith(expect.objectContaining({ port: 4001 }));
   });
 
   it('applies the same port rules when there is no recorded connection', async () => {
@@ -3876,7 +3924,7 @@ describe('ensureOtlpProxy', () => {
 
     await s.ensureOtlpProxy(AGENT);
 
-    expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ port: 62380 }));
+    expect(s.spawner.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ port: 62380 }));
   });
 
   it('re-points the settings at an already-running daemon without spawning', async () => {
@@ -3887,7 +3935,7 @@ describe('ensureOtlpProxy', () => {
 
     await s.ensureOtlpProxy(AGENT);
 
-    expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+    expect(s.spawner.spawnDaemon).not.toHaveBeenCalled();
     expect(refreshClaudeCodeOtlpEndpoint).toHaveBeenCalledWith(running);
     expect(s.daemon.seedConnectionRecord).toHaveBeenCalledWith(running);
   });
@@ -3895,7 +3943,8 @@ describe('ensureOtlpProxy', () => {
   // The start-time check is POSIX (`ps etime`); on Windows the daemon is judged by its pid alone, covered in daemon-manager.test.ts
   it.skipIf(process.platform === 'win32')('starts the proxy when the state names a pid that now belongs to another process', async () => {
     const { ensureOtlpProxy } = await import('../otlp-cold-start.js');
-    const { readState, spawnDaemon, checkStatus } = await import('../daemon-manager.js');
+    const { readState, checkStatus } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { isOwnerAlive } = await import('@/utils/processes.js');
     vi.mocked(readState).mockResolvedValue(daemonState() as Awaited<ReturnType<typeof readState>>);
     // Persistent, not Once: the cold start re-checks for a daemon after resolving the profile
@@ -3920,7 +3969,8 @@ describe('ensureOtlpProxy', () => {
 
   it('starts nothing while the state\'s daemon runs', async () => {
     const { ensureOtlpProxy } = await import('../otlp-cold-start.js');
-    const { readState, spawnDaemon } = await import('../daemon-manager.js');
+    const { readState } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { processStartedAt } = await import('@/utils/processes.js');
     vi.mocked(readState).mockResolvedValue(
       daemonState({ startedAt: new Date(processStartedAt()).toISOString() }) as Awaited<ReturnType<typeof readState>>
@@ -3935,7 +3985,8 @@ describe('ensureOtlpProxy', () => {
   // The start-time check is POSIX (`ps etime`); on Windows the daemon is judged by its pid alone, covered in daemon-manager.test.ts
   it.skipIf(process.platform === 'win32')('starts nothing for an old-format state written 10 minutes after its daemon started', async () => {
     const { ensureOtlpProxy } = await import('../otlp-cold-start.js');
-    const { readState, spawnDaemon } = await import('../daemon-manager.js');
+    const { readState } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const processes = await import('@/utils/processes.js');
     const exec = await import('@/utils/exec.js');
     const actual = await vi.importActual<typeof import('@/utils/processes.js')>('@/utils/processes.js');
@@ -4069,7 +4120,8 @@ describe('targets that once needed another identity, over one daemon', () => {
 
   async function arrangeFresh(): Promise<void> {
     await setupHappyMocks();
-    const { checkStatus, readState, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus, readState } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
     vi.mocked(readState).mockResolvedValue(null);
     vi.mocked(spawnDaemon).mockResolvedValue(daemonState() as Awaited<ReturnType<typeof spawnDaemon>>);
@@ -4077,7 +4129,7 @@ describe('targets that once needed another identity, over one daemon', () => {
 
   it('--omp --vscode writes both targets over one daemon', async () => {
     await arrangeFresh();
-    const { spawnDaemon } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { writeVsCodeLanguageModelsConfig } = await import('../connectors/vscode.js');
     const { writeOmpExtension } = await import('../connectors/omp.js');
     vi.mocked(writeVsCodeLanguageModelsConfig).mockResolvedValue({ configPath: '/vscode/models.json', requiresSecretConfiguration: false, modelCount: 5 });
@@ -4200,7 +4252,7 @@ describe('targets that once needed another identity, over one daemon', () => {
 
   it('spawns with no identity for omp when Claude Code analytics is declined', async () => {
     await arrangeFresh();
-    const { spawnDaemon } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     const { writeClaudeCodeOtlpConfig } = await import('../connectors/claude-code-otlp.js');
     const { writeOmpExtension } = await import('../connectors/omp.js');
     const { promptAnalyticsConfirmation } = await import('../prompts/analytics-confirmation.js');
@@ -4349,6 +4401,7 @@ describe('connect while Claude Desktop is connected: no identity is passed', () 
   async function arrange(gatewayPort: number, running: Record<string, unknown> | null) {
     await setupHappyMocks();
     const daemon = await import('../daemon-manager.js');
+    const spawner = await import('../daemon-spawn.js');
     const { checkProxyHealth } = await import('../health-check.js');
     const { readDesktopGateway } = await import('../connectors/desktop.js');
     vi.mocked(readDesktopGateway).mockResolvedValue({ port: gatewayPort });
@@ -4359,7 +4412,7 @@ describe('connect while Claude Desktop is connected: no identity is passed', () 
     vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'deep', code: 'ok' });
     vi.mocked(daemon.writeConnectionRecord).mockResolvedValue(true);
     const { connectTargets } = await import('../connect-orchestrator.js');
-    return { daemon, connectTargets };
+    return { daemon, spawner, connectTargets };
   }
 
   it.each(['claude-desktop', 'claude-code-otlp', 'codex-desktop'])(
@@ -4370,7 +4423,7 @@ describe('connect while Claude Desktop is connected: no identity is passed', () 
 
       await s.connectTargets({ targets: { claudeCodeOtlp: true }, yes: true });
 
-      expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+      expect(s.spawner.spawnDaemon).not.toHaveBeenCalled();
       expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
       expect(s.daemon.writeConnectionRecord).toHaveBeenCalledWith(running, 'p', { port: 4001 });
     }
@@ -4380,13 +4433,13 @@ describe('connect while Claude Desktop is connected: no identity is passed', () 
     const s = await arrange(4005, null);
     const { writeDesktopConfig } = await import('../connectors/desktop.js');
     vi.mocked(writeDesktopConfig).mockResolvedValue({ configPath: '/desktop/config.json', activated: false });
-    vi.mocked(s.daemon.spawnDaemon).mockResolvedValue(
-      matchingDesktopState({ port: 4005, url: 'http://127.0.0.1:4005' }) as Awaited<ReturnType<typeof s.daemon.spawnDaemon>>
+    vi.mocked(s.spawner.spawnDaemon).mockResolvedValue(
+      matchingDesktopState({ port: 4005, url: 'http://127.0.0.1:4005' }) as Awaited<ReturnType<typeof s.spawner.spawnDaemon>>
     );
 
     await s.connectTargets({ targets: { claudeDesktop: true } });
 
-    const [spawned] = vi.mocked(s.daemon.spawnDaemon).mock.calls[0];
+    const [spawned] = vi.mocked(s.spawner.spawnDaemon).mock.calls[0];
     expect(spawned.port).toBe(4005);
     expect(spawned).not.toHaveProperty('clientType');
     expect(spawned).not.toHaveProperty('telemetryMode');
@@ -4395,11 +4448,11 @@ describe('connect while Claude Desktop is connected: no identity is passed', () 
   it('keeps a spawn that came up off the asked port and records the port it runs on', async () => {
     const s = await arrange(4005, null);
     const spawnedState = matchingDesktopState({ port: 62000, url: 'http://127.0.0.1:62000' });
-    vi.mocked(s.daemon.spawnDaemon).mockResolvedValue(spawnedState as Awaited<ReturnType<typeof s.daemon.spawnDaemon>>);
+    vi.mocked(s.spawner.spawnDaemon).mockResolvedValue(spawnedState as Awaited<ReturnType<typeof s.spawner.spawnDaemon>>);
 
     await expect(s.connectTargets({ targets: { claudeCodeOtlp: true }, yes: true })).resolves.toBeUndefined();
 
-    expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ port: 4005 }));
+    expect(s.spawner.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ port: 4005 }));
     expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
     expect(s.daemon.writeConnectionRecord).toHaveBeenCalledWith(spawnedState, 'p', { port: 62000 });
   });
@@ -4430,6 +4483,7 @@ describe('ensureOtlpProxy while Claude Desktop is connected: no identity is pass
   async function arrange(record: Record<string, unknown> | null, gatewayPort: number | null, spawnedPort: number) {
     const { ensureOtlpProxy } = await import('../otlp-cold-start.js');
     const daemon = await import('../daemon-manager.js');
+    const spawner = await import('../daemon-spawn.js');
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { readDesktopGateway } = await import('../connectors/desktop.js');
     const { logger } = await import('../../../../utils/logger.js');
@@ -4438,15 +4492,15 @@ describe('ensureOtlpProxy while Claude Desktop is connected: no identity is pass
     vi.mocked(daemon.readState).mockResolvedValue(null);
     vi.mocked(daemon.readConnectionRecord).mockResolvedValue(record as Awaited<ReturnType<typeof daemon.readConnectionRecord>>);
     vi.mocked(daemon.checkStatus).mockResolvedValue({ running: false, state: null });
-    vi.mocked(daemon.spawnDaemon).mockResolvedValue(
-      daemonState({ port: spawnedPort, url: `http://127.0.0.1:${spawnedPort}` }) as Awaited<ReturnType<typeof daemon.spawnDaemon>>
+    vi.mocked(spawner.spawnDaemon).mockResolvedValue(
+      daemonState({ port: spawnedPort, url: `http://127.0.0.1:${spawnedPort}` }) as Awaited<ReturnType<typeof spawner.spawnDaemon>>
     );
     vi.mocked(ConfigLoader.loadLocalConfigProfile).mockResolvedValue({ name: 'p' });
     vi.mocked(ConfigLoader.getActiveProfileName).mockResolvedValue('p');
     for (const method of ['warn', 'info', 'status', 'success'] as const) {
       outputSpies.push(vi.spyOn(logger, method).mockImplementation(() => {}));
     }
-    return { ensureOtlpProxy, daemon };
+    return { ensureOtlpProxy, daemon, spawner };
   }
 
   function expectNoIdentity(spawned: Record<string, unknown>): void {
@@ -4462,7 +4516,7 @@ describe('ensureOtlpProxy while Claude Desktop is connected: no identity is pass
 
     await s.ensureOtlpProxy('claude');
 
-    const [spawned] = vi.mocked(s.daemon.spawnDaemon).mock.calls[0];
+    const [spawned] = vi.mocked(s.spawner.spawnDaemon).mock.calls[0];
     expect(spawned.port).toBe(4005);
     expectNoIdentity(spawned as unknown as Record<string, unknown>);
     for (const spy of outputSpies.slice(0, 6)) expect(spy).not.toHaveBeenCalled();
@@ -4474,7 +4528,7 @@ describe('ensureOtlpProxy while Claude Desktop is connected: no identity is pass
 
     await expect(s.ensureOtlpProxy('claude-code-otlp')).resolves.toBeUndefined();
 
-    expect(s.daemon.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ port: 4005 }));
+    expect(s.spawner.spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({ port: 4005 }));
     expect(s.daemon.stopDaemon).not.toHaveBeenCalled();
     expect(refreshClaudeCodeOtlpEndpoint).toHaveBeenCalledWith(
       expect.objectContaining({ port: 62000, url: 'http://127.0.0.1:62000' })
@@ -4487,7 +4541,7 @@ describe('ensureOtlpProxy while Claude Desktop is connected: no identity is pass
 
     await s.ensureOtlpProxy('claude-code-otlp');
 
-    const [spawned] = vi.mocked(s.daemon.spawnDaemon).mock.calls[0];
+    const [spawned] = vi.mocked(s.spawner.spawnDaemon).mock.calls[0];
     expect(spawned.port).toBe(4001);
     expectNoIdentity(spawned as unknown as Record<string, unknown>);
   });
@@ -4503,7 +4557,8 @@ describe('connectTargets — scope confirmation pre-flight (D7, D18)', () => {
     console_ = spyConsole();
     scopeReads.values = {};
     await setupHappyMocks();
-    const { checkStatus, readState, spawnDaemon } = await import('../daemon-manager.js');
+    const { checkStatus, readState } = await import('../daemon-manager.js');
+    const { spawnDaemon } = await import('../daemon-spawn.js');
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
     vi.mocked(readState).mockResolvedValue(null);
     vi.mocked(spawnDaemon).mockResolvedValue(daemonState() as Awaited<ReturnType<typeof spawnDaemon>>);
@@ -4570,7 +4625,7 @@ describe('connectTargets — scope confirmation pre-flight (D7, D18)', () => {
         const write = await writerFor(c.id);
         const { promptScopeDropConfirmation } = await import('../prompts/analytics-confirmation.js');
         vi.mocked(promptScopeDropConfirmation).mockResolvedValueOnce('cancel');
-        const { spawnDaemon } = await import('../daemon-manager.js');
+        const { spawnDaemon } = await import('../daemon-spawn.js');
         const { connectTargets } = await import('../connect-orchestrator.js');
 
         await connectTargets({ targets: { [c.target]: true }, scope });
@@ -4603,7 +4658,8 @@ describe('connectTargets — scope confirmation pre-flight (D7, D18)', () => {
       const { isNonInteractiveEnvironment } = await import('@/utils/interactive.js');
       vi.mocked(isNonInteractiveEnvironment).mockReturnValue(true);
       const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-      const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+      const { checkStatus } = await import('../daemon-manager.js');
+      const { spawnDaemon } = await import('../daemon-spawn.js');
       const { promptScopeDropConfirmation } = await import('../prompts/analytics-confirmation.js');
       const { connectTargets } = await import('../connect-orchestrator.js');
 

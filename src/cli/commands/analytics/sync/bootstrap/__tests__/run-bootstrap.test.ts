@@ -352,6 +352,7 @@ describe('setupCheckReport', () => {
     const report = setupCheckReport(now);
 
     expect(report.fileName).toBe('setup-check-20261104T213307Z.json');
+    expect(report.contentType).toBe('application/json');
     const parsed = JSON.parse(report.bytes.toString('utf-8'));
     expect(parsed).toEqual({
       setupCheck: true,

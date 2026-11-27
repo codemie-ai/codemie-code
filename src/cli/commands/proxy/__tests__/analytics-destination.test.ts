@@ -13,8 +13,11 @@ const daemon = vi.hoisted(() => ({ state: undefined as Record<string, unknown> |
 
 vi.mock('../daemon-manager.js', async (orig) => ({
   ...(await orig<typeof import('../daemon-manager.js')>()),
-  spawnDaemon: async (opts: Record<string, unknown>) => (daemon.state = { ...opts }),
   readState: async () => daemon.state,
+}));
+vi.mock('../daemon-spawn.js', async (orig) => ({
+  ...(await orig<typeof import('../daemon-spawn.js')>()),
+  spawnDaemon: async (opts: Record<string, unknown>) => (daemon.state = { ...opts }),
 }));
 vi.mock('../connect-orchestrator.js', async (orig) => ({
   ...(await orig<typeof import('../connect-orchestrator.js')>()),

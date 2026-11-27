@@ -15,6 +15,7 @@ vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({ readState: readStateM
 vi.mock('@/utils/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 const { ClaudeCodeOtlpPlugin } = await import('../claude-code-otlp.plugin.js');
+const { BackendPolicy } = await import('@/agents/core/collection-policy.js');
 const { logger } = await import('@/utils/logger.js');
 
 const GATEWAY = 'https://llm-gateway.example.com';
@@ -24,6 +25,8 @@ const UNPROVEN = { routed: false, routing_proof: 'unproven' };
 
 describe('ClaudeCodeOtlpPlugin.extractHookContext', () => {
   const plugin = new ClaudeCodeOtlpPlugin();
+  // The context is built inside `processOtlpEvent`, under the policy of its call.
+  Object.assign(plugin, { activePolicy: new BackendPolicy() });
   const call = async () => {
     const context = await (plugin as unknown as {
       extractHookContext: (input: { cwd: string; session_id: string }) => Promise<{ evidenceInputs: { organization?: string; routing: unknown } }>;

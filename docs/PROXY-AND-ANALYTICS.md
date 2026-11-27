@@ -11,8 +11,8 @@ How the `codemie proxy` and `codemie analytics` commands fit together, which one
 | Clients | `codemie proxy connect --<target>`, `codemie proxy disconnect --<target>\|--all` | Point an application at the proxy (`--claude-desktop`, `--vscode`, `--vscode-claude-code`, `--codex-desktop`, `--omp`) or turn analytics on for every client of a vendor (`--claude-otlp`, `--copilot-otlp`). |
 | Collection controls | `codemie proxy analytics enable`, `disable`, `include`, `exclude`, `status` | Turn collection on or off everywhere (`enable`/`disable`) or for the current project (`include`/`exclude`) while the hooks stay installed. |
 | Consent | `codemie proxy analytics consent grant`, `revoke`, `list`; `codemie proxy analytics resend` | Allow or stop collection from work folders that are not part of a CodeMie project. `resend` sends what was held before the consent was granted. |
-| Reports | `codemie analytics [--export] [-o] [--open] [--include-external <windows\|always\|never>]` | Read your own usage: sessions, tokens, cost, tools. |
-| Team sync | `codemie analytics sync bootstrap`, `install`, `status`, `run`, `uninstall` | Deliver this machine's reports one way to a team webhook and/or git repository on a daily schedule. |
+| Reports | `codemie analytics [--export] [-o] [--open] [--include-external <windows\|always\|never>]` | Read your own usage: sessions, tokens, cost, tools. The JSON export (`--export json`) is deprecated. |
+| Team sync | `codemie analytics sync bootstrap`, `install`, `status`, `run`, `uninstall` | Deliver this machine's reports one way to a team webhook and/or git repository on a daily schedule. On a machine with no CLI profile where it finds Claude Code, Copilot CLI or Copilot Chat, `install` turns on the local mode: a local proxy gathers the analytics and the job delivers an OTLP file beside the report, or several no larger than 70 MB each. |
 
 How they relate: `connect` sets a client or connector up, `doctor` and `clients` tell you its state, the `analytics` controls under `proxy` decide whether data is collected, and `codemie analytics` reads what was collected. `disconnect` removes a setup; `disable` and `exclude` only pause collection.
 
@@ -43,6 +43,8 @@ codemie proxy clients                   # each client connected, not connected o
 
 Targets combine in one run (`codemie proxy connect --claude-desktop --vscode`). Run `codemie proxy connect` with no target to list them. Restart the application the command names afterwards.
 
+**On a machine in the local mode** (`codemie analytics sync install` on a machine with no CLI profile, see [Analytics Sync](ANALYTICS-SYNC.md#local-analytics-mode)) there is no setup to run here: `install` wrote the hooks of Claude Code, Copilot CLI and Copilot Chat and started the local proxy, with no sign-in. `proxy connect` and `proxy disconnect` refuse there and name `codemie analytics sync uninstall`; `proxy start`, `restart` and `stop` act on the local proxy.
+
 ### Analytics are not arriving
 
 ```bash
@@ -52,15 +54,19 @@ codemie proxy doctor --verbose
 
 `doctor` prints one heading per section — Daemon, Authentication and upstream, Clients, Analytics connectors, Analytics delivery, Claude Desktop collection, Environment — each with at least one line (`ok` or `info` when there is nothing to report), the command that fixes each finding, and a closing count such as `2 warnings, 0 errors`. It exits 1 only on an error. `--json` carries every section for scripts.
 
+On a machine in the local mode there is no Authentication and upstream and no Analytics delivery section; a `Local analytics` section shows the analytics folder (its sessions and the newest one), the scheduled job and the last delivery per target. A stopped proxy is started by `codemie proxy start` or by the next Claude Code or Copilot event. With `--include-external never` the local mode gathers nothing.
+
 ### Exclude and re-include a project
 
 ```bash
 codemie proxy analytics exclude      # stop collecting for the current project
-codemie proxy analytics include      # collect it again
+codemie proxy analytics include      # collect it again (new sessions; see below)
 codemie proxy analytics status       # what is collected right now, and why
 ```
 
 To pause everything, use `codemie proxy analytics disable`; `enable` resumes it.
+
+On a machine in the local mode a session that fired a hook in an excluded folder is not gathered again, `include` and a return to a tracked folder included; `include` applies to the sessions that start after it.
 
 ### Project scope versus user scope
 
@@ -86,6 +92,8 @@ codemie proxy analytics resend                 # send sessions held before the c
 
 A consent applies to sessions that start after it. Sessions already held for lack of consent are sent once you run `codemie proxy analytics resend`. It releases every held session of the signed-in account that a consent now covers: a folder consent for the folder the session started in or a parent of it, or `--all`. The proxy then sends their queued data on its next pass. Only the folder a session started in is checked: if the session also worked in other folders of the same project before `resend`, that data is sent too. Sessions recorded by an earlier version are covered only by `--all`. Held data is kept for 24 hours (`OTLP_HELD_RETENTION_MINUTES`); after that it is dropped and cannot be resent.
 
+There is no consent on a machine in the local mode: nothing is held there, and `consent` and `resend` need a sign-in.
+
 ### Disconnect everything
 
 ```bash
@@ -93,7 +101,7 @@ codemie proxy disconnect --all             # everything `proxy clients` shows as
 codemie proxy stop                         # and stop the daemon
 ```
 
-`--all` continues past a failing target, reports each, and exits non-zero if any failed.
+`--all` continues past a failing target, reports each, and exits non-zero if any failed. On a machine in the local mode it is refused: `codemie analytics sync uninstall` removes the local mode's hooks and proxy.
 
 ### Set up team report sync
 
@@ -103,11 +111,11 @@ codemie analytics sync status              # check the schedule and last deliver
 codemie analytics sync run                 # send now
 ```
 
-See [Analytics Sync](ANALYTICS-SYNC.md) for the team-lead and developer steps.
+See [Analytics Sync](ANALYTICS-SYNC.md) for the team-lead and developer steps, and for the local mode a machine with no CLI profile gets.
 
 ## Deprecated and removed forms
 
-Deprecated forms still work until the removal date and print one notice line on stderr naming the replacement. Removed forms fail with a message naming the replacement and exit non-zero.
+Deprecated forms still work until the removal date and print one notice line on stderr naming the replacement. The JSON export of `codemie analytics` (`--export json`) is deprecated too, with no replacement and no removal date: its notice names neither, and it is not in the table below. Removed forms fail with a message naming the replacement and exit non-zero.
 
 ### Deprecated
 

@@ -1,7 +1,7 @@
 /**
  * ProxyWatcher — runs inside the proxy daemon.
  *
- * Periodically deep-checks the proxy. On failure it restarts the proxy
+ * Periodically runs the daemon's health check (`WatcherCallbacks.check`) on the proxy. On failure it restarts the proxy
  * IN-PROCESS on the same pinned port (Approach A). Unauthorized failures
  * (expired SSO session) cannot be fixed without an interactive login, so the
  * watcher records an unhealthy state once, keeps watching and offers the daemon
@@ -11,9 +11,11 @@
  * event and triggers an immediate re-check.
  */
 import { logger } from '../../../utils/logger.js';
-import { checkProxyHealth, ProxyHealthResult } from './health-check.js';
+import type { ProxyHealthResult } from './health-check.js';
 
 export interface WatcherCallbacks {
+  /** The health check each tick runs. */
+  check: () => Promise<ProxyHealthResult>;
   /** Tear down the current proxy and re-listen on the same pinned port. */
   restart: () => Promise<void>;
   /** Called when a check passes (record lastHealthyAt / clear reason). */
@@ -32,7 +34,6 @@ export interface WatcherCallbacks {
 
 export interface WatcherOptions {
   port: number;
-  gatewayKey: string;
   intervalMs?: number;        // default 30000
   maxRestartAttempts?: number; // default 3
 }
@@ -90,11 +91,7 @@ export class ProxyWatcher {
         return;
       }
 
-      const result = await checkProxyHealth({
-        port: this.opts.port,
-        gatewayKey: this.opts.gatewayKey,
-        deep: true,
-      });
+      const result = await this.callbacks.check();
 
       if (result.healthy) {
         this.restartAttempts = 0;

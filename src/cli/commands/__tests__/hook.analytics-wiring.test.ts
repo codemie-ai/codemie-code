@@ -7,6 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Readable } from 'node:stream';
 
 vi.mock('../proxy/otlp-cold-start.js', () => ({ ensureOtlpProxy: vi.fn() }));
+vi.mock('../proxy/local-daemon.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../proxy/local-daemon.js')>()),
+  ensureLocalOtlpProxy: vi.fn(),
+}));
 
 const readAnalyticsCookieAuth = vi.hoisted(() => vi.fn());
 const metricsSenderOptions = vi.hoisted(() => [] as Array<Record<string, unknown>>);
@@ -32,6 +36,9 @@ import { getCodemiePath } from '@/utils/paths.js';
 import { logger } from '@/utils/logger.js';
 import type { BaseHookEvent } from '@/agents/core/types.js';
 import { ensureOtlpProxy } from '../proxy/otlp-cold-start.js';
+import { ensureLocalOtlpProxy } from '../proxy/local-daemon.js';
+import { LocalPolicy } from '../shared/analytics-collection/local-policy.js';
+import { BackendPolicy } from '@/agents/core/collection-policy.js';
 import { forwardOtlpEventsToSpool } from '@/agents/plugins/utils.js';
 import { AgentRegistry } from '../../../agents/registry.js';
 import { OtlpAgentAdapter } from '@/agents/core/OtlpAgentAdapter.js';
@@ -76,7 +83,7 @@ describe('hook command analytics wiring', () => {
     vi.restoreAllMocks();
   });
 
-  it('calls processOtlpEvent with the parsed input and { ensureOtlpProxy, forwardOtlpEventsToSpool }', async () => {
+  it('calls processOtlpEvent with the parsed input and { ensureOtlpProxy, policy, forwardOtlpEventsToSpool }', async () => {
     const processOtlpEvent = vi.fn().mockResolvedValue(undefined);
     vi.spyOn(AgentRegistry, 'getAnalyticsAgent').mockReturnValue({ processOtlpEvent } as never);
 
@@ -86,8 +93,38 @@ describe('hook command analytics wiring', () => {
     expect(processOtlpEvent).toHaveBeenCalledTimes(1);
     const [input, deps] = processOtlpEvent.mock.calls[0];
     expect(JSON.parse(input as string)).toMatchObject({ hook_event_name: 'UserPromptSubmit' });
-    expect(deps).toEqual({ ensureOtlpProxy, forwardOtlpEventsToSpool });
+    expect(deps).toEqual({ ensureOtlpProxy, policy: expect.any(BackendPolicy), forwardOtlpEventsToSpool });
     expect((deps as { ensureOtlpProxy: unknown }).ensureOtlpProxy).toBe(ensureOtlpProxy);
+  });
+
+  it('in the local mode hands processOtlpEvent a LocalPolicy and the local launcher', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'codemie-hook-wiring-local-'));
+    vi.stubEnv('CODEMIE_HOME', home);
+    try {
+      writeFileSync(join(home, 'analytics-sync.json'), JSON.stringify({
+        webhookUrl: 'https://example.invalid/hook?sig=FAKE',
+        format: 'json',
+        includeExternal: 'never',
+        at: '03:00',
+        local: true,
+        localJob: { node: '/usr/bin/node', entry: '/opt/codemie/bin/codemie.js' },
+      }));
+      vi.mocked(ensureOtlpProxy).mockClear();
+      const processOtlpEvent = vi.fn().mockResolvedValue(undefined);
+      vi.spyOn(AgentRegistry, 'getAnalyticsAgent').mockReturnValue({ processOtlpEvent } as never);
+
+      await createHookCommand().parseAsync(['--agent', 'claude-code-otlp'], { from: 'user' });
+
+      const deps = processOtlpEvent.mock.calls[0][1] as { ensureOtlpProxy: (agent: string, event?: string) => Promise<void>; policy: unknown };
+      expect(deps.policy).toBeInstanceOf(LocalPolicy);
+      await deps.ensureOtlpProxy('claude-code-otlp', 'Stop');
+      expect(ensureLocalOtlpProxy).toHaveBeenCalledWith(expect.any(Function), 'claude-code-otlp', 'Stop');
+      expect(ensureOtlpProxy).not.toHaveBeenCalled();
+    } finally {
+      await logger.close();
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
   });
 
   it('keeps process.exitCode at 0 when ensureOtlpProxy rejects (daemon start failure)', async () => {
