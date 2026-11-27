@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-17343",
+  "head": "6c2e9ce068ba17d8c27b241b7460ba647336b2da",
+  "runner": "npm",
+  "started_at": "2026-11-25T17:44:00Z",
+  "completed_at": "2026-11-25T17:55:30.059Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4638,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 29084,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 9774,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 16205,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 317025,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "4 failed, 12750 passed. All 4 failures are EPERM on fs.symlink (Windows without symlink privilege); environmental, CI Windows runner/Linux can create symlinks."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 188593,
+      "command": "npx vitest run --project cli",
+      "exit_code": 1,
+      "notes": "10 failed, 372 passed. Failures: hook timeouts (10000ms) in analytics-secret-egress, profile, workflow; hook-stdout list did not exit within 20000ms; 7 skills.test.ts upstream-spawn failures (exit 1 instead of 0/7)."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 2934,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: \"No staged changes to scan\". Script only scans staged changes; enable by staging changes with Docker running. CI secrets-detection (reusable workflow) re-runs for real."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2485,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "ci-secrets-detection",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "uses: codemie-ai/ci-workflows/.github/workflows/reusable-secrets-detection.yml@main",
+      "exit_code": null,
+      "notes": "Remote reusable workflow; cannot be run locally."
+    },
+    {
+      "id": "hook-typecheck",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 0,
+      "command": "npm run typecheck",
+      "exit_code": 0,
+      "notes": "Covered by typecheck gate."
+    },
+    {
+      "id": "hook-lint-staged",
+      "source": "hook",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npx lint-staged",
+      "exit_code": null,
+      "notes": "Operates on staged files only; nothing staged."
+    }
+  ],
+  "failures": {
+    "unit": "⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯\n FAIL  |unit| src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts > connectTargets — the other clients moved off the shared key > moves a Codex config that is a symbolic link through the link, and a second connect leaves it\nError: EPERM: operation not permitted, symlink 'C:\\Users\\SWETLA~1\\AppData\\Local\\Temp\\connect-client-home-HJrYE6\\dotfiles-config.toml' -> 'C:\\Users\\SWETLA~1\\AppData\\Local\\Temp\\connect-client-home-HJrYE6\\.codex\\config.toml'\n FAIL  |unit| src/cli/commands/proxy/connectors/__tests__/codex-desktop-roundtrip.test.ts > moveCodexDesktopToNamedKey > moves a config file that is a symbolic link through the link, and a second move leaves it\nError: EPERM: operation not permitted, symlink 'C:\\Users\\SWETLA~1\\AppData\\Local\\Temp\\codex-home-qgad5W\\dotfiles-config.toml' -> 'C:\\Users\\SWETLA~1\\AppData\\Local\\Temp\\codex-home-qgad5W\\config.toml'\n FAIL  |unit| src/cli/commands/proxy/connectors/__tests__/vscode-claude-code.test.ts > moveVsCodeClaudeCodeToNamedKey > moves a settings file that is a symbolic link through the link, and a second move leaves it\nError: EPERM: operation not permitted, symlink 'C:\\Users\\SWETLA~1\\AppData\\Local\\Temp\\codemie-vscode-claude-code-move-3384zj\\dotfiles-settings.json' -> 'C:\\Users\\SWETLA~1\\AppData\\Local\\Temp\\codemie-vscode-claude-code-move-3384zj\\Code\\User\\settings.json'\n FAIL  |unit| src/cli/commands/analytics/sync/scheduler/__tests__/generators.test.ts > resolveJobCommand > resolves a symlinked entry to its realpath and builds argv the startup gate recognizes\nError: EPERM: operation not permitted, symlink 'C:\\Users\\SWETLA~1\\AppData\\Local\\Temp\\codemie-job-cmd-Z3dFlH\\codemie.js' -> 'C:\\Users\\SWETLA~1\\AppData\\Local\\Temp\\codemie-job-cmd-Z3dFlH\\codemie-shim'\n Test Files  4 failed | 668 passed (672)\n      Tests  4 failed | 12750 passed | 80 skipped (12834)",
+    "integration": " FAIL  |cli| tests/integration/analytics-secret-egress.test.ts > analytics pipeline: secrets in JSON OTLP and hook events\nError: Hook timed out in 10000ms.\n FAIL  |cli| tests/integration/cli-commands/profile.test.ts > Profile Commands\nError: Hook timed out in 10000ms.\n FAIL  |cli| tests/integration/cli-commands/workflow.test.ts > Workflow Commands\nError: Hook timed out in 10000ms.\n⎯⎯⎯⎯⎯⎯ Failed Tests 10 ⎯⎯⎯⎯⎯⎯⎯\n FAIL  |cli| tests/integration/hook-stdout.test.ts > hook process stdout (codemie hook / codemie sound) > what's-new notice > a piped command prints no notice and keeps the marker\nError: codemie list did not exit within 20000ms\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (authenticated upstream spawn) > add: forwards source and explicit --agent to upstream argv\nAssertionError: expected 1 to be +0 // Object.is equality\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (authenticated upstream spawn) > add: forwards --skill list to upstream argv\nAssertionError: expected 1 to be +0 // Object.is equality\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (authenticated upstream spawn) > add: clears telemetry gate and injects CI / NODE_OPTIONS shim\nTypeError: Cannot read properties of undefined (reading 'env')\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (authenticated upstream spawn) > list: injects DO_NOT_TRACK / DISABLE_TELEMETRY / CI / NODE_OPTIONS shim\nTypeError: Cannot read properties of undefined (reading 'env')\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (authenticated upstream spawn) > update: forwards positional skill names\nAssertionError: expected 1 to be +0 // Object.is equality\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (authenticated upstream spawn) > remove: forwards --skill / --agent / -y options\nAssertionError: expected 1 to be +0 // Object.is equality\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (authenticated upstream spawn) > list: forwards --json so upstream emits machine-readable output\nAssertionError: expected 1 to be +0 // Object.is equality\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (authenticated upstream spawn) > propagates upstream non-zero exit codes (not collapsed to 1)\nAssertionError: expected 1 to be 7 // Object.is equality\n FAIL  |cli| tests/integration/cli-commands/skills.test.ts > codemie skills (authenticated upstream spawn) > classifies CODEMIE_SKILL_EGRESS_BLOCKED stderr as egress_blocked exit code\nAssertionError: expected 1 to be 7 // Object.is equality\n Test Files  5 failed | 42 passed | 2 skipped (49)\n      Tests  10 failed | 372 passed | 20 skipped (402)"
+  }
+}

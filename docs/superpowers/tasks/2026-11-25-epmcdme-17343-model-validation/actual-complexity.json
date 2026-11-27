@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "generated": "2026-11-25T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 18,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 13,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Four components: shared rule in utils/model-value.ts, the AgentCLI launcher check, the new ModelValueGuardPlugin, and its registration in plugins/index.ts plus the CLAUDE_PATH_CLIENTS list in proxy-clients.ts. The shared util is consumed from two layers." },
+    { "dimension": "technical_risk", "reason": "The new proxy plugin sits on every Claude-path request. It parses the body, answers 400 in the Anthropic error envelope and must not leak the value. The closest pattern is DesktopModelsPlugin (early handleRequest short-circuit), which does not cover input validation. The acceptance criteria enumerate edge cases (not text, empty, too long, whitespace, control, BOM, zero-width) and no existing shared-table test template covered them, so Technical Risk is bumped from M to L." },
+    { "dimension": "file_change_estimate", "reason": "13 files changed (11-15 maps to XL). Most are new test files, a shared JSON case table and docs; production code is 5 files (model-value.ts, model-value-guard.plugin.ts, index.ts, proxy-clients.ts, AgentCLI.ts)." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M to L: enumerated edge and error cases with no existing test template (parameterized shared case table created)."
+  ],
+  "split_recommendation": null
+}

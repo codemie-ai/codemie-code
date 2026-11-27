@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "task": "Add one shared model-value validation rule and apply it in the codemie-claude launcher and a new request-level hook on the local proxy's Claude path, with a shared test-value table and unit tests for both.",
+  "generated": "2026-11-25T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 18,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Four components: a shared validator in src/utils (shared by agents core and proxy plugin), a Claude-only branch in AgentCLI.handleRun, a new handleRequest interceptor in the SSO proxy plugins registered in plugins/index.ts, and the shared test-value table. Spans Core, Plugin and Utils." },
+    { "dimension": "technical_risk", "reason": "Closest patterns are the --reasoning-effort launch check and gateway-key.plugin (Anthropic envelope, handleRequest). Neither covers model-value input validation or leak-free messages (AC4), so this is a divergence and a security-sensitive input-validation gap. Edge-case AC (tab, NBSP, empty, non-text) also has no existing shared parameterized table. Hazards: empty is treated as absent in four places, env vs config.model under --profile, hook priority against client attribution and desktop alias rewriting, and the exact Unicode whitespace/control set." },
+    { "dimension": "file_change_estimate", "reason": "About 3 modified files (AgentCLI.ts, plugins/index.ts, possibly plugin-order test) and 5-6 new files (validator, proxy plugin, shared test table, validator, launcher and plugin test files). Spread over src/utils, src/agents/core and src/providers/.../proxy/plugins." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped: closest existing pattern (gateway-key Anthropic envelope) does not cover input validation of the model value or leak-free error output",
+    "Technical Risk bumped: acceptance criteria enumerate edge cases (oversized, tab, NBSP, leading/trailing space, empty, non-text) with no existing shared parameterized test table"
+  ],
+  "split_recommendation": null
+}

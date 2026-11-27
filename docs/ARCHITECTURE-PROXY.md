@@ -71,6 +71,7 @@ The CodeMie Proxy is a **plugin-based HTTP streaming proxy** that sits between A
 │  │  [3]   MCP Auth               → MCP OAuth proxy & URL rewrite│
 │  │  [5]   Endpoint Blocker       → block unwanted endpoints early│
 │  │  [7]   Gateway Key            → validate local daemon bearer key│
+│  │  [8.5] Model Value Guard      → 400 on a bad model value (Claude path)│
 │  │  [10]  SSO Auth / JWT Auth    → Inject cookies / bearer token│
 │  │  [14]  Claude/Kimi/Codex Normalizers → per-agent body fixes │
 │  │  [15]  Request Sanitizer      → strip unsupported reasoning params│
@@ -198,7 +199,7 @@ The CodeMie Proxy is a **plugin-based HTTP streaming proxy** that sits between A
 **Plugin Priority Levels** (current, see §6 for the full plugin list):
 
 - **0-3**: MCP protocol handling (MCP Auth: 3)
-- **4-10**: Endpoint blocking, gateway/local auth, and upstream authentication (Endpoint Blocker: 5, Gateway Key: 7, SSO Auth: 10, JWT Auth: 10)
+- **4-10**: Endpoint blocking, gateway/local auth, and upstream authentication (Endpoint Blocker: 5, Gateway Key: 7, Model Value Guard: 8.5, SSO Auth: 10, JWT Auth: 10)
 - **11-19**: Per-agent request normalization and sanitization (Claude/Kimi/Codex Normalizers: 14, Request Sanitizer: 15, Codex/Copilot Encrypted-Content Sanitizers: 16, VS Code Request Normalizer: 17)
 - **20-50**: Header manipulation and observability (Header Injection: 20, Logging: 50)
 - **100**: Session sync (SSO Session Sync: 100)
@@ -562,6 +563,13 @@ It implements `handleRequest`, not `onRequest`: clients send these requests with
 **Purpose**: Validates the local bearer key of daemon-mode clients (Claude Desktop, the VS Code Claude Code extension, Codex desktop, VS Code BYOK, oh-my-pi) so they authenticate to the local proxy without ever seeing real SSO/JWT credentials, and names the request's client. A client's key is `gatewayKey` of `ProxyConfig` with the client's name appended (`<gatewayKey>.<client>`, `proxy-clients.ts`); the bare `gatewayKey` is served as the daemon's default client, and a key that names an unknown client is refused like a wrong key. Strips the header before the request is forwarded upstream.
 
 **Hook used**: `handleRequest`, not `onRequest` — this plugin runs in the earlier full-bypass phase (§4.1) so an invalid key is rejected (401) before any auth-injection or normalization plugin sees the request. On a valid key it returns `false` and the request falls through to the normal `onRequest` pipeline.
+
+### 6.3.1 Model Value Guard Plugin
+
+**Priority**: 8.5 (after the client attribution at 8, before the Desktop models answer at 9)
+**File**: `model-value-guard.plugin.ts`
+
+**Purpose**: Answers `400` in the Anthropic error envelope (`invalid_request_error`) to a request of a Claude-path client (`CLAUDE_PATH_CLIENTS` in `proxy-clients.ts`) whose body is a JSON object with a `model` field that breaks the shared rule in `src/utils/model-value.ts` (not text, empty, longer than 256 characters, or containing whitespace or control characters). Shape only: no catalog lookup, and the value never appears in the response or the log. It implements `handleRequest` and returns `true` on a rejection; any other body (no `model`, not a JSON object, unparsable) passes untouched.
 
 ### 6.4 SSO Auth Plugin
 
@@ -1041,6 +1049,7 @@ src/providers/plugins/sso/proxy/
     ├── mcp-auth.plugin.ts                             # priority 3
     ├── endpoint-blocker.plugin.ts                     # priority 5
     ├── gateway-key.plugin.ts                          # priority 7
+    ├── model-value-guard.plugin.ts                    # priority 8.5
     ├── sso-auth.plugin.ts                             # priority 10
     ├── jwt-auth.plugin.ts                             # priority 10
     ├── claude-request-normalizer.plugin.ts            # priority 14
