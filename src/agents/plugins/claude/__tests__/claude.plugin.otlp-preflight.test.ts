@@ -28,6 +28,12 @@ vi.mock('../../../../cli/commands/proxy/otlp-cold-start.js', () => ({
   ensureOtlpProxy: ensureOtlpProxyMock,
 }));
 
+const healMock = vi.hoisted(() => vi.fn());
+
+vi.mock('../../../../cli/commands/proxy/connectors/claude-code-otlp.js', () => ({
+  healClaudeSettingsHooks: healMock,
+}));
+
 import { ClaudePluginMetadata } from '../claude.plugin.js';
 
 describe('ClaudePluginMetadata.lifecycle.beforeRun — pre-spawn OTLP endpoint refresh', () => {
@@ -88,6 +94,36 @@ describe('ClaudePluginMetadata.lifecycle.beforeRun — pre-spawn OTLP endpoint r
     const env = await runBeforeRun({ FOO: 'bar' });
 
     expect(env.FOO).toBe('bar');
+  });
+
+  it('heals stale hook paths before ensureOtlpProxy when connected', async () => {
+    isClaudeCodeOtlpConnectedMock.mockResolvedValue(true);
+    ensureOtlpProxyMock.mockResolvedValue(undefined);
+    healMock.mockResolvedValue(true);
+
+    await runBeforeRun();
+
+    expect(healMock).toHaveBeenCalledTimes(1);
+    expect(healMock.mock.invocationCallOrder[0]).toBeLessThan(ensureOtlpProxyMock.mock.invocationCallOrder[0]);
+  });
+
+  it('never touches settings.json hooks when OTLP is not connected', async () => {
+    isClaudeCodeOtlpConnectedMock.mockResolvedValue(false);
+
+    await runBeforeRun();
+
+    expect(healMock).not.toHaveBeenCalled();
+  });
+
+  it('still refreshes the endpoint and returns env when the heal rejects', async () => {
+    isClaudeCodeOtlpConnectedMock.mockResolvedValue(true);
+    ensureOtlpProxyMock.mockResolvedValue(undefined);
+    healMock.mockRejectedValue(new Error('disk gone'));
+
+    const env = await runBeforeRun({ FOO: 'bar' });
+
+    expect(env.FOO).toBe('bar');
+    expect(ensureOtlpProxyMock).toHaveBeenCalledTimes(1);
   });
 
   it('does not stall the launch when the refresh never settles', async () => {
