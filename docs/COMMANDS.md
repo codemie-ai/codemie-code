@@ -2087,6 +2087,83 @@ codemie completion fish > ~/.config/fish/completions/codemie.fish
 
 `<shell>` is one of `bash`, `zsh` or `fish`; any other value is rejected. The command has no options. See [SHELL-COMPLETIONS.md](SHELL-COMPLETIONS.md) for installation per shell.
 
+### `codemie skill`
+
+Manage skills for CodeMie agents: list what was discovered, check the skill files, clear the cache, and sync CodeMie skills to another agent. Not to be confused with `codemie skills`, which installs skills from external catalogs.
+
+**Usage:**
+```bash
+codemie skill <command> [options]
+```
+
+**Subcommands:**
+- `list` - List all discovered skills. Options: `--mode <mode>` (filter by mode, for example `code` or `architect`), `--agent <agent>` (filter by agent compatibility), `--cwd <path>` (working directory for project skills; defaults to the current directory)
+- `validate` - Validate all skill files. Options: `--cwd <path>` (defaults to the current directory)
+- `reload` - Clear the skill cache and force a reload
+- `sync` - Sync CodeMie skills to a target agent. Options: `--target <agent>` (default `claude`), `--clean` (remove synced skills that no longer exist in CodeMie), `--dry-run` (preview without writing), `--cwd <path>` (defaults to the current directory)
+
+**Examples:**
+```bash
+codemie skill list --agent codemie-code
+codemie skill validate
+codemie skill sync --target claude --dry-run
+```
+
+Run `codemie skill <command> --help` for the full option list. See [SKILLS.md](SKILLS.md) for how skills are discovered and written.
+
+### `codemie skills`
+
+Install, manage and discover skills. It wraps the upstream skills CLI and searches the CodeMie catalog and the public skills.sh catalog; every subcommand requires a signed-in CodeMie SSO session. For skills already registered on the CodeMie platform, use [`codemie setup skills`](#codemie-setup-skills).
+
+**Usage:**
+```bash
+codemie skills <command> [options]
+```
+
+**Subcommands:**
+- `add <source>` - Install skills from a skills.sh source (`owner/repo`, a URL, or a local path). Options: `-g, --global`, `-s, --skill <skills...>`, `-a, --agent <agents...>`, `-y, --yes`, `--copy`
+- `update [skills...]` - Update installed skills (all by default). Options: `-g, --global`, `-p, --project`, `-y, --yes`
+- `remove [skills...]` - Remove installed skills. Options: `-g, --global`, `-a, --agent <agents...>`, `-s, --skill <skills...>`, `-y, --yes`
+- `list` - List installed skills. Options: `-g, --global`, `-a, --agent <agent>`, `--json`
+- `find [query]` - Search the catalogs; without a query the upstream interactive prompt starts. Options: `--json`, `--limit <n>`
+
+**Examples:**
+```bash
+codemie skills find review
+codemie skills add <owner>/<repo> --skill <skill-name> --yes
+codemie skills list --global --json
+```
+
+Run `codemie skills <command> --help` for the rest.
+
+### `codemie sdk`
+
+Manage CodeMie platform assets from the terminal through the CodeMie SDK. Each group has its own subcommands (typically `list`, `get`, `create`, `update` and `delete`, plus group-specific actions).
+
+**Usage:**
+```bash
+codemie sdk <group> <command> [options]
+```
+
+**Groups:**
+- `assistants` - Manage assistants
+- `workflows` - Manage workflows
+- `datasources` - Manage datasources
+- `integrations` - Manage integrations
+- `llm` - List available LLM models
+- `skills` - Manage platform skills, including attaching them to assistants and publishing them
+- `users` - Show the current user profile (`me`) and data (`data`)
+- `assistant-categories` - Manage assistant categories
+
+**Examples:**
+```bash
+codemie sdk assistants list
+codemie sdk llm list
+codemie sdk users me
+```
+
+Always start the path with `sdk`. Run `codemie sdk <group> --help` for the commands and options of a group; the usage lines printed there may omit the leading `sdk`.
+
 ### Analytics for every client of a vendor
 
 `codemie proxy connect --claude-otlp` turns CodeMie analytics on for every Claude client, whether or not its application is found: it connects Claude Code analytics, Claude Desktop and the VS Code Claude Code extension in one connect, through one daemon. Claude Desktop and the VS Code Claude Code extension are routed through the proxy only when they are not configured yet (the extension when `claude auth status` reports no login and its VS Code settings hold no other route or key, Claude Desktop when it has no applied Claude-3p config and no first-party data directory); a client already configured is left as it is and a line says so. `--claude-desktop` and `--vscode-claude-code` always route their client and print that its model requests now go through the gateway, not the Claude login. `codemie proxy disconnect --claude-otlp` removes a route together with the Claude Code hooks, and the client uses its Claude login again. The skip lines name the way to switch a client (`codemie proxy connect --claude-desktop` / `--vscode-claude-code`), and a refreshed route names the way back (`codemie proxy disconnect --vscode-claude-code` / `--claude-desktop`); `codemie proxy clients` shows the extension as `analytics on (uses your Claude login; model routing unchanged)` or, when routed, `routed through the proxy` with the disconnect command. `codemie proxy connect --copilot-otlp` connects Copilot Chat and Copilot CLI. On a machine in the local mode both refuse; `codemie analytics sync install` set those clients up.
