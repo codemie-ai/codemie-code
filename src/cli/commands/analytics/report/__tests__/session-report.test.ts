@@ -6,6 +6,12 @@ vi.mock('../../sources/sessions-source.js', () => ({
     load = loadMock;
   },
 }));
+const loadSessionsMock = vi.fn();
+vi.mock('../../data-loader.js', () => ({
+  MetricsDataLoader: class {
+    loadSessions = loadSessionsMock;
+  },
+}));
 const enrichCostsMock = vi.fn();
 vi.mock('../../cost/cost-enricher.js', () => ({ enrichCosts: (...a: unknown[]) => enrichCostsMock(...a) }));
 const aggregateMock = vi.fn();
@@ -24,7 +30,28 @@ vi.mock('../report-generator.js', () => ({
 }));
 
 describe('generateSessionReport', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    loadSessionsMock.mockReturnValue([]);
+  });
+
+  it('takes siblings from tracked records only, never a second native-discovery load', async () => {
+    loadMock.mockResolvedValue({ rawSessions: [{ sessionId: 's1' }] });
+    loadSessionsMock.mockReturnValue([{ sessionId: 's1' }, { sessionId: 's2' }]);
+    enrichCostsMock.mockResolvedValue({
+      index: new Map([['s1', { sessionId: 's1', tokens: { total: 10 } }]]),
+      summary: { totalCostUSD: 0, pricedSessions: 1, totalSessions: 1 },
+    });
+    aggregateMock.mockReturnValue({ totalSessions: 1, projects: [] });
+    buildPayloadMock.mockReturnValue({ meta: { totals: { sessions: 1 } }, sessions: [] });
+
+    const { generateSessionReport } = await import('../session-report.js');
+    await generateSessionReport({ sessionId: 's1', outputPath: '/tmp/out.json' });
+
+    expect(loadMock).toHaveBeenCalledTimes(1);
+    expect(loadMock).toHaveBeenCalledWith({ filter: { sessionId: 's1' } });
+    expect(enrichCostsMock).toHaveBeenCalledWith([{ sessionId: 's1' }], undefined, [{ sessionId: 's2' }]);
+  });
 
   it('writes a JSON report for a session that has data', async () => {
     loadMock.mockResolvedValue({ rawSessions: [{ sessionId: 's1' }] });

@@ -47,9 +47,14 @@ export async function loadAnalytics(
   } else {
     const { enrichCosts, realDeps } = await import('./cost/cost-enricher.js');
     // Unfiltered sessions bound resumed-session windows on shared logs even when filters exclude them.
-    const { rawSessions: all } = await source.load({ filter: {}, includeExternal });
+    // Tracked records only: sharing a log requires a CodeMie record, and native discovery ignores the date window.
+    const { MetricsDataLoader } = await import('./data-loader.js');
     const ids = new Set(rawSessions.map((r) => r.sessionId));
-    costResult = await enrichCosts(rawSessions, realDeps, all.filter((r) => !ids.has(r.sessionId)));
+    costResult = await enrichCosts(
+      rawSessions,
+      realDeps,
+      new MetricsDataLoader().loadSessions().filter((r) => !ids.has(r.sessionId))
+    );
   }
   const keepSessionIds = new Set(
     [...costResult.index.values()].filter((c) => c.tokens.total > 0).map((c) => c.sessionId)
