@@ -98,6 +98,10 @@ jobs:
           name: dist
           path: dist/
 
+      # zsh and fish are needed by the shell completion tests
+      - name: Install zsh and fish
+        run: sudo apt-get install -y zsh fish
+
       - name: Run unit tests
         run: npx vitest run --project unit
 
