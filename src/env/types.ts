@@ -218,7 +218,7 @@ export interface MultiProviderConfig {
  */
 export interface ConfigWithSource {
   value: any;
-  source: 'default' | 'global' | 'project' | 'profile' | 'env' | 'cli';
+  source: 'default' | 'global' | 'project' | 'profile' | 'env' | 'dotenv' | 'cli';
 }
 
 /**

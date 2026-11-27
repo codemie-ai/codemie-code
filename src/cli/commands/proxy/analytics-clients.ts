@@ -20,7 +20,7 @@ import { ANALYTICS_CONNECTORS, type AnalyticsConnectorId } from './analytics-con
 import { CLAUDE_CODE_OTLP_LABEL } from './claude-code-otlp-flow.js';
 import { CLAUDE_OTLP_FLAG, COPILOT_OTLP_FLAG, vendorFlag, type FlagRow } from './flag-list.js';
 import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
-import { readDesktopGateway } from './connectors/desktop.js';
+import { readCodeMieDesktopGateway, readDesktopGateway } from './connectors/desktop.js';
 import { readVsCodeClaudeCodeGateway } from './connectors/vscode-claude-code.js';
 import { getVsCodeProductDir, type ConnectorGateway } from './connectors/vscode.js';
 import type { DaemonState } from './daemon-manager.js';
@@ -302,7 +302,8 @@ export async function isMemberConfigured(member: AnalyticsMember, run: { insider
   try {
     switch (member) {
       case 'claudeDesktop':
-        return (await readDesktopGateway()) !== null;
+        // The applied config, or the CodeMie entry while another config is applied: disconnect cleans either.
+        return (await readDesktopGateway()) !== null || (await readCodeMieDesktopGateway()) !== null;
       case 'vscodeClaudeCode':
         return existsSync(getVsCodeProductDir(run.insiders));
       case 'claudeCodeOtlp':

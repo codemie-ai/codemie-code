@@ -1,0 +1,175 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "User approved; CR-002 resolved, check round approve (high)"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "User chose CR-002 fix-now; CR-001 accept"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "User approved; CR-002 resolved, check round approve (high)"
+    }
+  ],
+  "reviewed_head": "9a0bed5c5ddbeea039ff94afc8fe0d460023e008",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "Prior verdict had no blocking findings, so finding_status is empty. Fix-set advisory CR-002 is resolved: migration 012 now retries the rename up to 3 times on EPERM/EBUSY.",
+  "confidence": "medium",
+  "check_confidence": "high",
+  "risk_flags": [
+    "migration"
+  ],
+  "open": 0,
+  "closed": {
+    "fixed": 0,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "type": "question",
+      "file": "src/migrations/006-resolve-hook-command-paths.migration.ts",
+      "title": "Migration 006 edited despite non-goal",
+      "problem": "The spec listed changes to migrations 006/008 as a non-goal, but 006 had hookFiles made protected and a writeHooks method added so 012 can subclass it. Runtime behavior appears unchanged.",
+      "impact": "No behavior consequence seen; the question is whether the spec deviation was intended.",
+      "recommendation": "Confirm the 006 refactor is intended, or note it in the PR description.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "accept"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/migrations/012-heal-gemini-hook-cmd-shim.migration.ts",
+      "line": 22,
+      "title": "No retry on rename lock",
+      "problem": "On Windows, fs.rename over hooks.json can fail EPERM/EBUSY if Gemini or antivirus holds the file open; the migration reports write-failed with no retry.",
+      "impact": "Trigger is a transient lock during migration; hooks keep opening console windows until a later run. Workaround: re-run.",
+      "recommendation": "Optionally retry rename up to 3 times with a short delay before failing.",
+      "status": "resolved",
+      "check_notes": "012 migration.ts renameWithRetry retries fs.rename up to 3 attempts on EPERM/EBUSY with 50ms*attempt backoff; other errors rethrow; tmp cleaned up.",
+      "fix": {
+        "change": "Migration 012 retries fs.rename up to 3 times with short backoff on EPERM/EBUSY before failing",
+        "test": "012-heal-gemini-hook-cmd-shim.migration.test.ts: retries the rename when the file is briefly locked"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "AC1: win32 extensionless Gemini hooks rewritten to .cmd on sso/jwt launch",
+      "status": "pass",
+      "notes": "resolveHookCommand heals via toCmdShim"
+    },
+    {
+      "kind": "spec",
+      "item": "AC2: fresh install on Windows uses .cmd shim for every Gemini hook",
+      "status": "pass",
+      "notes": "resolveBinary uses shared toCmdShim"
+    },
+    {
+      "kind": "spec",
+      "item": "AC3: already-.cmd hooks unchanged, file not rewritten on re-run",
+      "status": "pass",
+      "notes": "idempotence tests present"
+    },
+    {
+      "kind": "spec",
+      "item": "AC4: no .cmd beside shim leaves command as is",
+      "status": "pass",
+      "notes": "toCmdShim requires existsSync"
+    },
+    {
+      "kind": "spec",
+      "item": "AC5: non-Windows hook commands unchanged",
+      "status": "pass",
+      "notes": "win32 gate; migration returns not-windows"
+    },
+    {
+      "kind": "spec",
+      "item": "AC6: Claude hooks keep PowerShell pin and & prefix",
+      "status": "pass",
+      "notes": "render path preserved"
+    },
+    {
+      "kind": "spec",
+      "item": "AC7 (manual): codemie-gemini headless turn opens no cmd.exe windows",
+      "status": "pending-stage-7",
+      "notes": "manual Windows run owned by the user"
+    },
+    {
+      "kind": "spec",
+      "item": "AC8: migration 012 heals Gemini hooks for any provider",
+      "status": "pass",
+      "notes": "registered; atomic write; no-op non-Windows"
+    },
+    {
+      "kind": "spec",
+      "item": "AC9: tests for hook-command, installer hooks, migration 012",
+      "status": "pass",
+      "notes": "all three test files present"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: do not change migrations 006/008",
+      "status": "partial",
+      "notes": "006 touched as a behavior-preserving refactor to allow subclassing"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "3 subjects use allowed types (fix, test) and allowed scopes (utils, agents), all under 100 chars, imperative"
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "changed source files use .js import extensions, explicit return types on exports, kebab-case file names, why-comments, small functions; no console.log or hardcoded secrets seen"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "no credential logging, no attribution header changes, no user-controlled path use; migration writes hooks.json via temp file and rename, with cleanup on failure"
+    }
+  ],
+  "final_round": {
+    "decision": "approve",
+    "rationale": "All four lenses and standards ran; no blocking findings. 2 advisory findings (006 non-goal touch question, rename lock on Windows); 8 candidates dismissed as noise; reachability checked on hook-command.ts and migration 012 only, so confidence is medium. Manual Windows check (AC7) is pending-stage-7.",
+    "confidence": "medium",
+    "risk_flags": [
+      "migration"
+    ]
+  }
+}

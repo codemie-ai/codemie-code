@@ -29,6 +29,9 @@ export const ClaudeAcpPluginMetadata: AgentMetadata = {
   // No native installer - npm only
   installerUrls: undefined,
 
+  // Installs via the npm prefix, so the PATH shadow check applies (parent opts out)
+  pathShadowCheck: undefined,
+
   // SSO config - separate clientType for analytics distinction
   ssoConfig: {
     enabled: true,

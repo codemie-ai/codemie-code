@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "assessed_head": "16f808897cf250d4d3de0ec5f751df1a7af6e0db",
+  "assessed_range": "78270935..16f80889",
+  "basis": "Scored by the assessor from the task description and the diffstat (11 files, +832/-27); it had no git access and read no source. Revision binding added by the orchestrator.",
+  "generated": "2026-11-24T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 20,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 11,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Touches copilot-usage-enrichment session-end recovery, spool-io appendSpool skipIf, otlp.plugin owner-pending replay and the copilot-cli-otlp adapter; shared spool utilities involved." },
+    { "dimension": "technical_risk", "reason": "No exact precedent for deriving session end from session.shutdown; idempotency across late hook, repeated processing, resume and owner-pending replay needs dedupe/ordering correctness (follow-up commits fixed replay dedupe and run-based matching). Many enumerated edge cases." },
+    { "dimension": "file_change_estimate", "reason": "11 files per diffstat (+832/-27) including tests and docs; mapped by file count to XL although the production diff is concentrated in one subsystem." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

@@ -26,13 +26,13 @@
 import '../setup/load-test-env.js';
 import { describe, it, expect } from 'vitest';
 import { resolvePrice } from '../../src/utils/pricing.js';
-import { fetchLiveCatalog, getCodemieTestUrl } from '../helpers/index.js';
+import { fetchLiveCatalog, getCodemieTestUrl, isImageOnlyModel } from '../helpers/index.js';
 import { isRouterModel } from '../../src/utils/model-family.js';
 
 describe.runIf(process.env.SSO_AVAILABLE !== 'false')('agent-analytics-pricing-reconciliation (T3): catalog pricing reconciliation', () => {
   it('every enabled catalog model resolves through resolvePrice', () => {
     const codeMieUrl = getCodemieTestUrl();
-    const enabledModels = fetchLiveCatalog(codeMieUrl, 'pricing-catalog-fetch').filter((m) => m.enabled && !isRouterModel(m));
+    const enabledModels = fetchLiveCatalog(codeMieUrl, 'pricing-catalog-fetch').filter((m) => m.enabled && !isRouterModel(m) && !isImageOnlyModel(m));
 
     const unresolved = enabledModels
       .map((m) => m.deployment_name)

@@ -84,7 +84,11 @@ export const RELATED: Record<string, RelatedEntry> = {
     next: {},
   },
   'proxy analytics consent grant': {
-    related: [{ path: 'codemie proxy analytics consent revoke', purpose: 'Withdraw work-project authorization' }, { path: 'codemie proxy analytics consent list', purpose: 'List authorized folders' }, A_STATUS],
+    related: [{ path: 'codemie proxy analytics consent revoke', purpose: 'Withdraw work-project authorization' }, { path: 'codemie proxy analytics consent list', purpose: 'List authorized folders' }, { path: 'codemie proxy analytics resend', purpose: 'Send data held for lack of consent' }, A_STATUS],
+    next: {},
+  },
+  'proxy analytics resend': {
+    related: [{ path: 'codemie proxy analytics consent grant', purpose: 'Authorize a work project' }, { path: 'codemie proxy analytics consent list', purpose: 'List authorized folders' }, DOCTOR],
     next: {},
   },
   'proxy analytics consent revoke': {

@@ -8,6 +8,7 @@
  */
 import chalk from 'chalk';
 import { ConfigLoader } from '../../../utils/config.js';
+import { resolveLoginUrl, resolveProfileCodeMieUrl } from '../../../providers/core/login-url.js';
 import { ProviderRegistry } from '../../../providers/index.js';
 import { displaySetupInstructions } from '../../../providers/integration/setup-ui.js';
 import {
@@ -38,7 +39,8 @@ import { describeProjectBinding, sanitizeDisplayText, type ProjectBindingState }
 import {
   writeDesktopConfig,
   getDesktopBaseDir,
-  getDesktopConfigPath,
+  getCodeMieDesktopConfigPath,
+  CODEMIE_DESKTOP_CONFIG_NAME,
   readDesktopGateway,
   mapCanonicalToDesktop,
   describeManagedSettingsOverride,
@@ -59,7 +61,8 @@ import {
   selectCodexModel,
   writeCodexDesktopConfig,
 } from './connectors/codex-desktop.js';
-import { confirmClaudeCodeOtlp, runClaudeCodeOtlp, type ClaudeCodeOtlpDisplay } from './claude-code-otlp-flow.js';
+import { confirmClaudeCodeOtlp, runClaudeCodeOtlp, type ClaudeCodeOtlpAgreement, type ClaudeCodeOtlpDisplay } from './claude-code-otlp-flow.js';
+import { printEnableLaterHint, recordConnectConsent } from './connect-consent.js';
 import { writeCopilotChatOtlpConfig } from './connectors/copilot-chat-otlp.js';
 import { writeCopilotCliOtlpConfig } from './connectors/copilot-cli-otlp.js';
 import { isOmpExtensionInstalled, writeOmpExtension } from './connectors/omp.js';
@@ -144,6 +147,11 @@ export interface ConnectOptions {
    * non-interactive success path for the Claude Code analytics target.
    */
   yes?: boolean;
+  /**
+   * `--include-personal-subscriptions`: with Claude Code analytics, also record work consent (this repository for
+   * `--scope project`, every folder for `user`), so personal-subscription sessions are sent too.
+   */
+  includePersonalSubscriptions?: boolean;
   /** The analytics aggregates given; absent is none. */
   aggregates?: readonly AggregateId[];
   /**
@@ -407,14 +415,17 @@ export async function resolveSsoProxyConfig(
 export async function assertSsoCredentials(
   baseUrl: string,
   profileName: string,
-  codeMieUrl?: string
+  codeMieUrl?: string,
+  provider?: string
 ): Promise<void> {
   let loginUrl: string | null = null;
   try {
     const { getStoredPlatformCredentials } = await import('../../../providers/core/codemie-auth-helpers.js');
-    const creds = await getStoredPlatformCredentials({ provider: 'ai-run-sso', baseUrl, codeMieUrl });
+    const creds = await getStoredPlatformCredentials({ provider: provider ?? 'ai-run-sso', baseUrl, codeMieUrl });
     if (!creds) {
-      loginUrl = resolveProfileCodeMieUrl(baseUrl, codeMieUrl);
+      // Bare `profile login` targets the active profile; any other profile needs its own host.
+      const activeProfileName = await resolveActiveProfileName();
+      loginUrl = activeProfileName === profileName ? '' : ` --url ${resolveLoginUrl(baseUrl, codeMieUrl)}`;
     }
   } catch (err) {
     throw new ConfigurationError(`Failed to verify credentials: ${(err as Error).message}`);
@@ -422,8 +433,8 @@ export async function assertSsoCredentials(
   // Thrown outside the try so the missing-login error is never re-wrapped.
   if (loginUrl !== null) {
     throw new ConfigurationError(
-      `No SSO credentials found for profile '${profileName}'.\n` +
-      `  ${renderHint({ reason: 'Sign in first', command: `codemie profile login --url ${loginUrl}` })}`
+      `No active CodeMie session for profile '${profileName}'.\n` +
+      `  ${renderHint({ reason: 'Sign in first', command: `codemie profile login${loginUrl}` })}`
     );
   }
 }
@@ -433,10 +444,11 @@ export async function verifySsoCredentials(
   baseUrl: string,
   profileName: string,
   codeMieUrl?: string,
+  provider?: string,
   beforeExit?: () => void
 ): Promise<void> {
   try {
-    await assertSsoCredentials(baseUrl, profileName, codeMieUrl);
+    await assertSsoCredentials(baseUrl, profileName, codeMieUrl, provider);
   } catch (err) {
     beforeExit?.();
     const [firstLine, ...rest] = (err as Error).message.split('\n');
@@ -448,12 +460,12 @@ export async function verifySsoCredentials(
   }
 }
 
-function resolveProfileCodeMieUrl(baseUrl: string, codeMieUrl?: string): string {
-  const profileOrigin = new URL(baseUrl).origin;
-  if (codeMieUrl && new URL(codeMieUrl).origin === profileOrigin) {
-    return codeMieUrl;
+async function resolveActiveProfileName(): Promise<string | null> {
+  try {
+    return await ConfigLoader.getActiveProfileName(process.cwd());
+  } catch {
+    return null;
   }
-  return profileOrigin;
 }
 
 export function printProxyError(error: unknown, label: string): never {
@@ -490,12 +502,13 @@ function resolveVsCodeSettingsFiles(insiders: boolean): string[] {
 /** The client files this run is about to configure, or null when no Claude target is selected. */
 async function claudeConnectTargets(
   targets: ConnectTargets,
-  insiders: boolean
+  insiders: boolean,
+  desktopConfigFile: string | undefined
 ): Promise<ProviderSettingsConnectTargets | null> {
   if (!targets.claudeDesktop && !targets.vscodeClaudeCode && !targets.claudeCodeOtlp) return null;
   return {
-    ...(targets.claudeDesktop
-      ? { desktop: { configFile: await getDesktopConfigPath(), managedFile: getClaudeDesktopManagedSettingsPath() } }
+    ...(targets.claudeDesktop && desktopConfigFile !== undefined
+      ? { desktop: { configFile: desktopConfigFile, managedFile: getClaudeDesktopManagedSettingsPath() } }
       : {}),
     ...(targets.vscodeClaudeCode ? { vscodeSettingsFiles: resolveVsCodeSettingsFiles(insiders) } : {}),
     claudeCodeOtlp: targets.claudeCodeOtlp,
@@ -510,10 +523,10 @@ async function claudeConnectTargets(
 async function checkClaudeProviderSettings(
   targets: ConnectTargets,
   profile: ProviderSettingsProfile,
-  options: { silent: boolean; insiders: boolean }
+  options: { silent: boolean; insiders: boolean; desktopConfigFile: string | undefined }
 ): Promise<ProviderSettingsSwitch | null> {
-  const { silent, insiders } = options;
-  const connect = await claudeConnectTargets(targets, insiders);
+  const { silent, insiders, desktopConfigFile } = options;
+  const connect = await claudeConnectTargets(targets, insiders, desktopConfigFile);
   if (!connect) return null;
   const { AgentRegistry } = await import('@/agents/registry.js');
   const claude = AgentRegistry.getAgent(CLAUDE_AGENT);
@@ -760,7 +773,12 @@ function printFailures(results: TargetResult[]): void {
   }
 }
 
-async function runClaudeDesktop(state: DaemonState, verbose: boolean): Promise<TargetResult> {
+/** `desktopConfigFile` is the CodeMie entry the provider-settings gate inspected; the write targets the same file. */
+async function runClaudeDesktop(
+  state: DaemonState,
+  verbose: boolean,
+  desktopConfigFile: string | undefined
+): Promise<TargetResult> {
   try {
     const canonical = state.syncCodeMieUrl
       ? await fetchManagedMcpServers('claude-desktop', state.syncCodeMieUrl)
@@ -780,13 +798,14 @@ async function runClaudeDesktop(state: DaemonState, verbose: boolean): Promise<T
         noAuthCount: oauthShapes.noAuth,
       })
     );
-    const configPath = await writeDesktopConfig(
+    const { configPath, switchedFrom } = await writeDesktopConfig(
       state.url,
       state.gatewayKey,
       getDesktopBaseDir(),
       orgMcpServers,
       undefined, // default managed-MCP state path
-      state.project
+      state.project,
+      desktopConfigFile
     );
     logger.info(
       '[proxy] Claude Desktop proxy configuration written',
@@ -811,6 +830,12 @@ async function runClaudeDesktop(state: DaemonState, verbose: boolean): Promise<T
       console.log(`  Config:  ${configPath}`);
       console.log(`  Gateway: ${state.url}`);
       console.log(chalk.dim('  Telemetry: metrics and conversations will sync as claude-desktop.'));
+    }
+    if (switchedFrom !== undefined) {
+      console.log(chalk.yellow(
+        `  Switched Claude Desktop's active configuration from "${sanitizeDisplayText(switchedFrom)}" ` +
+        `to "${CODEMIE_DESKTOP_CONFIG_NAME}".`
+      ));
     }
     console.log(chalk.yellow('  Restart Claude Desktop to apply changes.'));
     return { label: 'Claude Desktop', ok: true };
@@ -1150,7 +1175,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     console.log(chalk.yellow('Note: --model has no effect without --codex-desktop.'));
   }
 
-  warnIgnoredAnalyticsFlags(targets, opts.scope, Boolean(opts.yes));
+  warnIgnoredAnalyticsFlags(targets, opts.scope, Boolean(opts.yes), Boolean(opts.includePersonalSubscriptions));
   // Coalesced only after the ignored-flag checks above, which need to see an omitted --scope.
   const scope: AllowlistScope = opts.scope ?? 'user';
 
@@ -1177,8 +1202,11 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   let config: Awaited<ReturnType<typeof ConfigLoader.load>>;
   let profile: string;
   let otlpDisplay: ClaudeCodeOtlpDisplay | undefined;
+  let agreement: ClaudeCodeOtlpAgreement | undefined;
   let projectBinding: ProjectBindingState | undefined;
   let settingsSwitch: ProviderSettingsSwitch | null = null;
+  /** The CodeMie Claude Desktop entry this run inspects and writes; resolved once, before the provider-settings gate. */
+  let desktopConfigFile: string | undefined;
   let scopeBaselines: ScopeBaselines;
   try {
     // Pre-lock phase: the scope confirmation runs before SSO, the daemon or any config is touched,
@@ -1236,13 +1264,20 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       config.baseUrl,
       profile,
       config.codeMieUrl,
+      config.provider,
       () => printFailures(results)
     );
 
     // Before anything is started or written: Bedrock settings in Claude's own configuration would send
     // Claude traffic around the gateway this command is about to connect. Only the clients that will be
     // configured (an aggregate flag leaves out the ones not found on this machine) are checked.
-    settingsSwitch = await checkClaudeProviderSettings(activeTargets, config, { silent: Boolean(opts.yes), insiders });
+    // Resolved once: the gate inspects this Desktop entry and the write below targets it, whichever key each would read.
+    desktopConfigFile = activeTargets.claudeDesktop ? await getCodeMieDesktopConfigPath() : undefined;
+    settingsSwitch = await checkClaudeProviderSettings(
+      activeTargets,
+      config,
+      { silent: Boolean(opts.yes), insiders, desktopConfigFile }
+    );
 
     if (activeTargets.claudeCodeOtlp && otlpDisplay) {
       const confirmed = await confirmClaudeCodeOtlp(
@@ -1250,6 +1285,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
         Boolean(opts.overwrite),
         Boolean(opts.yes),
         otlpDisplay,
+        Boolean(opts.includePersonalSubscriptions),
       ).catch((error: unknown) => failAggregateInvalidProjectList(error, members, results, () => {
         // The list is checked before the prompt opens, so the prompt never named the profile.
         if (confirmationWillBeShown) printProfileLine();
@@ -1257,6 +1293,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       // `false` is a decline or a cancelled prompt; a falsy `undefined` is the analytics failing on its own (an invalid
       // project list), which leaves the other clients to be configured.
       const declined = confirmed === false;
+      if (confirmed) agreement = confirmed;
       // The prompt printed the profile line; the route lines come after it. A declined run turns no analytics on and
       // routes nothing the aggregate set, so its skip and hint lines would describe something that does not happen.
       if (!declined) printClaudeRoutePlan(routePlan);
@@ -1317,7 +1354,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   };
   const editionFlag = (flag: string): string => (insiders ? `${flag} --insiders` : flag);
   if (activeTargets.claudeDesktop) {
-    await runClient('--claude-desktop', runClaudeDesktop(state, verbose), 'claudeDesktop');
+    await runClient('--claude-desktop', runClaudeDesktop(state, verbose, desktopConfigFile), 'claudeDesktop');
   }
   if (activeTargets.vscode) {
     await runClient(editionFlag('--vscode'), runVscodeByok(state, insiders, config, verbose, projectBinding));
@@ -1347,6 +1384,11 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     const r = await runIfScopeUnchanged(target, scopeBaselines, analyticsWriters[target.key]);
     results.push(r);
     memberOk.set(target.key, r.ok);
+    // The consent is recorded only once Claude Code settings are written; a denied question leaves the way to grant it later.
+    if (target.key === 'claudeCodeOtlp' && r.ok && agreement) {
+      if (agreement.workConsent) results.push(await recordConnectConsent(scope));
+      else if (agreement.deniedQuestion) printEnableLaterHint(scope);
+    }
   }
   for (const member of notFound) {
     if (memberOk.get(member)) console.log(chalk.yellow(notInstalledLine(member)));
