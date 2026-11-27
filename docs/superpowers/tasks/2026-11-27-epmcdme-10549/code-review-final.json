@@ -1,0 +1,182 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "Check round approved: CR-001 and CR-002 resolved; CR-003 advisory kept fix-later"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "User accepted recommended actions: CR-001 and CR-002 fix-now, CR-003 fix-later"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "Check round approved: CR-001 and CR-002 resolved; CR-003 advisory kept fix-later"
+    }
+  ],
+  "reviewed_head": "0a13c8c89066d222eb730ffd6a81dc5a7bd73b30",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "Both fix-set blocking findings are resolved in docs/COMMANDS.md and match hook.ts: the managed-session note (hook.ts:1675) and the exit-code paragraph (hook.ts:1486-1498, 1755-1758). The CR-003 advisory was not in the fix set; AC3, AC6 and AC7 remain pending-stage-7 test runs.",
+  "confidence": "high",
+  "check_confidence": "high",
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 2,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "docs/COMMANDS.md",
+      "line": 1972,
+      "title": "Hook example is a silent no-op outside managed session",
+      "problem": "The example pipes a SessionStart payload into `codemie hook --agent claude`. In hook.ts a non-OTLP agent run outside a CodeMie-managed session (no CODEMIE_SESSION_ID and CODEMIE_AGENT) exits 0 before any processing (hook.ts:1675), so the documented command does nothing and prints nothing.",
+      "impact": "A reader who runs the example sees no effect and no error and may conclude the hook is broken. Trigger: running it by hand in a normal shell, which is how a docs example is typically tried.",
+      "recommendation": "Note that the example takes effect only inside a CodeMie-managed session (CODEMIE_SESSION_ID and CODEMIE_AGENT set), or use an OTLP agent name such as claude-code-otlp.",
+      "status": "resolved",
+      "check_notes": "COMMANDS.md:1975 now states the example only takes effect in a managed session (CODEMIE_SESSION_ID and CODEMIE_AGENT) and that OTLP agents skip the check; matches hook.ts:1660-1679.",
+      "fix": {
+        "change": "Added a note under the codemie hook example that it only takes effect in a CodeMie-managed session (CODEMIE_SESSION_ID and CODEMIE_AGENT set), else exits 0 silently; OTLP agents skip the check",
+        "test": "src/cli/__tests__/commands-doc-coverage.test.ts"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "docs/COMMANDS.md",
+      "line": 1979,
+      "title": "Hook exit codes omit transcript_path and exit 1",
+      "problem": "The Exit codes paragraph lists only invalid JSON, missing session_id or hook_event_name, and broken auth as exit 2. hook.ts also exits 2 when transcript_path is missing on events other than SessionStart and SessionEnd (hook.ts:1486-1497), exits 1 for any other handler failure with a stderr reason (hook.ts:1755-1758), and exits 0 for non-CodeMie sessions and OTLP agents without field checks. This is the partial on AC2.",
+      "impact": "Hook authors misread failures: a missing transcript_path blocks the agent with exit 2 and a failed handler exits 1, neither of which is documented.",
+      "recommendation": "Add that exit 2 also covers a missing transcript_path on events other than SessionStart/SessionEnd; other handler failures exit 1 with a one-line stderr reason; non-CodeMie sessions and OTLP agents skip field checks and exit 0.",
+      "status": "resolved",
+      "check_notes": "COMMANDS.md exit-codes paragraph now covers missing transcript_path (non-SessionStart/SessionEnd), exit 1 with stderr reason, and exit 0 for non-managed/OTLP; matches hook.ts:1486-1498 and 1755-1758.",
+      "fix": {
+        "change": "Extended the codemie hook Exit codes paragraph with missing transcript_path (exit 2), other handler failures (exit 1 with stderr reason), and non-managed or OTLP runs (exit 0)",
+        "test": "src/cli/__tests__/commands-doc-coverage.test.ts"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/__tests__/commands-doc-coverage.test.ts",
+      "line": 52,
+      "title": "Placeholder heading would be reported as unregistered",
+      "problem": "COMMAND_HEADING maps any heading starting with `codemie <words>` to a command name. A future heading such as `codemie <agent>` or `codemie --help` would map to a non-command name and the reverse rule would report it as not registered.",
+      "impact": "Narrow trigger: no current COMMANDS.md heading matches (checked), so there is no failure today; a future heading would produce a false failure with a clear message and an easy workaround.",
+      "recommendation": "Ignore headings whose first word after codemie does not start with a letter, e.g. `if (m && !/^[a-z]/i.test(m[1].trim())) return [];` in headingCommandPath.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "AC1: each of the 11 commands has a ### `codemie <name>` section with synopsis and example",
+      "status": "pass",
+      "notes": "All 11 sections present with Usage and Examples."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC2: synopsis, options and examples match the implementation",
+      "status": "partial",
+      "notes": "hook exit codes incomplete and hook example is a silent no-op outside a managed session; other sections match."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC3: test passes on final tree and fails on missing section, unregistered heading/alias, missing index line",
+      "status": "pending-stage-7",
+      "notes": "Needs a test run."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC4: a command named only in body text is reported undocumented",
+      "status": "pass",
+      "notes": "Parser maps headings only; parser test covers body-only mentions."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC5: assistants states its difference from setup assistants in its first lines and links to it",
+      "status": "pass",
+      "notes": "First paragraph contrasts the two and links to the setup assistants anchor."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC6: test runs under npm run ci (unit project) on Linux and Windows",
+      "status": "pending-stage-7",
+      "notes": "CI execution needs confirming."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC7: tips-validator.test.ts still passes; no retired or deprecated forms in new text",
+      "status": "pending-stage-7",
+      "notes": "Needs a test run."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC8: no existing heading or index line renamed, edited or removed",
+      "status": "pass",
+      "notes": "Diff only adds lines."
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "na",
+      "notes": "Standards audit not part of the compact profile."
+    },
+    {
+      "kind": "code-quality",
+      "status": "na",
+      "notes": "Standards audit not part of the compact profile."
+    },
+    {
+      "kind": "security",
+      "status": "na",
+      "notes": "Standards audit not part of the compact profile."
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "AC2 is partial: the codemie hook section in docs/COMMANDS.md omits the missing-transcript_path exit 2 and the exit 1 failure path, and its example is a silent no-op outside a managed session (both confirmed in hook.ts). 3 findings total (1 advisory); 0 deferred, 0 dismissed; AC3, AC6 and AC7 are pending-stage-7 test runs.",
+    "confidence": "high",
+    "risk_flags": []
+  }
+}

@@ -10,10 +10,22 @@ codemie --task "task"            # Execute single task with built-in agent and e
 codemie setup                    # Interactive configuration wizard
 codemie setup skills             # Manage CodeMie platform skills (register/unregister)
 codemie setup assistants         # Manage CodeMie assistants as Claude subagents or skills
+codemie assistants chat          # Chat with a registered CodeMie assistant
+codemie skill <command>          # Manage skills for CodeMie agents
+codemie skills <command>         # Install, manage and discover skills via the upstream skills CLI
+codemie sdk <group>              # Manage CodeMie platform assets via the SDK
+codemie models list              # List models available for the current provider
 codemie profile <command>        # Manage provider profiles
 codemie analytics [options]      # View usage analytics (add --export for an HTML/JSON report)
 codemie log [options]            # View and manage debug logs and sessions
 codemie workflow <command>       # Manage CI/CD workflows
+codemie proxy <command>          # Manage the CodeMie local gateway proxy daemon
+codemie opencode-metrics         # Process OpenCode sessions and extract metrics to JSONL
+codemie test-metrics             # Send a test metric to verify CodeMie API connectivity
+codemie hook                     # Unified hook event handler (called by agent plugins)
+codemie sound <event>            # Play a random sound for a hook event
+codemie tips [options]           # Browse the feature tips shown at session start and end
+codemie whatsnew [version]       # Show release notes from CHANGELOG.md
 codemie list [options]           # List all available agents
 codemie install [agent]          # Install an agent
 codemie uninstall [agent]        # Uninstall an agent
@@ -1918,6 +1930,241 @@ codemie version
 - CLI version
 - Node.js version
 - Package name and description
+
+### `codemie assistants`
+
+Talk to a CodeMie assistant from the terminal. `codemie assistants chat` sends messages to a CodeMie assistant; [`codemie setup assistants`](#codemie-setup-assistants) is a different command that registers assistants as Claude Code subagents or skills.
+
+**Usage:**
+```bash
+codemie assistants chat [assistant-id] [message] [options]
+```
+
+With both `assistant-id` and `message` the command runs in single-message mode: it sends the message and exits. Otherwise it asks you to pick an assistant and starts an interactive chat. Only assistants already registered with `codemie setup assistants` can be chatted with.
+
+**Examples:**
+```bash
+# Send one message to an assistant
+codemie assistants chat <assistant-id> "Summarize the open pull requests"
+
+# Continue an earlier conversation and attach a file
+codemie assistants chat <assistant-id> "Review this file" --conversation-id <id> -f ./notes.md
+```
+
+**Options:**
+- `-v, --verbose` - Enable verbose debug output
+- `--conversation-id <id>` - Conversation ID for keeping context across calls
+- `--load-history` - Load conversation history from previous sessions (on by default)
+- `-f, --file <path>` - File to upload; repeat the flag to attach several files
+- `--jwt-token <token>` - JWT bearer token for authentication (bypasses SSO)
+
+### `codemie hook`
+
+Unified hook event handler. Agent plugins call it from their hook configuration; you rarely run it by hand. It reads the hook event as JSON on stdin and routes it by the event name in the payload.
+
+**Usage:**
+```bash
+codemie hook --agent <name> [--event <name>]
+```
+
+**Example:**
+```bash
+echo '{"session_id":"...","hook_event_name":"SessionStart"}' | codemie hook --agent claude
+```
+
+The example takes effect only inside a CodeMie-managed session, where `CODEMIE_SESSION_ID` and `CODEMIE_AGENT` are set. In any other shell it exits `0` without doing anything or printing anything. An OTLP agent name such as `claude-code-otlp` skips that check.
+
+**Options:**
+- `--agent <name>` - Agent name for hook attribution
+- `--event <name>` - Event name for hosts whose hook payload carries none (for example Copilot CLI)
+
+**Exit codes:** exit code `2` is a blocking error. The hook host feeds the message printed on stderr back to the agent. It is used when the hook input is invalid (not JSON, or missing `session_id` or `hook_event_name`), when `transcript_path` is missing on any event other than `SessionStart` and `SessionEnd`, and when analytics sync is configured but authentication is known to be broken. Any other handler failure exits `1` and prints a one-line reason on stderr. Runs outside a CodeMie-managed session and runs for OTLP agents skip the field checks and exit `0`.
+
+See [HOOKS.md](HOOKS.md) for the hook events and configuration.
+
+### `codemie sound`
+
+Play a random sound for a hook event. Agent hooks call it to give audible feedback; it plays a random `.wav` or `.mp3` file from the event's sound directory under the CodeMie home directory and exits quietly when there is none.
+
+**Usage:**
+```bash
+codemie sound <event>
+```
+
+**Example:**
+```bash
+codemie sound SessionStart
+```
+
+`<event>` is the hook event name (for example `SessionStart`, `Stop`, `PermissionRequest`). The command has no options and always exits with code 0.
+
+### `codemie models`
+
+List and manage AI models. Only the `list` subcommand exists today.
+
+**Usage:**
+```bash
+codemie models list
+```
+
+`list` shows the models available for the provider of the current configuration, as a table with the model count. It has no options. It exits with an error when no provider is configured (run `codemie setup`) or when the provider does not support model listing.
+
+### `codemie tips`
+
+Browse the feature tips shown at session start and end. A tip whose command example no longer matches the CLI is marked as stale.
+
+**Usage:**
+```bash
+codemie tips [options]
+```
+
+**Examples:**
+```bash
+codemie tips                       # All tips, grouped by category
+codemie tips --random              # One random tip
+codemie tips --category <name>     # Tips from a single category
+```
+
+**Options:**
+- `--random` - Show a single random tip
+- `--category <name>` - Show only tips from one category (case-insensitive)
+
+Set `CODEMIE_TIPS=0` to stop the tips from showing at session start and end.
+
+### `codemie whatsnew`
+
+Show release notes from `CHANGELOG.md`.
+
+**Usage:**
+```bash
+codemie whatsnew [version] [options]
+```
+
+**Examples:**
+```bash
+codemie whatsnew            # Notes for the current version
+codemie whatsnew 0.1.0      # Notes for one version
+codemie whatsnew --all      # Notes for every version
+```
+
+**Options:**
+- `--all` - Show release notes for all versions
+
+### `codemie test-metrics`
+
+Send a test metric to the CodeMie API to verify endpoint connectivity.
+
+**Usage:**
+```bash
+codemie test-metrics [options]
+```
+
+**Example:**
+```bash
+codemie test-metrics --dry-run
+```
+
+**Options:**
+- `-a, --agent <name>` - Agent name in the metric (default: `codemie-code`)
+- `-m, --model <id>` - Model name in the metric (default: `test-model`)
+- `--client-type <type>` - Override the `X-CodeMie-Client` header (detected from the agent when omitted)
+- `--project <name>` - SSO project name (optional)
+- `--dry-run` - Show the payload and the curl command without sending
+- `-v, --verbose` - Show full request and response details
+
+### `codemie completion`
+
+Print a shell completion script for bash, zsh or fish. The script is generated from the live command tree and written to stdout.
+
+**Usage:**
+```bash
+codemie completion <shell>
+```
+
+**Examples:**
+```bash
+eval "$(codemie completion bash)"
+codemie completion fish > ~/.config/fish/completions/codemie.fish
+```
+
+`<shell>` is one of `bash`, `zsh` or `fish`; any other value is rejected. The command has no options. See [SHELL-COMPLETIONS.md](SHELL-COMPLETIONS.md) for installation per shell.
+
+### `codemie skill`
+
+Manage skills for CodeMie agents: list what was discovered, check the skill files, clear the cache, and sync CodeMie skills to another agent. Not to be confused with `codemie skills`, which installs skills from external catalogs.
+
+**Usage:**
+```bash
+codemie skill <command> [options]
+```
+
+**Subcommands:**
+- `list` - List all discovered skills. Options: `--mode <mode>` (filter by mode, for example `code` or `architect`), `--agent <agent>` (filter by agent compatibility), `--cwd <path>` (working directory for project skills; defaults to the current directory)
+- `validate` - Validate all skill files. Options: `--cwd <path>` (defaults to the current directory)
+- `reload` - Clear the skill cache and force a reload
+- `sync` - Sync CodeMie skills to a target agent. Options: `--target <agent>` (default `claude`), `--clean` (remove synced skills that no longer exist in CodeMie), `--dry-run` (preview without writing), `--cwd <path>` (defaults to the current directory)
+
+**Examples:**
+```bash
+codemie skill list --agent codemie-code
+codemie skill validate
+codemie skill sync --target claude --dry-run
+```
+
+Run `codemie skill <command> --help` for the full option list. See [SKILLS.md](SKILLS.md) for how skills are discovered and written.
+
+### `codemie skills`
+
+Install, manage and discover skills. It wraps the upstream skills CLI and searches the CodeMie catalog and the public skills.sh catalog; every subcommand requires a signed-in CodeMie SSO session. For skills already registered on the CodeMie platform, use [`codemie setup skills`](#codemie-setup-skills).
+
+**Usage:**
+```bash
+codemie skills <command> [options]
+```
+
+**Subcommands:**
+- `add <source>` - Install skills from a skills.sh source (`owner/repo`, a URL, or a local path). Options: `-g, --global`, `-s, --skill <skills...>`, `-a, --agent <agents...>`, `-y, --yes`, `--copy`
+- `update [skills...]` - Update installed skills (all by default). Options: `-g, --global`, `-p, --project`, `-y, --yes`
+- `remove [skills...]` - Remove installed skills. Options: `-g, --global`, `-a, --agent <agents...>`, `-s, --skill <skills...>`, `-y, --yes`
+- `list` - List installed skills. Options: `-g, --global`, `-a, --agent <agent>`, `--json`
+- `find [query]` - Search the catalogs; without a query the upstream interactive prompt starts. Options: `--json`, `--limit <n>`
+
+**Examples:**
+```bash
+codemie skills find review
+codemie skills add <owner>/<repo> --skill <skill-name> --yes
+codemie skills list --global --json
+```
+
+Run `codemie skills <command> --help` for the rest.
+
+### `codemie sdk`
+
+Manage CodeMie platform assets from the terminal through the CodeMie SDK. Each group has its own subcommands (typically `list`, `get`, `create`, `update` and `delete`, plus group-specific actions).
+
+**Usage:**
+```bash
+codemie sdk <group> <command> [options]
+```
+
+**Groups:**
+- `assistants` - Manage assistants
+- `workflows` - Manage workflows
+- `datasources` - Manage datasources
+- `integrations` - Manage integrations
+- `llm` - List available LLM models
+- `skills` - Manage platform skills, including attaching them to assistants and publishing them
+- `users` - Show the current user profile (`me`) and data (`data`)
+- `assistant-categories` - Manage assistant categories
+
+**Examples:**
+```bash
+codemie sdk assistants list
+codemie sdk llm list
+codemie sdk users me
+```
+
+Always start the path with `sdk`. Run `codemie sdk <group> --help` for the commands and options of a group; the usage lines printed there may omit the leading `sdk`.
 
 ### Analytics for every client of a vendor
 

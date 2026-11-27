@@ -1,0 +1,82 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-10549",
+  "head": "0a13c8c89066d222eb730ffd6a81dc5a7bd73b30",
+  "runner": "npm",
+  "started_at": "2026-11-27T14:10:43.417Z",
+  "completed_at": "2026-11-27T14:23:43.417Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 4747,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 18685,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 7304,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 13957,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 318474,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "11 tests in 5 files failed; 4 are Windows symlink EPERM, 7 in local-install.test.ts"
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 190716,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0
+    },
+    {
+      "id": "secrets",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 4447,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Output: \"No staged changes to scan\". Gitleaks scan not performed; stage changes or run with staged files to enable. CI runs it unconditionally."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3631,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Checks HEAD~1..HEAD only"
+    }
+  ],
+  "failures": {
+    "unit": " FAIL  |unit| src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts > connectTargets — the other clients moved off the shared key > moves a Codex config that is a symbolic link through the link, and a second connect leaves it\n FAIL  |unit| src/cli/commands/proxy/connectors/__tests__/codex-desktop-roundtrip.test.ts > moveCodexDesktopToNamedKey > moves a config file that is a symbolic link through the link, and a second move leaves it\n FAIL  |unit| src/cli/commands/proxy/connectors/__tests__/vscode-claude-code.test.ts > moveVsCodeClaudeCodeToNamedKey > moves a settings file that is a symbolic link through the link, and a second move leaves it\n FAIL  |unit| src/cli/commands/shared/analytics-collection/__tests__/local-install.test.ts > localInstallPlan > a state file left by a local proxy that died before the Claude Code step fails the install, and the steps are undone\n FAIL  |unit| src/cli/commands/shared/analytics-collection/__tests__/local-install.test.ts > localInstallPlan > no client found on a machine not local before goes on without the local mode: the job registered, no daemon, no folder\n FAIL  |unit| src/cli/commands/shared/analytics-collection/__tests__/local-install.test.ts > localInstallPlan > the one client found refusing on a machine not local before goes on without the local mode: the job registered, no daemon, no folder\n FAIL  |unit| src/cli/commands/shared/analytics-collection/__tests__/local-install.test.ts > localInstallPlan > an undone install leaves analytics/ and a local spool that holds a file, and removes the folder it made\n FAIL  |unit| src/cli/commands/shared/analytics-collection/__tests__/local-install.test.ts > localInstallPlan > an undone install leaves an empty analytics/ that was there before it, and removes the folder it made\n FAIL  |unit| src/cli/commands/shared/analytics-collection/__tests__/local-install.test.ts > localInstallPlan > an undone install that made analytics/ removes an empty local spool made after it, then analytics/\n FAIL  |unit| src/cli/commands/shared/analytics-collection/__tests__/local-install.test.ts > localInstallPlan > a settings write that fails after the folder was made removes that folder\n FAIL  |unit| src/cli/commands/analytics/sync/scheduler/__tests__/generators.test.ts > resolveJobCommand > resolves a symlinked entry to its realpath and builds argv the startup gate recognizes\n--- last lines ---\n\n FAIL  |unit| src/cli/commands/analytics/sync/scheduler/__tests__/generators.test.ts > resolveJobCommand > resolves a symlinked entry to its realpath and builds argv the startup gate recognizes\nError: EPERM: operation not permitted, symlink 'C:\\Users\\SWETLA~1\\AppData\\Local\\Temp\\codemie-job-cmd-Pc2vIb\\codemie.js' -> 'C:\\Users\\SWETLA~1\\AppData\\Local\\Temp\\codemie-job-cmd-Pc2vIb\\codemie-shim'\n ❯ src/cli/commands/analytics/sync/scheduler/__tests__/generators.test.ts:135:5\n    133|     const link = join(dir, 'codemie-shim');\n    134|     await writeFile(target, '');\n    135|     await symlink(target, link);\n       |     ^\n    136|     process.argv[1] = link;\n    137|\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/11]⎯\n\n\n Test Files  5 failed | 727 passed | 1 skipped (733)\n      Tests  11 failed | 13693 passed | 121 skipped (13825)\n   Start at  15:13:53\n   Duration  316.20s (transform 143.31s, setup 12.99s, import 540.79s, tests 1136.52s, environment 230ms)\n\n"
+  }
+}
