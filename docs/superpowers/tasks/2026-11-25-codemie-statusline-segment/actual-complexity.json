@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "generated": "2026-11-26T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 11,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 4,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "file_change_estimate", "reason": "4 files changed per diffstat (statusline.ts, statusline-installer.ts description constant, statusline test, README); fix-up touched 2 of the same files, so count not increased." },
+    { "dimension": "component_scope", "reason": "Single new rendering segment in the standalone statusline script plus a description string in the installer; follows existing segment pattern." }
+  ],
+  "red_flags_applied": []
+}

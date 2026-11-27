@@ -550,7 +550,7 @@ Providers: CodeMie SSO, Bearer Auth, LiteLLM.
 
 ## Claude Code Statusline
 
-The CodeMie Statusline displays live budget usage, project name, git branch, model, context window percentage, and token counts at the bottom of every Claude Code session.
+The CodeMie Statusline displays a `[⏺ CodeMie]` indicator, live budget usage, project name, git branch, model, context window percentage, and token counts at the bottom of every Claude Code session.
 
 ```bash
 # Install (or update) the statusline
@@ -563,10 +563,14 @@ codemie uninstall statusline
 Once installed, the statusline appears automatically in every claude session:
 
 ```
-[my-project] $4.21/$50 (8%) | (main) | [claude-sonnet-4-5] | ctx:12% in:45.2k out:3.1k
+[⏺ CodeMie] | [my-project] $4.21/$50 (8%) | (main) | [claude-sonnet-4-5] | ctx:12% in:45.2k out:3.1k
 ```
 
+The `[⏺ CodeMie]` segment appears only in sessions launched through CodeMie.
+
 The script is deployed to `~/.claude/codemie-budget-status.js` and registered as a `statusLine` command in `~/.claude/settings.json`. Budget values are cached for 60 seconds to avoid redundant API calls.
+
+**Updating an installed statusline.** The deployed script is a copy, so it does not change by itself when the CLI is upgraded. Every time you launch Claude Code through CodeMie (for example `codemie-claude`), the CLI compares `~/.claude/codemie-budget-status.js` with the bundle shipped in the installed CLI version and rewrites it when they differ, so the next managed launch after an upgrade picks up the new segment automatically. This refresh only rewrites the script: it never installs a statusline that is not there and never edits `~/.claude/settings.json`. A plain `claude` launch does not trigger it, and you can force an update at any time with `codemie install statusline`.
 
 ## Commands
 

@@ -12,7 +12,7 @@ export const STATUSLINE_DISPLAY_NAME = 'CodeMie Statusline';
 // Describes what buildStatusLine actually renders. The budget segment was removed; SCRIPT_FILENAME
 // deliberately still reads 'codemie-budget-status.js' because renaming it would orphan the
 // statusLine command in every existing ~/.claude/settings.json.
-export const STATUSLINE_DESCRIPTION = 'Project, branch, model, context usage, session cost & duration for Claude Code';
+export const STATUSLINE_DESCRIPTION = 'CodeMie session indicator, project, branch, model, context usage, session cost & duration for Claude Code';
 
 const SCRIPT_FILENAME = 'codemie-budget-status.js';
 const LEGACY_SCRIPT_FILENAME = 'codemie-statusline.mjs';
