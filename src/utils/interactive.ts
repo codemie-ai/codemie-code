@@ -15,6 +15,15 @@ export function isNonInteractiveEnvironment(): boolean {
   return !process.stdin.isTTY;
 }
 
+/** Shown when a command needs to read a pasted value and stdin or stdout is not a terminal. */
+export const NO_TTY_MESSAGE =
+  'Headless login needs an interactive terminal (stdin and stdout must both be a TTY).';
+
+/** True when both stdin and stdout are terminals, so a no-echo prompt can run. */
+export function hasInteractiveTerminal(): boolean {
+  return Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY);
+}
+
 /**
  * Whether the launcher may show the one-time project prompt (EPMCDME-15411).
  * Not when a single task runs (`--task`), stdin or stdout is not a terminal, or

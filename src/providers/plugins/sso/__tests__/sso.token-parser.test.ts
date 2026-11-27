@@ -63,3 +63,54 @@ describe('parseSSOToken', () => {
     if (input.trim()) expect((err as Error).message).not.toContain(input.trim());
   });
 });
+
+describe('parseSSOToken hardening', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('rejects a cookies object with a non-string value', async () => {
+    const bad = Buffer.from(JSON.stringify({ cookies: { a: { nested: 1 } } })).toString('base64');
+    await expect(parseSSOToken(bad, { codeMieUrl: BASE })).rejects.toThrow(/session cookies/);
+  });
+
+  it('rejects an empty cookies object', async () => {
+    const empty = Buffer.from(JSON.stringify({ cookies: {} })).toString('base64');
+    await expect(parseSSOToken(empty, { codeMieUrl: BASE })).rejects.toThrow(/session cookies/);
+  });
+
+  it('does not store credentials when the caller aborts during the config.js fetch', async () => {
+    const controller = new AbortController();
+    vi.stubGlobal('fetch', vi.fn((_url: string, init: { signal: AbortSignal }) =>
+      new Promise((_resolve, reject) => {
+        init.signal.addEventListener('abort', () => reject(new Error('aborted')));
+        controller.abort();
+      })
+    ));
+    await expect(parseSSOToken(raw, { codeMieUrl: BASE, signal: controller.signal }))
+      .rejects.toThrow('Authentication cancelled by user');
+  });
+
+  it('falls back to the default API URL when only the fetch times out', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('timeout')));
+    const result = await parseSSOToken(raw, { codeMieUrl: BASE });
+    expect(result.apiUrl).toBe(`${BASE}/code-assistant-api`);
+  });
+
+  it('honors an abort signal when AbortSignal.any is unavailable', async () => {
+    const original = AbortSignal.any;
+    (AbortSignal as { any?: unknown }).any = undefined;
+    try {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: false });
+      vi.stubGlobal('fetch', fetchMock);
+      const controller = new AbortController();
+      await parseSSOToken(raw, { codeMieUrl: BASE, signal: controller.signal });
+      const used = fetchMock.mock.calls[0][1].signal as AbortSignal;
+      expect(used.aborted).toBe(false);
+      controller.abort();
+      expect(used.aborted).toBe(true);
+    } finally {
+      (AbortSignal as { any?: unknown }).any = original;
+    }
+  });
+});

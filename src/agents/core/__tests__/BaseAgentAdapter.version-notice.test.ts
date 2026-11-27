@@ -51,7 +51,8 @@ vi.mock('../../../utils/cli-updater.js', () => ({
   getCurrentCliVersion: vi.fn(async () => '0.15.1'),
 }));
 
-vi.mock('../../../utils/interactive.js', () => ({
+vi.mock('../../../utils/interactive.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../utils/interactive.js')>()),
   isNonInteractiveEnvironment: vi.fn(() => false),
 }));
 

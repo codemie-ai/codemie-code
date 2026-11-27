@@ -375,7 +375,7 @@ export interface ProviderSetupSteps {
    *
    * Interactive re-auth flow when validation fails
    */
-  promptForReauth?(config: CodeMieConfigOptions, headless?: boolean): Promise<boolean>;
+  promptForReauth?(config: CodeMieConfigOptions): Promise<boolean>;
 
   /**
    * Optional: Get authentication status for display

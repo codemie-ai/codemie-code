@@ -217,3 +217,42 @@ describe('CodeMieSSO browser callback', () => {
     expect(typeof result.error).toBe('string');
   });
 });
+
+describe('CodeMieSSO headless hardening', () => {
+  const validToken = Buffer.from(JSON.stringify({ cookies: { _oauth2_proxy: 'x' } })).toString('base64');
+  beforeEach(() => {
+    storeSSOCredentials.mockReset();
+    promptForPastedToken.mockReset();
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('stores the VITE_API_URL from config.js, not the default API base', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => 'VITE_API_URL: "https://api.override.example.com/v2/"',
+    }));
+    promptForPastedToken.mockResolvedValue(validToken);
+
+    await new CodeMieSSO().authenticate({ codeMieUrl: 'https://codemie.example.com', headless: true });
+
+    expect(storeSSOCredentials).toHaveBeenCalledTimes(1);
+    const [stored] = storeSSOCredentials.mock.calls[0];
+    expect(stored.apiUrl).toBe('https://api.override.example.com/v2');
+  });
+
+  it('rejects headless combined with quiet and never prompts', async () => {
+    const result = await new CodeMieSSO().authenticate({
+      codeMieUrl: 'https://codemie.example.com',
+      headless: true,
+      quiet: true,
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('quiet');
+    expect(promptForPastedToken).not.toHaveBeenCalled();
+    expect(storeSSOCredentials).not.toHaveBeenCalled();
+  });
+});

@@ -24,6 +24,25 @@ export interface ParseSSOTokenOptions {
 
 const INVALID_TOKEN = 'Invalid login token. Copy the full address from the browser and try again.';
 const MISSING_COOKIES = 'Login token does not contain session cookies.';
+const ABORT_MESSAGE = 'Authentication cancelled by user';
+
+/**
+ * A signal that aborts when any input aborts. AbortSignal.any exists only from Node 20.3, and
+ * engines allows 20.0, so fall back to a manual listener on older runtimes.
+ */
+function anySignal(signals: AbortSignal[]): AbortSignal {
+  const anyFn = (AbortSignal as { any?: (s: AbortSignal[]) => AbortSignal }).any;
+  if (typeof anyFn === 'function') return anyFn(signals);
+  const controller = new AbortController();
+  for (const s of signals) {
+    if (s.aborted) {
+      controller.abort(s.reason);
+      break;
+    }
+    s.addEventListener('abort', () => controller.abort(s.reason), { once: true });
+  }
+  return controller.signal;
+}
 
 function safeDecodeURIComponent(value: string): string {
   try {
@@ -72,6 +91,11 @@ function decodeToken(raw: string): { cookies: Record<string, string> } {
   if (!cookies || typeof cookies !== 'object' || Array.isArray(cookies)) {
     throw new ConfigurationError(MISSING_COOKIES);
   }
+  const entries = Object.entries(cookies);
+  // Every cookie must be a string, or the Cookie header built from it is corrupt ([object Object])
+  if (entries.length === 0 || entries.some(([, value]) => typeof value !== 'string')) {
+    throw new ConfigurationError(MISSING_COOKIES);
+  }
   return { cookies: cookies as Record<string, string> };
 }
 
@@ -95,9 +119,9 @@ export async function parseSSOToken(input: string, opts: ParseSSOTokenOptions): 
 
   // Resolve the real API URL from config.js (optional; bounded by a timeout)
   let apiUrl = ensureApiBase(opts.codeMieUrl);
+  const timeout = AbortSignal.timeout(opts.fetchTimeoutMs ?? 5000);
+  const signal = opts.signal ? anySignal([timeout, opts.signal]) : timeout;
   try {
-    const timeout = AbortSignal.timeout(opts.fetchTimeoutMs ?? 5000);
-    const signal = opts.signal ? AbortSignal.any([timeout, opts.signal]) : timeout;
     const response = await fetch(`${apiUrl}/config.js`, {
       headers: {
         cookie: Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join(';')
@@ -111,7 +135,10 @@ export async function parseSSOToken(input: string, opts: ParseSSOTokenOptions): 
       }
     }
   } catch {
-    // config.js fetch is optional - fall back to the default API URL
+    // A timeout falls back to the default API URL. A user abort must not: the caller cancelled.
+    if (opts.signal?.aborted) {
+      throw new ConfigurationError(ABORT_MESSAGE);
+    }
   }
 
   return { apiUrl, cookies };

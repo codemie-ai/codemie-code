@@ -10,6 +10,7 @@ import { ProviderRegistry } from '../../core/registry.js';
 import type { CodeMieConfigOptions } from '../../../env/types.js';
 import { logger } from '../../../utils/logger.js';
 import { ConfigurationError } from '../../../utils/errors.js';
+import { hasInteractiveTerminal, NO_TTY_MESSAGE } from '../../../utils/interactive.js';
 import { AnthropicSubscriptionTemplate } from './anthropic-subscription.template.js';
 import {
   DEFAULT_CODEMIE_BASE_URL,
@@ -29,8 +30,9 @@ const HEADLESS_INSTRUCTIONS = [
   '  2. Run `claude setup-token` on a machine with a browser, then export CLAUDE_CODE_OAUTH_TOKEN with the result here and rerun setup.'
 ].join('\n');
 
+// Same TTY requirement as the SSO paste prompt (NO_TTY_MESSAGE), with the Claude routes appended
 const NO_TTY_CLAUDE_MESSAGE =
-  'Headless Claude login needs an interactive terminal (stdin and stdout must both be a TTY). ' +
+  `${NO_TTY_MESSAGE} ` +
   'Run setup from one to use `claude auth login`, or run `claude setup-token` on a machine with a browser, ' +
   'export CLAUDE_CODE_OAUTH_TOKEN here, then run setup again.';
 
@@ -45,7 +47,7 @@ const LOGIN_NOT_COMPLETED_MESSAGE =
  * @throws ConfigurationError when stdin or stdout is not a TTY, or when the login does not complete.
  */
 async function runHeadlessClaudeLogin(): Promise<void> {
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+  if (!hasInteractiveTerminal()) {
     throw new ConfigurationError(NO_TTY_CLAUDE_MESSAGE);
   }
   console.log(HEADLESS_INSTRUCTIONS);

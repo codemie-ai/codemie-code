@@ -18,7 +18,8 @@ import { ensureApiBase } from '../../core/codemie-auth-helpers.js';
 import { logger } from '../../../utils/logger.js';
 import { effectiveExpiresAt } from './sso.expiry.js';
 import { parseSSOToken } from './sso.token-parser.js';
-import { promptForPastedToken } from './sso.paste-prompt.js';
+import { promptForPastedToken, ABORT_MESSAGE } from './sso.paste-prompt.js';
+import { ConfigurationError } from '../../../utils/errors.js';
 
 const HEADLESS_MAX_ATTEMPTS = 3;
 
@@ -112,6 +113,12 @@ export class CodeMieSSO {
     process.once('SIGINT', sigintHandler);
     process.once('SIGTERM', sigtermHandler);
 
+    if (config.headless && config.quiet) {
+      // quiet exists for callers whose stdout must stay clean (a hook's JSON). Headless login's
+      // whole job is to print the URL the user must open, so the two cannot be combined.
+      return { success: false, error: 'Headless login cannot run with quiet output: it prints the sign-in URL.' };
+    }
+
     try {
       let result: SSOAuthResult;
       if (config.headless) {
@@ -167,8 +174,11 @@ export class CodeMieSSO {
       return result;
 
     } catch (error) {
-      // Handle abort as user cancellation
-      if (error instanceof Error && (error.name === 'AbortError' || error.message === 'AbortError')) {
+      // Handle abort as user cancellation: the browser path rejects with a plain AbortError,
+      // the paste prompt with ConfigurationError(ABORT_MESSAGE)
+      const isBrowserAbort = error instanceof Error && (error.name === 'AbortError' || error.message === 'AbortError');
+      const isPasteAbort = error instanceof ConfigurationError && error.message === ABORT_MESSAGE;
+      if (isBrowserAbort || isPasteAbort) {
         return {
           success: false,
           error: 'Authentication cancelled by user'
@@ -201,7 +211,7 @@ export class CodeMieSSO {
     const fakePort = 49152 + Math.floor(Math.random() * 16000);
     const ssoUrl = `${ensureApiBase(config.codeMieUrl)}/v1/auth/login/${fakePort}`;
 
-    // Printed even when quiet: without it the user cannot sign in
+    // The paste-back flow exists to print the URL, so quiet cannot apply to it
     console.log(chalk.white('Open this URL in a browser on any machine and sign in:'));
     console.log(`  ${ssoUrl}`);
     console.log(chalk.dim(

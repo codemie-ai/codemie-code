@@ -118,13 +118,6 @@ describe('SSOSetupSteps platform URL resolution', () => {
       expect(mockAuthenticate).toHaveBeenCalledWith({ codeMieUrl: P, timeout: 120000 });
     });
 
-    it('promptForReauth with headless shows no prompt and authenticates headless', async () => {
-      mockAuthenticate.mockResolvedValue({ success: true });
-      const ok = await SSOSetupSteps.promptForReauth!({ provider: 'ai-run-sso', baseUrl: P } as never, true);
-      expect(ok).toBe(true);
-      expect(mockPrompt).not.toHaveBeenCalled();
-      expect(mockAuthenticate).toHaveBeenCalledWith({ codeMieUrl: P, timeout: 120000, headless: true });
-    });
   });
 
   describe('promptForReauth', () => {

@@ -279,32 +279,29 @@ export const SSOSetupSteps: ProviderSetupSteps = {
    *
    * Interactive re-auth flow when validation fails
    */
-  async promptForReauth(config: CodeMieConfigOptions, headless = false): Promise<boolean> {
+  async promptForReauth(config: CodeMieConfigOptions): Promise<boolean> {
     try {
       // Show warning about credentials
       console.log(chalk.yellow('\n⚠️  Authentication required\n'));
 
-      // Headless was chosen explicitly by the caller, so there is nothing to ask
-      if (!headless) {
-        const { choice } = await inquirer.prompt([
-          {
-            type: 'list',
-            name: 'choice',
-            message: 'Re-authenticate now?',
-            choices: [
-              { name: 'Yes, open the browser', value: 'browser' },
-              { name: 'Yes, but paste the login result (no browser on this machine)', value: 'paste' },
-              { name: 'No', value: 'no' }
-            ],
-            default: 'browser'
-          }
-        ]);
-
-        if (choice === 'no') {
-          return false;
+      const { choice } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'choice',
+          message: 'Re-authenticate now?',
+          choices: [
+            { name: 'Yes, open the browser', value: 'browser' },
+            { name: 'Yes, but paste the login result (no browser on this machine)', value: 'paste' },
+            { name: 'No', value: 'no' }
+          ],
+          default: 'browser'
         }
-        headless = choice === 'paste';
+      ]);
+
+      if (choice === 'no') {
+        return false;
       }
+      const headless = choice === 'paste';
 
       // Run authentication
       const codeMieUrl = getPlatformUrl(config);
