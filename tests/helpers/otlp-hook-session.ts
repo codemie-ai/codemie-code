@@ -312,8 +312,16 @@ export function recordProxyConnection(home: string, profile: string): void {
   );
 }
 
-/** Stores an SSO login for `apiUrl` the way `codemie setup` does, through the built CredentialStore. */
-export function storeSsoLogin(home: string, apiUrl: string, cookies: Record<string, string>): void {
+/**
+ * Stores an SSO login for `apiUrl` the way `codemie setup` does, through the built CredentialStore. It expires in an
+ * hour unless `expiresAt` says otherwise; only a login with a `codemie_access_token` cookie has a local expiry.
+ */
+export function storeSsoLogin(
+  home: string,
+  apiUrl: string,
+  cookies: Record<string, string>,
+  expiresAt: number = Date.now() + 3600000
+): void {
   execFileSync(
     process.execPath,
     [
@@ -321,7 +329,7 @@ export function storeSsoLogin(home: string, apiUrl: string, cookies: Record<stri
       '-e',
       `const { CredentialStore } = await import(${JSON.stringify(pathToFileURL(SECURITY_DIST).href)});
 await CredentialStore.getInstance().storeSSOCredentials(
-  { cookies: ${JSON.stringify(cookies)}, apiUrl: ${JSON.stringify(apiUrl)}, expiresAt: Date.now() + 3600000 },
+  { cookies: ${JSON.stringify(cookies)}, apiUrl: ${JSON.stringify(apiUrl)}, expiresAt: ${expiresAt} },
   ${JSON.stringify(apiUrl)}
 );`,
     ],
