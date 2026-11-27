@@ -15,12 +15,19 @@ export interface ZshSession {
 }
 
 export interface ZshSessionOptions {
-  script: string;
+  /** The completion script; required by `source` and `autoload`, unused by `zshrc`. */
+  script?: string;
   /** Root command / completion function suffix: function is `_<name>`. */
   name: string;
   cwd: string;
-  /** source: `source` the script; autoload: install it as `_<name>` on fpath. */
-  mode: 'source' | 'autoload';
+  /**
+   * source: `source` the script; autoload: install it as `_<name>` on fpath;
+   * zshrc: load nothing itself, only `source $ZDOTDIR/.zshrc` as a new shell would
+   * (the rc file is the caller's, e.g. the documented fpath + compinit lines).
+   */
+  mode: 'source' | 'autoload' | 'zshrc';
+  /** HOME and ZDOTDIR of the shell; defaults to a private temp dir removed on close. */
+  home?: string;
   timeoutMs?: number;
 }
 
@@ -39,15 +46,25 @@ export async function startZsh(opts: ZshSessionOptions): Promise<ZshSession> {
   const fdir = join(tmp, 'fn');
   mkdirSync(fdir);
 
+  if (opts.mode !== 'zshrc' && !opts.script) {
+    rmSync(tmp, { recursive: true, force: true });
+    throw new Error(`startZsh: mode '${opts.mode}' needs a script`);
+  }
   const loadScript =
     opts.mode === 'source'
       ? `source '${opts.script}'`
       : `cp '${opts.script}' '${join(fdir, fn)}'; fpath=('${fdir}' $fpath); autoload -Uz ${fn}`;
+  const loadCompletion =
+    opts.mode === 'zshrc'
+      ? 'source "$ZDOTDIR/.zshrc"'
+      : opts.mode === 'autoload'
+        ? `${loadScript}\ncompinit -u -d '${join(tmp, 'zcompdump')}'`
+        : `compinit -u -d '${join(tmp, 'zcompdump')}'\n${loadScript}`;
 
   const setup = `
 PROMPT=''; RPROMPT=''; bindkey -e
 autoload -Uz compinit
-${opts.mode === 'autoload' ? `${loadScript}\ncompinit -u -d '${join(tmp, 'zcompdump')}'` : `compinit -u -d '${join(tmp, 'zcompdump')}'\n${loadScript}`}
+${loadCompletion}
 __tok='${token}'
 typeset -ga __all
 __cc() {
@@ -74,7 +91,12 @@ print -r -- "R\${__tok}Y"
     cols: 200,
     rows: 50,
     cwd: opts.cwd,
-    env: { ...process.env, HOME: tmp, ZDOTDIR: tmp, TERM: 'xterm-256color' } as Record<string, string>,
+    env: {
+      ...process.env,
+      HOME: opts.home ?? tmp,
+      ZDOTDIR: opts.home ?? tmp,
+      TERM: 'xterm-256color',
+    } as Record<string, string>,
   });
 
   let buf = '';
