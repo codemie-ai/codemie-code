@@ -19,10 +19,35 @@ import { logger } from '../../../utils/logger.js';
 import { MetricsProcessor } from './session/processors/claude.metrics-processor.js';
 import { ConversationsProcessor } from './session/processors/claude.conversations-processor.js';
 import { SessionStore } from '../../core/session/SessionStore.js';
+import type { Session } from '../../core/session/types.js';
+import { nextRecordStartInDirectory } from '../../core/session/next-record-start.js';
+import { getCodemiePath } from '../../../utils/paths.js';
 import { applyClaudeBaseline } from './session/claude-baseline.js';
 import { extractClaudeFileOperation, type ClaudeFileOperation } from './session/claude-file-operation.js';
 import { collectToolOutcomes, extractNamedInvocations } from './session/claude-named-invocations.js';
 import { isCountedTranscriptLine, keepFirstAcrossCompaction } from './session/transcript-lines.js';
+
+/** The transcript paths named by CodeMie records other than `sessionId`. */
+async function claimedTranscripts(sessionId: string): Promise<Set<string>> {
+  const claimed = new Set<string>();
+  const sessionsDir = getCodemiePath('sessions');
+  let names: string[];
+  try {
+    names = (await readdir(sessionsDir)).filter((name) => name.endsWith('.json'));
+  } catch {
+    return claimed;
+  }
+  for (const name of names) {
+    try {
+      const other = JSON.parse(await readFile(join(sessionsDir, name), 'utf-8')) as Session;
+      const file = other.correlation?.agentSessionFile;
+      if (file && other.sessionId !== sessionId) claimed.add(file);
+    } catch {
+      // An unreadable record claims nothing
+    }
+  }
+  return claimed;
+}
 
 /**
  * Best-effort decode of a Claude Code project directory name back to a filesystem path.
@@ -98,6 +123,56 @@ export class ClaudeSessionAdapter implements SessionAdapter {
       return null;
     }
     return join(homedir(), home, 'projects');
+  }
+
+  /**
+   * Find the transcripts of a record that names none, read-only: the `*.jsonl` files of the projects
+   * directory of the record's working directory last written within its run window (at or after
+   * its start, before the next record of the same agent in that directory), minus files another
+   * record already names. Sorted by time; empty when none.
+   */
+  async locateTranscript(record: Session): Promise<string[]> {
+    const projectsDir = this.getProjectsDir();
+    const encoded = encodeClaudeProjectDir(record.workingDirectory);
+    const dir = projectsDir ? join(projectsDir, encoded) : undefined;
+    logger.debug(`[claude-locate] cwd=${record.workingDirectory} encoded=${encoded} dir=${dir ?? 'n/a'}`);
+    if (!dir || !existsSync(dir)) {
+      logger.debug('[claude-locate] project directory does not exist');
+      return [];
+    }
+
+    let names: string[];
+    try {
+      names = (await readdir(dir)).filter((name) => name.endsWith('.jsonl'));
+    } catch {
+      return [];
+    }
+
+    // Stat first: files outside the window are dropped before anything is read
+    const until = await nextRecordStartInDirectory(record);
+    const inWindow: Array<{ path: string; time: number }> = [];
+    let outside = 0;
+    for (const name of names) {
+      const path = join(dir, name);
+      const info = await stat(path).catch(() => null);
+      if (!info) continue;
+      const time = info.mtimeMs;
+      if (time < record.startTime || (until !== undefined && time >= until)) {
+        outside++;
+        continue;
+      }
+      inWindow.push({ path, time });
+    }
+
+    const claimed = await claimedTranscripts(record.sessionId);
+    const found = inWindow
+      .filter(({ path }) => !claimed.has(path))
+      .sort((a, b) => a.time - b.time || a.path.localeCompare(b.path))
+      .map(({ path }) => path);
+    logger.debug(
+      `[claude-locate] files=${names.length} found=${found.length} outsideWindow=${outside} claimed=${inWindow.length - found.length}`
+    );
+    return found;
   }
 
   /**
