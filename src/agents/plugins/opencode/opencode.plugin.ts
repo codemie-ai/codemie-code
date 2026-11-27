@@ -622,10 +622,10 @@ export class OpenCodePlugin extends BaseAgentAdapter {
     return this.sessionAdapter;
   }
 
-  /** The session the launch names: `--session <ses_>` / `--session=<ses_>`. */
+  /** The session the launch names: `--session <ses_>` / `-s <ses_>`. */
   extractNativeResumeId(args: string[]): string | undefined {
-    // Only `--session` is a native resume form here: `-s` is the wrapper's own `--silent` and never reaches opencode; `--resume <ses_>` is the wrapper's form and travels separately
-    return flagValue(args, ['--session']);
+    // `-s` reaches this helper only for `opencode`; for `opencode-acp` (inherits this helper) `-s` is the wrapper's silent flag and never arrives. `--resume <ses_>` is the wrapper's form and travels separately
+    return flagValue(args, ['--session', '-s']);
   }
 
   /** A `--continue` / `-c` launch continues the last session without naming it. */

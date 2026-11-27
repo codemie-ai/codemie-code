@@ -353,7 +353,7 @@ export class CoworkEventProducer {
     progress.step = end ? 'session-end-events' : 'events';
     const reduced = await resolveCoworkReduction(envelope);
     if (own.length > 0) {
-      await appendSpool(cliSessionId, 'hooks', spoolLines(own.map((event) => stampCoworkEvent(event, envelope, next.events.lastLineAt, { reduced }))), project, undefined, reduced);
+      await appendSpool(cliSessionId, 'hooks', spoolLines(own.map((event) => stampCoworkEvent(event, envelope, next.events.lastLineAt, { reduced }))), project, { reduced });
     }
     if (end) next.lastEndedAt = next.events.lastLineAt;
     progress.step = 'cursor-save';
@@ -433,7 +433,7 @@ async function appendPass(pass: TranscriptPass, envelope: CoworkEnvelope, cursor
   try {
     const reduced = await resolveCoworkReduction(envelope);
     const events = pass.events.map((event) => stampCoworkEvent(event, envelope, cursor.events.lastLineAt, { reduced }));
-    await appendSpool(envelope.sessionId, 'hooks', spoolLines(events), project, undefined, reduced);
+    await appendSpool(envelope.sessionId, 'hooks', spoolLines(events), project, { reduced });
   } catch (error) {
     await pass.finalize(false);
     throw error;

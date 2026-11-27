@@ -344,7 +344,7 @@ describe('delivery retention', () => {
     it('reduces native JSON that reached the spool before the stamped hook (same tick), with the binding stored beside the project', async () => {
       const { appendSpool, forwardSession, readStatus } = await modules();
       await appendSpool(SESSION, 'logsJson', nativeLine);
-      await appendSpool(SESSION, 'hooks', stampedHook, ['A'], undefined, true);
+      await appendSpool(SESSION, 'hooks', stampedHook, ['A'], { reduced: true });
 
       const status = await readStatus(SESSION);
       expect(status).toMatchObject({ project: 'A', reduction: true });
@@ -389,14 +389,14 @@ describe('delivery retention', () => {
       await appendSpool(SESSION, 'logsJson', nativeLine);
       expect((await snapshotPendingNdjsonRecords(SESSION, 'logsJson'))?.reduction).toBe('unbound');
 
-      await appendSpool(SESSION, 'hooks', stampedHook, ['A'], undefined, true);
+      await appendSpool(SESSION, 'hooks', stampedHook, ['A'], { reduced: true });
       expect((await snapshotPendingNdjsonRecords(SESSION, 'logsJson'))?.reduction).toBe('on');
     });
 
     it('drops protobuf already spooled for a reduced session instead of sending it', async () => {
       const { appendSpool, forwardSession, readStatus } = await modules();
       await appendSpool(SESSION, 'logs', Buffer.from('pb-bytes'));
-      await appendSpool(SESSION, 'hooks', stampedHook, ['A'], undefined, true);
+      await appendSpool(SESSION, 'hooks', stampedHook, ['A'], { reduced: true });
 
       await forwardSession(SESSION, false, credentials as never);
 

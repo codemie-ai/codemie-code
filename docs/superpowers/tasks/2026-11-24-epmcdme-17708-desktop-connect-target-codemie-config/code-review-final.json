@@ -1,0 +1,274 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "request-changes",
+  "gate_decision": {
+    "gate": "code-review.final",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "Fix-up 9bdb0f66 closes CR-001/006/007/008; user accepted clients/doctor side effect"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "Fix set CR-001, CR-006, CR-007, CR-008; others fix-later/accept"
+    },
+    {
+      "gate": "code-review.final",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "Fix-up 9bdb0f66 closes CR-001/006/007/008; user accepted clients/doctor side effect"
+    }
+  ],
+  "reviewed_head": "9bdb0f66dc307373c7d8a1decb49d203468fa782",
+  "rounds": [
+    "final"
+  ],
+  "rationale": "One blocking finding: disconnect --all still detects Claude Desktop only through the applied entry, so it skips the CodeMie entry when another config is active, contrary to the disconnect decision; acceptance did not run (no spec), so confidence is low. 10 findings (1 blocking, 9 advisory incl. both standards blocking rows graded non-blocking: the ticket-key anti-pattern and size guidelines carry no blocking language and the size violation predates this change), 1 deferred (corrupt _meta.json discards other entries, pre-existing) written to code-review-deferred.local.md, 7 dismissed.",
+  "confidence": "low",
+  "check_confidence": null,
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 1,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/client-targets.ts",
+      "line": 110,
+      "title": "disconnect --all misses non-applied CodeMie entry",
+      "problem": "removeDesktopConfig now resolves the CodeMie entry whichever config is applied, but the disconnect pre-checks still read only the applied entry: CLIENT_TARGETS claude-desktop isConnected -> readDesktopConfigured -> readDesktopGatewayConfig (client-targets.ts:110-116), and aggregate filtering isMemberConfigured('claudeDesktop') -> readDesktopGateway (desktop.ts:1061). disconnect-orchestrator.ts:307 only runs the disconnect when isConnected() is true. No test arranges a foreign applied config with a separate 'CodeMie Proxy' entry for these sites (missing-adoption gap).",
+      "impact": "After connect writes the 'CodeMie Proxy' entry and the user switches Desktop to another config (the multi-config setup this ticket is about), `codemie proxy disconnect --all` skips Claude Desktop and leaves the CodeMie entry with the gateway URL, named key and managed MCP servers, while `disconnect --claude-desktop` cleans it; this contradicts the user decision that disconnect targets the CodeMie entry even when another config is active. Reachability confirmed on the live disconnect path.",
+      "recommendation": "Make Claude Desktop's connected check for disconnect (CLIENT_TARGETS claude-desktop gateway.read / readDesktopConfigured, and isMemberConfigured('claudeDesktop') via readDesktopGateway) detect the CodeMie entry through resolveCodeMieDesktopConfig (non-new entry whose file points at the local proxy), not only the applied entry, so `disconnect --all` runs removeDesktopConfig whichever config is active. Add a client-targets/disconnect test with appliedId on a foreign config and a separate 'CodeMie Proxy' entry pointing at the local proxy.",
+      "status": "fixed",
+      "fix": {
+        "change": "New readCodeMieDesktopGateway (desktop.ts); claude-desktop isConnected (client-targets.ts) and isMemberConfigured('claudeDesktop') also count a non-applied CodeMie entry pointing at the local proxy; gateway.read and other readers stay on the applied entry",
+        "test": "desktop.test.ts readCodeMieDesktopGateway 'reads the CodeMie Proxy entry while a foreign config is applied'; client-targets.test.ts 'Claude Desktop reads as connected for disconnect --all ...'; analytics-clients.test.ts 'claudeDesktop — configured when only the non-applied CodeMie Proxy entry ...'"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "commits 08db07a5..9da337b9",
+      "title": "Ticket key in commit subjects",
+      "problem": "All four commit subjects embed EPMCDME-17708 (e.g. 'fix(proxy): EPMCDME-17708 resolve the CodeMie Claude Desktop config entry'); git-workflow.md Anti-Patterns lists 'Ticket key in the commit subject when scope already conveys context'.",
+      "impact": "History noise only; commitlint does not enforce it and squash-merge makes the PR title the final message on main, so the workaround is choosing the PR title at merge time.",
+      "recommendation": "Drop the ticket key from the PR title (and subjects if they are rewritten) and reference EPMCDME-17708 in the body footer / PR body.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/commands/proxy/connect-orchestrator.ts",
+      "line": 822,
+      "title": "Switch notice skipped for unnamed applied entry",
+      "problem": "The switch notice prints only when switchedFrom is set; when the previous appliedId has no _meta.json entry (or no name), writeDesktopConfig returns activated: true without switchedFrom and the orchestrator ignores activated. Orchestrator tests mock writeDesktopConfig and do not cover activated without switchedFrom.",
+      "impact": "Narrow trigger (a dangling or nameless appliedId): the user is not told the active Desktop config changed, contradicting docs/COMMANDS.md which says the line prints whenever the active config changed.",
+      "recommendation": "Print a generic switch notice when activated is true and switchedFrom is absent (e.g. 'Switched Claude Desktop's active configuration to \"CodeMie Proxy\"'), and add a test for that case.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/commands/proxy/connectors/desktop.ts",
+      "line": 726,
+      "title": "getDesktopConfigPath is now dead export",
+      "problem": "The only production caller of getDesktopConfigPath (connect-orchestrator.ts Bedrock gate) was switched to getCodeMieDesktopConfigPath; grep of src finds no remaining non-test caller.",
+      "impact": "No behavior consequence today; an exported applied-path API that misleads future callers into targeting the applied config again remains, along with its test mocks.",
+      "recommendation": "Delete getDesktopConfigPath and its test mocks, or document the remaining intended caller.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/commands/proxy/connectors/desktop.ts",
+      "line": 766,
+      "title": "Legacy CodeMie config left orphaned",
+      "problem": "Earlier connect versions wrote the gateway into whichever entry was applied and kept its name (e.g. 'Default'). resolveCodeMieDesktopConfig recognises such an entry only via rule (b): applied and pointing at the local proxy with the current key. When it is not applied, or the gateway key changed, connect appends a new 'CodeMie Proxy' entry and disconnect cannot find the legacy one.",
+      "impact": "Trigger limited to users upgrading from the old connect with the legacy entry no longer applied or a rotated key; the orphan is inactive and points at a dead loopback gateway, so the impact is clutter plus stale MCP servers until the user deletes it by hand.",
+      "recommendation": "Optionally scan non-applied entries whose file isDesktopPointedAtLocalProxy (or isCodeMieGatewayConfig with a loopback URL) before minting a new UUID, or note the manual cleanup in docs; keep AC6 (never modify an unrelated config) in mind.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/commands/proxy/connectors/desktop.ts",
+      "line": 766,
+      "title": "Stale named entry shadows live applied gateway",
+      "problem": "Rule (a) picks the 'CodeMie Proxy' entry even when its file is missing; removeDesktopConfig (desktop.ts:1106) then returns 'no CodeMie Claude Desktop config' even if the applied entry (renamed, pointing at the local proxy) is the live CodeMie gateway.",
+      "impact": "Narrow trigger: a named entry without a file coexisting with a legacy applied CodeMie config (removeDesktopConfig drops file and entry together, so this needs external edits or a legacy setup); disconnect reports nothing to remove and Desktop stays routed through the proxy. On connect the outcome is acceptable: the named entry is written and activated.",
+      "recommendation": "In removeDesktopConfig, when the resolved named entry has no file, fall through to the applied entry if it points at the local proxy.",
+      "status": "fixed",
+      "fix": {
+        "change": "removeDesktopConfig uses findCodeMieConfigOnDisk: a named CodeMie entry without a file falls through to the applied entry when it points at the local proxy",
+        "test": "desktop.test.ts removeDesktopConfig 'falls back to the applied local-proxy entry when the CodeMie Proxy entry has no file'"
+      },
+      "disposition": {
+        "rationale": "user chose to fix now: small change",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/commands/proxy/connectors/desktop.ts",
+      "line": 773,
+      "title": "Non-string applied name crashes switch notice",
+      "problem": "previousAppliedName is taken from the applied _meta.json entry's name without a type check; connect-orchestrator.ts:823 passes it to sanitizeDisplayText, which calls .replace and throws on a number, null or object.",
+      "impact": "Narrow trigger (a malformed name in Desktop's own _meta.json): the config and meta are already written, but the catch reports 'Could not configure Claude Desktop' - a false failure.",
+      "recommendation": "Set previousAppliedName only when typeof name === 'string'.",
+      "status": "fixed",
+      "fix": {
+        "change": "resolveCodeMieDesktopConfig sets previousAppliedName only for a string name",
+        "test": "desktop.test.ts resolveCodeMieDesktopConfig 'gives no previous name when the applied entry name is %j'"
+      },
+      "disposition": {
+        "rationale": "user chose to fix now: false failure after successful write",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-008",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/commands/proxy/connectors/desktop.ts",
+      "line": 799,
+      "title": "Gate and write resolve target with different keys",
+      "problem": "getCodeMieDesktopConfigPath (used by the Bedrock gate) resolves the target with the key from the default daemon state file, while writeDesktopConfig uses state.gatewayKey passed from runClaudeDesktop. Under rule (b) the two can pick different entries.",
+      "impact": "Narrow trigger: no 'CodeMie Proxy' entry, an applied legacy CodeMie config, and a daemon key that differs between the gate and the write (e.g. respawn with a new key); the gate then checks a different file than the one connect writes. Reachability of a key change in that window was not confirmed.",
+      "recommendation": "Resolve the gate path with the same gateway key the write will use (pass it in), or resolve once and reuse the target.",
+      "status": "fixed",
+      "fix": {
+        "change": "connectTargets resolves the CodeMie Desktop path once before the provider-settings gate and passes it to writeDesktopConfig (new targetConfigPath param, pinned id in resolveCodeMieDesktopConfig)",
+        "test": "desktop.test.ts 'writes the entry the connect gate resolved, even when this key would pick another'; connect-orchestrator.test.ts 'writes the Claude Desktop config the provider-settings gate inspected'"
+      },
+      "disposition": {
+        "rationale": "user chose to fix now: gate and write must agree on target",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-009",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/commands/proxy/connectors/desktop.ts",
+      "line": 823,
+      "title": "writeDesktopConfig exceeds size guidelines further",
+      "problem": "code-quality.md Code Structure Guidelines ask for functions under 50 lines and files under 500 lines; desktop.ts grows from 1091 to 1185 lines and writeDesktopConfig (~175 lines) gains meta/activation branching. Both violations pre-existed this change.",
+      "impact": "No behavior consequence today; maintainability of an already oversized module degrades slightly.",
+      "recommendation": "Extract the _meta.json update/activation block (desktop.ts ~979-997) into a helper, or move readConfigEntry/resolveCodeMieDesktopConfig/readConfigMeta/getCodeMieDesktopConfigPath into a sibling module.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-010",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "type": "question",
+      "file": "src/cli/commands/proxy/connectors/desktop.ts",
+      "line": 1171,
+      "title": "Disconnect leaves Desktop with no applied config",
+      "problem": "Connect now switches Desktop's appliedId from the user's config (e.g. 'QA Other Gateway') to 'CodeMie Proxy', but the previous appliedId is not recorded; when disconnect deletes the CodeMie entry it drops appliedId, leaving no active config.",
+      "impact": "After connect then disconnect, the user must re-select their former config in Desktop by hand; the workaround is cheap. Correct only if leaving no active config is the intended disconnect outcome.",
+      "recommendation": "Question: should disconnect restore the config connect switched away from (record the previous appliedId on connect and restore it if that entry still exists), or is leaving no applied config intended?",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "accept"
+      }
+    }
+  ],
+  "deferred": [
+    {
+      "id": "DF-001",
+      "severity": "major",
+      "file": "src/cli/commands/proxy/connectors/desktop.ts",
+      "line": 778,
+      "title": "Corrupt _meta.json drops other config entries",
+      "problem": "readConfigMeta treats a corrupt or non-object _meta.json as {}, and writeDesktopConfig rewrites it with only the CodeMie entry, discarding all other entries.",
+      "preexisting": "Pre-change writeDesktopConfig parsed meta with the same catch-to-{} and rewrote it identically; this change only moved it into a helper."
+    }
+  ],
+  "coverage_graded_at": "final",
+  "business_review": [],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "partial",
+      "notes": "4 subjects match <type>(<scope>): <subject>, but each embeds EPMCDME-17708, a git-workflow.md anti-pattern (ticket key in subject); not enforced by commitlint"
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "imports, return types, JSDoc, interfaces met; desktop.ts grows 1091->1185 lines and writeDesktopConfig (~175 lines) exceeds the 500-line file / 50-line function guidelines; both pre-existed"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "config ids validated with isSafeSessionId; logs via sanitizeLogArgs; entry name printed via sanitizeDisplayText; writes via writeFileAtomic; no secrets touched"
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "One blocking finding: disconnect --all still detects Claude Desktop only through the applied entry, so it skips the CodeMie entry when another config is active, contrary to the disconnect decision; acceptance did not run (no spec), so confidence is low. 10 findings (1 blocking, 9 advisory incl. both standards blocking rows graded non-blocking: the ticket-key anti-pattern and size guidelines carry no blocking language and the size violation predates this change), 1 deferred (corrupt _meta.json discards other entries, pre-existing) written to code-review-deferred.local.md, 7 dismissed.",
+    "confidence": "low",
+    "risk_flags": []
+  }
+}

@@ -338,8 +338,11 @@ export function unwrapHookRecords(records: string[]): HookPayload {
   for (const record of records) {
     let serialized: string;
     let wireEvent: Record<string, unknown>;
+    let historicalEnd: boolean;
     try {
-      serialized = (JSON.parse(record) as OtlpHookSpoolData).hookEvent;
+      const envelope = JSON.parse(record) as OtlpHookSpoolData;
+      serialized = envelope.hookEvent;
+      historicalEnd = envelope.historicalEnd === true;
       wireEvent = JSON.parse(serialized) as Record<string, unknown>;
     } catch {
       // Complete but unusable record: dropped deliberately. Its bytes are still
@@ -348,7 +351,7 @@ export function unwrapHookRecords(records: string[]): HookPayload {
       continue;
     }
 
-    if (wireEvent['type'] === SESSION_END_EVENT_TYPE) {
+    if (wireEvent['type'] === SESSION_END_EVENT_TYPE && !historicalEnd) {
       containsSessionEnd = true;
     }
     unwrapped.push(serialized);

@@ -146,7 +146,30 @@ describe('AgentCLI -s flag ownership', () => {
     expect(setSilentMode).not.toHaveBeenCalled();
   });
 
-  describe.each(['claude', 'opencode'])('%s (-s remains the wrapper silent flag)', (agent) => {
+  describe('opencode (native -s = --session)', () => {
+    it('forwards -s with its session id and does not enable silent', async () => {
+      const agentArgs = await runCli('opencode', ['-s', 'ses_x']);
+
+      expect(setSilentMode).not.toHaveBeenCalled();
+      expect(agentArgs).toEqual(['-s', 'ses_x']);
+    });
+
+    it('still enables silent via --silent', async () => {
+      const agentArgs = await runCli('opencode', ['--silent', 'chat']);
+
+      expect(setSilentMode).toHaveBeenCalledWith(true);
+      expect(agentArgs).toEqual(['chat']);
+    });
+  });
+
+  it('opencode-acp keeps -s as the wrapper silent flag', async () => {
+    const agentArgs = await runCli('opencode-acp', ['-s', 'chat']);
+
+    expect(setSilentMode).toHaveBeenCalledWith(true);
+    expect(agentArgs).toEqual(['chat']);
+  });
+
+  describe.each(['claude'])('%s (-s remains the wrapper silent flag)', (agent) => {
     it('consumes -s as silent mode and does not forward it', async () => {
       const agentArgs = await runCli(agent, ['-s', 'chat']);
 
