@@ -27,6 +27,9 @@ import { verifyActiveCli, formatStaleWarning, type ActiveCliVerdict } from './ac
 
 export const CLI_PACKAGE_NAME = '@codemieai/code';
 
+export const CODEMIE_CONNECT_UPDATE_MESSAGE =
+  'This CodeMie CLI is part of CodeMie Connect. Update it from the CodeMie Connect app.';
+
 // Rate limiting: Check for updates at most once per interval (default: 24 hours)
 const UPDATE_CHECK_INTERVAL = parseInt(
   process.env.CODEMIE_UPDATE_CHECK_INTERVAL || '86400000',

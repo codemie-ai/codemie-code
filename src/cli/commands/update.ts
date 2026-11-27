@@ -6,7 +6,7 @@ import { AgentNotFoundError, AgentInstallationError, getErrorMessage } from '../
 import { logger } from '../../utils/logger.js';
 import * as npm from '../../utils/processes.js';
 import { restoreCliBinLink } from '../../utils/cli-bin.js';
-import { CLI_PACKAGE_NAME } from '../../utils/cli-updater.js';
+import { CLI_PACKAGE_NAME, CODEMIE_CONNECT_UPDATE_MESSAGE } from '../../utils/cli-updater.js';
 import { compareVersions, isValidSemanticVersion } from '../../utils/version-utils.js';
 import ora from 'ora';
 import chalk from 'chalk';
@@ -28,6 +28,8 @@ interface UpdateCheckResult {
   hasUpdate: boolean;
   /** npm package name for installation */
   npmPackage: string;
+  /** True when CodeMie Connect manages this CLI, so it is never updated from here */
+  managedByConnect?: boolean;
 }
 
 /**
@@ -81,9 +83,21 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
 
   // Special handling for built-in agent (codemie-code) — uses CLI package version
   if (agent.metadata.isBuiltIn) {
-    const { getCurrentCliVersion } = await import('../../utils/cli-updater.js');
+    const { getCurrentCliVersion, isCodemieConnectInstall } = await import('../../utils/cli-updater.js');
     const cliVersion = await getCurrentCliVersion();
     if (!cliVersion) return null;
+
+    if (await isCodemieConnectInstall()) {
+      return {
+        name: agent.name,
+        displayName: agent.displayName,
+        currentVersion: cliVersion,
+        latestVersion: cliVersion,
+        hasUpdate: false,
+        npmPackage: CLI_PACKAGE_NAME,
+        managedByConnect: true,
+      };
+    }
 
     const latestVersion = await npm.getLatestVersion(CLI_PACKAGE_NAME);
     if (!latestVersion) return null;
@@ -173,7 +187,9 @@ function displayUpdateStatus(results: UpdateCheckResult[]): void {
     console.log(chalk.bold(`  ${result.displayName}`));
     console.log(`    Current: ${result.currentVersion}`);
 
-    if (result.hasUpdate) {
+    if (result.managedByConnect) {
+      console.log(`    ${chalk.cyan(CODEMIE_CONNECT_UPDATE_MESSAGE)}`);
+    } else if (result.hasUpdate) {
       console.log(`    Latest:  ${chalk.green(result.latestVersion)} ${chalk.yellow('(update available)')}`);
     } else {
       console.log(`    Latest:  ${result.latestVersion} ${chalk.green('(up to date)')}`);
@@ -214,6 +230,10 @@ async function updateAgent(agent: AgentAdapter, latestVersion: string): Promise<
     await agent.installVersion('supported');
   } else if (agent.metadata.isBuiltIn) {
     // Special handling for built-in agent — update the CLI package
+    const { isCodemieConnectInstall } = await import('../../utils/cli-updater.js');
+    if (await isCodemieConnectInstall()) {
+      throw new AgentInstallationError(agent.name, CODEMIE_CONNECT_UPDATE_MESSAGE);
+    }
     await npm.installGlobal(CLI_PACKAGE_NAME, { version: latestVersion, force: true });
   } else {
     // Standard npm-based agents
@@ -339,7 +359,9 @@ export function createUpdateCommand(): Command {
         const outdated = results.filter(r => r.hasUpdate);
 
         if (outdated.length === 0) {
-          console.log(chalk.green('✓ All agents are up to date!'));
+          if (results.some(r => !r.managedByConnect)) {
+            console.log(chalk.green('✓ All agents are up to date!'));
+          }
           return;
         }
 
