@@ -11,14 +11,22 @@
 
 import { execFile } from 'child_process';
 import { logger } from '../../utils/logger.js';
-import { getMcpClientName } from '../constants.js';
+import { getMcpAuthTimings, getMcpClientName } from '../constants.js';
 import { proxyLog } from '../proxy-logger.js';
 import { acquireAuthLock } from './auth-lock.js';
-import { startCallbackServer, type CallbackResult } from './callback-server.js';
+import {
+  CallbackTimeoutError,
+  OAuthCallbackError,
+  startCallbackServer,
+  type CallbackResult,
+} from './callback-server.js';
 import {
   forgetPersistedLogin,
+  forgetPersistedLoginIf,
   loadPersistedLogin,
+  peekPersistedLogin,
   persistLogin,
+  type PersistedLogin,
   type RenewalGrant,
 } from './token-store.js';
 
@@ -30,6 +38,9 @@ import type {
   OAuthClientInformationMixed,
   OAuthTokens,
 } from '@modelcontextprotocol/client';
+
+/** OAuth error codes (RFC 6749 section 5.2) with which a server ends a grant for good. */
+const GRANT_ENDING_CODES: ReadonlySet<string> = new Set(['invalid_grant', 'invalid_client', 'unauthorized_client']);
 
 /**
  * OAuth provider for MCP authorization code flow.
@@ -81,6 +92,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
     if (this.callbackWait) return;
     const { redirectUrl, waitForCallback, close } = await startCallbackServer({
       preferredPort: this._callbackPort,
+      timeoutMs: getMcpAuthTimings().callbackTimeoutMs,
     });
     this._redirectUrl = redirectUrl;
     this._callbackPort = Number(new URL(redirectUrl).port);
@@ -132,6 +144,11 @@ export class McpOAuthProvider implements OAuthClientProvider {
     if (this._tokens || !this.serverUrl) return;
     const login = loadPersistedLogin(this.serverUrl);
     if (!login) return;
+    this.seed(login);
+  }
+
+  /** Take over a persisted login: the access token, its expiry, and the grant with its own client. */
+  private seed(login: PersistedLogin): void {
     this._tokens = login.tokens;
     this._expiresAt = login.expiresAt ?? 0; // unknown lifetime: renew before first use
     this._grant = login.grant;
@@ -151,10 +168,15 @@ export class McpOAuthProvider implements OAuthClientProvider {
   /**
    * Get a new access token with the refresh token, without any user interaction. Returns false when
    * that is not possible; never throws. A refusal by the server (revoked or expired refresh token,
-   * unknown client) ends the grant, anything else (network, server error) may be transient and
-   * keeps it for the next attempt.
+   * unknown client) normally ends the grant, anything else (network, server error) may be transient
+   * and keeps it for the next attempt.
+   *
+   * Refresh tokens rotate: when another proxy process renewed first, this process's refresh token is
+   * refused although the login is fine. So after a refusal the persisted login is looked at (never
+   * deleted): a different refresh token is adopted, and renewal is retried once, only if the adopted
+   * access token needs it. `allowAdopt` is private to that single retry; callers pass only `fetchFn`.
    */
-  async renewSilently(fetchFn?: FetchLike): Promise<boolean> {
+  async renewSilently(fetchFn?: FetchLike, allowAdopt = true): Promise<boolean> {
     const grant = this._grant;
     if (!grant || !this.serverUrl) return false;
 
@@ -172,9 +194,26 @@ export class McpOAuthProvider implements OAuthClientProvider {
       return true;
     } catch (error) {
       proxyLog(`[mcp-proxy] Silent renewal failed: ${error instanceof Error ? error.message : error}`);
-      if (error instanceof OAuthError) {
+      if (!(error instanceof OAuthError)) return false; // transient: keep the grant and the file
+
+      if (allowAdopt) {
+        const persisted = peekPersistedLogin(this.serverUrl);
+        if (persisted?.grant && persisted.grant.refreshToken !== grant.refreshToken) {
+          proxyLog('[mcp-proxy] Refresh token was rotated by another process, adopting the persisted login');
+          this.seed(persisted);
+          if (!this.tokenNeedsRenewal()) return true;
+          return this.renewSilently(fetchFn, false);
+        }
+        // Nothing newer persisted: the refusal ends the grant
         this._grant = undefined;
         forgetPersistedLogin(this.serverUrl);
+        return false;
+      }
+
+      // The single retry with an adopted grant was refused too
+      if (GRANT_ENDING_CODES.has(error.code)) {
+        this._grant = undefined;
+        forgetPersistedLoginIf(this.serverUrl, grant.refreshToken);
       }
       return false;
     }
@@ -208,7 +247,11 @@ export class McpOAuthProvider implements OAuthClientProvider {
     // Concurrent logins from sibling proxies clobber each other's gateway CSRF/session state
     // in the browser, so wait for any other pending login to finish first.
     if (!this.releaseAuthLock) {
-      this.releaseAuthLock = await acquireAuthLock();
+      const t = getMcpAuthTimings();
+      this.releaseAuthLock = await acquireAuthLock({
+        maxWaitMs: t.lockMaxWaitMs,
+        staleAfterMs: t.lockStaleMs,
+      });
     }
 
     const url = authorizationUrl.toString();
@@ -257,6 +300,24 @@ export class McpOAuthProvider implements OAuthClientProvider {
       const result = await this.callbackWait;
       logger.debug('[mcp-proxy] Received authorization callback');
       return result.code;
+    } catch (error) {
+      // Typed errors only (never message text). The original error is always rethrown. The
+      // hints name env vars and the client name, never the code, state or callback URL.
+      if (error instanceof CallbackTimeoutError) {
+        console.error(
+          '[mcp-proxy] Login timed out waiting for the browser callback. ' +
+            'Raise MCP_PROXY_AUTH_TIMEOUT_SECONDS (10-3600 seconds) to allow more time. ' +
+            'If the gateway page showed "insufficient_scope", change MCP_CLIENT_NAME instead ' +
+            `(currently "${getMcpClientName()}", as set in this proxy process's environment).`
+        );
+      } else if (error instanceof OAuthCallbackError && error.oauthError === 'insufficient_scope') {
+        console.error(
+          '[mcp-proxy] The gateway refused the login with insufficient_scope. ' +
+            `Try a different MCP_CLIENT_NAME (currently "${getMcpClientName()}", ` +
+            "as set in this proxy process's environment)."
+        );
+      }
+      throw error;
     } finally {
       this.callbackWait = undefined;
       this.callbackClose = undefined;
