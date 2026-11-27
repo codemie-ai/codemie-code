@@ -56,6 +56,20 @@ const OTEL_ENDPOINTS: Record<OtelStream, string> = {
 
 const FORWARD_TIMEOUT_MS = 20_000;
 
+/** Only a plain http(s) URL without embedded credentials may be requested (SSRF guard on the destination). */
+function assertForwardUrl(raw: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error('Invalid forward URL');
+  }
+  if ((parsed.protocol !== 'https:' && parsed.protocol !== 'http:') || parsed.username || parsed.password) {
+    throw new Error('Unsupported forward URL');
+  }
+  return parsed.href;
+}
+
 /* ------------------------------------------------------------------ http --- */
 
 async function postToBackend(
@@ -65,6 +79,7 @@ async function postToBackend(
   credentials: SSOCredentials | JWTCredentials,
   extra: Record<string, string>
 ): Promise<WireResponse> {
+  const safeUrl = assertForwardUrl(url);
   const headers = authHeadersFor(credentials);
   if (!headers) {
     throw new Error('Unsupported credential type');
@@ -75,7 +90,7 @@ async function postToBackend(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FORWARD_TIMEOUT_MS);
   try {
-    const response = await fetch(url, {
+    const response = await fetch(safeUrl, {
       method: 'POST',
       headers,
       body,
