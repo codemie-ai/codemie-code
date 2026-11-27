@@ -40,9 +40,11 @@ vi.mock('../health-check.js', () => ({
   fetchProxyHealth: vi.fn(async () => { throw new TypeError('fetch failed'); }),
 }));
 vi.mock('../connectors/desktop.js', () => ({
+  CODEMIE_DESKTOP_CONFIG_NAME: 'CodeMie Proxy',
   writeDesktopConfig: vi.fn(),
   getDesktopBaseDir: vi.fn().mockReturnValue('/mock/desktop/base'),
   getDesktopConfigPath: vi.fn(async () => '/mock/desktop/base/configLibrary/applied.json'),
+  getCodeMieDesktopConfigPath: vi.fn(async () => '/mock/desktop/base/configLibrary/codemie.json'),
   mapCanonicalToDesktop: vi.fn().mockReturnValue([]),
   summarizeManagedOauthShapes: vi.fn().mockReturnValue({ oauthConfigured: 0, oauthFlagged: 0, noAuth: 0 }),
   describeManagedSettingsOverride: vi.fn().mockReturnValue(null),
@@ -151,7 +153,7 @@ async function setupHappyMocks(provider = 'ai-run-sso'): Promise<void> {
   const { writeDesktopConfig } = await import('../connectors/desktop.js');
   const { getVsCodeClaudeCodeSettingsPath } = await import('../connectors/vscode-claude-code.js');
   const { canPromptForProject } = await import('@/utils/interactive.js');
-  vi.mocked(writeDesktopConfig).mockReset().mockResolvedValue('/desktop/config.json');
+  vi.mocked(writeDesktopConfig).mockReset().mockResolvedValue({ configPath: '/desktop/config.json', activated: false });
   vi.mocked(getVsCodeClaudeCodeSettingsPath).mockReset().mockImplementation((insiders?: boolean) =>
     insiders ? '/mock/vscode-insiders/User/settings.json' : '/mock/vscode/User/settings.json'
   );
@@ -243,7 +245,7 @@ describe('connectTargets: Bedrock settings conflict gate', () => {
     expect(vi.mocked(detectAndAsk).mock.calls[0][0]).toMatchObject({ canPrompt: false });
   });
 
-  it('resolves the Desktop applied and managed files and hands the profile to the gate; project layers are never supplied', async () => {
+  it('resolves the CodeMie Desktop config and managed files and hands the profile to the gate; project layers are never supplied', async () => {
     await setupHappyMocks();
     const { detectAndAsk } = await import('@/agents/plugins/claude/cloud-provider-conflict/gate.js');
     const { connectTargets } = await import('../connect-orchestrator.js');
@@ -254,7 +256,7 @@ describe('connectTargets: Bedrock settings conflict gate', () => {
     expect(input.flow).toBe('connect-desktop');
     expect(input.profile).toMatchObject({ provider: 'ai-run-sso' });
     expect(input.paths).toEqual({
-      desktopApplied: '/mock/desktop/base/configLibrary/applied.json',
+      desktopApplied: '/mock/desktop/base/configLibrary/codemie.json',
       desktopManaged: '/mock/desktop/managed-settings.json',
     });
     expect(input.paths).not.toHaveProperty('projectSettings');
@@ -407,7 +409,7 @@ describe('connectTargets: Bedrock settings conflict gate', () => {
   it('does not change a no-conflict connect: inert apply, targets written, exit code 0', async () => {
     await setupHappyMocks();
     const { writeDesktopConfig } = await import('../connectors/desktop.js');
-    vi.mocked(writeDesktopConfig).mockResolvedValue('/desktop/config.json');
+    vi.mocked(writeDesktopConfig).mockResolvedValue({ configPath: '/desktop/config.json', activated: false });
     const { connectTargets } = await import('../connect-orchestrator.js');
 
     await connectTargets({ targets: { claudeDesktop: true } });

@@ -3002,7 +3002,7 @@ describe('the own-record step at exit', () => {
         finishedAt = Date.now();
       });
       while (finishedAt === undefined && Date.now() - exitStart < 30 * SECOND) {
-        await vi.advanceTimersByTimeAsync(25);
+        await vi.advanceTimersByTimeAsync(5);
         await new Promise((resolve) => realSetTimeout(resolve, 1));
       }
       await step;
@@ -3361,20 +3361,22 @@ describe('one server id per run: the start metric\'s session_id', () => {
     const { processStartedAt } = await import('../../../utils/processes.js');
     writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: processStartedAt() }));
     const controller = new AbortController();
+    const lockWrites = vi.mocked(writeFile).mock.calls;
+    let callsAtAbort = 0;
     respond = (metric) => {
-      if (metric.attributes.status === 'started') controller.abort();
+      if (metric.attributes.status === 'started') {
+        callsAtAbort = lockWrites.length;
+        controller.abort();
+      }
       return ok();
     };
     clearLogs();
 
-    let elapsedMs = Number.NaN;
-    await onFakeClock(async () => {
-      const startedAt = Date.now();
-      await processEvent(startEvent('codemie-start-id'), config(session, { abortSignal: controller.signal }));
-      elapsedMs = Date.now() - startedAt;
-    });
+    await onFakeClock(() => processEvent(startEvent('codemie-start-id'), config(session, { abortSignal: controller.signal })));
 
-    expect(elapsedMs).toBeLessThan(2 * SECOND);
+    expect(controller.signal.aborted).toBe(true);
+    // Any exclusive create here means the cancelled start-id step entered the lock attempt loop.
+    expect(lockWrites.slice(callsAtAbort).filter(([path]) => String(path) === lockPath)).toEqual([]);
     expect(readRecord(session.sessionId).startMetricSessionId).toBeUndefined();
     expect(vi.mocked(logger.warn).mock.calls.some(([line]) => String(line).includes(
       `start metric id of ${session.sessionId} not stored: record locked`

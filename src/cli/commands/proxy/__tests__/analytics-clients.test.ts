@@ -33,6 +33,7 @@ vi.mock('@/telemetry/clients/claude-desktop/claude-desktop.gateway.js', async (i
 vi.mock('../connectors/desktop.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../connectors/desktop.js')>()),
   readDesktopGateway: vi.fn(async () => null),
+  readCodeMieDesktopGateway: vi.fn(async () => null),
 }));
 
 vi.mock('../connectors/claude-code-otlp.js', async (importOriginal) => ({
@@ -49,7 +50,7 @@ const { getCommandPath } = await import('@/utils/processes.js');
 const { getClaudeDesktopAppCandidates } = await import('@/telemetry/clients/claude-desktop/claude-desktop.paths.js');
 const { readDesktopGatewayConfig } = await import('@/telemetry/clients/claude-desktop/claude-desktop.gateway.js');
 const { hasClaudeCodeOtlpHooks } = await import('../connectors/claude-code-otlp.js');
-const { readDesktopGateway } = await import('../connectors/desktop.js');
+const { readCodeMieDesktopGateway, readDesktopGateway } = await import('../connectors/desktop.js');
 const { readCopilotConnectorScope } = await import('@/agents/core/copilot-connector-scope.js');
 const { getVsCodeProductDir } = await import('../connectors/vscode.js');
 const { writeVsCodeClaudeCodeConfigAtPath } = await import('../connectors/vscode-claude-code.js');
@@ -117,6 +118,7 @@ beforeEach(async () => {
   vi.mocked(hasClaudeCodeOtlpHooks).mockResolvedValue(false);
   vi.mocked(readDesktopGatewayConfig).mockReset().mockResolvedValue(null);
   vi.mocked(readDesktopGateway).mockReset().mockResolvedValue(null);
+  vi.mocked(readCodeMieDesktopGateway).mockReset().mockResolvedValue(null);
 });
 
 afterEach(async () => {
@@ -589,6 +591,12 @@ describe('isMemberConfigured', () => {
   it('claudeDesktop — configured when its applied config points at this proxy', async () => {
     expect(await isMemberConfigured('claudeDesktop', run)).toBe(false);
     vi.mocked(readDesktopGateway).mockResolvedValue({ port: 4001 });
+    expect(await isMemberConfigured('claudeDesktop', run)).toBe(true);
+  });
+
+  it('claudeDesktop — configured when only the non-applied CodeMie Proxy entry points at this proxy', async () => {
+    vi.mocked(readDesktopGatewayConfig).mockResolvedValue(null);
+    vi.mocked(readCodeMieDesktopGateway).mockResolvedValue({ port: 4001 });
     expect(await isMemberConfigured('claudeDesktop', run)).toBe(true);
   });
 

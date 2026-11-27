@@ -123,7 +123,7 @@ async function readNpmValue(args: string[]): Promise<string | null> {
 
 let globalNpmPrefix: Promise<string | null> | undefined;
 
-function getGlobalNpmPrefix(): Promise<string | null> {
+export function getGlobalNpmPrefix(): Promise<string | null> {
   globalNpmPrefix ??= readNpmValue(['prefix', '-g']);
   return globalNpmPrefix;
 }

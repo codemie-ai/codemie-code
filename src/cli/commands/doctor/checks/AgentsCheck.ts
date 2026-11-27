@@ -10,6 +10,13 @@
 import { AgentRegistry } from '../../../../agents/registry.js';
 import { AgentAdapter } from '../../../../agents/core/types.js';
 import { ItemWiseHealthCheck, HealthCheckResult, HealthCheckDetail } from '../types.js';
+import { formatNotOnPathHint, formatNotOnPathShort, type ShadowVerdict } from '../../../../utils/path-shadow.js';
+import { formatPutAheadLine } from '../../../../utils/active-cli.js';
+import { getPathModule } from '../../../../utils/platform.js';
+import { logger } from '../../../../utils/logger.js';
+
+const SHADOW_DEADLINE_MS = 5000;
+const UNKNOWN_VERDICT: ShadowVerdict = { status: 'unknown' };
 
 export class AgentsCheck implements ItemWiseHealthCheck {
   name = 'Installed Agents';
@@ -34,7 +41,74 @@ export class AgentsCheck implements ItemWiseHealthCheck {
     return null;
   }
 
+  /** Version detail, upgraded to a PATH-shadow warning when another install shadows the managed one. */
   private async buildDetail(agent: AgentAdapter): Promise<HealthCheckDetail> {
+    const detail = await this.buildVersionDetail(agent);
+    const verdict = await this.safeShadowVerdict(agent);
+    if (verdict.status !== 'shadowed') return detail;
+
+    const version = await agent.getVersion();
+    const versionStr = version ? ` (${version})` : '';
+    const activeDir = getPathModule(process.platform).dirname(verdict.active);
+    const shadowMessage = `${agent.displayName}${versionStr} - another install shadows the CodeMie-managed one (active: ${verdict.active})`;
+    const versionNote = detail.status === 'ok' ? '' : `; ${detail.message}`;
+    return {
+      status: detail.status === 'error' ? 'error' : 'warn',
+      message: `${shadowMessage}${versionNote}`,
+      hint: formatPutAheadLine(verdict.managedDir, activeDir)
+    };
+  }
+
+  private async safeShadowVerdict(agent: AgentAdapter): Promise<ShadowVerdict> {
+    if (!agent.checkPathShadow) return UNKNOWN_VERDICT;
+    try {
+      return await agent.checkPathShadow();
+    } catch (error: unknown) {
+      logger.debug('PATH shadow check failed', error);
+      return UNKNOWN_VERDICT;
+    }
+  }
+
+  /**
+   * Agents isInstalled() reports false never reach the installed list, so a managed shim that
+   * exists on disk but is off PATH is reported here. One shared deadline; unfinished -> unknown.
+   */
+  private async buildNotOnPathDetails(installed: AgentAdapter[]): Promise<HealthCheckDetail[]> {
+    const candidates = AgentRegistry.getManageableAgents().filter((a) => !installed.includes(a));
+    if (candidates.length === 0) return [];
+
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<ShadowVerdict>((resolve) => {
+      timer = setTimeout(() => resolve(UNKNOWN_VERDICT), SHADOW_DEADLINE_MS);
+    });
+    try {
+      const verdicts = await Promise.all(
+        candidates.map(async (agent): Promise<ShadowVerdict> => {
+          if (!agent.checkPathShadow) return UNKNOWN_VERDICT;
+          try {
+            return await Promise.race([agent.checkPathShadow(), deadline]);
+          } catch (error: unknown) {
+            logger.debug('PATH shadow check failed', error);
+            return UNKNOWN_VERDICT;
+          }
+        })
+      );
+      const details: HealthCheckDetail[] = [];
+      verdicts.forEach((verdict, i) => {
+        if (verdict.status !== 'missing-on-path') return;
+        details.push({
+          status: 'warn',
+          message: `${candidates[i].displayName} - ${formatNotOnPathShort(verdict)}`,
+          hint: formatNotOnPathHint(verdict).join('\n')
+        });
+      });
+      return details;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async buildVersionDetail(agent: AgentAdapter): Promise<HealthCheckDetail> {
     const version = await agent.getVersion();
     const versionStr = version ? ` (${version})` : '';
 
@@ -85,6 +159,7 @@ export class AgentsCheck implements ItemWiseHealthCheck {
         message: 'No agents installed (CodeMie Code is built-in)'
       });
     }
+    details.push(...(await this.buildNotOnPathDetails(installedAgents)));
 
     return { name: this.name, success: !details.some((d) => d.status === 'error'), details };
   }
@@ -109,6 +184,11 @@ export class AgentsCheck implements ItemWiseHealthCheck {
         status: 'info',
         message: 'No agents installed (CodeMie Code is built-in)'
       };
+      details.push(detail);
+      onDisplayItem(detail);
+    }
+
+    for (const detail of await this.buildNotOnPathDetails(installedAgents)) {
       details.push(detail);
       onDisplayItem(detail);
     }

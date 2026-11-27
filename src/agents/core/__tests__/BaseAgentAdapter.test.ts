@@ -3,7 +3,8 @@ import { spawn } from 'child_process';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { getCommandPath } from '../../../utils/processes.js';
+import { getCommandMatches, getCommandPath, exec as mockedExec } from '../../../utils/processes.js';
+import { VERSION_PROBE_OPTIONS } from '../../../utils/exec.js';
 import { BaseAgentAdapter } from '../BaseAgentAdapter.js';
 import type { AgentMetadata } from '../types.js';
 import { logger } from '../../../utils/logger.js';
@@ -59,6 +60,7 @@ vi.mock('../../../utils/processes.js', () => ({
   installGlobal:      vi.fn(),
   uninstallGlobal:    vi.fn(),
   getCommandPath:     vi.fn(() => Promise.resolve(null)),
+  getCommandMatches:  vi.fn(() => Promise.resolve({ status: 'unanswered' })),
   processStartedAt:   vi.fn(() => 0),
   WRAPPER_PID_ENV: 'CODEMIE_WRAPPER_PID',
   WRAPPER_STARTED_AT_ENV: 'CODEMIE_WRAPPER_STARTED_AT',
@@ -236,6 +238,30 @@ describe('BaseAgentAdapter', () => {
       // Original should be unchanged (verify shallow copy worked)
       expect(originalMetadata.silentMode).toBe(false);
       expect(adapter.getMetadata().silentMode).toBe(true);
+    });
+  });
+
+  describe('getVersion', () => {
+    const versionMetadata: AgentMetadata = {
+      name: 'ver',
+      displayName: 'Ver Agent',
+      description: 'Version probe tests',
+      npmPackage: null,
+      cliCommand: 'ver-bin',
+      envMapping: {},
+      supportedProviders: ['openai'],
+    };
+
+    it('bounds the probe with VERSION_PROBE_OPTIONS and returns the parsed version', async () => {
+      vi.mocked(mockedExec).mockResolvedValueOnce({ code: 0, stdout: ' 1.2.3 ', stderr: '' });
+      const version = await new TestAdapter(versionMetadata).getVersion();
+      expect(mockedExec).toHaveBeenCalledWith('ver-bin', ['--version'], VERSION_PROBE_OPTIONS);
+      expect(version).toBe('1.2.3');
+    });
+
+    it('returns null when the probe times out', async () => {
+      vi.mocked(mockedExec).mockRejectedValueOnce(new Error('Command timed out after 5000ms'));
+      expect(await new TestAdapter(versionMetadata).getVersion()).toBeNull();
     });
   });
 
@@ -693,6 +719,41 @@ describe('BaseAgentAdapter', () => {
 
       expect(spawnMock).toHaveBeenCalledWith(
         `"C:\\Users\\Name${char}Org\\bin\\cmd.exe"`,
+        [],
+        expect.objectContaining({ shell: true }),
+      );
+    });
+
+    it('launches the first memoized PATH match with a single PATH lookup shared with the shadow check', async () => {
+      const spawnMock = vi.mocked(spawn);
+      vi.mocked(getCommandMatches).mockResolvedValue({
+        status: 'answered',
+        matches: ['C:\\Tools\\bin\\pathagent.cmd', 'C:\\Other\\pathagent.cmd'],
+      });
+
+      const adapter = new RunPathAdapter({ ...baseMetadata, cliCommand: 'pathagent' });
+      await adapter.getPathMatches(); // what checkPathShadow() does at launch
+      await adapter.run([], {});
+
+      expect(getCommandMatches).toHaveBeenCalledTimes(1);
+      expect(getCommandPath).not.toHaveBeenCalled();
+      expect(spawnMock).toHaveBeenCalledWith(
+        'C:\\Tools\\bin\\pathagent.cmd',
+        [],
+        expect.objectContaining({ shell: true }),
+      );
+    });
+
+    it('falls back to getCommandPath when the PATH lookup has no usable match', async () => {
+      vi.mocked(getCommandMatches).mockResolvedValue({ status: 'answered', matches: [] });
+      vi.mocked(getCommandPath).mockResolvedValueOnce('C:\\Fallback\\pathagent.cmd');
+
+      const adapter = new RunPathAdapter({ ...baseMetadata, cliCommand: 'pathagent' });
+      await adapter.run([], {});
+
+      expect(getCommandPath).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(spawn)).toHaveBeenCalledWith(
+        'C:\\Fallback\\pathagent.cmd',
         [],
         expect.objectContaining({ shell: true }),
       );

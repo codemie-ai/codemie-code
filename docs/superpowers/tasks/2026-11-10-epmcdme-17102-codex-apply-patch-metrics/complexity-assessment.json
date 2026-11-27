@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "task": "Make the Codex metrics processor record apply_patch custom tool calls (one shared per-call patch parse with file operations, sub-agent rollouts, failure status, no double count on resume) and compute Codex active duration from turn start/end records.",
+  "generated": "2026-11-10T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 17,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Touches CodexMetricsProcessor (custom_tool_call / custom_tool_call_output pairing, fileOperations, real toolStatus), the apply_patch parser in codex-metrics-extractor (refactored into a shared per-call parse that also feeds ParsedSession.metrics via codex.session), a new turn-based active-duration writer (task_started/task_complete) that interacts with SessionStore and the shared SessionEnd path in hook.ts, plus the onSessionEnd / incremental-sync callers. 3-4 components in the Codex plugin plus core session store, with a new shared parsing abstraction." },
+    { "dimension": "technical_risk", "reason": "Closest patterns: pi saveActiveDurationMs (processor-written activeDurationMs) and opencode/pi per-call fileOperations on success only. They cover the shape but not the Codex-specific parts: patch result from patch_apply_end (unread anywhere today), Add->write mapping change that alters native analytics, double-count risk between a processor-written activeDurationMs and hook.ts accumulateActiveDuration, resume dedupe for turns, and an external version-dependent rollout format. Base M, bumped to L because the AC enumerate edge cases (interrupted/open turns, idle gaps, no turns, failed patches, pending results, resume) and no existing Codex test template covers patch parsing, custom tool calls or active duration." },
+    { "dimension": "file_change_estimate", "reason": "Estimated 5-7 modified files (codex.metrics-processor.ts, codex-metrics-extractor.ts, codex.session.ts, codex-message-types.ts, possibly codex.plugin.ts, existing processor and extractor tests) and 1-2 new (shared patch parse / active-duration helper and its test) across codex/session, codex/session/processors and codex/__tests__. Calibration: consistent with bundled M example epmcdme-10202 (5 files, patterns available); clearly smaller than project L example profile-provider-decoupling (14 files, data migration)." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

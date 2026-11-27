@@ -1924,6 +1924,16 @@ describe('ClaudeCodeOtlpPlugin agent.prompt.submit enrichment', () => {
     expect(resolveHookAuthProfile).toHaveBeenCalledWith();
   });
 
+  it('preflights auth before proxy startup for an ownerless prompt and reuses the result', async () => {
+    await plugin.processOtlpEvent(promptEvent('hello'), { ensureOtlpProxy, forwardOtlpEventsToSpool });
+
+    expect(ensureCodeMieSsoAuthOrWait).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(ensureCodeMieSsoAuthOrWait).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(ensureOtlpProxy).mock.invocationCallOrder[0]
+    );
+    expect(forwardOtlpEventsToSpool).toHaveBeenCalledTimes(1);
+  });
+
   it('emits no event when the SSO gate blocks the prompt', async () => {
     vi.mocked(ensureCodeMieSsoAuthOrWait).mockResolvedValue({ ok: false, reason: 'expired' } as never);
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);

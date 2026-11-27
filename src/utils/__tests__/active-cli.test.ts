@@ -4,7 +4,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getCommandPath } from '@/utils/processes.js';
-import { findActiveCli, findFirstManifest, resolvePackage } from '../active-cli.js';
+import { findActiveCli, findFirstManifest, formatStaleWarning, resolvePackage } from '../active-cli.js';
 import { NPM_WIN32_SHIMS } from '../../../tests/helpers/npm-shims.js';
 
 // A disk of the platform under test, whatever platform runs the test: paths as that platform writes them.
@@ -136,5 +136,44 @@ describe('findActiveCli', () => {
       status: 'unknown',
       reason: "could not inspect first codemie on PATH: EACCES: permission denied 'C:\\npm\\codemie.cmd'",
     });
+  });
+});
+
+describe('formatStaleWarning', () => {
+  const B = String.fromCharCode(92);
+  const old = `D:${B}old`;
+  const active = { path: `${old}${B}codemie.cmd`, version: '1.0.0', prefix: old };
+
+  it('keeps the exact output with a known new prefix', () => {
+    expect(
+      formatStaleWarning({ status: 'stale', active, installedVersion: '2.0.0', newPrefix: `C:${B}new` }, 'win32')
+    ).toEqual([
+      '⚠ The codemie on your PATH is older than the version just installed.',
+      `  Active:    ${old}${B}codemie.cmd (version 1.0.0)`,
+      '  Installed: 2.0.0',
+      '',
+      '  To use the new version:',
+      `  - Put "C:${B}new" ahead of "${old}" on your PATH`,
+      '  - Or remove the old install:',
+      `    npm uninstall -g @codemieai/code --prefix "${old}"`,
+      '  Then open a new terminal.',
+    ]);
+  });
+
+  it('keeps the exact output without a new prefix', () => {
+    expect(
+      formatStaleWarning(
+        { status: 'stale', active: { ...active, prefix: null }, installedVersion: '2.0.0', newPrefix: null },
+        'win32'
+      )
+    ).toEqual([
+      '⚠ The codemie on your PATH is older than the version just installed.',
+      `  Active:    ${old}${B}codemie.cmd (version 1.0.0)`,
+      '  Installed: 2.0.0',
+      '',
+      '  To use the new version:',
+      `  - Put the bin directory of the new install ahead of "${old}" on your PATH`,
+      '  Then open a new terminal.',
+    ]);
   });
 });

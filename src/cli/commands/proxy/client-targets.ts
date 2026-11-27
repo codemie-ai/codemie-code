@@ -22,7 +22,7 @@ import { getClaudeSettingsPath } from '@/agents/plugins/claude-code-otlp/claude-
 import { DEFAULT_GATEWAY_KEY, readState, type DaemonState } from './daemon-manager.js';
 import { ANALYTICS_CONNECTORS, type AnalyticsConnectorId, type ConnectorScopeRead } from './analytics-connectors.js';
 import { vendorFlag } from './flag-list.js';
-import { getDesktopBaseDir, moveDesktopToNamedKey } from './connectors/desktop.js';
+import { getDesktopBaseDir, moveDesktopToNamedKey, readCodeMieDesktopGateway } from './connectors/desktop.js';
 import {
   getVsCodeClaudeCodeSettingsPath,
   moveVsCodeClaudeCodeToNamedKey,
@@ -115,8 +115,22 @@ async function readDesktopConfigured(state: DaemonState): Promise<ConnectorGatew
   return { port: gateway.port, key };
 }
 
-function gatewayTarget(target: Omit<ClientTarget, 'isConnected'> & { gateway: ClientGatewaySpec }): ClientTarget {
-  return { ...target, isConnected: async () => (await target.gateway.read(await probeDaemonState())) !== null };
+/**
+ * Claude Desktop has something for `disconnect` to clean: its applied config points at a local gateway, or its CodeMie
+ * entry (`CodeMie Proxy`) points at the local proxy while another config is applied.
+ */
+async function isDesktopConnected(): Promise<boolean> {
+  if ((await readDesktopConfigured(await probeDaemonState())) !== null) return true;
+  return (await readCodeMieDesktopGateway()) !== null;
+}
+
+function gatewayTarget(
+  target: Omit<ClientTarget, 'isConnected'> & { gateway: ClientGatewaySpec; isConnected?: ClientTarget['isConnected'] }
+): ClientTarget {
+  return {
+    ...target,
+    isConnected: target.isConnected ?? (async () => (await target.gateway.read(await probeDaemonState())) !== null),
+  };
 }
 
 function analyticsConnector(id: AnalyticsConnectorId): (typeof ANALYTICS_CONNECTORS)[number] {
@@ -157,6 +171,8 @@ export const CLIENT_TARGETS: readonly ClientTarget[] = [
     flag: '--claude-desktop',
     label: 'Claude Desktop',
     configLocation: () => join(getDesktopBaseDir(), 'configLibrary'),
+    // `gateway.read` stays on the applied entry (what Desktop uses); connected also counts a non-applied CodeMie entry.
+    isConnected: isDesktopConnected,
     disconnect: () => disconnectClaudeDesktop(),
     // Its Cowork sessions go through the same analytics delivery.
     carriesAnalytics: true,
