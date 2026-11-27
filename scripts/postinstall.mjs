@@ -4,6 +4,7 @@ import { existsSync, readFileSync, appendFileSync, chmodSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { installCompletions } from './install-completions.mjs';
 
 // npm strips execute bits on macOS when unpacking prebuilt binaries
 if (process.platform === 'darwin') {
@@ -44,6 +45,9 @@ function alreadyInRcFile(rcFile, dir) {
   if (!existsSync(rcFile)) return false;
   return readFileSync(rcFile, 'utf8').includes(dir);
 }
+
+// Completion failures must never prevent npm from completing installation.
+installCompletions();
 
 const npmBin = getNpmBinDir();
 if (!npmBin) process.exit(0);

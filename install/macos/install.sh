@@ -132,6 +132,18 @@ fi
 
 status "CodeMie" "installed $RESOLVED_PACKAGE_VERSION"
 
+# npm lifecycle hooks normally cannot prompt. Run the same packaged installer
+# explicitly so it can ask on /dev/tty, including when this script is piped.
+COMPLETION_PREFIX="$INSTALL_PREFIX"
+if [ -z "$COMPLETION_PREFIX" ]; then
+  COMPLETION_PREFIX="$(npm config get prefix 2>/dev/null || true)"
+fi
+COMPLETION_INSTALLER="$COMPLETION_PREFIX/lib/node_modules/@codemieai/code/scripts/install-completions.mjs"
+IGNORE_SCRIPTS="$(npm config get ignore-scripts 2>/dev/null || true)"
+if [ "$IGNORE_SCRIPTS" != "true" ] && [ -f "$COMPLETION_INSTALLER" ]; then
+  node "$COMPLETION_INSTALLER" --interactive --prefix "$COMPLETION_PREFIX" || true
+fi
+
 if [ "$LEGACY_OVERRIDE_DETECTED" = "1" ] && [ "$INSTALL_PREFIX" != "$LEGACY_PREFIX" ]; then
   echo "Reinstall stranded packages, for example: npm i -g @anthropic-ai/claude-code@latest"
   echo "Optional cleanup: rm -rf \"$LEGACY_PREFIX\""
