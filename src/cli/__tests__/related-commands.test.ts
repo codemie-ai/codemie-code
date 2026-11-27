@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import type { Command } from 'commander';
 import { createProgram } from '../program.js';
+import { isHiddenCommand } from '../hidden.js';
 import { RELATED, printNext } from '../related-commands.js';
 
 interface Node {
@@ -8,14 +9,10 @@ interface Node {
   cmd: Command;
 }
 
-function isHidden(cmd: Command): boolean {
-  return (cmd as unknown as { _hidden: boolean })._hidden === true;
-}
-
 function collect(cmd: Command, prefix: string, out: Node[]): Node[] {
   for (const sub of cmd.commands) {
     const path = prefix ? `${prefix} ${sub.name()}` : sub.name();
-    if (!isHidden(sub)) {
+    if (!isHiddenCommand(sub)) {
       if (/^(proxy|analytics)\b/.test(path)) out.push({ path, cmd: sub });
       collect(sub, path, out);
     }
@@ -31,7 +28,7 @@ function resolves(program: Command, full: string): boolean {
   let i = 1;
   for (; i < tokens.length; i++) {
     const next = node.commands.find((c) => c.name() === tokens[i]);
-    if (!next || isHidden(next)) break;
+    if (!next || isHiddenCommand(next)) break;
     node = next;
   }
   if (node === program) return false;

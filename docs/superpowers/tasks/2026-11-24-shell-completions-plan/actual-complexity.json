@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "generated": "2026-11-24T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 21,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 37,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "New completion module (tree walker, bash/zsh/fish generators, escape helper), new completion command, and wiring into program, hidden-command registry, deprecation, related-commands, invocation-context and tips-validator." },
+    { "dimension": "technical_risk", "reason": "Shell-escaping of command and option names is an injection surface with no reusable existing util; many per-shell edge cases require snapshot and integration tests." },
+    { "dimension": "file_change_estimate", "reason": "37 files changed (2298 insertions), of which about 21 are tests, snapshots and helpers; the count alone maps to XXL." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk floored at L: escaping/sanitization work for shell injection surface with no adequate reusable util"
+  ],
+  "split_recommendation": null
+}

@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "task": "Add Bash, Zsh and Fish completions to the CodeMie CLI via a new `codemie completion <shell>` command that statically generates scripts from the commander tree, with docs and tests.",
+  "generated": "2026-11-24T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 18,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "New completion command, tree-walking generator, three shell emitters, registration in program.ts, and an argv-based quiet-start change in bin/codemie.js. createProgram() already exists, so no index.ts restructuring is needed." },
+    { "dimension": "technical_risk", "reason": "Closest pattern is the createXCommand factory plus the related-commands/tips-validator tree walkers. It does not cover shell-escaping of descriptions in three dialects. Stdout hygiene under eval is also uncovered: migrations and the update prompt print to stdout. The prototype uses mapfile, which is not Bash 3.2. The acceptance criteria list edge cases (hidden items, aliases, choices) and there is no existing zsh or fish test harness, so the edge-case bump applies." },
+    { "dimension": "file_change_estimate", "reason": "About 4-5 modified files (program.ts, bin/codemie.js, README.md, docs/COMMANDS.md, possibly ci.yml). About 6-8 new files (command, generator, emitters, tests), across src/cli, bin, docs and tests." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped to L: edge-case acceptance criteria with no existing zsh/fish test template, plus a shell-escaping gap in the closest existing pattern"
+  ],
+  "split_recommendation": null
+}
