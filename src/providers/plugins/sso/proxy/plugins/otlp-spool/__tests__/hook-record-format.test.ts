@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { addLineId, encodeHookRecord, hookRecordEventId, lineIdOf, parseHookEnvelope } from '../hook-record-format.js';
+import {
+  addLineId,
+  encodeHookRecord,
+  hookRecordEventId,
+  lineIdOf,
+  parseHookEnvelope,
+  setUserEmail,
+} from '../hook-record-format.js';
 import { unwrapHookRecords } from '../forwarder.js';
 
 const NOW = 1_764_000_000_000;
@@ -227,6 +234,39 @@ describe('addLineId', () => {
 
   it('answers null for a line that does not parse', () => {
     expect(addLineId('not json', 'f.jsonl:0')).toBeNull();
+  });
+});
+
+describe('setUserEmail', () => {
+  const lineId = { key: 'codemie.line_id', value: { stringValue: 'f.jsonl:0' } };
+  const email = (value: string) => ({ key: 'user.email', value: { stringValue: value } });
+  const record = { attributes: [email('rec@example.com'), { key: 'event_type', value: { stringValue: 'x' } }] };
+
+  it('sets the email on every resource, replacing a resource-level one, records untouched', () => {
+    const line = JSON.stringify({
+      resourceLogs: [
+        { resource: { attributes: [email('old@example.com'), lineId] }, scopeLogs: [{ logRecords: [record] }] },
+        { scopeLogs: [] },
+      ],
+    });
+    expect(JSON.parse(setUserEmail(line, 'A.B@Example.com')!)).toEqual({
+      resourceLogs: [
+        { resource: { attributes: [lineId, email('A.B@Example.com')] }, scopeLogs: [{ logRecords: [record] }] },
+        { scopeLogs: [], resource: { attributes: [email('A.B@Example.com')] } },
+      ],
+    });
+  });
+
+  it('sets the email on every resource of a snake_case export', () => {
+    const line = JSON.stringify({ resource_spans: [{ resource: { attributes: [lineId] }, scope_spans: [] }] });
+    expect(JSON.parse(setUserEmail(line, 'A.B@Example.com')!)).toEqual({
+      resource_spans: [{ resource: { attributes: [lineId, email('A.B@Example.com')] }, scope_spans: [] }],
+    });
+  });
+
+  it('answers null for a line that does not parse or is not an export request', () => {
+    expect(setUserEmail('not json', 'a@example.com')).toBeNull();
+    expect(setUserEmail('{"other":[]}', 'a@example.com')).toBeNull();
   });
 });
 

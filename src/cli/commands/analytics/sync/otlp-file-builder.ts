@@ -16,6 +16,7 @@ import {
   folderFileName,
   folderSessionIdOf,
 } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/analytics-folder-paths.js';
+import { setUserEmail } from '@/providers/plugins/sso/proxy/plugins/otlp-spool/hook-record-format.js';
 import { emailSlug } from '../report/report-generator.js';
 import { errorMessage } from './redact.js';
 import { MAX_EXPORT_BYTES } from './targets/webhook-target.js';
@@ -46,6 +47,21 @@ async function wholeLines(path: string): Promise<Buffer | null> {
   }
   const end = bytes.lastIndexOf(NEWLINE);
   return end < 0 ? null : bytes.subarray(0, end + 1);
+}
+
+/** The lines with the sync email on every resource of every export request line; any other line as it lies. */
+function withUserEmail(lines: Buffer, email: string): Buffer {
+  // Line by line on the bytes: a session too long for one string is still built, and a line left as it lies keeps its bytes.
+  const out: Buffer[] = [];
+  for (let start = 0; start < lines.length; ) {
+    const newline = lines.indexOf(NEWLINE, start);
+    const end = newline < 0 ? lines.length : newline + 1;
+    const line = lines.subarray(start, newline < 0 ? end : newline);
+    const stamped = line.length === 0 ? null : setUserEmail(line.toString('utf-8'), email);
+    out.push(stamped === null ? lines.subarray(start, end) : Buffer.from(stamped + (newline < 0 ? '' : '\n'), 'utf-8'));
+    start = end;
+  }
+  return Buffer.concat(out);
 }
 
 /** The session's lines as gzip members no larger than `cap`: whole when it fits, else halved at a line until it does. */
@@ -111,7 +127,7 @@ export class OtlpFolderSource implements ExportSource {
     const notRead: string[] = [];
     for (const sessionId of sessionIds) {
       try {
-        pieces.push(...(await this.sessionPieces(root, sessionId, window)));
+        pieces.push(...(await this.sessionPieces(root, sessionId, window, email)));
       } catch (err) {
         logger.debug('[analytics-sync] session left out', ...sanitizeLogArgs({ sessionId, err: errorMessage(err) }));
         (err instanceof ExportTooLargeError ? leftOut : notRead).push(`${sessionId} (${errorMessage(err)})`);
@@ -133,8 +149,11 @@ export class OtlpFolderSource implements ExportSource {
     return reports;
   }
 
-  /** The session's gzip pieces, none when it is being moved, outside the window or has no whole line yet. */
-  private async sessionPieces(root: string, sessionId: string, window: SyncWindow): Promise<Buffer[]> {
+  /**
+   * The session's gzip pieces, every export request line naming `email` as its resources' `user.email`; none when it
+   * is being moved, outside the window or has no whole line yet.
+   */
+  private async sessionPieces(root: string, sessionId: string, window: SyncWindow, email: string): Promise<Buffer[]> {
     const marker = join(root, sessionId + MOVING_SUFFIX);
     // A session being moved is left for a later run.
     if (await exists(marker)) return [];
@@ -150,7 +169,7 @@ export class OtlpFolderSource implements ExportSource {
     }
     if (await exists(marker)) return [];
     if (sessionParts.length === 0) return [];
-    return compressedPieces(Buffer.concat(sessionParts), this.cap);
+    return compressedPieces(withUserEmail(Buffer.concat(sessionParts), email), this.cap);
   }
 }
 

@@ -4,7 +4,7 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
@@ -253,6 +253,60 @@ describe('OtlpFolderSource', () => {
       writeFileSync(folder(), 'not a folder');
 
       await expect(build()).rejects.toThrow();
+    });
+  });
+
+  describe('the sync email', () => {
+    type Attr = { key: string; value: { stringValue: string } };
+    const attr = (key: string, value: string): Attr => ({ key, value: { stringValue: value } });
+    /** An export line of `kind` with its line id, an optional resource-level email and a record-level email. */
+    function exportLine(kind: 'resourceLogs' | 'resourceMetrics', id: string, resourceEmail?: string): string {
+      const resource = [attr('codemie.line_id', id), ...(resourceEmail ? [attr('user.email', resourceEmail)] : [])];
+      const pad = createHash('sha256').update(id).digest('hex');
+      const record = { attributes: [attr('user.email', ''), attr('pad', pad)] };
+      return JSON.stringify({ [kind]: [{ resource: { attributes: resource }, scopeLogs: [{ logRecords: [record] }] }] }) + '\n';
+    }
+    const resources = (line: string): Attr[][] => {
+      const parsed = JSON.parse(line) as Record<string, { resource: { attributes: Attr[] } }[]>;
+      return Object.values(parsed)[0].map((entry) => entry.resource.attributes);
+    };
+    const lines = (reports: { bytes: Buffer }[]) =>
+      reports.flatMap((report) => gunzipSync(report.bytes).toString('utf-8').split('\n').filter((line) => line !== ''));
+    const snapshot = () => Object.fromEntries(readdirSync(folder()).map((name) => [name, readFileSync(join(folder(), name))]));
+
+    it('every resource of every line names the sync email with its case; line ids, records and the folder stay', async () => {
+      file('s1.hooks.jsonl', exportLine('resourceLogs', 's1.hooks.jsonl:a') + 'not an export\n');
+      file('s1.otel_metrics.jsonl', exportLine('resourceMetrics', 's1.otel_metrics.jsonl:b', 'other@example.com'));
+      const before = snapshot();
+
+      const built = lines((await build('A.B@Example.com'))!);
+
+      expect(built[1]).toBe('not an export');
+      const exports = [built[0], built[2]];
+      expect(exports.map(resources)).toEqual([
+        [[attr('codemie.line_id', 's1.hooks.jsonl:a'), attr('user.email', 'A.B@Example.com')]],
+        [[attr('codemie.line_id', 's1.otel_metrics.jsonl:b'), attr('user.email', 'A.B@Example.com')]],
+      ]);
+      for (const line of exports) {
+        const record = Object.values(JSON.parse(line) as Record<string, { scopeLogs: { logRecords: { attributes: Attr[] }[] }[] }[]>)[0][0]
+          .scopeLogs[0].logRecords[0];
+        expect(record.attributes[0]).toEqual(attr('user.email', ''));
+      }
+      expect(snapshot()).toEqual(before);
+    });
+
+    it('a session split across files: every line of every part names the email, each part within the cap', async () => {
+      const ids = Array.from({ length: 20 }, (_, i) => `big.hooks.jsonl:${i}`);
+      file('big.hooks.jsonl', ids.map((id) => exportLine('resourceLogs', id)).join(''));
+
+      const reports = (await build('A.B@Example.com', 600))!;
+
+      expect(reports.length).toBeGreaterThan(1);
+      for (const report of reports) expect(report.bytes.length).toBeLessThanOrEqual(600);
+      const built = lines(reports);
+      expect(built.map(resources)).toEqual(
+        ids.map((id) => [[attr('codemie.line_id', id), attr('user.email', 'A.B@Example.com')]])
+      );
     });
   });
 

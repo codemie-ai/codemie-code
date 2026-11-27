@@ -136,6 +136,23 @@ export function encodeHookRecord(
  * for a line that does not parse or is not an export request.
  */
 export function addLineId(line: string, lineId: string): string | null {
+  return editResourceAttributes(line, (attributes) => [...attributes, { key: LINE_ID_KEY, value: { stringValue: lineId } }]);
+}
+
+/**
+ * Sets the resource attribute `user.email` to `email` on every resource of one OTLP JSON export request line,
+ * camelCase or snake_case, replacing a resource-level one already there; `null` for a line that does not parse or is
+ * not an export request.
+ */
+export function setUserEmail(line: string, email: string): string | null {
+  return editResourceAttributes(line, (attributes) => [
+    ...attributes.filter((a) => !(isObject(a) && a['key'] === USER_EMAIL_KEY)),
+    { key: USER_EMAIL_KEY, value: { stringValue: email } },
+  ]);
+}
+
+/** One OTLP JSON export request line with `edit` applied to every resource's attributes; `null` as `addLineId` says. */
+function editResourceAttributes(line: string, edit: (attributes: unknown[]) => unknown[]): string | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(line);
@@ -148,8 +165,7 @@ export function addLineId(line: string, lineId: string): string | null {
   for (const entry of parsed[key] as unknown[]) {
     if (!isObject(entry)) continue;
     const resource = isObject(entry['resource']) ? entry['resource'] : (entry['resource'] = {});
-    const attributes = Array.isArray(resource['attributes']) ? resource['attributes'] : (resource['attributes'] = []);
-    (attributes as KeyValue[]).push({ key: LINE_ID_KEY, value: { stringValue: lineId } });
+    resource['attributes'] = edit(Array.isArray(resource['attributes']) ? (resource['attributes'] as unknown[]) : []);
   }
   return JSON.stringify(parsed);
 }

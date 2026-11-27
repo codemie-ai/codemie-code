@@ -638,9 +638,11 @@ are masked when an event is written, as on any machine. The file holds none of t
 backend gets as request headers: the organization, the subscription class, the policy version,
 the project's source, the contract and the consent.
 
-With no CodeMie login a line's `user_email` is empty; a hook event still names the developer in
-`developer_name` — the git `user.email` or `user.name`, else the CLI config's email or the OS
-user — and the file's name does through the email slug. A session's telemetry
+Every `resource` of every line carries the attribute `user.email` = the sync email the file's name is made from,
+with its case, so a reader takes the developer from the file itself; it is set when the run builds the file, and a
+resource-level `user.email` of Claude Code's telemetry gives way to it. With no CodeMie login a record's `user_email`
+is empty; a hook event also names the developer in `developer_name` — the git `user.email` or `user.name`, else the
+CLI config's email or the OS user. A session's telemetry
 travels whole with its hook events, so the part of a session resumed outside the policy is in the
 file: OTLP carries no working directory. A session that fires a hook while your filters leave it out — analytics
 switched off, an excluded project, a project outside the tracked list — is not gathered from
