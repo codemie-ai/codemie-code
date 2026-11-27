@@ -11,6 +11,11 @@ export interface ZshSession {
   complete(line: string): Promise<string[]>;
   /** Evaluates a zsh expression (e.g. `$_comps[tool]`) inside the session. */
   expr(expression: string): Promise<string>;
+  /**
+   * zshrc mode only: the directories `compaudit` reported insecure when the rc file
+   * called `compinit`, i.e. with the rc's own fpath in effect. Empty in other modes.
+   */
+  insecureDirs(): Promise<string[]>;
   close(): void;
 }
 
@@ -54,9 +59,22 @@ export async function startZsh(opts: ZshSessionOptions): Promise<ZshSession> {
     opts.mode === 'source'
       ? `source '${opts.script}'`
       : `cp '${opts.script}' '${join(fdir, fn)}'; fpath=('${fdir}' $fpath); autoload -Uz ${fn}`;
+  // zshrc mode runs the caller's rc lines verbatim, plain `compinit` included. On a host
+  // whose own fpath holds a directory compaudit flags (e.g. a CI runner's site-functions),
+  // plain compinit stops at an interactive y/n prompt. The wrapper below runs once, in
+  // place of the rc's `compinit`: it records what compaudit reports with the rc's fpath in
+  // effect (exposed by insecureDirs(), so a caller can fail on a dir it owns) and then
+  // runs compinit with -u so a host directory the caller does not own cannot hang the shell.
+  // `autoload -Uz compinit` in the rc is a no-op for an already defined function.
+  const auditedCompinit = `compinit() {
+  unfunction compinit
+  autoload -Uz compaudit compinit
+  __insecure=(\${(f)"$(compaudit 2>/dev/null)"})
+  compinit -u "$@"
+}`;
   const loadCompletion =
     opts.mode === 'zshrc'
-      ? 'source "$ZDOTDIR/.zshrc"'
+      ? `${auditedCompinit}\nsource "$ZDOTDIR/.zshrc"`
       : opts.mode === 'autoload'
         ? `${loadScript}\ncompinit -u -d '${join(tmp, 'zcompdump')}'`
         : `compinit -u -d '${join(tmp, 'zcompdump')}'\n${loadScript}`;
@@ -64,6 +82,7 @@ export async function startZsh(opts: ZshSessionOptions): Promise<ZshSession> {
   const setup = `
 PROMPT=''; RPROMPT=''; bindkey -e
 autoload -Uz compinit
+typeset -ga __insecure
 ${loadCompletion}
 __tok='${token}'
 typeset -ga __all
@@ -144,6 +163,13 @@ print -r -- "R\${__tok}Y"
         proc.write(`\x15print -r -- "S\${__tok}B"${expression}"E\${__tok}"\r`)
       );
       return m[1].replace(/\r|\n/g, '');
+    },
+    async insecureDirs(): Promise<string[]> {
+      const m = await waitFor(result, () =>
+        proc.write(`\x15print -r -- "S\${__tok}B\${(pj:\\x1f:)__insecure}E\${__tok}"\r`)
+      );
+      const body = m[1].replace(/\r|\n/g, '');
+      return body === '' ? [] : body.split('\x1f');
     },
     close(): void {
       proc.kill();

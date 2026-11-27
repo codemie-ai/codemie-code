@@ -52,6 +52,9 @@ for (const shell of ['zsh', 'fish'] as const) {
     home = realDir(mkdtempSync(join(tmpdir(), 'codemie-zsh-setup-')));
     // docs/SHELL-COMPLETIONS.md:50 - save as ~/.zsh/completions/_codemie via a .tmp file and mv.
     installed = installCompletion(home, 'zsh', join(home, '.zsh', 'completions', '_codemie'));
+    // Explicit 0755, whatever the host umask: the documented location must be one compaudit accepts.
+    chmodSync(join(home, '.zsh'), 0o755);
+    chmodSync(join(home, '.zsh', 'completions'), 0o755);
     // docs/SHELL-COMPLETIONS.md:56 - the ~/.zshrc lines, nothing else: the script is never sourced by hand.
     writeFileSync(join(home, '.zshrc'), 'fpath=(~/.zsh/completions $fpath)\nautoload -Uz compinit && compinit\n');
     zsh = await startZsh({ name: 'codemie', cwd: home, mode: 'zshrc', home });
@@ -72,6 +75,8 @@ for (const shell of ['zsh', 'fish'] as const) {
 
   // @case add-bash-zsh-and-fish_TC_004
   it('a new shell registers _codemie from fpath and completes codemie <Tab> and codemie --<Tab>', async () => {
+    // The rc's plain compinit would prompt on any insecure fpath dir; none may be under the documented path.
+    expect((await zsh.insecureDirs()).filter(d => d === home || d.startsWith(`${home}/`))).toEqual([]);
     expect(await zsh.expr('$_comps[codemie]')).toBe('_codemie');
     expect(await zsh.complete('codemie ')).toEqual(expect.arrayContaining(TOP_LEVEL));
     expect(await zsh.complete('codemie --')).toEqual(expect.arrayContaining(ROOT_OPTIONS));
