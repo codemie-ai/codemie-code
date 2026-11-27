@@ -1931,6 +1931,162 @@ codemie version
 - Node.js version
 - Package name and description
 
+### `codemie assistants`
+
+Talk to a CodeMie assistant from the terminal. `codemie assistants chat` sends messages to a CodeMie assistant; [`codemie setup assistants`](#codemie-setup-assistants) is a different command that registers assistants as Claude Code subagents or skills.
+
+**Usage:**
+```bash
+codemie assistants chat [assistant-id] [message] [options]
+```
+
+With both `assistant-id` and `message` the command runs in single-message mode: it sends the message and exits. Otherwise it asks you to pick an assistant and starts an interactive chat. Only assistants already registered with `codemie setup assistants` can be chatted with.
+
+**Examples:**
+```bash
+# Send one message to an assistant
+codemie assistants chat <assistant-id> "Summarize the open pull requests"
+
+# Continue an earlier conversation and attach a file
+codemie assistants chat <assistant-id> "Review this file" --conversation-id <id> -f ./notes.md
+```
+
+**Options:**
+- `-v, --verbose` - Enable verbose debug output
+- `--conversation-id <id>` - Conversation ID for keeping context across calls
+- `--load-history` - Load conversation history from previous sessions (on by default)
+- `-f, --file <path>` - File to upload; repeat the flag to attach several files
+- `--jwt-token <token>` - JWT bearer token for authentication (bypasses SSO)
+
+### `codemie hook`
+
+Unified hook event handler. Agent plugins call it from their hook configuration; you rarely run it by hand. It reads the hook event as JSON on stdin and routes it by the event name in the payload.
+
+**Usage:**
+```bash
+codemie hook --agent <name> [--event <name>]
+```
+
+**Example:**
+```bash
+echo '{"session_id":"...","hook_event_name":"SessionStart"}' | codemie hook --agent claude
+```
+
+**Options:**
+- `--agent <name>` - Agent name for hook attribution
+- `--event <name>` - Event name for hosts whose hook payload carries none (for example Copilot CLI)
+
+**Exit codes:** exit code `2` is a blocking error. The hook host feeds the message printed on stderr back to the agent. It is used when the hook input is invalid (not JSON, or missing `session_id` or `hook_event_name`) and when analytics sync is configured but authentication is known to be broken.
+
+See [HOOKS.md](HOOKS.md) for the hook events and configuration.
+
+### `codemie sound`
+
+Play a random sound for a hook event. Agent hooks call it to give audible feedback; it plays a random `.wav` or `.mp3` file from the event's sound directory under the CodeMie home directory and exits quietly when there is none.
+
+**Usage:**
+```bash
+codemie sound <event>
+```
+
+**Example:**
+```bash
+codemie sound SessionStart
+```
+
+`<event>` is the hook event name (for example `SessionStart`, `Stop`, `PermissionRequest`). The command has no options and always exits with code 0.
+
+### `codemie models`
+
+List and manage AI models. Only the `list` subcommand exists today.
+
+**Usage:**
+```bash
+codemie models list
+```
+
+`list` shows the models available for the provider of the current configuration, as a table with the model count. It has no options. It exits with an error when no provider is configured (run `codemie setup`) or when the provider does not support model listing.
+
+### `codemie tips`
+
+Browse the feature tips shown at session start and end. A tip whose command example no longer matches the CLI is marked as stale.
+
+**Usage:**
+```bash
+codemie tips [options]
+```
+
+**Examples:**
+```bash
+codemie tips                       # All tips, grouped by category
+codemie tips --random              # One random tip
+codemie tips --category <name>     # Tips from a single category
+```
+
+**Options:**
+- `--random` - Show a single random tip
+- `--category <name>` - Show only tips from one category (case-insensitive)
+
+Set `CODEMIE_TIPS=0` to stop the tips from showing at session start and end.
+
+### `codemie whatsnew`
+
+Show release notes from `CHANGELOG.md`.
+
+**Usage:**
+```bash
+codemie whatsnew [version] [options]
+```
+
+**Examples:**
+```bash
+codemie whatsnew            # Notes for the current version
+codemie whatsnew 0.1.0      # Notes for one version
+codemie whatsnew --all      # Notes for every version
+```
+
+**Options:**
+- `--all` - Show release notes for all versions
+
+### `codemie test-metrics`
+
+Send a test metric to the CodeMie API to verify endpoint connectivity.
+
+**Usage:**
+```bash
+codemie test-metrics [options]
+```
+
+**Example:**
+```bash
+codemie test-metrics --dry-run
+```
+
+**Options:**
+- `-a, --agent <name>` - Agent name in the metric (default: `codemie-code`)
+- `-m, --model <id>` - Model name in the metric (default: `test-model`)
+- `--client-type <type>` - Override the `X-CodeMie-Client` header (detected from the agent when omitted)
+- `--project <name>` - SSO project name (optional)
+- `--dry-run` - Show the payload and the curl command without sending
+- `-v, --verbose` - Show full request and response details
+
+### `codemie completion`
+
+Print a shell completion script for bash, zsh or fish. The script is generated from the live command tree and written to stdout.
+
+**Usage:**
+```bash
+codemie completion <shell>
+```
+
+**Examples:**
+```bash
+eval "$(codemie completion bash)"
+codemie completion fish > ~/.config/fish/completions/codemie.fish
+```
+
+`<shell>` is one of `bash`, `zsh` or `fish`; any other value is rejected. The command has no options. See [SHELL-COMPLETIONS.md](SHELL-COMPLETIONS.md) for installation per shell.
+
 ### Analytics for every client of a vendor
 
 `codemie proxy connect --claude-otlp` turns CodeMie analytics on for every Claude client, whether or not its application is found: it connects Claude Code analytics, Claude Desktop and the VS Code Claude Code extension in one connect, through one daemon. Claude Desktop and the VS Code Claude Code extension are routed through the proxy only when they are not configured yet (the extension when `claude auth status` reports no login and its VS Code settings hold no other route or key, Claude Desktop when it has no applied Claude-3p config and no first-party data directory); a client already configured is left as it is and a line says so. `--claude-desktop` and `--vscode-claude-code` always route their client and print that its model requests now go through the gateway, not the Claude login. `codemie proxy disconnect --claude-otlp` removes a route together with the Claude Code hooks, and the client uses its Claude login again. The skip lines name the way to switch a client (`codemie proxy connect --claude-desktop` / `--vscode-claude-code`), and a refreshed route names the way back (`codemie proxy disconnect --vscode-claude-code` / `--claude-desktop`); `codemie proxy clients` shows the extension as `analytics on (uses your Claude login; model routing unchanged)` or, when routed, `routed through the proxy` with the disconnect command. `codemie proxy connect --copilot-otlp` connects Copilot Chat and Copilot CLI. On a machine in the local mode both refuse; `codemie analytics sync install` set those clients up.
