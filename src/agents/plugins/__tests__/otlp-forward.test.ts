@@ -90,6 +90,24 @@ describe('forwardOtlpEventsToSpool', () => {
     await expect(forwardOtlpEventsToSpool([{ type: 'x' }], 'claude-code-otlp')).resolves.toBe(false);
   });
 
+  it('EPMCDME-17854: flags a batch as undelivered only when no daemon state or a refused connection proves nothing was sent', async () => {
+    const flag = () => ({ value: false });
+    const noState = flag();
+    readStateMock.mockResolvedValueOnce(null);
+    await forwardOtlpEventsToSpool([{ type: 'x' }], 'a', { undelivered: noState });
+    const refused = flag();
+    fetchMock.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    await forwardOtlpEventsToSpool([{ type: 'x' }], 'a', { undelivered: refused });
+    const rejected = flag();
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 500 }));
+    await forwardOtlpEventsToSpool([{ type: 'x' }], 'a', { undelivered: rejected });
+    const aborted = flag();
+    fetchMock.mockRejectedValueOnce(new DOMException('Aborted', 'AbortError'));
+    await forwardOtlpEventsToSpool([{ type: 'x' }], 'a', { undelivered: aborted });
+
+    expect([noState.value, refused.value, rejected.value, aborted.value]).toEqual([true, true, false, false]);
+  });
+
   it('aborts and returns false after the fixed 3s timeout', async () => {
     vi.useFakeTimers();
     fetchMock.mockImplementation((_url: string, init: RequestInit) => {

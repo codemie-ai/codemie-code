@@ -1,6 +1,6 @@
 import { BackendPolicy } from '@/agents/core/collection-policy.js';
 import { evidenceDir } from '../evidence/record-store.js';
-const backendPolicy = new BackendPolicy();
+import { pendingOwnerDir } from '../evidence/owner-pending.js';
 import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
 import { createHash } from 'node:crypto';
 import { format } from 'node:util';
@@ -11,6 +11,7 @@ import { AnalyticsSourceError } from '@/utils/errors.js';
 
 // The real daemon-manager resolves its state file at load and the real cold start writes Claude Code's settings:
 // both land under a home of this file's own.
+const backendPolicy = new BackendPolicy();
 const isolatedHome = await vi.hoisted(async () => {
   const fs = await import('node:fs');
   const os = await import('node:os');
@@ -1261,6 +1262,79 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       (adapter as FakeAdapter).evaluate = async () => ({ decision: 'forward', payload: [{ session_id: 's1' }], finalize: async () => undefined });
       await run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
       expect(forwardToSpool).not.toHaveBeenCalled();
+    });
+
+    describe('events held until the daemon is up (EPMCDME-17854)', () => {
+      class HoldAdapter extends StampAdapter {
+        protected override holdsUntilDelivered(): boolean {
+          return true;
+        }
+      }
+      const held = () => {
+        const root = pendingOwnerDir();
+        return existsSync(root)
+          ? readdirSync(root).flatMap((d) => readdirSync(join(root, d)).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readFileSync(join(root, d, f), 'utf-8')) as Record<string, any>))
+          : [];
+      };
+      const finalize = vi.fn(async () => undefined);
+      const unreachable = (reached: boolean) =>
+        forwardToSpool.mockImplementation((async (_e: unknown, _n: string, opts?: { undelivered?: { value: boolean } }) => {
+          if (opts?.undelivered) opts.undelivered.value = reached;
+          return false;
+        }) as never);
+      const start = () => {
+        (adapter as FakeAdapter).evaluate = async () => ({ decision: 'forward', payload: [{ session_id: 's1', type: 'a' }, { session_id: 's1', type: 'b' }], finalize });
+        return run({ sessionId: 's1', payload: [{ session_id: 's1' }] });
+      };
+
+      beforeEach(() => {
+        adapter = new HoldAdapter();
+        finalize.mockClear();
+      });
+
+      it('holds the exact built batch when the daemon was not reached, accepts it for the cursor, and records the session', async () => {
+        unreachable(true);
+        await start();
+
+        const sent = forwardToSpool.mock.calls[0][0] as Record<string, unknown>[];
+        const [entry, ...more] = held();
+        expect(more).toEqual([]);
+        expect(entry).toMatchObject({ session_id: 's1', agentName: 'fake', api_identity: expect.any(String) });
+        expect(entry.events.map((e: Record<string, unknown>) => e['event_id'])).toEqual(sent.map((e) => e['event_id']));
+        expect(entry.events).toEqual(sent); // same bytes: hook-time facts and ids, nothing rebuilt
+        expect(entry.fields).not.toHaveProperty('owner_hash');
+        expect(readRecords()).toHaveLength(1); // evidence persisted at hook time
+        expect(finalize).toHaveBeenCalledWith(true);
+      });
+
+      it('does not hold when delivery is ambiguous (the daemon may have spooled the batch)', async () => {
+        unreachable(false);
+        await start();
+        expect(held()).toEqual([]);
+        expect(finalize).toHaveBeenCalledWith(false);
+      });
+
+      it('does not hold when the daemon accepted the batch', async () => {
+        await start();
+        expect(held()).toEqual([]);
+        expect(finalize).toHaveBeenCalledWith(true);
+      });
+
+      it('a hold that cannot be written is not accepted, so the cursor stays and the next start retries', async () => {
+        unreachable(true);
+        mkdirSync(join(home, 'analytics'), { recursive: true });
+        writeFileSync(join(home, 'analytics', 'state'), 'not a directory'); // the queue directory cannot be created
+        await start();
+        expect(finalize).toHaveBeenCalledWith(false);
+      });
+
+      it('an adapter that does not opt in never holds', async () => {
+        adapter = new StampAdapter();
+        unreachable(true);
+        await start();
+        expect(held()).toEqual([]);
+        expect(finalize).toHaveBeenCalledWith(false);
+      });
     });
 
     it('stamps nothing for an untracked project and leaves the event path unchanged', async () => {

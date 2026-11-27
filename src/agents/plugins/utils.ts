@@ -17,7 +17,7 @@ const FORWARD_TIMEOUT_MS = 3_000;
 export async function forwardOtlpEventsToSpool(
   events: Record<string, unknown>[],
   agentName: string,
-  opts?: { evidenceV?: 1; evidenceLoss?: { sessionId: string; reason: string; events: number } }
+  opts?: { evidenceV?: 1; evidenceLoss?: { sessionId: string; reason: string; events: number }; undelivered?: { value: boolean } }
 ): Promise<boolean> {
   if (events.length === 0 && !opts?.evidenceLoss) {
     return true;
@@ -28,6 +28,7 @@ export async function forwardOtlpEventsToSpool(
 
     if (!state) {
       logger.debug('forwardOtlpEventsToSpool: daemon unavailable, skipping forward');
+      if (opts?.undelivered) opts.undelivered.value = true;
       return false;
     }
 
@@ -54,6 +55,8 @@ export async function forwardOtlpEventsToSpool(
       clearTimeout(timeout);
     }
   } catch (err) {
+    // A refused connection delivered nothing; a timeout may have (the daemon can still have spooled the batch).
+    if (opts?.undelivered && !(err instanceof Error && err.name === 'AbortError')) opts.undelivered.value = true;
     const reason = err instanceof Error && err.name === 'AbortError' ? 'timeout' : err instanceof Error ? err.message : String(err);
     logger.debug(`forwardOtlpEventsToSpool: ${reason}`);
     return false;

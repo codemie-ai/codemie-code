@@ -2,8 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const readStateMock = vi.fn();
 const getStoredCredentialsMock = vi.fn();
+const readRecordMock = vi.fn();
+const loadConfigMock = vi.fn();
 
-vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({ readState: readStateMock }));
+vi.mock('@/cli/commands/proxy/daemon-manager.js', () => ({ readState: readStateMock, readConnectionRecord: readRecordMock }));
+vi.mock('@/utils/config.js', () => ({ ConfigLoader: { load: loadConfigMock } }));
 vi.mock('@/providers/plugins/sso/sso.auth.js', () => ({
   CodeMieSSO: class {
     getStoredCredentials = getStoredCredentialsMock;
@@ -21,6 +24,7 @@ describe('resolveHookCredentials', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getStoredCredentialsMock.mockResolvedValue(null);
+    readRecordMock.mockResolvedValue(null);
   });
 
   it('prefers the credentials stored for syncCodeMieUrl', async () => {
@@ -50,6 +54,35 @@ describe('resolveHookCredentials', () => {
     readStateMock.mockResolvedValue(null);
     await expect(resolveHookCredentials()).resolves.toBeNull();
     expect(getStoredCredentialsMock).not.toHaveBeenCalled();
+  });
+
+  it('without daemon state uses the URLs of the profile proxy connect recorded (EPMCDME-17854)', async () => {
+    readStateMock.mockResolvedValue(null);
+    readRecordMock.mockResolvedValue({ profile: 'work' });
+    loadConfigMock.mockResolvedValue({ name: 'work', codeMieUrl: 'https://sync', baseUrl: 'https://target' });
+    getStoredCredentialsMock.mockImplementation(async (url: string) => creds(url));
+
+    await expect(resolveHookCredentials()).resolves.toMatchObject({ apiUrl: 'https://sync' });
+    expect(loadConfigMock).toHaveBeenCalledWith(process.cwd(), { name: 'work' });
+  });
+
+  it('without daemon state ignores a recorded profile the configs do not know (it loads as another one)', async () => {
+    readStateMock.mockResolvedValue(null);
+    readRecordMock.mockResolvedValue({ profile: 'gone' });
+    loadConfigMock.mockResolvedValue({ name: 'default', codeMieUrl: 'https://sync', baseUrl: 'https://target' });
+    getStoredCredentialsMock.mockImplementation(async (url: string) => creds(url));
+
+    await expect(resolveHookCredentials()).resolves.toBeNull();
+    expect(getStoredCredentialsMock).not.toHaveBeenCalled();
+  });
+
+  it('the daemon state wins over the recorded profile', async () => {
+    readStateMock.mockResolvedValue({ targetUrl: 'https://target' });
+    readRecordMock.mockResolvedValue({ profile: 'work' });
+    getStoredCredentialsMock.mockImplementation(async (url: string) => creds(url));
+
+    await expect(resolveHookCredentials()).resolves.toMatchObject({ apiUrl: 'https://target' });
+    expect(readRecordMock).not.toHaveBeenCalled();
   });
 
   it('returns null when nothing is stored', async () => {

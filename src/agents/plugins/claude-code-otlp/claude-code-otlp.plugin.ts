@@ -291,6 +291,12 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
     }
   }
 
+  /** A fresh session's start/env batch carries the session's only start: held for the daemon when it cannot be reached. */
+  protected override holdsUntilDelivered(hookInput: HookInput): boolean {
+    const source = readOptionalString(hookInput, 'source');
+    return hookInput.hook_event_name === 'SessionStart' && (source === 'startup' || source === 'clear');
+  }
+
   /** Why this hook's folder/generation/consent no longer fits the recorded session; 'unreadable' = preferences cannot be read. */
   private async recordViolation(record: EvidenceRecord, cwd: string): Promise<StopReason | 'unreadable' | undefined> {
     const prefs = await readClaudeAnalyticsPreferences();

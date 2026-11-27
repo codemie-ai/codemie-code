@@ -8,7 +8,7 @@ import { resolveIdentityFields, resolveProjectAtCwd, type IdentityFields, type P
 import { resolveBranchStory } from './story-resolver.js';
 import { stampEvidence, type EvidenceInputs } from './evidence/stamp.js';
 import { frozenProfileOf, type EvidenceRecord } from './evidence/record-store.js';
-import { enqueuePendingOwner } from './evidence/owner-pending.js';
+import { enqueuePendingOwner, type PendingFields } from './evidence/owner-pending.js';
 
 export type ForwardDecision<TBlockOutput = Record<string, unknown>> =
   | {
@@ -41,6 +41,8 @@ interface PreparedForward {
   failure?: string;
   /** The events are durably held for their login (owner not resolved yet): the hook batch counts as accepted. */
   pendingStored?: true;
+  /** The stamped record and its login, from which an undelivered batch can be held (see `holdsUntilDelivered`). */
+  stamped?: { record: EvidenceRecord; fp: string };
 }
 
 /** Common fields an event may bring itself: its own non-empty value wins. All others are stamped. */
@@ -154,8 +156,11 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
 
         const context = await this.extractHookContext(hookInput);
         const batch = await this.prepareForward(context, decision, hookInput);
-        const args: Parameters<OtlpAdapterDeps['forwardOtlpEventsToSpool']> = batch.options
-          ? [batch.events, this.name, batch.options]
+        const hold = batch.stamped && this.holdsUntilDelivered(hookInput) ? batch.stamped : undefined;
+        const undelivered = { value: false };
+        const options = hold ? { ...batch.options, undelivered } : batch.options;
+        const args: Parameters<OtlpAdapterDeps['forwardOtlpEventsToSpool']> = options
+          ? [batch.events, this.name, options]
           : [batch.events, this.name];
         // One transport call site; retries reuse the same prepared bytes and event IDs.
         const send = (): Promise<boolean> => forwardOtlpEventsToSpool(...args);
@@ -167,6 +172,8 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         } else {
           accepted = await send();
           if (!accepted && decision.retryOnce) accepted = await send();
+          // The daemon was certainly not reached: keep these exact events for the daemon to spool once it is up.
+          if (!accepted && hold && undelivered.value) accepted = await this.holdUndelivered(context, batch.events, hold);
         }
         if (!accepted && this.requiresSpoolAcceptance(hookInput)) {
           throw new AnalyticsSourceError(batch.failure ?? 'Local analytics spool did not accept the hook event batch');
@@ -190,6 +197,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     hookInput: TInput
   ): Promise<PreparedForward> {
     let record: EvidenceRecord | undefined;
+    let stamped: PreparedForward['stamped'];
     if (context.evidenceInputs) {
       const stamp = await stampEvidence(context, context.evidenceInputs, this.projectPolicy);
       if (!stamp.ok) {
@@ -207,6 +215,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         };
       }
       record = stamp.record;
+    stamped = { record: stamp.record, fp: stamp.fp };
       if ((await this.recordGate(context, record)) === 'stop') return { events: [], failure: 'Session scope check stopped publication; hook event not enqueued' };
     }
     const [commonFields, agentFields] = await Promise.all([
@@ -217,6 +226,7 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     return {
       events: decision.payload.map((hookEvent) => this.buildEvent(hookEvent, invocation)),
       options: record ? { evidenceV: 1 } : undefined,
+      stamped,
     };
   }
 
@@ -258,6 +268,44 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       logger.debug(`[${this.name}] holding events for owner failed: ${error instanceof Error ? error.name : 'error'}`);
       return false;
     }
+  }
+
+  /**
+   * Parks the already-built events (same ids, hook-time facts) in the owner-pending queue, bound to the login that
+   * stamped them; the daemon appends them to the spool once it runs and checks the session's scope again at that point.
+   * `true` only when they are durably on disk.
+   */
+  private async holdUndelivered(
+    context: OtlpHookContext,
+    events: Record<string, unknown>[],
+    { record, fp }: NonNullable<PreparedForward['stamped']>
+  ): Promise<boolean> {
+    try {
+      const { schema: _schema, owner_hash: _owner, created: _created, last_used: _lastUsed, ...fields }: EvidenceRecord = record;
+      const held: PendingFields = fields;
+      const ok = await enqueuePendingOwner({
+        fp,
+        agentName: this.name,
+        api_identity: held.api_identity,
+        session_id: held.session_id,
+        fields: held,
+        cwd: context.cwd,
+        project_at_cwd: await resolveProjectAtCwd(context.cwd, held.profile, this.projectPolicy),
+        events,
+      });
+      if (ok) logger.warn(`[${this.name}] daemon not reachable; ${events.length} event(s) held until it is up`);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Events of this hook whose loss would lose the whole session (its start): when the daemon is certainly unreachable
+   * they are held for it instead of dropped. Other events keep commit-after-send. Default: none.
+   */
+  protected holdsUntilDelivered(_input: TInput): boolean {
+    return false;
   }
 
   /**
