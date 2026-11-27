@@ -419,6 +419,43 @@ interface CopilotCliRawMessage {
  * cache-write (125,660) fits inside fresh input (150,012), and subtracting can never
  * over-bill. Copilot exposes no cache-TTL split, so all writes fall in the 5m bucket.
  */
+/**
+ * One Copilot usage bucket converted from Copilot's OpenAI-style convention into this repo's
+ * {@link TokenUsage}, where `input` EXCLUDES cache reads and cache writes.
+ *
+ * Exported because Copilot usage reaches this repo through more than one route: the parsed
+ * native transcript (this file) and the local-store/`events.jsonl`/VS Code scanners
+ * (`analytics/copilot-local/`). Both must apply the SAME peeling, or the two paths report
+ * different dollar figures for the same session — so the formula lives here once.
+ */
+export function copilotUsageToTokens(u: {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+}): TokenUsage {
+  const cacheRead = u.cacheReadTokens ?? 0;
+  const output = u.outputTokens ?? 0;
+
+  // inputTokens is the TOTAL prompt; peel off the cached and cache-written parts.
+  const freshInput = Math.max(0, (u.inputTokens ?? 0) - cacheRead);
+  // Clamp cache writes to the fresh input they were written from. Cache creation is
+  // priced ABOVE the base input rate, so an inconsistent transcript must not be able
+  // to bill more of it than the prompt actually contained. Clamping also keeps `input`
+  // non-negative by construction.
+  const cacheCreation = Math.min(u.cacheWriteTokens ?? 0, freshInput);
+  const input = freshInput - cacheCreation;
+
+  return {
+    input,
+    output,
+    cacheRead,
+    cacheCreation,
+    cacheCreation1h: 0,
+    total: input + output + cacheRead + cacheCreation,
+  };
+}
+
 function readCopilotCli(parsed: ParsedSession): UsageMap {
   const out: UsageMap = new Map();
   for (const arr of allMessageArrays(parsed)) {
@@ -426,27 +463,7 @@ function readCopilotCli(parsed: ParsedSession): UsageMap {
       if (!raw || typeof raw !== 'object' || !raw.model || !raw.usage) {
         continue;
       }
-      const u = raw.usage;
-      const cacheRead = u.cacheReadTokens ?? 0;
-      const output = u.outputTokens ?? 0;
-
-      // inputTokens is the TOTAL prompt; peel off the cached and cache-written parts.
-      const freshInput = Math.max(0, (u.inputTokens ?? 0) - cacheRead);
-      // Clamp cache writes to the fresh input they were written from. Cache creation is
-      // priced ABOVE the base input rate, so an inconsistent transcript must not be able
-      // to bill more of it than the prompt actually contained. Clamping also keeps `input`
-      // non-negative by construction.
-      const cacheCreation = Math.min(u.cacheWriteTokens ?? 0, freshInput);
-      const input = freshInput - cacheCreation;
-
-      accumulate(out, raw.model, {
-        input,
-        output,
-        cacheRead,
-        cacheCreation,
-        cacheCreation1h: 0,
-        total: input + output + cacheRead + cacheCreation,
-      });
+      accumulate(out, raw.model, copilotUsageToTokens(raw.usage));
     }
   }
   return out;

@@ -9,7 +9,13 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { AnalyticsFormatter } from './formatter.js';
 import { loadAnalytics } from './analytics-core.js';
-import type { AnalyticsOptions, AnalyticsFilter, OtelCommandOptions, RootAnalytics } from './types.js';
+import type {
+  AnalyticsOptions,
+  AnalyticsFilter,
+  CopilotCommandOptions,
+  OtelCommandOptions,
+  RootAnalytics,
+} from './types.js';
 import type { CostSummary, SessionCostIndex } from './cost/types.js';
 import type { InstallOptions } from './sync/types.js';
 import type { BootstrapOptions } from './sync/bootstrap/types.js';
@@ -18,13 +24,14 @@ import { logger } from '../../../utils/logger.js';
 import { parseDateOnly } from '@/utils/date-filter.js';
 import { SessionsSource } from './sources/sessions-source.js';
 import { OtelSource } from './sources/otel-source.js';
+import { CopilotLocalSource } from './sources/copilot-local-source.js';
 import type { AnalyticsSource } from './sources/types.js';
 import { ConfigLoader } from '../../../utils/config.js';
 import { parseDuration } from './date-args.js';
 import { EMAIL_REGEX } from './sync/identity.js';
 import { includeExternalFor } from './sync/policy.js';
 import type { IncludeExternalPolicy } from './sync/types.js';
-import { ConfigurationError } from '../../../utils/errors.js';
+import { AnalyticsSourceError, ConfigurationError } from '../../../utils/errors.js';
 import {
   DEPRECATION_REMOVE_ON,
   deprecate,
@@ -108,6 +115,37 @@ export function createAnalyticsCommand(): Command {
       return runAnalytics(opts, new OtelSource(opts.file, opts.user));
     });
   command.addCommand(otel);
+
+  // `codemie analytics copilot` — GitHub Copilot usage scanned from Copilot's own local
+  // artifacts (CLI/Desktop session store + events.jsonl, VS Code chat sessions, WSL homes).
+  // Kept out of the default source on purpose: `native-loader` already discovers `copilot-cli`
+  // sessions from ~/.copilot/session-state, so merging the two without a dedup policy would
+  // double-count every CLI session (docs/SPEC-copilot-local-statistics.md).
+  const copilot = new Command('copilot')
+    .description("Analytics from GitHub Copilot's local logs (CLI, Desktop, VS Code, WSL)");
+  applyCommonOptions(copilot)
+    .option('--scan-days <days>', 'Days of Copilot history to scan (default: the date window, else all)')
+    .option('--no-wsl', 'Skip Copilot homes inside running WSL distros')
+    .option('--no-vscode', 'Skip the VS Code extension chat-session scan')
+    .action((_options: CopilotCommandOptions, command: Command) => {
+      // Shared options are registered on both levels, so commander binds them to the parent
+      // when they appear after `copilot`; optsWithGlobals() merges both sets.
+      const opts = command.optsWithGlobals() as CopilotCommandOptions;
+      const scanDays = opts.scanDays === undefined ? undefined : Number.parseInt(opts.scanDays, 10);
+      if (scanDays !== undefined && (!Number.isFinite(scanDays) || scanDays < 1)) {
+        throw new AnalyticsSourceError('--scan-days must be a positive whole number of days');
+      }
+      return runAnalytics(
+        opts,
+        new CopilotLocalSource({
+          maxAgeDays: scanDays,
+          // commander maps `--no-wsl` to `wsl: false`, so the flags arrive inverted.
+          skipWsl: opts.noWsl === true || (opts as { wsl?: boolean }).wsl === false,
+          skipVsCode: opts.noVscode === true || (opts as { vscode?: boolean }).vscode === false,
+        })
+      );
+    });
+  command.addCommand(copilot);
 
   // `codemie analytics sync` — a daily per-user OS job that sends this machine's analytics
   // reports one way to the team's webhook and/or a team git repository. A pure group (no
