@@ -3,7 +3,8 @@ import { spawn } from 'child_process';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { getCommandPath } from '../../../utils/processes.js';
+import { getCommandMatches, getCommandPath, exec as mockedExec } from '../../../utils/processes.js';
+import { VERSION_PROBE_OPTIONS } from '../../../utils/exec.js';
 import { BaseAgentAdapter } from '../BaseAgentAdapter.js';
 import type { AgentMetadata } from '../types.js';
 import { logger } from '../../../utils/logger.js';
@@ -59,6 +60,7 @@ vi.mock('../../../utils/processes.js', () => ({
   installGlobal:      vi.fn(),
   uninstallGlobal:    vi.fn(),
   getCommandPath:     vi.fn(() => Promise.resolve(null)),
+  getCommandMatches:  vi.fn(() => Promise.resolve({ status: 'unanswered' })),
   processStartedAt:   vi.fn(() => 0),
   WRAPPER_PID_ENV: 'CODEMIE_WRAPPER_PID',
   WRAPPER_STARTED_AT_ENV: 'CODEMIE_WRAPPER_STARTED_AT',
@@ -236,6 +238,30 @@ describe('BaseAgentAdapter', () => {
       // Original should be unchanged (verify shallow copy worked)
       expect(originalMetadata.silentMode).toBe(false);
       expect(adapter.getMetadata().silentMode).toBe(true);
+    });
+  });
+
+  describe('getVersion', () => {
+    const versionMetadata: AgentMetadata = {
+      name: 'ver',
+      displayName: 'Ver Agent',
+      description: 'Version probe tests',
+      npmPackage: null,
+      cliCommand: 'ver-bin',
+      envMapping: {},
+      supportedProviders: ['openai'],
+    };
+
+    it('bounds the probe with VERSION_PROBE_OPTIONS and returns the parsed version', async () => {
+      vi.mocked(mockedExec).mockResolvedValueOnce({ code: 0, stdout: ' 1.2.3 ', stderr: '' });
+      const version = await new TestAdapter(versionMetadata).getVersion();
+      expect(mockedExec).toHaveBeenCalledWith('ver-bin', ['--version'], VERSION_PROBE_OPTIONS);
+      expect(version).toBe('1.2.3');
+    });
+
+    it('returns null when the probe times out', async () => {
+      vi.mocked(mockedExec).mockRejectedValueOnce(new Error('Command timed out after 5000ms'));
+      expect(await new TestAdapter(versionMetadata).getVersion()).toBeNull();
     });
   });
 
@@ -495,6 +521,17 @@ describe('BaseAgentAdapter', () => {
       );
     });
 
+    it('hands the agent no CLAUDE_CODE_USE_BEDROCK key once it was deleted from process.env', async () => {
+      process.env.CLAUDE_CODE_USE_BEDROCK = '1';
+      delete process.env.CLAUDE_CODE_USE_BEDROCK;
+
+      await new RunPipelineAdapter(effortMetadata).run([], {});
+
+      const spawnOptions = vi.mocked(spawn).mock.calls.at(-1)?.[2] as { env: NodeJS.ProcessEnv };
+      expect(Object.keys(spawnOptions.env)).not.toContain('CLAUDE_CODE_USE_BEDROCK');
+      expect(process.env.CLAUDE_CODE_USE_BEDROCK).toBeUndefined();
+    });
+
     it('does not call applyReasoningEffort when CODEMIE_REASONING_EFFORT is absent', async () => {
       const adapter = new RunPipelineAdapter(effortMetadata);
 
@@ -537,6 +574,74 @@ describe('BaseAgentAdapter', () => {
       } finally {
         consoleErrorSpy.mockRestore();
       }
+    });
+  });
+
+  describe('run() — banner model text', () => {
+    class BannerAdapter extends BaseAgentAdapter {}
+
+    const bannerMetadata: AgentMetadata = {
+      name: 'banner-agent',
+      displayName: 'Banner Agent',
+      description: 'Agent that shows the welcome banner',
+      npmPackage: null,
+      cliCommand: 'banner-agent-bin',
+      envMapping: {},
+      supportedProviders: ['anthropic-subscription'],
+    };
+    const bannerKeys = ['CODEMIE_MODEL', 'CODEMIE_MODEL_ENV_ORIGIN', 'CODEMIE_PROFILE_MODEL'];
+    let envBefore: NodeJS.ProcessEnv;
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      envBefore = { ...process.env };
+      for (const key of bannerKeys) delete process.env[key];
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      vi.mocked(console.log).mockRestore();
+      // run() copies its env into process.env.
+      for (const key of Object.keys(process.env)) if (!(key in envBefore)) delete process.env[key];
+      Object.assign(process.env, envBefore);
+    });
+
+    async function bannerModel(env: Record<string, string>): Promise<unknown> {
+      const { renderProfileInfo } = await import('../../../utils/profile.js');
+      await new BannerAdapter(bannerMetadata).run([], env);
+      return (vi.mocked(renderProfileInfo).mock.calls.at(-1)?.[0] as { model?: string } | undefined)?.model;
+    }
+
+    it('marks a CODEMIE_MODEL override with its origin and the profile model it replaced', async () => {
+      expect(
+        await bannerModel({
+          CODEMIE_MODEL: 'claude-opus-4-8[1m]',
+          CODEMIE_MODEL_ENV_ORIGIN: 'dotenv',
+          CODEMIE_PROFILE_MODEL: 'claude-sonnet-5',
+        })
+      ).toBe('claude-opus-4-8[1m] (CODEMIE_MODEL from .env overrides profile: claude-sonnet-5)');
+    });
+
+    it('shows the plain model when the launcher reports no override', async () => {
+      expect(
+        await bannerModel({ CODEMIE_MODEL: 'claude-opus-4-8[1m]', CODEMIE_MODEL_ENV_ORIGIN: '', CODEMIE_PROFILE_MODEL: '' })
+      ).toBe('claude-opus-4-8[1m]');
+    });
+
+    it('drops the override marker when the agent replaces the env model before the banner', async () => {
+      class SwappingAdapter extends BaseAgentAdapter {
+        protected override async setupProxy(env: NodeJS.ProcessEnv): Promise<void> {
+          env.CODEMIE_MODEL = 'gpt-5.5';
+        }
+      }
+      const { renderProfileInfo } = await import('../../../utils/profile.js');
+      await new SwappingAdapter(bannerMetadata).run([], {
+        CODEMIE_MODEL: 'claude-opus-4-8[1m]',
+        CODEMIE_MODEL_ENV_ORIGIN: 'shell',
+        CODEMIE_PROFILE_MODEL: 'gpt-4.1',
+      });
+      expect((vi.mocked(renderProfileInfo).mock.calls.at(-1)?.[0] as { model?: string } | undefined)?.model)
+        .toBe('gpt-5.5');
     });
   });
 
@@ -614,6 +719,41 @@ describe('BaseAgentAdapter', () => {
 
       expect(spawnMock).toHaveBeenCalledWith(
         `"C:\\Users\\Name${char}Org\\bin\\cmd.exe"`,
+        [],
+        expect.objectContaining({ shell: true }),
+      );
+    });
+
+    it('launches the first memoized PATH match with a single PATH lookup shared with the shadow check', async () => {
+      const spawnMock = vi.mocked(spawn);
+      vi.mocked(getCommandMatches).mockResolvedValue({
+        status: 'answered',
+        matches: ['C:\\Tools\\bin\\pathagent.cmd', 'C:\\Other\\pathagent.cmd'],
+      });
+
+      const adapter = new RunPathAdapter({ ...baseMetadata, cliCommand: 'pathagent' });
+      await adapter.getPathMatches(); // what checkPathShadow() does at launch
+      await adapter.run([], {});
+
+      expect(getCommandMatches).toHaveBeenCalledTimes(1);
+      expect(getCommandPath).not.toHaveBeenCalled();
+      expect(spawnMock).toHaveBeenCalledWith(
+        'C:\\Tools\\bin\\pathagent.cmd',
+        [],
+        expect.objectContaining({ shell: true }),
+      );
+    });
+
+    it('falls back to getCommandPath when the PATH lookup has no usable match', async () => {
+      vi.mocked(getCommandMatches).mockResolvedValue({ status: 'answered', matches: [] });
+      vi.mocked(getCommandPath).mockResolvedValueOnce('C:\\Fallback\\pathagent.cmd');
+
+      const adapter = new RunPathAdapter({ ...baseMetadata, cliCommand: 'pathagent' });
+      await adapter.run([], {});
+
+      expect(getCommandPath).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(spawn)).toHaveBeenCalledWith(
+        'C:\\Fallback\\pathagent.cmd',
         [],
         expect.objectContaining({ shell: true }),
       );

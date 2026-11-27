@@ -1,3 +1,4 @@
+import { getCopilotSessionStateRoot } from '../../copilot-cli/copilot-cli.paths.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -20,7 +21,7 @@ import { resolveHookAuthProfile } from '@/agents/core/hook-auth-profile.js';
 import { logger } from '@/utils/logger.js';
 import { evaluateCopilotAnalyticsGate } from '@/agents/core/copilot-analytics-gate.js';
 import { CopilotCliOtlpPlugin } from '../copilot-cli-otlp.plugin.js';
-import { toolsStatePath } from '../copilot-cli-otlp.state.js';
+import { readSessionState, toolsStatePath } from '../copilot-cli-otlp.state.js';
 
 // Hook-side state files must never land in the developer's real ~/.codemie.
 process.env.CODEMIE_HOME = mkdtempSync(join(tmpdir(), 'cop-otlp-plugin-'));
@@ -405,6 +406,27 @@ describe('CopilotCliOtlpPlugin desktop prompt preamble', () => {
     expect(JSON.stringify(event)).not.toMatch(/copilot_tauri_workspace|current_datetime/);
   });
 
+  it('strips every desktop-app block (workspace, working context, artifacts, branch rename) before the user text', async () => {
+    const wrappers =
+      '<copilot_tauri_workspace>\nBranch fields are JSON strings.\n</copilot_tauri_workspace>\n' +
+      '<copilot_working_context>\ncwd: /Users/dev/qa-16018/chat1\n</copilot_working_context>\n' +
+      '<copilot_artifacts>\nartifacts_dir: /Users/dev/.copilot/artifacts/0a5481ce\n</copilot_artifacts>\n' +
+      '<branch_rename_request>\nRename the branch.\n</branch_rename_request>\n' +
+      '<current_datetime>2026-11-13T12:00:00+02:00</current_datetime>\n';
+
+    const event = await forwardedPrompt(`${wrappers}Do these three things one after another`);
+
+    expect(event.prompt).toBe('Do these three things one after another');
+    expect(event.prompt_body).toBe('Do these three things one after another');
+    expect(JSON.stringify(event)).not.toMatch(/copilot_artifacts|branch_rename_request|artifacts_dir|\/Users\/dev/);
+  });
+
+  it('strips a desktop-app block whose tag is not known yet, as long as it is a copilot_* block', async () => {
+    const event = await forwardedPrompt('<copilot_future_context>\ninternal\n</copilot_future_context>\nFix the bug');
+
+    expect(event.prompt).toBe('Fix the bug');
+  });
+
   it('omits the prompt but still forwards the event when only the preamble is present', async () => {
     const event = await forwardedPrompt(preamble);
 
@@ -423,6 +445,71 @@ describe('CopilotCliOtlpPlugin desktop prompt preamble', () => {
     const event = await forwardedPrompt('How to use <current_datetime> in prompts and keep the rest');
 
     expect(event.prompt).toBe('How to use <current_datetime> in prompts and keep the rest');
+  });
+
+  const systemNotification =
+    '<system_notification> Reminder: This session currently has an auto-generated or placeholder name. ' +
+    'Before replying to the user, call the `rename_session` tool to give it a short title. </system_notification>';
+  const sourceJson = '<app_user_message_source_json>{"source":"user","id":"m1"}</app_user_message_source_json>';
+
+  it('strips the trailing <system_notification> reminder the desktop app appends after the user text', async () => {
+    const event = await forwardedPrompt(`Read notes.txt and reply with its first line only. ${systemNotification}`);
+
+    expect(event.prompt).toBe('Read notes.txt and reply with its first line only.');
+    expect(event.prompt_body).toBe('Read notes.txt and reply with its first line only.');
+    expect(JSON.stringify(event)).not.toMatch(/system_notification|rename_session/);
+  });
+
+  it('strips leading and trailing desktop-app blocks together, including <app_user_message_source_json>', async () => {
+    const event = await forwardedPrompt(`${preamble}List the lines of list.txt.\n${systemNotification}\n${sourceJson}`);
+
+    expect(event.prompt).toBe('List the lines of list.txt.');
+    expect(event.prompt_body).toBe('List the lines of list.txt.');
+    expect(JSON.stringify(event)).not.toMatch(/system_notification|app_user_message_source_json|copilot_tauri_workspace/);
+  });
+
+  it('stores the whole user text when a long reminder follows it, instead of cutting inside the reminder', async () => {
+    const userText = 'Please review the changes in the repository and summarise the risks. '.repeat(2).trim();
+    const event = await forwardedPrompt(`${userText}\n${systemNotification}`);
+
+    expect(event.prompt_body).toBe(userText);
+  });
+
+  it('does not take a story id from a trailing desktop-app block', async () => {
+    const event = await forwardedPrompt(`reply with ok\n<system_notification>Worktree qa-16018/chat1</system_notification>`);
+
+    expect(event.prompt).toBe('reply with ok');
+    expect(event.story_id).toBeFalsy();
+  });
+
+  it('keeps a story id the user wrote before the trailing block', async () => {
+    const event = await forwardedPrompt(`EPMCDME-16523 check: reply with ok\n${systemNotification}`);
+
+    expect(event.prompt).toBe('EPMCDME-16523 check: reply with ok');
+    expect(event.story_id).toBe('EPMCDME-16523');
+  });
+
+  it('omits the prompt when only trailing desktop-app blocks remain', async () => {
+    const event = await forwardedPrompt(`${systemNotification}\n${sourceJson}`);
+
+    expect(event.type).toBe('agent.prompt.submit');
+    expect(event).not.toHaveProperty('prompt');
+  });
+
+  it('keeps a user mention of a trailing-block tag in the middle or at the end of the text', async () => {
+    const mention = 'What is <system_notification>x</system_notification> for? Also see <system_notification>';
+    expect((await forwardedPrompt(mention)).prompt).toBe(mention);
+
+    vi.clearAllMocks();
+    const withReminder = await forwardedPrompt(
+      `What is <system_notification>x</system_notification> for?\n${systemNotification}`
+    );
+    expect(withReminder.prompt).toBe('What is <system_notification>x</system_notification> for?');
+  });
+
+  it('keeps a complete block of a leading-only desktop tag that the user wrote at the end of the text', async () => {
+    const text = 'Explain this: <copilot_artifacts>x</copilot_artifacts>';
+    expect((await forwardedPrompt(text)).prompt).toBe(text);
   });
 
   it('leaves a CLI prompt without a preamble unchanged, including other tags', async () => {
@@ -508,5 +595,54 @@ describe('CopilotCliOtlpPlugin sub-agent agentStop', () => {
     expect(events).toHaveLength(1);
     expect(events.map((e) => e.type)).not.toContain('agent.usage.request');
     expect(events.map((e) => e.type)).not.toContain('agent.session.summary');
+  });
+});
+
+describe('CopilotCliOtlpPlugin sessionEnd without a session', () => {
+  const plugin = new CopilotCliOtlpPlugin();
+  const forwardOtlpEventsToSpool = vi.fn(async (_events: Array<Record<string, unknown>>, _agent: string) => true);
+  const deps = { ensureOtlpProxy: vi.fn(async () => {}), forwardOtlpEventsToSpool };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    delete process.env.CODEMIE_SESSION_ID;
+    vi.mocked(evaluateCopilotAnalyticsGate).mockResolvedValue({ tracked: true });
+  });
+
+  function makeSessionState(sessionId: string): void {
+    const dir = join(process.env.COPILOT_HOME as string, 'session-state', sessionId);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'events.jsonl'), '');
+  }
+
+  // VS Code's headless Copilot runtime fires a lone sessionEnd on resume, and `copilot` + `/exit` writes no log:
+  // both would otherwise reach CLI Analytics as a session of one event.
+  it('forwards nothing for a sessionEnd of a session that has no session-state folder', async () => {
+    await plugin.processOtlpEvent(hookInput({ sessionId: 'end-only-bg', codemieEventName: 'sessionEnd', reason: 'user_exit' }), deps);
+
+    expect(forwardOtlpEventsToSpool).not.toHaveBeenCalled();
+  });
+
+  it('still forwards the sessionEnd of a session that has a session-state folder', async () => {
+    makeSessionState('end-real');
+
+    await plugin.processOtlpEvent(hookInput({ sessionId: 'end-real', codemieEventName: 'sessionEnd', reason: 'user_exit' }), deps);
+
+    const events = forwardOtlpEventsToSpool.mock.calls[0][0];
+    expect(events.map((e) => e.type)).toEqual(['agent.session.end']);
+    expect(events[0].session_id).toBe('end-real');
+  });
+
+  it('forwards the lifecycle events that are not sessionEnd even when the session has no folder yet', async () => {
+    await plugin.processOtlpEvent(hookInput({ sessionId: 'start-early', codemieEventName: 'sessionStart', source: 'new' }), deps);
+
+    expect(forwardOtlpEventsToSpool.mock.calls[0][0].map((e) => e.type)).toEqual(['agent.session.start']);
+    expect(readSessionState('start-early').sessionStateRoot).toBe(getCopilotSessionStateRoot());
+  });
+
+  it('does not record session state for the dropped sessionEnd', async () => {
+    await plugin.processOtlpEvent(hookInput({ sessionId: 'end-no-state', codemieEventName: 'sessionEnd' }), deps);
+
+    expect(readSessionState('end-no-state')).toEqual({});
   });
 });

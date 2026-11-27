@@ -1,5 +1,7 @@
 import { AgentMetadata, AgentAdapter, AgentConfig, MCPConfigSummary, ExtensionsScanSummary, VersionCompatibilityResult, AgentAdapterType } from './types.js';
 import * as npm from '../../utils/processes.js';
+// Tests mock processes.js only, so VERSION_PROBE_OPTIONS stays real by living in exec.js.
+import { VERSION_PROBE_OPTIONS } from '@/utils/exec.js';
 import { NpmError, createErrorContext } from '../../utils/errors.js';
 import {
   exec,
@@ -23,11 +25,14 @@ import { formatTipLine, getSessionTip } from '../../utils/tips.js';
 import { syncRegisteredSkills } from '../../cli/commands/skills/setup/sync.js';
 import { describeProjectBinding, parseProjectBinding, PROJECT_BINDING_ENV } from '../../utils/project-binding.js';
 import { renderProfileInfo } from '../../utils/profile.js';
+import { describeModel, MODEL_ENV_ORIGIN_ENV, parseModelEnvOrigin, PROFILE_MODEL_ENV } from '../../utils/model-origin.js';
 import chalk from 'chalk';
 import { existsSync } from 'fs';
-import { mkdir, writeFile } from 'fs/promises';
-import { join } from 'path';
-import { resolveHomeDir } from '../../utils/paths.js';
+import { access, mkdir, writeFile } from 'fs/promises';
+import { join, win32 as winPath } from 'path';
+import { resolveHomeDir, isSamePathResolved } from '../../utils/paths.js';
+import { classifyShadow, type ShadowVerdict } from '../../utils/path-shadow.js';
+import { getCodemieNpmPrefix, getCodemieOrGlobalNpmPrefix, getGlobalNpmPrefix, getNpmBinDir } from '../../utils/npm-prefix.js';
 import { getMCPConfigSummary as getMCPConfigSummaryUtil } from '../../utils/mcp-config.js';
 import { getExtensionsScanSummary } from '../../utils/extensions-scan.js';
 import {
@@ -59,6 +64,27 @@ import {
 import { noticeDeliveryAtExit } from './session/exit-notice.js';
 import { EXIT_NETWORK_BUDGET_MS, START_PASS_EXIT_BUDGET_MS, settleStartPass } from './session/start-pass.js';
 
+const PATH_LOOKUP_TIMEOUT_MS = 5000;
+
+/** npm-config prefix lookup, shared per process so `codemie list` spawns npm at most once. */
+let npmConfigPrefixLookup: Promise<string | null> | undefined;
+
+function getNpmConfigPrefixOnce(): Promise<string | null> {
+  npmConfigPrefixLookup ??= getGlobalNpmPrefix().catch(() => null);
+  return npmConfigPrefixLookup;
+}
+
+/** Test hook: forget the memoized npm-config prefix. */
+export function resetNpmConfigPrefixCache(): void {
+  npmConfigPrefixLookup = undefined;
+}
+
+/** Directory part of a file path, accepting both `/` and `\` separators (mirrors the classifier). */
+function dirOfPath(file: string): string {
+  const i = Math.max(file.lastIndexOf('/'), file.lastIndexOf('\\'));
+  return i <= 0 ? file : file.slice(0, i);
+}
+
 /**
  * Base class for all agent adapters
  * Implements common logic shared by external agents
@@ -67,6 +93,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   protected proxy: CodeMieProxy | null = null;
   /** The start pass over other sessions' records; awaited at exit within the budget */
   private startPass: ReconcilePass | null = null;
+  /** Memoized PATH lookup for `cliCommand`; shared by the shadow check and launch */
+  private pathMatches: Promise<string[] | null> | null = null;
   public readonly metadata: AgentMetadata;
   public readonly type = AgentAdapterType.BASE;
 
@@ -286,6 +314,105 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
+   * PATH matches for `cliCommand` in PATH order, memoized per adapter instance.
+   * `null` when the lookup failed or exceeded the 5000 ms deadline; `[]` when nothing matched.
+   */
+  getPathMatches(): Promise<string[] | null> {
+    const command = this.metadata.cliCommand;
+    if (!command) return Promise.resolve(null);
+    this.pathMatches ??= (async (): Promise<string[] | null> => {
+      let timer: NodeJS.Timeout | undefined;
+      const timeout = new Promise<'timeout'>((resolve) => {
+        timer = setTimeout(() => resolve('timeout'), PATH_LOOKUP_TIMEOUT_MS);
+      });
+      try {
+        const lookup = await Promise.race([npm.getCommandMatches(command, PATH_LOOKUP_TIMEOUT_MS), timeout]);
+        return lookup !== 'timeout' && lookup.status === 'answered' ? lookup.matches : null;
+      } catch {
+        return null;
+      } finally {
+        clearTimeout(timer);
+      }
+    })();
+    return this.pathMatches;
+  }
+
+  /**
+   * Fallback when the derived prefix has no shim: CodeMie may run from another global prefix than
+   * the one `install` used. Only when the agent is nowhere on PATH, look at the npm-config prefix.
+   * Never throws; any failure yields `missing`.
+   */
+  private async probeNpmConfigPrefix(cliCommand: string, derivedPrefix: string): Promise<ShadowVerdict> {
+    const missing: ShadowVerdict = { status: 'missing' };
+    try {
+      const matches = await this.getPathMatches();
+      if (matches === null) return { status: 'unknown' };
+      if (matches.length > 0) return missing;
+
+      const npmPrefix = await getNpmConfigPrefixOnce();
+      if (!npmPrefix || npmPrefix === derivedPrefix) return missing;
+      const managedDir = getNpmBinDir(npmPrefix, 'win32');
+      const shimPath = winPath.join(managedDir, `${cliCommand}.cmd`);
+      await access(shimPath);
+      return { status: 'missing-on-path', managedDir, shimPath };
+    } catch {
+      return missing;
+    }
+  }
+
+  /**
+   * Whether another install of this agent shadows the CodeMie-managed one on PATH.
+   * Windows only; never throws. `unknown` when the agent opts out, the prefix is unresolved
+   * (npm is only spawned to find it when `resolvePrefix` is set) or the lookup failed.
+   */
+  async checkPathShadow(opts: { resolvePrefix?: boolean } = {}): Promise<ShadowVerdict> {
+    const unknown: ShadowVerdict = { status: 'unknown' };
+    const { cliCommand, npmPackage, pathShadowCheck } = this.metadata;
+    if (process.platform !== 'win32' || !cliCommand || !npmPackage || pathShadowCheck === false) {
+      return unknown;
+    }
+
+    try {
+      const prefix = getCodemieNpmPrefix() ?? (opts.resolvePrefix ? await getCodemieOrGlobalNpmPrefix() : null);
+      if (!prefix) return unknown;
+      const managedDir = getNpmBinDir(prefix, 'win32');
+
+      // Probe the managed shim first: without one the agent is 'missing' (barring the npm-config fallback).
+      const managedShimPath = winPath.join(managedDir, `${cliCommand}.cmd`);
+      try {
+        await access(managedShimPath);
+      } catch {
+        if (opts.resolvePrefix) return { status: 'missing' };
+        return this.probeNpmConfigPrefix(cliCommand, prefix);
+      }
+
+      const matches = await this.getPathMatches();
+      if (matches === null) return unknown;
+      // U+FFFD means where.exe output was not UTF-8 (OEM code page, non-ASCII profile): the folder
+      // cannot be compared reliably, so stay silent rather than warn about a healthy install.
+      if (matches.some((m) => m.includes('�'))) return unknown;
+
+      // The classifier compares synchronously; resolve directory equality up front.
+      const sameDir = new Map<string, boolean>();
+      for (const m of matches) {
+        const dir = dirOfPath(m);
+        if (!sameDir.has(dir)) sameDir.set(dir, await isSamePathResolved(dir, managedDir));
+      }
+      return classifyShadow({
+        matches,
+        managedDir,
+        managedShimPath,
+        samePath: (a, b) => b === managedDir && (sameDir.get(a) ?? false),
+      });
+    } catch (error) {
+      logger.debug(`[${this.displayName}] PATH shadow check failed`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return unknown;
+    }
+  }
+
+  /**
    * Get agent version
    */
   async getVersion(): Promise<string | null> {
@@ -294,9 +421,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     }
 
     try {
-      const result = await exec(this.metadata.cliCommand, ['--version']);
+      const result = await exec(this.metadata.cliCommand, ['--version'], VERSION_PROBE_OPTIONS);
       return result.stdout.trim();
-    } catch {
+    } catch (error) {
+      logger.debug(`Version probe failed for ${this.metadata.cliCommand}: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
   }
@@ -636,7 +764,14 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       const profileName = env.CODEMIE_PROFILE_NAME || 'default';
       const provider = env.CODEMIE_PROVIDER || 'unknown';
       const cliVersion = env.CODEMIE_CLI_VERSION || 'unknown';
-      const model = env.CODEMIE_MODEL || 'unknown';
+      // The origin describes the launcher's model; an agent that picked another one in setupProxy
+      // (Codex, Kimi catalog resolution) must not credit CODEMIE_MODEL for its own choice.
+      const launcherModelKept = env.CODEMIE_MODEL === envOverrides?.CODEMIE_MODEL;
+      const model = describeModel(
+        env.CODEMIE_MODEL || 'unknown',
+        launcherModelKept ? parseModelEnvOrigin(env[MODEL_ENV_ORIGIN_ENV]) : undefined,
+        env[PROFILE_MODEL_ENV] || undefined
+      );
       const codeMieUrl = env.CODEMIE_URL;
       // The launcher's binding and project; never re-resolved here (EPMCDME-15411).
       const project = describeProjectBinding(
@@ -866,8 +1001,13 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       let commandPath = this.metadata.cliCommand;
 
       // Try to resolve full path via PATH first
-      const { getCommandPath } = await import('../../utils/processes.js');
-      const resolvedPath = await getCommandPath(this.metadata.cliCommand);
+      // Reuse the memoized PATH lookup (shared with the shadow check) so launch costs one lookup.
+      const memoizedMatches = await this.getPathMatches();
+      let resolvedPath: string | null = memoizedMatches?.[0] ?? null;
+      if (!resolvedPath) {
+        const { getCommandPath } = await import('../../utils/processes.js');
+        resolvedPath = await getCommandPath(this.metadata.cliCommand);
+      }
       if (resolvedPath) {
         commandPath = isWindows && /[ \t,;=()&|<>^%[\]{}]/.test(resolvedPath) ? `"${resolvedPath}"` : resolvedPath;
         logger.debug(`Resolved command path: ${resolvedPath}`);

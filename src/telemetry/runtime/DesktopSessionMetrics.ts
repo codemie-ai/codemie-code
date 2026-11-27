@@ -2,6 +2,8 @@ import type { SessionStore } from '@/agents/core/session/SessionStore.js';
 import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
 import type { Session } from '@/agents/core/session/types.js';
 import { analyticsAuthMarkedInvalid } from '@/agents/core/session/stale-session-reconciliation.js';
+import { markEndMetricRejected } from '@/cli/commands/hook/end-metric.js';
+import type { RequestOutcome } from '@/providers/plugins/sso/session/bounded-request.js';
 import { MetricsSender } from '@/providers/plugins/sso/index.js';
 import { PROXY_STORE_READ_DEADLINE_MS, readCookieAuth } from '@/providers/plugins/sso/session/cookie-auth.js';
 import { CodeMieSSO } from '@/providers/plugins/sso/sso.auth.js';
@@ -10,6 +12,7 @@ import type {
   LocalTelemetryDiscoveredSession
 } from '@/telemetry/runtime/types.js';
 import { desktopEndTime } from '@/telemetry/runtime/desktop-session.js';
+import { claudeAnalyticsCollecting } from '@/telemetry/runtime/analytics-switch.js';
 import { logger } from '@/utils/logger.js';
 
 /** The processing context and the start / end metrics of a Desktop session. */
@@ -25,10 +28,11 @@ export class DesktopSessionMetrics {
   }
 
   /**
-   * The daemon holds the cookies a delivery would carry and the server has not rejected them; without
-   * them a delivery makes no request and spends no attempt.
+   * Analytics are on, the daemon holds the cookies a delivery would carry and the server has not rejected them;
+   * otherwise a delivery makes no request and spends no attempt.
    */
   async canDeliver(): Promise<boolean> {
+    if (!(await claudeAnalyticsCollecting())) return false;
     const urls = [this.credentialsUrl, this.config.syncApiUrl || this.config.targetApiUrl, this.config.targetApiUrl];
     return !(await analyticsAuthMarkedInvalid(urls)) && (await this.loadCookieAuth()).cookies !== '';
   }
@@ -124,6 +128,22 @@ export class DesktopSessionMetrics {
     // One end for the duration and end_time
     const endTime = session.endTime ?? desktopEndTime(session);
     const stretchStart = session.stretchStartTime ?? session.startTime;
+    try {
+      await this.sendEnd(context, session, endTime, stretchStart);
+    } catch (error) {
+      // A refusal for good (a JSON 400/409/422) is terminal, as on the CLI: never re-sent, and the drop is stamped
+      if ((error as { outcome?: RequestOutcome } | null)?.outcome === 'rejected') {
+        await markEndMetricRejected(this.sessionStore, session.sessionId);
+        return;
+      }
+      throw error;
+    }
+    // ponytail: a process cut between the server's 200 and this save sends the end metric once more
+    const latest = (await this.sessionStore.loadSession(session.sessionId)) ?? session;
+    await this.sessionStore.saveSession({ ...latest, endMetricSentAt: Date.now() });
+  }
+
+  private async sendEnd(context: ProcessingContext, session: Session, endTime: number, stretchStart: number): Promise<void> {
     await this.createSender(context).sendSessionEnd(
       {
         sessionId: session.correlation.agentSessionId || session.sessionId,
@@ -142,9 +162,6 @@ export class DesktopSessionMetrics {
       session.activeDurationMs,
       endTime
     );
-    // ponytail: a process cut between the server's 200 and this save sends the end metric once more
-    const latest = (await this.sessionStore.loadSession(session.sessionId)) ?? session;
-    await this.sessionStore.saveSession({ ...latest, endMetricSentAt: Date.now() });
   }
 
   private createSender(context: ProcessingContext): MetricsSender {

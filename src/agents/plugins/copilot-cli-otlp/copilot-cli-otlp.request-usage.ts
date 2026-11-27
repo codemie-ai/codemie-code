@@ -61,9 +61,13 @@ export function resolveCopilotBillableModel(raw: string): string {
 
 interface UsageRecordData {
   usage?: UsageRecordUsage;
+  agentId?: string;
 }
 
 interface UsageRecordUsage extends CopilotUsageBuckets {
+  agentId?: string;
+  /** Copilot ≥ 1.0.115 omits `apiCallId`; `accounting.usageId` is the same id `assistant.message.apiCallId` carries. */
+  accounting?: { usageId?: string };
   model?: string;
   apiCallId?: string;
   finishReason?: string;
@@ -117,7 +121,7 @@ function toRow(
   requestId: string,
   rawModel: string,
   tokens: ReturnType<typeof toBackendTokens>,
-  extra: { timestamp: string; stopReason: string; scope: 'main' | 'agent'; attached: boolean; partial?: boolean }
+  extra: { timestamp: string; stopReason: string; scope: 'main' | 'agent'; attached: boolean; partial?: boolean; agentId?: string }
 ): Record<string, unknown> {
   return {
     type: USAGE_REQUEST_EVENT_TYPE,
@@ -137,7 +141,21 @@ function toRow(
     timestamp: extra.timestamp,
     event_id: stableEventId(USAGE_REQUEST_EVENT_TYPE, sessionId, requestId + (extra.attached ? ':final' : '')),
     ...(extra.partial ? { usage_partial: true } : {}),
+    ...(extra.agentId ? { agent_id: extra.agentId } : {}),
   };
+}
+
+/**
+ * The sub-agent that made a request: `agentId` on the nested usage, the flat record data, or the
+ * event envelope (where Copilot stamps every sub-agent event). Absent for the main thread and for
+ * older clients; the root session's own id is not a sub-agent.
+ */
+function recordAgentId(sessionId: string, event: CopilotEvent, data: UsageRecordData, usage: UsageRecordUsage): string | undefined {
+  for (const candidate of [usage.agentId, data.agentId, event.agentId]) {
+    const id = typeof candidate === 'string' ? candidate.trim() : '';
+    if (id && id !== sessionId) return id;
+  }
+  return undefined;
 }
 
 const EMPTY_BUCKETS: CopilotUsageBuckets = {};
@@ -203,15 +221,19 @@ export function buildUsageRows(
         sawUsageRecordEvent = true;
         const data = (event.data ?? {}) as UsageRecordData & UsageRecordUsage;
         const usage: UsageRecordUsage = data.usage ?? data;
-        if (!usage.apiCallId || !usage.model) break;
+        const apiCallId = usage.apiCallId || usage.accounting?.usageId;
+        if (!apiCallId || !usage.model) break;
         segmentHasRecords[segment] = true;
+        const scope = usage.initiator === 'sub-agent' ? 'agent' : 'main';
         records.push({
           segment,
-          row: toRow(sessionId, usage.apiCallId, usage.model, toBackendTokens(usage), {
+          row: toRow(sessionId, apiCallId, usage.model, toBackendTokens(usage), {
             timestamp,
             stopReason: usage.finishReason ?? 'end_turn',
-            scope: usage.initiator === 'sub-agent' ? 'agent' : 'main',
+            scope,
             attached: false,
+            // Only a sub-agent-classified request may be attributed to an agent.
+            agentId: scope === 'agent' ? recordAgentId(sessionId, event, data, usage) : undefined,
           }),
         });
         break;

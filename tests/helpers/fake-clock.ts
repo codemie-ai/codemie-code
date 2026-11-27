@@ -1,4 +1,15 @@
+import { randomBytes } from 'node:crypto';
 import { vi } from 'vitest';
+
+/**
+ * Resolves once the libuv threadpool has worked off the requests queued before this call. Real fs I/O runs on
+ * that pool, and a pool job queued now runs behind the fs requests already in flight, so awaiting one lets the
+ * code under test finish its current I/O step before the fake clock moves on. Without it a loaded machine (CI)
+ * spends a fake deadline on real I/O latency and the test fails on timing it does not mean to measure.
+ */
+function settleRealIo(): Promise<void> {
+  return new Promise((resolve) => randomBytes(1, () => resolve()));
+}
 
 /**
  * Runs `work` on a fake clock (setTimeout and Date) in 25 ms steps, real I/O running between them.
@@ -24,6 +35,7 @@ export async function onFakeClock<T>(work: () => Promise<T>, hold?: { while: () 
         await vi.advanceTimersByTimeAsync(25);
         step++;
       }
+      await settleRealIo();
       await new Promise((resolve) => realSetTimeout(resolve, 1));
     }
     return await run;

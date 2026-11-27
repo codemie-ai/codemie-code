@@ -9,22 +9,35 @@
  * captures and parses the forwarded request body, then asserts the exact
  * transformation each client type produces.
  *
- * Deterministic: authMethod 'jwt' with a DUMMY token (no SSO/keychain/network
- * auth), a mock upstream on an ephemeral port, no gateway key. Each test picks
- * the clientType/model that activates exactly one normalizer.
+ * Deterministic: authMethod 'jwt' with a DUMMY token (no keychain/network auth),
+ * a mock upstream on an ephemeral port. The wrapper names (codemie-code,
+ * codemie-claude, codemie-kimi, ...) run one proxy per clientType with no
+ * gateway key; the daemon's client names run through one proxy with a gateway
+ * key, the client chosen per request by its key. The money section signs in
+ * with an SSO cookie from the file credential store (keytar mocked away).
  *
- * The clientType → active plugin mapping (probed from ALLOWED_* in each plugin):
+ * The client → active plugin mapping (the `clients` each plugin declares):
  *   - request-sanitizer         → codemie-code / codemie-opencode
- *   - claude-request-normalizer → codemie-claude / codemie-copilot / claude-desktop
+ *   - claude-request-normalizer → codemie-claude / codemie-copilot / claude-desktop / vscode-claude-code
  *   - kimi-request-normalizer   → codemie-kimi / codemie-kimi-acp
  *   - codex-request-normalizer  → codex-desktop (also fetches the deployment list)
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import http from 'node:http';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+// The keychain is the boundary: the SSO cookie of the money section lives in the file store under CODEMIE_HOME
+vi.mock('keytar', () => {
+  throw new Error('no keychain in this test');
+});
+
 import { CodeMieProxy } from '../../src/providers/plugins/sso/proxy/sso.proxy.js';
 import type { ProxyConfig } from '../../src/providers/plugins/sso/proxy/proxy-types.js';
+import { CredentialStore } from '../../src/utils/security.js';
 import { setupTestIsolation } from '../helpers/test-isolation.js';
+import '../../src/providers/plugins/sso/sso.template.js'; // register the ai-run-sso provider
 import '../../src/providers/plugins/sso/proxy/plugins/index.js'; // register core plugins
 
 const UPSTREAM_TOKEN = 'dummy-upstream-jwt';
@@ -32,6 +45,7 @@ const UPSTREAM_TOKEN = 'dummy-upstream-jwt';
 interface CapturedRequest {
   method: string;
   url: string;
+  headers: http.IncomingHttpHeaders;
   body: Record<string, unknown> | null;
 }
 
@@ -39,6 +53,8 @@ interface Harness {
   proxyUrl: string;
   /** The last non-model-listing request the upstream received (body JSON-parsed). */
   lastForwarded: () => CapturedRequest | null;
+  /** Every non-model-listing request the upstream received, in order. */
+  allForwarded: () => CapturedRequest[];
   /** How many times the /v1/llm_models listing endpoint was hit directly. */
   modelListHits: () => number;
   stop: () => Promise<void>;
@@ -50,9 +66,13 @@ interface Harness {
  */
 async function startHarness(
   configOverrides: Partial<ProxyConfig> = {},
-  models: unknown[] | null = null
+  models: unknown[] | null = null,
+  answer: (req: http.IncomingMessage) => { status: number; body: unknown } = () => ({ status: 200, body: { ok: true } }),
+  /** Runs with the upstream's URL before the proxy starts (e.g. to store a login for it). */
+  beforeStart?: (targetApiUrl: string) => Promise<void>
 ): Promise<Harness> {
   let forwarded: CapturedRequest | null = null;
+  const all: CapturedRequest[] = [];
   let listHits = 0;
 
   const upstream = http.createServer((req, res) => {
@@ -76,9 +96,11 @@ async function startHarness(
       } catch {
         body = null;
       }
-      forwarded = { method: req.method ?? '', url, body };
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true }));
+      forwarded = { method: req.method ?? '', url, headers: req.headers, body };
+      all.push(forwarded);
+      const { status, body: answerBody } = answer(req);
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(answerBody));
     });
   });
 
@@ -98,12 +120,14 @@ async function startHarness(
     ...configOverrides,
   };
 
+  await beforeStart?.(config.targetApiUrl);
   const proxy = new CodeMieProxy(config);
   const { url } = await proxy.start();
 
   return {
     proxyUrl: url,
     lastForwarded: () => forwarded,
+    allForwarded: () => all,
     modelListHits: () => listHits,
     stop: async () => {
       await proxy.stop();
@@ -112,17 +136,31 @@ async function startHarness(
   };
 }
 
-/** POST a JSON body through the proxy to the given path. */
+/** POST a JSON body through the proxy to the given path, with a gateway key when given. */
 async function postJson(
   proxyUrl: string,
   path: string,
-  body: unknown
+  body: unknown,
+  gatewayKey?: string
 ): Promise<Response> {
   return fetch(`${proxyUrl}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(gatewayKey && { Authorization: `Bearer ${gatewayKey}` }) },
     body: JSON.stringify(body),
   });
+}
+
+const GATEWAY_KEY = 'codemie-proxy';
+/** The key a client of the daemon sends: the shared key with its client name. */
+const keyOf = (client: string) => `${GATEWAY_KEY}.${client}`;
+
+/** The daemon's proxy: one for every client, a gateway key, the shared key served as `defaultClient`. */
+function startDaemonHarness(
+  overrides: Partial<ProxyConfig> = {},
+  models: unknown[] | null = null,
+  answer?: Parameters<typeof startHarness>[2]
+): Promise<Harness> {
+  return startHarness({ gatewayKey: GATEWAY_KEY, clientType: 'codemie-daemon', ...overrides }, models, answer);
 }
 
 describe('Proxy request-body normalization contract (end-to-end, in-process)', () => {
@@ -287,10 +325,10 @@ describe('Proxy request-body normalization contract (end-to-end, in-process)', (
     });
   });
 
-  describe('codex-request-normalizer (codex-desktop)', () => {
+  describe('codex-request-normalizer (codex-desktop, by its key through the daemon)', () => {
     it('maps an undated codex model name to the newest matching dated deployment', async () => {
-      harness = await startHarness(
-        { clientType: 'codex-desktop' },
+      harness = await startDaemonHarness(
+        {},
         [
           { deployment_name: 'gpt-5-2-2025-06-01', enabled: true },
           { deployment_name: 'gpt-5-2-2026-01-15', enabled: true },
@@ -301,7 +339,7 @@ describe('Proxy request-body normalization contract (end-to-end, in-process)', (
       const res = await postJson(harness.proxyUrl, '/v1/responses', {
         model: 'gpt-5.2',
         input: [],
-      });
+      }, keyOf('codex-desktop'));
       expect(res.status).toBe(200);
 
       const body = harness.lastForwarded()?.body as Record<string, unknown>;
@@ -312,8 +350,8 @@ describe('Proxy request-body normalization contract (end-to-end, in-process)', (
     });
 
     it('repairs empty tool descriptions in-place using the tool name', async () => {
-      harness = await startHarness(
-        { clientType: 'codex-desktop' },
+      harness = await startDaemonHarness(
+        {},
         [{ deployment_name: 'gpt-5-2-2026-01-15', enabled: true }]
       );
 
@@ -325,7 +363,7 @@ describe('Proxy request-body normalization contract (end-to-end, in-process)', (
           { name: 'keep', description: 'already set' },
         ],
         input: [],
-      });
+      }, keyOf('codex-desktop'));
       expect(res.status).toBe(200);
 
       const tools = (harness.lastForwarded()?.body as Record<string, unknown>).tools as Array<
@@ -337,19 +375,178 @@ describe('Proxy request-body normalization contract (end-to-end, in-process)', (
     });
 
     it('passes an already-dated exact deployment name through unchanged', async () => {
-      harness = await startHarness(
-        { clientType: 'codex-desktop' },
+      harness = await startDaemonHarness(
+        {},
         [{ deployment_name: 'gpt-5-2-2026-01-15', enabled: true }]
       );
 
       const res = await postJson(harness.proxyUrl, '/v1/responses', {
         model: 'gpt-5-2-2026-01-15',
         input: [],
-      });
+      }, keyOf('codex-desktop'));
       expect(res.status).toBe(200);
 
       const body = harness.lastForwarded()?.body as Record<string, unknown>;
       expect(body.model).toBe('gpt-5-2-2026-01-15');
+    });
+  });
+
+  describe('the daemon\'s client names, each by its key through one proxy', () => {
+    const THINKING = { model: 'claude-sonnet-5', thinking: { type: 'enabled', budget_tokens: 10000 }, messages: [] };
+
+    it.each(['claude-desktop', 'vscode-claude-code'])('%s: the Claude normalizer turns thinking enabled into adaptive', async (client) => {
+      harness = await startDaemonHarness();
+
+      await postJson(harness.proxyUrl, '/v1/messages', THINKING, keyOf(client));
+
+      const body = harness.lastForwarded()?.body as Record<string, unknown>;
+      expect(body.thinking).toEqual({ type: 'adaptive' });
+      expect(body.output_config).toEqual({ effort: 'high' });
+    });
+
+    it.each(['codex-desktop', 'vscode-byok', 'codemie-daemon'])('%s: the Claude normalizer leaves the body alone', async (client) => {
+      harness = await startDaemonHarness();
+
+      await postJson(harness.proxyUrl, '/v1/messages', THINKING, keyOf(client));
+
+      expect(harness.lastForwarded()?.body).toEqual(THINKING);
+    });
+
+    it('vscode-byok: the VS Code normalizer shortens an overlong user on /responses', async () => {
+      harness = await startDaemonHarness();
+      const user = 'u'.repeat(80);
+
+      await postJson(harness.proxyUrl, '/v1/responses', { model: 'gpt-5.2', user, input: [] }, keyOf('vscode-byok'));
+
+      const forwardedUser = (harness.lastForwarded()?.body as Record<string, unknown>).user as string;
+      expect(forwardedUser.length).toBeLessThanOrEqual(32);
+      expect(forwardedUser).not.toBe(user);
+    });
+
+    it.each(['codex-desktop', 'codemie-daemon'])('%s: the VS Code normalizer leaves the user alone', async (client) => {
+      harness = await startDaemonHarness();
+      const user = 'u'.repeat(80);
+
+      await postJson(harness.proxyUrl, '/v1/responses', { model: 'gpt-5.2', user, input: [] }, keyOf(client));
+
+      expect((harness.lastForwarded()?.body as Record<string, unknown>).user).toBe(user);
+    });
+  });
+
+  describe('money: who pays and what is charged, for every client of the daemon', () => {
+    const PROJECT = 'daemon-project';
+    const SSO_COOKIE = 'synthetic-sso-cookie';
+    const PROFILE = 'money-profile';
+    const CATALOG = [
+      { deployment_name: 'claude-opus-4-5-20251101', enabled: true },
+      { deployment_name: 'gpt-5-2-2026-01-15', enabled: true },
+      { deployment_name: 'grok-4.6', base_name: 'grok-4.6', label: 'Grok 4.6', enabled: true },
+    ];
+    /** A Responses request that replays reasoning state, and an upstream that rejects the replay. */
+    const REPLAY = {
+      model: 'gpt-5-2-2026-01-15',
+      include: ['reasoning.encrypted_content'],
+      input: [{ type: 'reasoning', encrypted_content: 'abc==' }, { type: 'message', role: 'user', content: 'hi' }],
+    };
+    const REJECT_REPLAY = (req: http.IncomingMessage) => req.url === '/v1/responses'
+      ? { status: 400, body: { error: { code: 'invalid_encrypted_content', message: 'could not be verified' } } }
+      : { status: 200, body: { ok: true } };
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    /** The SSO login of the profile for `targetApiUrl`, in the file credential store. */
+    async function signIn(targetApiUrl: string): Promise<void> {
+      await CredentialStore.getInstance().storeSSOCredentials(
+        { cookies: { codemie_access_token: SSO_COOKIE }, apiUrl: targetApiUrl, expiresAt: 4102444800000 },
+        targetApiUrl
+      );
+    }
+
+    /**
+     * The daemon over the profile's SSO login, with its project, its `--model`, a profile that opted into one extra
+     * model and the shared key served as `defaultClient`; then one request sent with `key`.
+     */
+    async function startPaying(
+      path: string, body: unknown, key: string, defaultClient = 'codemie-daemon', answer?: Parameters<typeof startHarness>[2]
+    ): Promise<Harness> {
+      writeFileSync(join(process.env.CODEMIE_HOME!, 'codemie-cli.config.json'), JSON.stringify({
+        version: 2, activeProfile: PROFILE, profiles: { [PROFILE]: { provider: 'ai-run-sso', claudeExtraModels: ['grok-4.6'] } },
+      }));
+      const started = await startHarness({
+        gatewayKey: GATEWAY_KEY, clientType: defaultClient, provider: 'ai-run-sso', authMethod: 'sso', jwtToken: undefined,
+        profile: PROFILE, project: PROJECT, model: 'gpt-5.2', version: '1.2.3',
+      }, CATALOG, answer, signIn);
+      await postJson(started.proxyUrl, path, body, key);
+      return started;
+    }
+
+    /** What the backend charges by reached the upstream on exactly one request: CLI, project, cookie, model; no gateway key. */
+    function expectCharged(started: Harness, path: string, model: string): void {
+      const requests = started.allForwarded().filter((request) => request.url === path);
+      expect(requests).toHaveLength(1);
+      const [request] = requests;
+      expect(request.headers['x-codemie-cli']).toBe('codemie-cli/1.2.3');
+      expect(request.headers['x-codemie-project']).toBe(PROJECT);
+      expect(request.headers.cookie).toContain(SSO_COOKIE);
+      expect(String(request.headers.authorization ?? '')).not.toContain(GATEWAY_KEY);
+      expect(request.body?.model).toBe(model);
+    }
+
+    /** The model each client's own daemon forwards today, for the request it sends. */
+    const MODEL_TABLE: Array<[string, string, string, unknown, string]> = [
+      ['claude-desktop', 'a Claude-family name', '/v1/messages', { model: 'claude-opus-4-5', messages: [] }, 'claude-opus-4-5-20251101'],
+      ['claude-desktop', 'a title-generation prompt', '/v1/messages',
+        { model: 'claude-opus-4-5', system: 'Generate a concise, sentence-case title', messages: [] }, 'claude-haiku-4-5-env'],
+      ['claude-desktop', 'an extra model alias', '/v1/messages', { model: 'claude-x-44968622fb', messages: [] }, 'grok-4.6'],
+      ['vscode-claude-code', 'a Claude-family name', '/v1/messages', { model: 'claude-opus-4-5', messages: [] }, 'claude-opus-4-5-20251101'],
+      ['vscode-claude-code', 'a title-generation prompt', '/v1/messages',
+        { model: 'claude-opus-4-5', system: 'Generate a concise, sentence-case title', messages: [] }, 'claude-haiku-4-5-env'],
+      ['vscode-claude-code', 'an extra model alias', '/v1/messages', { model: 'claude-x-44968622fb', messages: [] }, 'grok-4.6'],
+      ['codex-desktop', 'a name the catalog lacks', '/v1/responses', { model: 'gpt-9-unknown', input: [] }, 'gpt-5-2-2026-01-15'],
+      ['vscode-byok', 'a name the catalog lacks', '/v1/responses', { model: 'gpt-9-unknown', input: [] }, 'gpt-9-unknown'],
+      ['codemie-daemon', 'a name the catalog lacks', '/v1/responses', { model: 'gpt-9-unknown', input: [] }, 'gpt-9-unknown'],
+    ];
+
+    it.each(MODEL_TABLE)('%s, %s: charged to the daemon\'s project and CLI, signed in, forwarded once with its model', async (client, _case, path, body, model) => {
+      // The Haiku model of the environment, which title generation is sent with
+      vi.stubEnv('CODEMIE_HAIKU_MODEL', 'claude-haiku-4-5-env');
+      harness = await startPaying(path, body, keyOf(client));
+
+      expectCharged(harness, path, model);
+    });
+
+    it.each([
+      ['claude-desktop', 'gpt-9-unknown'],
+      ['vscode-claude-code', 'gpt-9-unknown'],
+      ['codex-desktop', 'gpt-5-2-2026-01-15'],
+      ['vscode-byok', 'gpt-9-unknown'],
+      ['codemie-daemon', 'gpt-9-unknown'],
+    ])('the shared key under the default client %s: charged as every client, forwarded once with model %s', async (defaultClient, model) => {
+      harness = await startPaying('/v1/responses', { model: 'gpt-9-unknown', input: [] }, GATEWAY_KEY, defaultClient);
+
+      expectCharged(harness, '/v1/responses', model);
+    });
+
+    it('the shared key under the default client codex-desktop carrying a claude-* model is rewritten as for codex-desktop', async () => {
+      harness = await startPaying('/v1/responses', { model: 'claude-sonnet-5', input: [] }, GATEWAY_KEY, 'codex-desktop');
+
+      expectCharged(harness, '/v1/responses', 'gpt-5-2-2026-01-15');
+    });
+
+    it.each(['codex-desktop', 'vscode-byok'])('no second forward: a 400 with the encrypted-content marker gives %s one upstream request', async (client) => {
+      harness = await startPaying('/v1/responses', REPLAY, keyOf(client), 'codemie-daemon', REJECT_REPLAY);
+
+      expect(harness.allForwarded().filter((request) => request.url === '/v1/responses')).toHaveLength(1);
+    });
+
+    it('the Copilot retry runs for a codemie-copilot wrapper proxy alone: two upstream requests', async () => {
+      harness = await startHarness({ clientType: 'codemie-copilot' }, null, REJECT_REPLAY);
+
+      await postJson(harness.proxyUrl, '/v1/responses', REPLAY);
+
+      expect(harness.allForwarded().filter((request) => request.url === '/v1/responses')).toHaveLength(2);
     });
   });
 });

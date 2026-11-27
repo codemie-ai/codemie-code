@@ -31,9 +31,9 @@ export class CoworkRunner {
 
   /**
    * Starts a producer run unless one is in flight. A run found still in flight 5 minutes after its start is warned
-   * about once; no second run starts beside it.
+   * about once; no second run starts beside it. `connected` — whether Desktop is connected, passed to the run.
    */
-  startIfIdle(now: number): void {
+  startIfIdle(now: number, connected = true): void {
     if (this.inFlight) {
       if (!this.overdueWarned && now - this.inFlightSince >= OVERDUE_RUN_MS) {
         this.overdueWarned = true;
@@ -46,7 +46,7 @@ export class CoworkRunner {
     this.inFlightSince = now;
     this.overdueWarned = false;
     this.inFlight = Promise.resolve()
-      .then(() => this.producer.run(now))
+      .then(() => this.producer.run(now, connected))
       .catch((error) => {
         logger.warn('[desktop-telemetry] Cowork producer run failed; retried at the next poll', {
           error: error instanceof Error ? error.message : String(error)

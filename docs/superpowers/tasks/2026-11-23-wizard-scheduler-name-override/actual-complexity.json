@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "generated": "2026-11-24T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 20,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 23,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Touches the guided wizard (step model, late steps, state store), config store, install/status/uninstall commands, and the scheduler generators/index for launchd, systemd and Windows Task Scheduler." },
+    { "dimension": "file_change_estimate", "reason": "23 files per diffstat (629+/280-), about 8 of them tests and 3 docs, all under analytics/sync. The count is high but mostly mechanical threading of one name value." },
+    { "dimension": "affected_layers", "reason": "CLI prompt, install/uninstall service logic, persisted config/state, and OS scheduler infrastructure." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

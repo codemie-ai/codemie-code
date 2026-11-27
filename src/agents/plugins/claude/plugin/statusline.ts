@@ -591,7 +591,9 @@ export function fmt(n) {
 const C = {
   reset:  '\x1b[0m',
   purple: '\x1b[38;2;177;185;249m',
+  boldPurple: '\x1b[1;38;2;177;185;249m',
   green:  '\x1b[0;32m',
+  brightGreen: '\x1b[1;92m',
   yellow: '\x1b[0;33m',
   red:    '\x1b[0;31m',
   cyan:   '\x1b[0;36m',
@@ -623,8 +625,16 @@ export function truncate(text, max) {
   return chars.length <= max ? text : `${chars.slice(0, max - 1).join('')}…`;
 }
 
-export function buildStatusLine({ projectName, branch, model, actualModel, ctxPct, tokIn, tokOut, cost, costExact, durationMs, budget = null as { pct: number; text: string } | null, budgetError = null as string | null }) {
+// A CodeMie-managed session is launched with CODEMIE_SESSION_ID (same discriminator as launchMode()
+// in src/agents/core/evidence/routing.ts). An empty or whitespace-only value counts as not managed.
+export function isManagedSession(env: NodeJS.ProcessEnv = process.env): boolean {
+  return Boolean(env.CODEMIE_SESSION_ID?.trim());
+}
+
+export function buildStatusLine({ projectName, branch, model, actualModel, ctxPct, tokIn, tokOut, cost, costExact, durationMs, budget = null as { pct: number; text: string } | null, budgetError = null as string | null, managed = false }) {
   const parts: string[] = [];
+
+  if (managed) parts.push(`${c(C.boldPurple, '[')}${c(C.brightGreen, '⏺')}${c(C.boldPurple, ' CodeMie]')}`);
 
   if (projectName) parts.push(c(C.purple, `[${truncate(projectName, MAX_PROJECT_CHARS)}]`));
   if (budget)            parts.push(c(budgetColor(budget.pct), budget.text));
@@ -725,14 +735,22 @@ export async function resolveBudget({
   // Fast path: fresh cache, skip the network. Discard any entry that isn't this schema version
   // (e.g. a pre-upgrade string-shaped value) or that was written for a different profile —
   // budgets are per-profile, and two sessions on different profiles share this one cache file.
+  //
+  // A failed lookup is cached too (`value: null` plus its `error`) and served for the same TTL.
+  // Caching only successes made every timeout, HTTP error or missing row fall through to a live
+  // request on the next render, and the statusline re-renders on every Claude Code event in
+  // every open session: against a slow API that is a stream of abandoned requests that each
+  // still run to completion on the server. Now a failing API is asked once per TTL per machine.
   try {
     const cache = JSON.parse(await readFile(CACHE_FILE, 'utf8'));
-    const validShape = cache.schema === CACHE_SCHEMA
+    const fresh = cache.schema === CACHE_SCHEMA
       && cache.profile === profileName
-      && typeof cache.value === 'object' && cache.value !== null
-      && typeof cache.value.text === 'string';
-    if (validShape && Date.now() - cache.ts < CACHE_TTL_MS) {
+      && Date.now() - cache.ts < CACHE_TTL_MS;
+    if (fresh && typeof cache.value === 'object' && cache.value !== null && typeof cache.value.text === 'string') {
       return { budget: cache.value, budgetError: null };
+    }
+    if (fresh && cache.value === null && (cache.error === null || typeof cache.error === 'string')) {
+      return { budget: null, budgetError: cache.error };
     }
   } catch {
     // No cache, unreadable, or a stale/mismatched schema — fall through to a live lookup below.
@@ -769,6 +787,21 @@ export async function resolveBudget({
     return { budget: null, budgetError: 'reauthenticate' };
   }
 
+  // Records the outcome of a live lookup. Best-effort: an unwritable cache must not hide a budget
+  // that did arrive - the next render simply asks again.
+  const remember = async (budget: { text: string; pct: number } | null, budgetError: string | null) => {
+    try {
+      await writeFile(
+        CACHE_FILE,
+        JSON.stringify({ schema: CACHE_SCHEMA, profile: profileName, ts: Date.now(), value: budget, error: budgetError }),
+        'utf8'
+      );
+    } catch {
+      // ignore
+    }
+    return { budget, budgetError };
+  };
+
   try {
     const res = await fetchImpl(`${baseUrl}/v1/analytics/budget_usage`, {
       headers: { 'Content-Type': 'application/json', 'X-CodeMie-Client': 'codemie-cli', ...headers },
@@ -784,15 +817,13 @@ export async function resolveBudget({
     // above, so skip the segment silently the way those do. Genuine failures — HTTP errors, auth
     // — still surface, because those are cases where a budget was expected and did not arrive.
     const contentType = res.headers?.get?.('content-type') ?? '';
-    if (!contentType.includes('json')) return { budget: null, budgetError: null };
+    if (!contentType.includes('json')) return await remember(null, null);
 
     const json = await res.json() as { data?: { rows?: unknown[] } };
     const row = matchBudgetRow(json?.data?.rows, userEmail);
     if (!row) throw new Error('budget row not found');
 
-    const budget = formatBudgetSegment(row);
-    await writeFile(CACHE_FILE, JSON.stringify({ schema: CACHE_SCHEMA, profile: profileName, ts: Date.now(), value: budget }), 'utf8');
-    return { budget, budgetError: null };
+    return await remember(formatBudgetSegment(row), null);
   } catch (e) {
     // Node collapses every transport failure into a bare "fetch failed" and hides the real
     // reason on `cause` — ECONNREFUSED, ENOTFOUND, a TLS error. On its own that message names
@@ -802,7 +833,7 @@ export async function resolveBudget({
       ? (e.cause as { code: unknown }).code
       : undefined;
     const message = e instanceof Error ? e.message : String(e);
-    return { budget: null, budgetError: code ? `budget: ${code}` : message };
+    return await remember(null, code ? `budget: ${code}` : message);
   }
 }
 
@@ -842,7 +873,7 @@ export async function main() {
   // unreachable API, no such endpoint) is not worth a permanent warning slot — the segment simply
   // disappears until a lookup succeeds.
   const budgetError = budgetResult.budgetError === 'reauthenticate' ? budgetResult.budgetError : null;
-  process.stdout.write(buildStatusLine({ ...basic, budget: budgetResult.budget, budgetError, branch, actualModel, cost, costExact }));
+  process.stdout.write(buildStatusLine({ ...basic, budget: budgetResult.budget, budgetError, branch, actualModel, cost, costExact, managed: isManagedSession() }));
 }
 
 // Compares decoded paths (not raw strings) so this correctly matches even when the

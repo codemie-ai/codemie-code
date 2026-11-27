@@ -1,0 +1,146 @@
+{
+  "schema": 1,
+  "branch": "feat/proxy-analytics-cli-redesign",
+  "head": "6f8ddd29da96ac1781e3cb8fc92ef8f5c7adef81",
+  "runner": "custom",
+  "started_at": "2026-11-18T11:33:33Z",
+  "completed_at": "2026-11-18T11:41:55Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1184,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2857,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2762,
+      "command": "npm run typecheck",
+      "exit_code": 0,
+      "notes": "Also enforced by .husky/pre-commit (npm run typecheck); covered here."
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5132,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 165815,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "Only failure: src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts (worker heap OOM, then vitest-pool terminate timeout). 635/636 files, 11746 tests passed; the 8 not-passed tests are that file. Re-run alone: same OOM (exit 1). Caller-identified known crash, also on origin/main; no other unit failures."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 55763,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0,
+      "notes": "Passed in full run under load avg ~7-11: 47 files passed, 1 skipped; 387 tests passed, 10 skipped. tests/integration/hook-stdout.test.ts passed in this run; previous hook-stdout timeouts did not recur, consistent with host load. Run env had CODEMIE_* and NO_PROXY/no_proxy removed."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 773,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: 'No staged changes to scan' (exit 0). Script scans only the staged diff and nothing is staged. To enable: stage the changes, or run gitleaks over the branch range (e.g. gitleaks git --log-opts=608d79a1..HEAD with .gitleaks.toml). CI secrets-detection still re-scans for real."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 312,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Checks HEAD~1..HEAD only (1 of the branch commits); the squash-merge PR title is linted separately in CI (ci-pr-title)."
+    },
+    {
+      "id": "pre-commit-aggregate",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 6223,
+      "command": "npm run check:pre-commit",
+      "exit_code": 0
+    },
+    {
+      "id": "full-ci",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 184166,
+      "command": "npm run ci",
+      "exit_code": 1,
+      "notes": "Stopped at the unit step (license-check, lint and build passed), only on the known copilot-managed-report OOM (635/636 files, 11746 tests passed). No timing-assertion failures this run. The integration step was not reached inside npm run ci, but the standalone integration gate passed."
+    },
+    {
+      "id": "lint-staged",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 480,
+      "command": "npx lint-staged",
+      "exit_code": 0,
+      "notes": "Self-skip: '\u2192 lint-staged could not find any staged files.' Its checks (eslint --max-warnings=0, vitest related) are covered by the lint and unit gates here. To enable: stage the changed .ts files."
+    },
+    {
+      "id": "commit-msg",
+      "source": "hook",
+      "status": "N/A",
+      "command": "npx --no -- commitlint --edit \"$1\"",
+      "notes": "Needs a commit message file from git; the HEAD message is covered by the commitlint gate."
+    },
+    {
+      "id": "ci-secrets-detection",
+      "source": "ci",
+      "status": "N/A",
+      "command": "codemie-ai/ci-workflows reusable-secrets-detection.yml@main",
+      "notes": "Remote reusable workflow; cannot run locally. The local equivalent (secrets) self-skipped, so this check is still owed to CI."
+    },
+    {
+      "id": "ci-test-windows",
+      "source": "ci",
+      "status": "N/A",
+      "command": "npx vitest run --project unit && npx vitest run --project cli (windows-latest)",
+      "notes": "Needs a windows-latest runner; the per-guide CRLF repro was not attempted. Still owed to CI."
+    },
+    {
+      "id": "ci-codeql",
+      "source": "ci",
+      "status": "N/A",
+      "command": ".github/workflows/codeql.yml",
+      "notes": "Runs only on GitHub CodeQL infrastructure. Still owed to CI."
+    },
+    {
+      "id": "ci-pr-title",
+      "source": "ci",
+      "status": "N/A",
+      "command": "codemie-ai/ci-workflows reusable-commit-lint.yml@main",
+      "notes": "Needs an open PR title. Still owed to CI."
+    }
+  ],
+  "failures": {
+    "unit": "20: 0x103a277e8 Builtins_AsyncFunctionAwaitResolveClosure [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n21: 0x103afce58 Builtins_PromiseFulfillReactionJob [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n22: 0x103a16bd0 Builtins_RunMicrotasks [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n23: 0x1039e67b0 Builtins_JSRunMicrotasksEntry [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n24: 0x102f013f0 v8::internal::(anonymous namespace)::Invoke(v8::internal::Isolate*, v8::internal::(anonymous namespace)::InvokeParams const&) [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n25: 0x102f01c64 v8::internal::(anonymous namespace)::InvokeWithTryCatch(v8::internal::Isolate*, v8::internal::(anonymous namespace)::InvokeParams const&) [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n26: 0x102f01da0 v8::internal::Execution::TryRunMicrotasks(v8::internal::Isolate*, v8::internal::MicrotaskQueue*) [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n27: 0x102f30b44 v8::internal::MicrotaskQueue::RunMicrotasks(v8::internal::Isolate*) [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n28: 0x102f314a4 v8::internal::MicrotaskQueue::PerformCheckpoint(v8::Isolate*) [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n29: 0x1029970b8 node::InternalCallbackScope::Close() [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n30: 0x102996a90 node::InternalCallbackScope::~InternalCallbackScope() [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n31: 0x102ac0ba4 node::fs::FSReqPromise<node::AliasedBufferBase<double, v8::Float64Array>>::Resolve(v8::Local<v8::Value>) [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n32: 0x102ad3efc node::fs::AfterInteger(uv_fs_s*) [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n33: 0x102ac1244 node::MakeLibuvRequestCallback<uv_fs_s, void (*)(uv_fs_s*)>::Wrapper(uv_fs_s*) [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n34: 0x1039c1f74 uv__work_done [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n35: 0x1039c59c4 uv__async_io [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n36: 0x1039da2bc uv__io_poll [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n37: 0x1039c6318 uv_run [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n38: 0x1029986a8 node::SpinEventLoopInternal(node::Environment*) [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n39: 0x102b27828 node::NodeMainInstance::Run() [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n40: 0x102a77dfc node::Start(int, char**) [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n41: 0x1832854e4 start [/usr/lib/dyld]\n[vitest-pool]: Timeout terminating forks worker for test files /Users/Nikita_Levyankov/repos/codemie-ai/codemie-code/src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts.\n\u23af\u23af\u23af\u23af\u23af\u23af Unhandled Errors \u23af\u23af\u23af\u23af\u23af\u23af\n\nVitest caught 1 unhandled error during the test run.\nThis might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.\n\n\u23af\u23af\u23af\u23af\u23af\u23af Unhandled Error \u23af\u23af\u23af\u23af\u23af\u23af\u23af\nError: [vitest-pool]: Worker forks emitted error.\n \u276f EventEmitter.<anonymous> node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3445:22\n \u276f EventEmitter.emit node:events:514:28\n \u276f ChildProcess.emitUnexpectedExit node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3012:22\n \u276f ChildProcess.emit node:events:514:28\n \u276f Process.ChildProcess._handle.onexit node:internal/child_process:324:12\n\nCaused by: Error: Worker exited unexpectedly\n \u276f ChildProcess.emitUnexpectedExit node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3011:33\n \u276f ChildProcess.emit node:events:514:28\n \u276f Process.ChildProcess._handle.onexit node:internal/child_process:324:12\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\n\n\n Test Files  635 passed (636)\n      Tests  11746 passed (11754)\n     Errors  1 error\n   Start at  13:34:00\n   Duration  165.08s (transform 25.55s, setup 0ms, import 153.86s, tests 356.32s, environment 50ms)\n\n",
+    "full-ci": "20: 0x10140b7e8 Builtins_AsyncFunctionAwaitResolveClosure [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n21: 0x1014e0e58 Builtins_PromiseFulfillReactionJob [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n22: 0x1013fabd0 Builtins_RunMicrotasks [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n23: 0x1013ca7b0 Builtins_JSRunMicrotasksEntry [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n24: 0x1008e53f0 v8::internal::(anonymous namespace)::Invoke(v8::internal::Isolate*, v8::internal::(anonymous namespace)::InvokeParams const&) [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n25: 0x1008e5c64 v8::internal::(anonymous namespace)::InvokeWithTryCatch(v8::internal::Isolate*, v8::internal::(anonymous namespace)::InvokeParams const&) [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n26: 0x1008e5da0 v8::internal::Execution::TryRunMicrotasks(v8::internal::Isolate*, v8::internal::MicrotaskQueue*) [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n27: 0x100914b44 v8::internal::MicrotaskQueue::RunMicrotasks(v8::internal::Isolate*) [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n28: 0x1009154a4 v8::internal::MicrotaskQueue::PerformCheckpoint(v8::Isolate*) [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n29: 0x10037b0b8 node::InternalCallbackScope::Close() [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n30: 0x10037aa90 node::InternalCallbackScope::~InternalCallbackScope() [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n31: 0x1004a4ba4 node::fs::FSReqPromise<node::AliasedBufferBase<double, v8::Float64Array>>::Resolve(v8::Local<v8::Value>) [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n32: 0x1004b7efc node::fs::AfterInteger(uv_fs_s*) [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n33: 0x1004a5244 node::MakeLibuvRequestCallback<uv_fs_s, void (*)(uv_fs_s*)>::Wrapper(uv_fs_s*) [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n34: 0x1013a5f74 uv__work_done [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n35: 0x1013a99c4 uv__async_io [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n36: 0x1013be2bc uv__io_poll [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n37: 0x1013aa318 uv_run [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n38: 0x10037c6a8 node::SpinEventLoopInternal(node::Environment*) [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n39: 0x10050b828 node::NodeMainInstance::Run() [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n40: 0x10045bdfc node::Start(int, char**) [/Users/Nikita_Levyankov/.nvm/versions/node/v24.22.0/bin/node]\n41: 0x1832854e4 start [/usr/lib/dyld]\n[vitest-pool]: Timeout terminating forks worker for test files /Users/Nikita_Levyankov/repos/codemie-ai/codemie-code/src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts.\n\u23af\u23af\u23af\u23af\u23af\u23af Unhandled Errors \u23af\u23af\u23af\u23af\u23af\u23af\n\nVitest caught 1 unhandled error during the test run.\nThis might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.\n\n\u23af\u23af\u23af\u23af\u23af\u23af Unhandled Error \u23af\u23af\u23af\u23af\u23af\u23af\u23af\nError: [vitest-pool]: Worker forks emitted error.\n \u276f EventEmitter.<anonymous> node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3445:22\n \u276f EventEmitter.emit node:events:514:28\n \u276f ChildProcess.emitUnexpectedExit node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3012:22\n \u276f ChildProcess.emit node:events:514:28\n \u276f Process.ChildProcess._handle.onexit node:internal/child_process:324:12\n\nCaused by: Error: Worker exited unexpectedly\n \u276f ChildProcess.emitUnexpectedExit node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3011:33\n \u276f ChildProcess.emit node:events:514:28\n \u276f Process.ChildProcess._handle.onexit node:internal/child_process:324:12\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\n\n\n Test Files  635 passed (636)\n      Tests  11746 passed (11754)\n     Errors  1 error\n   Start at  13:38:10\n   Duration  166.68s (transform 35.30s, setup 0ms, import 163.58s, tests 391.19s, environment 42ms)\n\n"
+  }
+}

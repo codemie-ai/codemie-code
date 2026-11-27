@@ -1,0 +1,208 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "request-changes",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "User approved: CR-001..CR-006 resolved; CR-007 to be fixed by commit reword right after approval"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "User asked to fix all 7 findings CR-001..CR-007 in one fix-up round (code fixes + reword 7 commit subjects: ticket key to footer)"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "User approved: CR-001..CR-006 resolved; CR-007 to be fixed by commit reword right after approval"
+    }
+  ],
+  "reviewed_head": "a4244ceef84af236c761476e8a302ca8b9f63f30",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "CR-001 to CR-006 are resolved against the fix-up diff and current source; CR-007 (commit subjects carry the ticket key, kind evidence) has no fix_evidence yet and stays unresolved by the caller's design, so the round cannot approve. codex.plugin.ts (596 lines) was not touched by the fix-up.",
+  "confidence": "medium",
+  "check_confidence": "medium",
+  "risk_flags": [
+    "data-contract"
+  ],
+  "open": 0,
+  "closed": {
+    "fixed": 6,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 1
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/agents/plugins/codex/codex-metrics-extractor.ts",
+      "title": "Extractor and processor disagree on pending apply_patch",
+      "problem": "The extractor counts a result-less apply_patch in tools.apply_patch and backfills it as a failure, while the processor emits no delta until a result arrives.",
+      "impact": "Local summary and synced records report different apply_patch and failure counts for the same rollout, violating spec S2/AC3.",
+      "recommendation": "Treat pending calls identically in both paths (skip in the extractor, or emit in both); update the extractor test expecting failure 3 including call_pending.",
+      "status": "resolved",
+      "check_notes": "Extractor now skips calls with no result; test pins it and failure count 2.",
+      "fix": {
+        "change": "extractor skips result-less apply_patch calls, matching the processor",
+        "test": "codex-metrics-extractor.test.ts"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/codex/codex.incremental-sync.ts",
+      "line": 148,
+      "title": "Idle tick overwrites in-flight tick promise",
+      "problem": "When the interval fires during a running tick, tick() returns at once via tickInFlight, and its instant promise replaces the real one in tickPromises.",
+      "impact": "stopCodexIncrementalSync awaits the no-op promise, so the running tick can still write after the final pass and revert the stored active duration.",
+      "recommendation": "Do not store a new promise when tickInFlight is already true, so stop awaits the real running tick.",
+      "status": "resolved",
+      "check_notes": "Interval callback returns early when tickInFlight is set; new stop test covers it.",
+      "fix": {
+        "change": "interval callback returns early while a tick is in flight, so stop awaits the real tick",
+        "test": "codex.incremental-sync.test.ts"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/codex/codex.plugin.ts",
+      "line": 428,
+      "title": "Parent-rollout active time wiring untested",
+      "problem": "storeActiveDuration computes duration from the resolved parent rollout, but every lifecycle test mocks resolveParentRollout as identity.",
+      "impact": "A regression that passes the child rollout would undercount active time with no failing test; spec S3 requires this to be pinned.",
+      "recommendation": "Add a lifecycle test with a child picked rollout and a parent file holding the turns, asserting activeDurationMs equals the parent's turn time.",
+      "status": "resolved",
+      "check_notes": "Lifecycle test resolves a parent rollout and asserts 45000 ms from the parent.",
+      "fix": {
+        "change": "lifecycle test with child picked rollout and parent holding the turns",
+        "test": "codex.plugin.lifecycle.test.ts"
+      }
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/codex/codex.session.ts",
+      "title": "codex.session.ts exceeds 500-line limit",
+      "problem": "The file grew from 474 to 572 lines; codex.plugin.ts is also 596 lines.",
+      "impact": "Violates the code-quality guide's file-size limit, which the standards audit treats as blocking.",
+      "recommendation": "Move the new rollout-family loading helpers into a separate module under session/.",
+      "status": "resolved",
+      "check_notes": "Helpers moved to session/codex-rollout-family.ts; codex.session.ts is 449 lines. codex.plugin.ts 596 untouched.",
+      "fix": {
+        "change": "rollout family helpers moved to session/codex-rollout-family.ts and re-exported; codex.session.ts now 449 lines",
+        "test": "n/a"
+      }
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/codex/session/codex-apply-patch.ts",
+      "title": "outputFailed text heuristic misclassifies successes",
+      "problem": "Output beginning with error/failed or containing verification failed is treated as failure even when an exit code says success. Reachability unconfirmed.",
+      "impact": "A successful patch can be counted as failed and its file operations dropped.",
+      "recommendation": "Prefer a numeric exit_code when present (exit !== 0) before the text heuristic.",
+      "status": "resolved",
+      "check_notes": "Numeric exit_code now decides before the text heuristic; test added.",
+      "fix": {
+        "change": "numeric exit_code decides outcome before text heuristic",
+        "test": "codex-apply-patch.test.ts"
+      }
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/codex/session/processors/codex.metrics-processor.ts",
+      "line": 211,
+      "title": "Family fallback drops sub-agent rollouts",
+      "problem": "When loadRolloutFamilyRecords throws, familyRecords returns only the picked records, whereas the no-rolloutPath branch also keeps session.subagents.",
+      "impact": "Sub-agent apply_patch calls loaded in the session go uncounted on that error path.",
+      "recommendation": "Return [...records, ...subagents.flatMap((s) => s.messages as CodexRolloutRecord[])] in the catch.",
+      "status": "resolved",
+      "check_notes": "Catch branch keeps sub-agent messages; test added.",
+      "fix": {
+        "change": "family fallback keeps loaded sub-agent records",
+        "test": "codex.metrics-processor.test.ts"
+      }
+    },
+    {
+      "id": "CR-007",
+      "kind": "evidence",
+      "severity": "major",
+      "triage": "patch",
+      "file": "unknown",
+      "title": "Commit subjects embed ticket key",
+      "problem": "7 of 8 commit subjects contain EPMCDME-17102; git-workflow.md puts the ticket in the footer.",
+      "impact": "Documented commit-format standard is not met across the review range.",
+      "recommendation": "Reword the subjects to drop the ticket key and add it to the commit footer.",
+      "status": "wont-fix",
+      "check_notes": "No fix_evidence mapped; commits are rewritten after this round, as the caller stated.",
+      "disposition": {
+        "rationale": "User approved the check round with CR-007 open. The code findings CR-001..CR-006 are resolved. CR-007 (ticket key in 7 commit subjects) cannot be fixed before the check round because a reword changes every commit hash and breaks the round's reviewed_head range. The caller rewords the commits right after this approval (key moves to the footer) and proves it from git log before the review is pinned.",
+        "source": "hitl"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "S2 extractor uses same pairing so local summary and synced records agree (AC 3)",
+      "status": "partial",
+      "notes": "Extractor counts pending apply_patch and backfills failure; processor emits nothing."
+    },
+    {
+      "kind": "spec",
+      "item": "S3 test pins older parent + fresh child: active time from parent",
+      "status": "partial",
+      "notes": "Edits case pinned; active-time case not pinned, resolveParentRollout mocked as identity."
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "partial",
+      "notes": "7 of 8 subjects embed ticket key EPMCDME-17102; guide wants it in the footer."
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "codex.session.ts grew 474 to 572 lines; codex.plugin.ts 596; guide limit is 500."
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "No credential, header or logging issues found."
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "Spec S2/AC3 is only partly met (extractor and processor disagree on pending apply_patch) and a stop/tick race can let a late tick overwrite the final duration; standards flag commit subjects and a file over 500 lines. Active-time parent wiring is untested. No deferred items; about 8 candidates dismissed as handled, NaN-from-launcher-env, or out of scope (no backfill non-goal). Reachability of CR-005 was not confirmed.",
+    "confidence": "medium",
+    "risk_flags": [
+      "data-contract"
+    ]
+  }
+}

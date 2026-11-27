@@ -25,6 +25,7 @@ import { SessionStore } from '../../../../agents/core/session/SessionStore.js';
 import { MetricsSyncProcessor } from './processors/metrics/metrics-sync-processor.js';
 import { createSyncProcessor as createConversationSyncProcessor } from './processors/conversations/syncProcessor.js';
 import { applyProcessingSyncUpdates } from '../../../../agents/core/session/sync-state-utils.js';
+import { attemptOutcome, noteLocalFailure } from './bounded-request.js';
 import { isExternalOrigin } from '../../../../agents/core/session/session-origin-audit.js';
 
 export interface SessionSyncResult {
@@ -269,6 +270,16 @@ export class SessionSyncer {
           } else {
             logger.error(`[SessionSyncer] Processor ${processor.name} failed: ${result.message}`);
             failedProcessors.push(processor.name);
+            // A failed result no request outcome explains is a local failure: no server saw it
+            if (context.abortSignal && attemptOutcome(context.abortSignal) === undefined) noteLocalFailure(context.abortSignal);
+          }
+
+          // The run ends at the first request outcome that is not ok: the later processors wait for the next run
+          const outcome = context.stopAtFirstFailure && context.abortSignal ? attemptOutcome(context.abortSignal) : undefined;
+          if (outcome !== undefined && outcome !== 'not-attempt') {
+            skippedProcessors = this.processors.length - index - 1;
+            logger.debug(`[SessionSyncer] Request outcome ${outcome}, ending the run`);
+            break;
           }
 
         } catch (error: unknown) {
@@ -281,6 +292,7 @@ export class SessionSyncer {
           processorResults[processor.name] = failedResult;
           allResults.push(failedResult);
           failedProcessors.push(processor.name);
+          if (context.abortSignal && attemptOutcome(context.abortSignal) === undefined) noteLocalFailure(context.abortSignal);
         }
       }
 

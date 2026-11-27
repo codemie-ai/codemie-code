@@ -6,6 +6,10 @@ import {
   orderModelsForPicker,
 } from '../../../providers/plugins/sso/sso.http-client.js';
 import { fetchCodeMieCatalogForEnv, projectFromEnv } from '../../../providers/plugins/sso/sso.catalog.js';
+import {
+  claudeExtraModelsFromEnv,
+  isServableCatalogModel as isServableModel,
+} from '../../../providers/plugins/sso/sso.claude-extra-models.js';
 import { getPlatformUrlFromEnv } from '../../../providers/core/codemie-auth-helpers.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
@@ -42,16 +46,6 @@ const TIER_ENV_VAR: Record<ClaudeModelTier, string> = {
   opus: 'CODEMIE_OPUS_MODEL',
 };
 
-const CLAUDE_INCOMPATIBLE_MODEL_PATTERNS: RegExp[] = [
-  /embedding/i,
-  /rerank/i,
-  /whisper/i,
-  /tts/i,
-  /moderation/i,
-  /image/i,
-  /vision-only/i,
-];
-
 // `model` (the default tier) accepts any Claude-family model; the other tiers
 // must additionally match their own name.
 const TIER_PATTERN: Record<ClaudeModelTier, RegExp | null> = {
@@ -81,17 +75,6 @@ function modelIdentifiers(model: LlmModel): string[] {
   return [model.deployment_name, model.base_name, model.label].filter(
     (value): value is string => Boolean(value)
   );
-}
-
-/**
- * Whether a deployment can serve an agent session at all: enabled, tool- and stream-capable,
- * and not an embedding/rerank/audio endpoint. Says nothing about model family on purpose —
- * `isClaudeCompatibleModel` layers the family check on top, and only for auto-selection.
- */
-function isServableModel(model: LlmModel): boolean {
-  if (!model.enabled) return false;
-  if (model.features?.tools === false || model.features?.streaming === false) return false;
-  return !CLAUDE_INCOMPATIBLE_MODEL_PATTERNS.some((pattern) => pattern.test(getSearchText(model)));
 }
 
 function isClaudeCompatibleModel(model: LlmModel, tier: ClaudeModelTier): boolean {
@@ -277,6 +260,9 @@ export async function buildModelLabelMap(env: NodeJS.ProcessEnv): Promise<Record
   }
 }
 
+/** Picker description for an opted-in non-Claude model. */
+const NON_CLAUDE_MODEL_NOTE = 'Not a Claude model; some Claude Code features may not work';
+
 export interface ModelPickerOption {
   model: string;
   label: string;
@@ -289,7 +275,9 @@ export interface ModelPickerOption {
  * a plain Claude-named deployment, or a router (Switchyard virtual router / LiteLLM auto-router
  * — see `isRouterCatalogEntry`) whose target is Claude-family (see `isClaudeFamilyModel`).
  * A router targeting a different family (e.g. a GPT auto-router) is excluded — Claude Code can't
- * drive it anyway, so listing it would just be catalog noise.
+ * drive it anyway, so listing it would just be catalog noise. The exception is a model the
+ * profile opted into via `claudeExtraModels` (`codemie-claude models select`): it is listed
+ * with a note that it is not a Claude model.
  *
  * Ranked with the same `rankModel`/`compareRankedModels` ordering already used for tier
  * auto-resolution, then the selected model, routers and the rest are grouped in that order (stable, so each group keeps that ranking).
@@ -304,8 +292,13 @@ export interface ModelPickerOption {
 export async function buildModelPickerOptions(env: NodeJS.ProcessEnv): Promise<ModelPickerOption[]> {
   try {
     const catalog = await fetchCatalog(env);
+    // Non-Claude models the profile opted into (`codemie-claude models select`) join the
+    // lineup; they rank after Claude models, since their ids carry no Claude version.
+    const extraIds = new Set(claudeExtraModelsFromEnv(env));
+    const isOptedIn = (model: LlmModel): boolean =>
+      modelIdentifiers(model).some((id) => extraIds.has(id));
     const rankedByScore = catalog
-      .filter((model) => isServableModel(model) && isClaudeFamilyModel(model))
+      .filter((model) => isServableModel(model) && (isClaudeFamilyModel(model) || isOptedIn(model)))
       .map((model) => {
         try {
           return { ranked: rankModel(model), model };
@@ -336,7 +329,8 @@ export async function buildModelPickerOptions(env: NodeJS.ProcessEnv): Promise<M
     for (const { ranked: rankedModel, model } of ranked) {
       if (seen.has(rankedModel.id)) continue; // a model may rank under >1 identifier
       seen.add(rankedModel.id);
-      const description = describeRouter(model, labelIndex) || undefined;
+      const description = describeRouter(model, labelIndex)
+        || (isClaudeFamilyModel(model) ? undefined : NON_CLAUDE_MODEL_NOTE);
       options.push({
         model: applyContextWindow(rankedModel.id, model.max_input_tokens),
         label: model.label || rankedModel.id,

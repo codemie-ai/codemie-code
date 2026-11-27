@@ -172,12 +172,23 @@ describe('Proxy header contract — conditional headers (end-to-end, in-process)
       resolveForRequest: async () => resolve.value,
     } as unknown as ProxyConfig['desktopRepositoryResolver'];
     harness = await startHarness({ desktopRepositoryResolver });
-    expect((await callProxy(harness.proxyUrl, `Bearer ${GATEWAY_KEY}`)).status).toBe(200);
+    // A Claude Desktop request: its named key and the session id Desktop sends
+    const desktopRequest = () => fetch(`${harness!.proxyUrl}/v1/messages`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${GATEWAY_KEY}.claude-desktop`,
+        'x-claude-code-session-id': 'desktop-session-1',
+      },
+      body: JSON.stringify({ hello: 'world' }),
+    });
+    expect((await desktopRequest()).status).toBe(200);
+    expect(harness.captured()['x-codemie-client']).toBe('claude-desktop');
     expect(harness.captured()['x-codemie-repository']).toBe(encodeAttributionHeader('клиент/репо'));
     expect(harness.captured()['x-codemie-branch']).toBe(encodeAttributionHeader('фича/икс'));
 
     resolve.value = {};
-    expect((await callProxy(harness.proxyUrl, `Bearer ${GATEWAY_KEY}`)).status).toBe(200);
+    expect((await desktopRequest()).status).toBe(200);
     expect(harness.captured()['x-codemie-repository']).toBe('Cowork');
   });
 

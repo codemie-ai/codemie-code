@@ -1,4 +1,4 @@
-import type {AgentMetadata} from '../../core/types.js';
+import type {AgentMetadata, ProviderSettingsCheckInput, ProviderSettingsCheckOutcome} from '../../core/types.js';
 import {ClaudePlugin, ClaudePluginMetadata} from './claude.plugin.js';
 
 /**
@@ -28,6 +28,9 @@ export const ClaudeAcpPluginMetadata: AgentMetadata = {
 
   // No native installer - npm only
   installerUrls: undefined,
+
+  // Installs via the npm prefix, so the PATH shadow check applies (parent opts out)
+  pathShadowCheck: undefined,
 
   // SSO config - separate clientType for analytics distinction
   ssoConfig: {
@@ -96,5 +99,13 @@ export class ClaudeAcpPlugin extends ClaudePlugin {
    */
   async getVersion(): Promise<string | null> {
     return null;
+  }
+
+  /**
+   * Same check as Claude Code, but never asks: stdio carries the editor's JSON-RPC, so a conflict stops
+   * the launch with guidance instead.
+   */
+  async checkProviderSettings(input: ProviderSettingsCheckInput): Promise<ProviderSettingsCheckOutcome> {
+    return super.checkProviderSettings({ ...input, canPrompt: false });
   }
 }

@@ -1,0 +1,34 @@
+{
+  "decision": "approve",
+  "confidence": "medium",
+  "rationale": "Delta check of 47ce56a0..16f80889 (2 files, +79/-8) on top of the full balanced review of 78270935..47ce56a0. Not a relaunched full review: the lenses were not re-run; the changed guard, its callers and the new tests were read and exercised. CR-001 and CR-004 are fixed and both are reproduced on the previous source. CR-002 is resolved by decision (keep local commits, conventional PR title, Jira key in the body). CR-003 and CR-005 stay deferred as advisory. No new finding. Medium, not high: no spec in no-spec mode and the lenses were not re-run on the combined range.",
+  "reviewed_range": "78270935..16f80889",
+  "reviewed_head": "16f808897cf250d4d3de0ec5f751df1a7af6e0db",
+  "delta_from": "47ce56a0ffc6bfd59368f0c8582efff003f6dc01",
+  "delta_diff": "delta-47ce56a0..16f80889.local.diff",
+  "delta_diff_sha256": "8e122d96b62f6272a0cb87ebbe8d400459b7f58d88d5215b5c5e742969a1341c",
+  "prior_review": {
+    "dir": "docs/superpowers/reviews/2026-11-24-epmcdme-17840-copilot-session-end",
+    "head": "47ce56a0ffc6bfd59368f0c8582efff003f6dc01",
+    "diff_sha256": "79a2598dba630f846c025a6e32213c78d34571152e8f2200fde8d52762874c1d",
+    "decision": "request-changes",
+    "kept_intact": true
+  },
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    {
+      "rule": "git-workflow: ticket key in the body footer, not the commit subject",
+      "status": "deviation-accepted",
+      "detail": "Commits 0d934ffd, 6423e6a7 and 47ce56a0 carry the key in the subject. Per the owner's decision the local commits are kept; the PR title is conventional without the key and the PR body carries EPMCDME-17840. The new commit 16f80889 follows the rule (key in a Refs footer)."
+    }
+  ],
+  "findings": [],
+  "prior_findings": [
+    {"id": "CR-001", "status": "fixed", "evidence": "recoveredEndCovers now compares the run (latest start at or before each timestamp) instead of timestamp order; test 'a late native end stamped AFTER the shutdown' (5s, 9s and wall-clock NOW) fails on 47ce56a0 and passes on 16f80889; 'a native end after a resume start' keeps the resumed run's end."},
+    {"id": "CR-002", "status": "resolved-by-decision", "evidence": "Existing local commits kept; PR title conventional, Jira key in the PR body."},
+    {"id": "CR-003", "status": "deferred", "evidence": "Advisory; inspected map is never pruned. Not changed."},
+    {"id": "CR-004", "status": "fixed", "evidence": "The recovery append's skipIf now runs runEndedOrSuperseded under the spool lock: a newer start after the shutdown leaves the older run's end appended (test passes on both sources, a control), a newer start at or before the shutdown withholds the older end and the next tick ends the newer run (fails on 47ce56a0, passes on 16f80889)."},
+    {"id": "CR-005", "status": "deferred", "evidence": "Advisory; the awaited recovery pass in tick is unchanged and no fire-and-forget tick was added."}
+  ]
+}

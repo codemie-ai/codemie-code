@@ -215,6 +215,22 @@ describe('CopilotCliSessionAdapter.parseSessionFile', () => {
     expect(parsed.metrics!.userPrompts![1].text).toBe('/tmp is full');
   });
 
+  it('does not count a sub-agent injected prompt as a user prompt or command', async () => {
+    const f = join(dir, 'subagent.jsonl');
+    const review = 'The user has requested a review via the /review command. Use the task tool.';
+    writeFileSync(
+      f,
+      [
+        { type: 'user.message', data: { content: 'check my branch' } },
+        { type: 'user.message', data: { content: review, transformedContent: review, source: 'agent-sess-sub' } },
+      ].map((l) => JSON.stringify(l)).join('\n') + '\n'
+    );
+
+    const parsed = await newAdapter().parseSessionFile(f, 'sess-sub');
+    expect(parsed.metrics!.userPrompts).toEqual([{ count: 1, text: 'check my branch' }]);
+    expect(parsed.metrics!.commandInvocations ?? {}).toEqual({});
+  });
+
   it('records every file of a successful apply_patch call', async () => {
     const f = join(dir, 'patch.jsonl');
     const patch = '*** Begin Patch\n*** Add File: /repo/app/new.ts\n+x\n*** Update File: /repo/app/a.ts\n-a\n+b\n*** End Patch';
@@ -300,8 +316,20 @@ describe('CopilotCliSessionAdapter.parseSessionFile', () => {
         },
         {
           type: 'user.message',
+          timestamp: '2026-08-11T11:29:21.500Z',
+          data: { text: '<copilot_artifacts>\nartifacts_dir: /Users/dev/.copilot/artifacts/x\n</copilot_artifacts>\n<branch_rename_request>\nrename\n</branch_rename_request>\nAdd a test' },
+        },
+        {
+          type: 'user.message',
           timestamp: '2026-08-11T11:29:22.000Z',
           data: { text: '<copilot_tauri_workspace>only preamble</copilot_tauri_workspace>' },
+        },
+        {
+          type: 'user.message',
+          timestamp: '2026-08-11T11:29:23.000Z',
+          data: {
+            text: 'Read notes.txt <system_notification> Reminder: rename the session. </system_notification>\n<app_user_message_source_json>{"id":"m1"}</app_user_message_source_json>',
+          },
         },
       ].map((l) => JSON.stringify(l)).join('\n') + '\n'
     );
@@ -311,8 +339,14 @@ describe('CopilotCliSessionAdapter.parseSessionFile', () => {
       (m) => m.type === 'user'
     );
 
-    expect(parsed.metrics!.userPrompts).toEqual([{ count: 1, text: 'Fix the bug' }]);
+    expect(parsed.metrics!.userPrompts).toEqual([
+      { count: 1, text: 'Fix the bug' },
+      { count: 1, text: 'Add a test' },
+      { count: 1, text: 'Read notes.txt' },
+    ]);
     expect(users[0].message?.content).toBe('Fix the bug');
+    expect(users[1].message?.content).toBe('Add a test');
+    expect(users[3].message?.content).toBe('Read notes.txt');
   });
 
   it('merges session.shutdown line totals into the per-file operations without duplicating', async () => {

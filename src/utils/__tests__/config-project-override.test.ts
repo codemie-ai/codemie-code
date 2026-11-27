@@ -12,6 +12,7 @@ import type { MultiProviderConfig, CodeMieIntegrationInfo } from '../../env/type
 import * as paths from '../paths.js';
 import { PassThrough } from 'node:stream';
 import { logger } from '../logger.js';
+import { resetModelOriginRecords } from '../model-origin.js';
 
 // Test utilities
 const TEST_DIR = path.join(process.cwd(), 'tmp-test-config');
@@ -832,5 +833,148 @@ describe('ConfigLoader - workspace resolution and project-only composition', () 
         expect((await ConfigLoader.resolveProfileIdentity(workingDir, 'g')).projectOrigin).toBe('none');
       });
     });
+  });
+});
+
+describe('ConfigLoader - CODEMIE_MODEL override resolution', () => {
+  const ORIGINAL_GLOBAL_CONFIG = (ConfigLoader as unknown as { GLOBAL_CONFIG: string }).GLOBAL_CONFIG;
+  const ORIGINAL_GLOBAL_CONFIG_DIR = (ConfigLoader as unknown as { GLOBAL_CONFIG_DIR: string }).GLOBAL_CONFIG_DIR;
+  const workingDir = path.join(TEST_DIR, 'project');
+  let envBefore: NodeJS.ProcessEnv;
+
+  async function writeConfig(
+    file: string,
+    activeProfile: string,
+    profiles: Record<string, Partial<MultiProviderConfig['profiles'][string]>>
+  ): Promise<void> {
+    const config = { version: 2, activeProfile, profiles };
+    await fs.writeFile(file, JSON.stringify(config, null, 2));
+  }
+
+  beforeEach(async () => {
+    envBefore = { ...process.env };
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith('CODEMIE_') && key !== 'CODEMIE_HOME') delete process.env[key];
+    }
+    resetModelOriginRecords();
+    await fs.mkdir(GLOBAL_CONFIG_DIR, { recursive: true });
+    await fs.mkdir(path.join(workingDir, '.codemie'), { recursive: true });
+    vi.spyOn(paths, 'getCodemieHome').mockReturnValue(GLOBAL_CONFIG_DIR);
+    vi.spyOn(paths, 'getCodemiePath').mockImplementation((subpath: string) => path.join(GLOBAL_CONFIG_DIR, subpath));
+    (ConfigLoader as unknown as { GLOBAL_CONFIG: string }).GLOBAL_CONFIG = GLOBAL_CONFIG_PATH;
+    (ConfigLoader as unknown as { GLOBAL_CONFIG_DIR: string }).GLOBAL_CONFIG_DIR = GLOBAL_CONFIG_DIR;
+    await writeConfig(GLOBAL_CONFIG_PATH, 'p', { p: { provider: 'openai', model: 'stored-model', apiKey: 'sk-test' } });
+  });
+
+  afterEach(async () => {
+    await logger.close();
+    await fs.rm(TEST_DIR, { recursive: true, force: true });
+    vi.restoreAllMocks();
+    (ConfigLoader as unknown as { GLOBAL_CONFIG: string }).GLOBAL_CONFIG = ORIGINAL_GLOBAL_CONFIG;
+    (ConfigLoader as unknown as { GLOBAL_CONFIG_DIR: string }).GLOBAL_CONFIG_DIR = ORIGINAL_GLOBAL_CONFIG_DIR;
+    for (const key of Object.keys(process.env)) if (!(key in envBefore)) delete process.env[key];
+    Object.assign(process.env, envBefore);
+    resetModelOriginRecords();
+  });
+
+  it('labels a .env model "dotenv" and reports the profile model it replaced', async () => {
+    await fs.writeFile(path.join(workingDir, '.env'), 'CODEMIE_MODEL=dotenv-model\n');
+
+    const { sources } = await ConfigLoader.loadWithSources(workingDir);
+    expect(sources.model).toEqual({ value: 'dotenv-model', source: 'dotenv' });
+
+    const config = await ConfigLoader.load(workingDir);
+    expect(config.model).toBe('dotenv-model');
+    expect(ConfigLoader.modelResolutionOf(config)).toEqual({ envModelUsed: true, profileModel: 'stored-model' });
+  });
+
+  it('still labels "dotenv" on a second load in the same process', async () => {
+    await fs.writeFile(path.join(workingDir, '.env'), 'CODEMIE_MODEL=dotenv-model\n');
+    await ConfigLoader.load(workingDir);
+    await ConfigLoader.load(workingDir);
+
+    expect((await ConfigLoader.loadWithSources(workingDir)).sources.model?.source).toBe('dotenv');
+  });
+
+  it('labels a shell model "env"', async () => {
+    process.env.CODEMIE_MODEL = 'shell-model';
+
+    expect((await ConfigLoader.loadWithSources(workingDir)).sources.model).toEqual({ value: 'shell-model', source: 'env' });
+    const config = await ConfigLoader.load(workingDir);
+    expect(ConfigLoader.modelResolutionOf(config)).toEqual({ envModelUsed: true, profileModel: 'stored-model' });
+  });
+
+  it('lets the shell win over .env', async () => {
+    process.env.CODEMIE_MODEL = 'shell-model';
+    await fs.writeFile(path.join(workingDir, '.env'), 'CODEMIE_MODEL=dotenv-model\n');
+
+    expect((await ConfigLoader.loadWithSources(workingDir)).sources.model).toEqual({ value: 'shell-model', source: 'env' });
+  });
+
+  it('labels "env" once CODEMIE_MODEL was changed after .env was loaded', async () => {
+    await fs.writeFile(path.join(workingDir, '.env'), 'CODEMIE_MODEL=dotenv-model\n');
+    await ConfigLoader.load(workingDir);
+    process.env.CODEMIE_MODEL = 'later-model';
+
+    expect((await ConfigLoader.loadWithSources(workingDir)).sources.model).toEqual({ value: 'later-model', source: 'env' });
+  });
+
+  it('labels every key .env supplies, and built-in defaults as "default"', async () => {
+    await fs.writeFile(path.join(workingDir, '.env'), 'CODEMIE_TIMEOUT=111\n');
+
+    const { sources } = await ConfigLoader.loadWithSources(workingDir);
+    expect(sources.timeout).toEqual({ value: 111, source: 'dotenv' });
+    expect(sources.ignorePatterns?.source).toBe('default');
+  });
+
+  it('reads .env from envDir when it differs from the config dir', async () => {
+    const envDir = path.join(workingDir, 'sub');
+    await fs.mkdir(envDir, { recursive: true });
+    await fs.writeFile(path.join(envDir, '.env'), 'CODEMIE_MODEL=sub-model\n');
+
+    expect((await ConfigLoader.loadWithSources(workingDir, undefined, envDir)).sources.model).toEqual({
+      value: 'sub-model',
+      source: 'dotenv',
+    });
+  });
+
+  it('does not use the env model when a profile is selected explicitly', async () => {
+    process.env.CODEMIE_MODEL = 'shell-model';
+
+    const config = await ConfigLoader.load(workingDir, { name: 'p' });
+    expect(config.model).toBe('stored-model');
+    expect(ConfigLoader.modelResolutionOf(config)).toEqual({ envModelUsed: false, profileModel: 'stored-model' });
+  });
+
+  it('reports no env model when CODEMIE_MODEL is not set', async () => {
+    const config = await ConfigLoader.load(workingDir);
+    expect(ConfigLoader.modelResolutionOf(config)).toEqual({ envModelUsed: false, profileModel: 'stored-model' });
+  });
+
+  it('reports the field-merged profile model for a local profile laid over a global one of the same name', async () => {
+    await writeConfig(LOCAL_CONFIG_PATH, 'p', { p: { timeout: 5000 } as Partial<MultiProviderConfig['profiles'][string]> });
+    process.env.CODEMIE_MODEL = 'shell-model';
+
+    const config = await ConfigLoader.load(workingDir);
+    expect(config.timeout).toBe(5000);
+    expect(ConfigLoader.modelResolutionOf(config)).toEqual({ envModelUsed: true, profileModel: 'stored-model' });
+  });
+
+  it('has no resolution for a config object load() did not return', () => {
+    expect(ConfigLoader.modelResolutionOf({ name: 'x' } as never)).toBeUndefined();
+  });
+
+  it('prints a .env value with the "(.env)" label', async () => {
+    await fs.writeFile(path.join(workingDir, '.env'), 'CODEMIE_MODEL=dotenv-model\n');
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      lines.push(args.join(' '));
+    });
+
+    await ConfigLoader.showWithSources(workingDir);
+
+    // eslint-disable-next-line no-control-regex
+    const modelLine = lines.map((line) => line.replace(/\u001b\[[0-9;]*m/g, '')).find((line) => line.includes('model:'));
+    expect(modelLine).toContain('dotenv-model (.env)');
   });
 });

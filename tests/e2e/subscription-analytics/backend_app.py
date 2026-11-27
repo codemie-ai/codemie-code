@@ -177,7 +177,7 @@ async def _rows(sql: str, *args):
 async def session_row(sid: str) -> dict:
     """Stored facts of one session (direct SQL) plus row counts of what ingest wrote."""
     dims = await _rows(
-        "SELECT session_id, jwt_email, owner_email, project_name, project_origin, subscription_type FROM session_dims "
+        "SELECT session_id, jwt_email, owner_email, project_name, project_origin, subscription_type, funding_route FROM session_dims "
         "WHERE session_id = $1",
         sid,
     )
@@ -201,6 +201,17 @@ async def visible(sid: str, viewer: str, role: str = "owner", project: str = WOR
         scope = ViewerScope(viewer_email=viewer, unrestricted=False, admin_projects=frozenset(), mode="detail")
     allowed = bool(await reader.authorize_session(sid, scope))
     return {"allowed": allowed}
+
+
+@app.post("/_e2e/rollup")
+async def rollup() -> dict:
+    """REAL: the backend's own scheduled maintenance and user-day rollup jobs, run once on demand (this harness has no scheduler)."""
+    runtime = get_cli_analytics_storage().runtime
+    await runtime.run_maintenance()
+    await runtime.refresh_rollups()
+    await runtime.refresh_user_rollup()
+    await runtime.check_user_rollup()
+    return {"ok": True}
 
 
 @app.get("/_e2e/health")

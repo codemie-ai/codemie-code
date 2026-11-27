@@ -273,6 +273,15 @@ describe('Path Utilities - Cross-Platform', () => {
       it('should handle Windows-style paths', () => {
         expect(extractRepository('C:\\Users\\alice\\projects\\codemie-code')).toBe('projects/codemie-code');
       });
+
+      it.each([
+        ['C:\\Repositories', 'Repositories'],
+        ['C:/Repositories', 'Repositories'],
+        ['C:\\Repositories\\codemie', 'Repositories/codemie'],
+        ['C:\\', 'unknown'],
+      ])('should drop the drive letter segment: %s', (input, expected) => {
+        expect(extractRepository(input)).toBe(expected);
+      });
     });
 
     describe('Claude Desktop sandbox paths — return Cowork', () => {
@@ -378,5 +387,30 @@ describe('isSamePath', () => {
 
   it('returns false for different paths', () => {
     expect(isSamePath('/usr/local', '/opt/codemie', 'linux')).toBe(false);
+  });
+});
+
+describe('isSamePathResolved', () => {
+  it('treats a symlink alias of a real dir as the same path', async () => {
+    const { mkdtempSync, mkdirSync, symlinkSync, rmSync } = await import('fs');
+    const { tmpdir } = await import('os');
+    const { join } = await import('path');
+    const { isSamePathResolved } = await import('../paths.js');
+    const root = mkdtempSync(join(tmpdir(), 'samepath-'));
+    try {
+      const real = join(root, 'real');
+      const link = join(root, 'link');
+      mkdirSync(real);
+      try {
+        symlinkSync(real, link, 'junction');
+      } catch {
+        return; // symlinks not permitted here
+      }
+      expect(await isSamePathResolved(real, link)).toBe(true);
+      expect(await isSamePathResolved(real, root)).toBe(false);
+      expect(await isSamePathResolved(join(root, 'nope'), join(root, 'nope'))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

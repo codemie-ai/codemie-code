@@ -3,8 +3,10 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import chalk from 'chalk';
 import type { AgentAdapter, ResumeOwnershipResult } from './types.js';
+import { runProviderSettingsCheck, type ProviderSettingsSwitch } from './provider-settings-check.js';
 import { CONTINUE_SESSION_ENV_KEY, RESUME_SESSION_ENV_KEY, SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY } from './session/types.js';
 import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config.js';
+import { MODEL_ENV_ORIGIN_ENV, PROFILE_MODEL_ENV, resolveModelEnvOrigin } from '../../utils/model-origin.js';
 import { ensureApiBase, DEFAULT_CODEMIE_BASE_URL } from '../../providers/core/codemie-auth-helpers.js';
 import { AuthMethod, ProviderName } from '../../providers/core/types.js';
 import { JWTTemplate } from '../../providers/plugins/jwt/jwt.template.js';
@@ -28,8 +30,10 @@ import { PiPluginMetadata } from '../plugins/pi/pi.plugin.js';
 import { OpenWikiPluginMetadata } from '../plugins/openwiki/openwiki.plugin.js';
 import { CopilotCliPluginMetadata } from '../plugins/copilot-cli/index.js';
 import { getAgentInstallCommand, getAgentLauncherCommand } from './agent-aliases.js';
+import { formatNotOnPathHint, formatShadowWarning, type ShadowVerdict } from '../../utils/path-shadow.js';
 import { createAssistantsSetupCommand } from '../../cli/commands/assistants/setup/index.js';
 import { createSkillsSetupCommand } from '../../cli/commands/skills/setup/index.js';
+import { createClaudeModelsCommand } from '../../cli/commands/claude-models.js';
 import type { TargetAgent } from '../../cli/commands/shared/agent-targets.js';
 
 /**
@@ -65,11 +69,12 @@ export class AgentCLI {
 
   /**
    * Silent flag definition. Agents whose native CLI already uses `-s`
-   * (codex: --sandbox <mode>, gemini: --sandbox) keep only the long form
-   * so `-s` is forwarded to the agent untouched.
+   * (codex: --sandbox <mode>, gemini: --sandbox, opencode: -s = --session)
+   * keep only the long form so `-s` is forwarded to the agent untouched.
+   * `opencode-acp` is a different adapter name and keeps `-s` as silent.
    */
   private getSilentFlags(): string {
-    const agentsWithNativeShortS = ['codex', 'gemini'];
+    const agentsWithNativeShortS = ['codex', 'gemini', 'opencode'];
     return agentsWithNativeShortS.includes(this.adapter.name) ? '--silent' : '-s, --silent';
   }
 
@@ -131,6 +136,12 @@ export class AgentCLI {
       this.program.addCommand(setupCommand);
     }
 
+    // Non-Claude models a profile offers alongside Claude ones (Claude Code /model picker and
+    // Claude Desktop). Claude Code has no `models` subcommand of its own, so nothing is shadowed.
+    if (this.adapter.name === ClaudePluginMetadata.name && !this.adapter.ownedSubcommands?.includes('models')) {
+      this.program.addCommand(createClaudeModelsCommand());
+    }
+
     // Add init command for frameworks, but only when the agent binary doesn't
     // already own an 'init' subcommand (avoids shadowing the binary's native command).
     if (!this.adapter.ownedSubcommands?.includes('init')) {
@@ -169,23 +180,49 @@ export class AgentCLI {
     }
   }
 
+  /** PATH shadow verdict for launch; `unknown` when the adapter has no check or it throws. */
+  private async resolvePathShadow(): Promise<ShadowVerdict> {
+    try {
+      return (await this.adapter.checkPathShadow?.()) ?? { status: 'unknown' };
+    } catch (error) {
+      logger.debug('[AgentCLI] PATH shadow check failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { status: 'unknown' };
+    }
+  }
+
   /**
    * Handle main run action
    */
   private async handleRun(args: string[], options: Record<string, unknown>): Promise<void> {
+    // Settings switch agreed during this launch; its backup folder is repeated if a later step fails
+    let settingsSwitch: ProviderSettingsSwitch | null = null;
     try {
       // Check if agent is installed
-      if (!(await this.adapter.isInstalled())) {
+      const [installed, shadow] = await Promise.all([this.adapter.isInstalled(), this.resolvePathShadow()]);
+      if (!installed) {
         // stderr, not stdout: callers that capture our stdout (t3code, SDKs)
         // must not receive install instructions in the stream they parse.
-        console.error(chalk.red(`\n✗ ${this.adapter.displayName} is not installed\n`));
-        console.error(chalk.white('Install it with:\n'));
-        console.error(chalk.cyan(`  ${getAgentInstallCommand(this.adapter.name)}\n`));
+        if (shadow.status === 'missing-on-path') {
+          // Installed by CodeMie but its directory is not on PATH: say so instead of "not installed".
+          for (const line of formatNotOnPathHint(shadow)) console.error(chalk.yellow(line));
+          console.error('');
+        } else {
+          console.error(chalk.red(`\n✗ ${this.adapter.displayName} is not installed\n`));
+          console.error(chalk.white('Install it with:\n'));
+          console.error(chalk.cyan(`  ${getAgentInstallCommand(this.adapter.name)}\n`));
 
-        // Windows-specific guidance for PATH refresh issue
-        this.displayWindowsPathGuidance();
+          // Windows-specific guidance for PATH refresh issue
+          this.displayWindowsPathGuidance();
+        }
 
         process.exit(1);
+      }
+
+      if (shadow.status === 'shadowed') {
+        for (const line of formatShadowWarning(shadow)) console.error(chalk.yellow(line));
+        console.error('');
       }
 
       // Auto-enable silent mode whenever this wrapper is not driving an
@@ -311,6 +348,15 @@ export class AgentCLI {
         process.exit(1);
       }
 
+      // Agents whose own settings can select a cloud provider (Claude: Bedrock) check them before auth, so a
+      // cancel never starts a sign-in; the agreed switch is applied only once the launch is ready to run.
+      const { canPromptForProject } = await import('../../utils/interactive.js');
+      settingsSwitch = await runProviderSettingsCheck(
+        this.adapter,
+        { flow: 'launch', canPrompt: canPromptForProject({ task: options.task }) && !options.silent, profile: config },
+        'exit'
+      );
+
       // NEW: Auth validation via provider plugin
       // Skip when --jwt-token is explicitly provided: it overrides any configured provider auth
       try {
@@ -339,7 +385,6 @@ export class AgentCLI {
       // of its own is asked once in a terminal; otherwise it warns once and continues
       // with the shared project. Runs after authentication, before the environment export.
       const { resolveLaunchIdentity, finalizeLaunchIdentity } = await import('./launch-identity.js');
-      const { canPromptForProject } = await import('../../utils/interactive.js');
       const { resolveJwtToken } = await import('../../providers/plugins/jwt/jwt.utils.js');
       const launchIdentity = await resolveLaunchIdentity(config, {
         workingDir: configDir,
@@ -388,6 +433,8 @@ export class AgentCLI {
         process.exit(1);
       }
 
+      await settingsSwitch.apply();
+
       const providerEnv = ConfigLoader.exportProviderEnvVars(config);
 
       // Mark an explicit --model CLI flag so plugin-level auto-heal logic (e.g.
@@ -419,9 +466,13 @@ export class AgentCLI {
       // the marker bin/codemie-copilot.js already sets for the Copilot plugin.
       providerEnv.CODEMIE_MODEL_SOURCE = options.model
         ? 'cli'
-        : process.env.CODEMIE_MODEL
+        : ConfigLoader.modelResolutionOf(config)?.envModelUsed
           ? 'env'
           : 'default';
+      // Always set, so a nested launch never inherits a stale override marker for the banner.
+      const envModelShown = providerEnv.CODEMIE_MODEL_SOURCE === 'env' && Boolean(providerEnv.CODEMIE_MODEL);
+      providerEnv[MODEL_ENV_ORIGIN_ENV] = envModelShown ? (resolveModelEnvOrigin(process.env) ?? '') : '';
+      providerEnv[PROFILE_MODEL_ENV] = envModelShown ? (ConfigLoader.modelResolutionOf(config)?.profileModel ?? '') : '';
 
       // Pass status flag to lifecycle hooks
       if (options.status) {
@@ -511,6 +562,16 @@ export class AgentCLI {
             appendAuditEvent('resume_external_confirmed', auditData);
             logger.info(`[AgentCLI] External resume confirmed for agent ${this.adapter.name}; session will not be synced`);
           }
+
+          // The user may have passed an id the agent does not know (e.g. a CodeMie session id
+          // shown by analytics). Hand the agent the native id the resolver mapped it to.
+          // Only the `--resume` option is rewritten; a native positional resume stays as typed.
+          const resolvedNativeId = ownership?.nativeResumeId?.replace(/\p{Cc}/gu, '');
+          if (options.resume && resolvedNativeId && resolvedNativeId !== resumeId) {
+            logger.info(`[AgentCLI] Resuming session ${resumeId} as native ${this.adapter.name} session ${resolvedNativeId}`);
+            options.resume = resolvedNativeId;
+            providerEnv[RESUME_SESSION_ENV_KEY] = resolvedNativeId;
+          }
         }
       }
 
@@ -530,6 +591,7 @@ export class AgentCLI {
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error(chalk.red(`\n✗ Failed to run ${this.adapter.displayName}\n`));
       console.error(chalk.white(errorMessage));
+      settingsSwitch?.printBackupNote();
       console.error('');
 
       // Log detailed error for debugging

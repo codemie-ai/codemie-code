@@ -143,7 +143,8 @@ export function clearHold(status: SessionStatus, scope: HoldScope): void {
  * The one place that applies the project policy, for the tick and for the snapshots. Caller holds
  * the lock. Runs the one-time legacy scan, evaluates `evaluateProjectPolicy`, executes every discard
  * it demands and persists the status once when anything changed. A discard for want of a project is
- * recorded as `lastLoss` (`no_project`) and warned once per session; a conflict discard is warned only.
+ * recorded as `lastLoss` (`no_project`) and warned once per session; a conflict discard is recorded as
+ * `lastLoss` (`project_conflict_discard`) and also warned once per session.
  */
 export async function applyProjectPolicyLocked(
   sessionId: string,
@@ -177,12 +178,13 @@ export async function applyProjectPolicyLocked(
       dirty ||= result.changed;
     }
   }
-  const noProjectLoss = policy.state === 'unbound' && hooksBytes + otelBytes > 0;
-  if (noProjectLoss) {
+  const discardedBytes = hooksBytes + otelBytes;
+  const lossReason = policy.state === 'unbound' ? 'no_project' : policy.state === 'conflict' ? 'project_conflict_discard' : undefined;
+  if (lossReason && discardedBytes > 0) {
     status.lastLoss = {
-      reason: 'no_project',
+      reason: lossReason,
       at: Date.now(),
-      bytes: hooksBytes + otelBytes,
+      bytes: discardedBytes,
       stream: hooksBytes > 0 ? 'hooks' : otelStream,
     };
   }
@@ -198,7 +200,7 @@ export async function applyProjectPolicyLocked(
     if (policy.state === 'conflict') {
       warnDiscardOnce(sessionId, { sessionId, reason: policy.reason ?? 'none', hooksBytes, otelBytes });
     }
-    if (noProjectLoss) {
+    if (policy.state === 'unbound') {
       warnNoProjectDiscardOnce(sessionId, { sessionId, hooksBytes, otelBytes });
     }
   }
@@ -253,6 +255,16 @@ export async function isSendAllowed(
 
 /* --------------------------------------------------------------- producers --- */
 
+interface AppendSpoolOptions {
+  /**
+   * Hooks only: retain the original owner-pending age. If the range cannot stay at the head
+   * of the queue or the age-segment limit is reached, the append returns false for retry.
+   */
+  carriedSince?: number;
+  /** Skip the append if this check, evaluated under the session lock, returns true. */
+  skipIf?: () => Promise<boolean>;
+}
+
 /**
  * Append spool bytes and make the session discoverable.
  *
@@ -264,15 +276,14 @@ export async function appendSpool(
   stream: SpoolStream,
   data: string | Buffer,
   projectNames?: string[],
-  /**
-   * Hooks only: these bytes were first held at this time (owner-pending handover); the age is carried, not reset. They are
-   * appended only when the pending hooks range is empty or entirely carried (so they stay its head) and fewer than
-   * `MAX_AGE_SEGMENTS` ranges are tracked; otherwise nothing is written and `false` is returned (the caller keeps the data).
-   */
-  carriedSince?: number
+  { carriedSince, skipIf }: AppendSpoolOptions = {}
 ): Promise<boolean> {
   let appended = true;
   await withSessionLock(sessionId, async () => {
+    if (skipIf && (await skipIf())) {
+      appended = false;
+      return;
+    }
     // The epoch exists before this version writes any session status: a new session is never pre-epoch.
     await readOrCreateEpoch();
     await mkdir(spoolRoot(), { recursive: true, mode: 0o700 });

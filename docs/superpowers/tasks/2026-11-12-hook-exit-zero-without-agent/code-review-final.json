@@ -1,0 +1,13 @@
+{
+  "decision": "approve",
+  "rationale": "No-spec round (compact profile, edge-case lens only), so confidence is low; no blocking findings survived reachability checks. 1 deferred (malformed-stdin exit 2 predates the guard; see code-review-deferred.md), 2 dismissed (Map.get(undefined) does not throw; test regex looseness is below the floor).",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    {"kind": "commit-format", "status": "na", "notes": "standards not expected for this profile"},
+    {"kind": "code-quality", "status": "na", "notes": "standards not expected for this profile"},
+    {"kind": "security", "status": "na", "notes": "standards not expected for this profile"}
+  ],
+  "findings": []
+}

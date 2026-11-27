@@ -6,10 +6,13 @@
  * on start to fill its picker.
  */
 
+import { createHash } from 'node:crypto';
 import { logger } from '../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../utils/security.js';
 import { isClaudeFamilyModel, isRouterModel, type ModelFamilyFields } from '../../../utils/model-family.js';
 import { resolveTenantModelId } from './sso.model-name-resolver.js';
+import { catalogModelIdentifiers, resolveClaudeExtraModels } from './sso.claude-extra-models.js';
+import type { LlmModel } from './sso.http-client.js';
 
 /** The catalog entry fields the Desktop list reads; `id` covers OpenAI-style `{ data: [{ id }] }` replies. */
 export type DesktopCatalogEntry = ModelFamilyFields & { id?: string; enabled?: boolean };
@@ -23,17 +26,16 @@ export interface DesktopModel {
 }
 
 /**
- * Curated list of Claude models we expose by default.
+ * Curated Claude models that head Desktop's list; the first one served is Desktop's default.
  *
  * Each entry is matched against the catalog either as an exact ID or as
  * `<entry>-<YYYYMMDD>` (the dated variant). The actual resolved ID is what
  * Desktop is offered, so the gateway receives a model name it has registered.
  *
  * Opus, Sonnet, and Haiku entries are listed in descending preference
- * (`opus: 5.5 → 5 → 4-8 → 4-7 → 4-6 → 3`, `sonnet: 5.5 → 5 → 4-6`, `haiku: 5.5 → 4-5`):
- * {@link selectDesktopClaudeModels} collapses each family to the single
- * highest-priority ID the gateway actually serves, so Desktop never shows more
- * than one Opus, Sonnet, or Haiku (matching the latest cloud Desktop lineup).
+ * (`opus: 5.5 → 5 → 4-8 → 4-7 → 4-6`, `sonnet: 5.5 → 5 → 4-6`, `haiku: 5.5 → 4-5`):
+ * {@link selectDesktopClaudeModels} puts the highest-priority ID the gateway serves
+ * in each family first. It does not limit the list: every other Claude model follows.
  */
 export const PREFERRED_CLAUDE_MODELS = [
   'claude-opus-5-5',
@@ -114,15 +116,15 @@ export function selectPreferredClaudeModels(
 }
 
 /**
- * Build the exact model set Claude Desktop should be offered.
+ * Build the ordered model list Claude Desktop is offered; its first entry is Desktop's default.
  *
- * Resolves the curated preferred list via {@link selectPreferredClaudeModels},
- * then collapses the opus, sonnet, and haiku families to a single entry each:
- * the first (highest-priority) ID that resolved. With preferred order
- * `opus: 5.5 → 5 → 4-8 → 4-7 → 4-6 → 3`, `sonnet: 5.5 → 5 → 4-6`, and
- * `haiku: 5.5 → 4-5` in {@link PREFERRED_CLAUDE_MODELS}, this exposes the
- * highest-priority model in each family when the gateway serves it and
- * otherwise falls back to the next-best available ID. Order is preserved.
+ * Three groups, in this order:
+ * 1. The curated pick: {@link selectPreferredClaudeModels} collapsed to the first
+ *    (highest-priority) resolved ID per Opus, Sonnet and Haiku family, in
+ *    {@link PREFERRED_CLAUDE_MODELS} order.
+ * 2. Every router, in catalog order.
+ * 3. Every other plain model, in catalog order. Only the exact picked IDs are left out,
+ *    so dated, undated and version-first variants of a picked model still appear.
  */
 export function selectDesktopClaudeModels(
   available: readonly DesktopModel[],
@@ -139,7 +141,7 @@ export function selectDesktopClaudeModels(
   let opusKept = false;
   let sonnetKept = false;
   let haikuKept = false;
-  const models = resolved.filter((id) => {
+  const picked = resolved.filter((id) => {
     if (/^claude-opus-/i.test(id)) {
       if (opusKept) return false;
       opusKept = true;
@@ -157,7 +159,61 @@ export function selectDesktopClaudeModels(
     }
     return true;
   });
-  return [...models.map((id) => byId.get(id) ?? { id, isRouter: false }), ...routers];
+  const pickedIds = new Set(picked);
+  const remaining = available.filter((model) => !model.isRouter && !pickedIds.has(model.id));
+  return [...picked.map((id) => byId.get(id) ?? { id, isRouter: false }), ...routers, ...remaining];
+}
+
+/**
+ * Prefix of the ID an extra (non-Claude) model is offered to Desktop under. Desktop accepts
+ * only IDs that read as Claude and rejects any that name another model family (`grok`,
+ * `gpt`, ...), in discovery and in `inferenceModels` alike. So an extra model is listed under
+ * `claude-x-<hash>`, an opaque ID that never spells a family name, with its real name as the
+ * display name; {@link resolveDesktopExtraModelId} maps it back before the request goes upstream.
+ */
+const DESKTOP_EXTRA_MODEL_PREFIX = 'claude-x-';
+/** Hex only (0-9, a-f), so the hash can never contain a model family name. */
+const DESKTOP_EXTRA_MODEL_HASH_LENGTH = 10;
+
+/** The ID Desktop is offered for an extra model's real (stored) ID. Deterministic, so no state is kept. */
+export function desktopExtraModelAlias(realId: string): string {
+  const hash = createHash('sha256').update(realId).digest('hex').slice(0, DESKTOP_EXTRA_MODEL_HASH_LENGTH);
+  return `${DESKTOP_EXTRA_MODEL_PREFIX}${hash}`;
+}
+
+/**
+ * The real model ID behind an ID Desktop sends: the extra model whose alias it is, or
+ * `undefined` when it is not an alias of one of `extraIds`.
+ */
+export function resolveDesktopExtraModelId(id: string, extraIds: readonly string[]): string | undefined {
+  if (!id.startsWith(DESKTOP_EXTRA_MODEL_PREFIX)) return undefined;
+  return extraIds.find((extraId) => desktopExtraModelAlias(extraId) === id);
+}
+
+/**
+ * Appends the non-Claude models the profile opted into (`claudeExtraModels`, see
+ * {@link resolveClaudeExtraModels}) after the Claude lineup, under their opaque
+ * alias ({@link desktopExtraModelAlias}) and their real name as the label. Ids the catalog no
+ * longer serves are skipped, and a model already in the lineup is not listed twice.
+ */
+export function withDesktopExtraModels(
+  models: readonly DesktopModel[],
+  catalog: readonly LlmModel[],
+  extraIds: readonly string[]
+): DesktopModel[] {
+  const listed = new Set(models.map((model) => model.id));
+  const extras: DesktopModel[] = [];
+  for (const extraId of extraIds) {
+    const [model] = resolveClaudeExtraModels(catalog, [extraId]);
+    if (!model || catalogModelIdentifiers(model).some((id) => listed.has(id))) continue;
+    catalogModelIdentifiers(model).forEach((id) => listed.add(id));
+    extras.push({
+      id: desktopExtraModelAlias(extraId),
+      label: model.label || extraId,
+      isRouter: isRouterModel(model),
+    });
+  }
+  return [...models, ...extras];
 }
 
 /**

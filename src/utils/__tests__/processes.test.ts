@@ -488,6 +488,25 @@ describe('npm utility', () => {
       expect(result).toBeNull();
     });
 
+    it('rejects a timed-out lookup and resolves null on a non-zero exit with throwIfUnanswered', async () => {
+      const { getCommandPath } = await import('../processes.js');
+
+      execSpy.mockRejectedValue(new Error('Command timed out after 3000ms'));
+      await expect(getCommandPath('claude', 3000, { throwIfUnanswered: true }))
+        .rejects.toThrow('Command timed out after 3000ms');
+
+      execSpy.mockResolvedValue({ code: 1, stdout: '', stderr: '' });
+      expect(await getCommandPath('claude', 3000, { throwIfUnanswered: true })).toBeNull();
+    });
+
+    it('resolves null on a timed-out lookup without throwIfUnanswered', async () => {
+      execSpy.mockRejectedValue(new Error('Command timed out after 3000ms'));
+
+      const { getCommandPath } = await import('../processes.js');
+
+      expect(await getCommandPath('claude', 3000)).toBeNull();
+    });
+
     it('should filter out empty lines', async () => {
       // Output with empty lines (shouldn't happen but handle gracefully)
       execSpy.mockResolvedValue({
@@ -520,6 +539,42 @@ describe('npm utility', () => {
       await getCommandPath('codemie');
 
       expect(execSpy).toHaveBeenCalledWith('which', ['codemie']);
+    });
+  });
+
+  describe('getCommandMatches', () => {
+    it('returns every where.exe line in order, trimming CRLF', async () => {
+      vi.spyOn(os, 'platform').mockReturnValue('win32');
+      execSpy.mockResolvedValue({
+        code: 0,
+        stdout: 'C:\\A\\claude.cmd\r\nC:\\B\\claude.exe\r\n\r\nC:\\C\\claude.ps1\r\n',
+        stderr: ''
+      });
+
+      const { getCommandMatches } = await import('../processes.js');
+      const result = await getCommandMatches('claude', 3000);
+
+      expect(result).toEqual({
+        status: 'answered',
+        matches: ['C:\\A\\claude.cmd', 'C:\\B\\claude.exe', 'C:\\C\\claude.ps1']
+      });
+      expect(execSpy).toHaveBeenCalledWith('C:\\Windows\\System32\\where.exe', ['$PATH:claude'], { timeout: 3000 });
+    });
+
+    it('answers with no matches on a non-zero exit', async () => {
+      execSpy.mockResolvedValue({ code: 1, stdout: '', stderr: 'not found' });
+
+      const { getCommandMatches } = await import('../processes.js');
+
+      expect(await getCommandMatches('claude')).toEqual({ status: 'answered', matches: [] });
+    });
+
+    it('is unanswered when exec rejects or times out', async () => {
+      execSpy.mockRejectedValue(new Error('Command timed out after 3000ms'));
+
+      const { getCommandMatches } = await import('../processes.js');
+
+      expect(await getCommandMatches('claude', 3000)).toEqual({ status: 'unanswered' });
     });
   });
 

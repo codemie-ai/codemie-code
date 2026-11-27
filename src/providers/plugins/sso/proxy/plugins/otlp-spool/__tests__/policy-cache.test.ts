@@ -174,6 +174,17 @@ describe('policy-cache publication contracts', () => {
     expect(old).toMatchObject({ usable: false, policy: null, publicationContracts: ['1'] });
   });
 
+  it('an expired policy still exposes its organization encodings, and a policy without any exposes none', async () => {
+    const withEncodings = json(200, { organizations: ['Org A'], version: 'v1', organization_encodings: ['utf8-b64u.v1'] });
+    await refreshPolicy(ns, opts(T0, withEncodings));
+    const old = await getPolicyState(ns, { now: T0 + POLICY_USABLE_MS + 1 });
+    expect(old).toMatchObject({ usable: false, policy: null, organizationEncodings: ['utf8-b64u.v1'] });
+
+    await refreshPolicy(ns, opts(T0 + POLICY_USABLE_MS + 2, okFetch));
+    const fresh = await getPolicyState(ns, { now: T0 + POLICY_USABLE_MS + 3 });
+    expect(fresh.organizationEncodings).toBeUndefined();
+  });
+
   it('a malformed list is treated as none advertised', async () => {
     const s = await refreshPolicy(ns, opts(T0, json(200, { organizations: [], version: 'v', publication_contracts: 'yes' })));
     expect(s.publicationContracts).toBeUndefined();

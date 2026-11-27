@@ -36,7 +36,7 @@ export const DEFAULT_CONVERSATION_FOLDER = 'Claude Desktop';
 // ============================================================================
 
 /** HTTP status codes that should NOT trigger retry logic */
-export const NON_RETRYABLE_HTTP_CODES = [400, 401, 403, 422] as const;
+export const NON_RETRYABLE_HTTP_CODES = [400, 401, 403, 409, 422] as const;
 
 // ============================================================================
 // Processor Configuration

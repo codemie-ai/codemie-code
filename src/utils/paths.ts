@@ -11,6 +11,8 @@
  */
 
 import path from 'path';
+import { realpath } from 'fs';
+import { promisify } from 'util';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -240,6 +242,24 @@ export function isSamePath(a: string, b: string, platform: NodeJS.Platform = pro
   return getPathModule(platform).relative(a, b) === '';
 }
 
+/**
+ * Like {@link isSamePath}, but first resolves both sides through the filesystem
+ * (`realpath.native`), so symlinks, junctions and Windows 8.3 short names compare equal.
+ * Falls back to the raw path for a side that cannot be resolved.
+ */
+export async function isSamePathResolved(a: string, b: string): Promise<boolean> {
+  const resolve = async (p: string): Promise<string> => {
+    try {
+      // Resolved lazily so modules that mock `fs` without `realpath` still import cleanly.
+      return await promisify(realpath.native)(p);
+    } catch {
+      return p;
+    }
+  };
+  const [ra, rb] = await Promise.all([resolve(a), resolve(b)]);
+  return isSamePath(ra, rb);
+}
+
 // ============================================================================
 // UUID Validation Utilities
 // ============================================================================
@@ -407,6 +427,10 @@ const CLAUDE_DESKTOP_SANDBOX_RE =
  * @example
  * extractRepository('/Users/john/Library/Application Support/Claude-3p/local-agent-mode-sessions/<s>/<u>/local_2d5f3a0f-6a50-4778-ac55-9ffbca0446da/outputs')
  * // Returns: 'Cowork'
+ *
+ * @example
+ * extractRepository('C:\\Repositories')
+ * // Returns: 'Repositories' (a leading drive letter is never part of the name)
  */
 export function extractRepository(workingDirectory: string): string {
   if (CLAUDE_DESKTOP_SANDBOX_RE.test(normalizePathSeparators(workingDirectory))) {
@@ -415,6 +439,9 @@ export function extractRepository(workingDirectory: string): string {
 
   const parts = splitPath(workingDirectory);
   const filtered = parts.filter(p => p.length > 0);
+  if (filtered.length > 0 && /^[A-Za-z]:$/.test(filtered[0])) {
+    filtered.shift();
+  }
 
   if (filtered.length >= 2) {
     return `${filtered[filtered.length - 2]}/${filtered[filtered.length - 1]}`;

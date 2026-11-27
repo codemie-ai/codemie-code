@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   recordKey, createOrRead, readRecord, touch, sweepRecords, evidenceDir, publicationModeFileName,
+  recordFits, attachConsentRef,
   type EvidenceFields,
 } from '../record-store.js';
 
@@ -263,5 +264,72 @@ describe('analytics state placement and existing-store compatibility', () => {
     writeFileSync(join(legacy, `${keyOf(f)}.json`), '{invalid');
     expect((await createOrRead(keyOf(f), f)).kind).toBe('stamp_invalid');
     expect(existsSync(join(home, 'analytics', 'state', 'evidence'))).toBe(false);
+  });
+});
+
+const contract = (sid: string, over: Partial<EvidenceFields> = {}) =>
+  fields(sid, { funding_route: 'subscription', negotiate_publication: true, collection_generation: 0, ...over });
+
+describe('session_folder', () => {
+  it('is stored and read back', async () => {
+    const f = contract('s1', { session_folder: '/work/repo' });
+    await createOrRead(keyOf(f), f);
+    expect(await readRecord(keyOf(f))).toMatchObject({ kind: 'existing', record: { session_folder: '/work/repo' } });
+  });
+
+  it('an empty, non-string or over-long folder makes the record invalid (fail closed)', async () => {
+    expect((await createOrRead(keyOf(contract('a')), contract('a', { session_folder: '' }))).kind).toBe('stamp_invalid');
+    expect((await createOrRead(keyOf(contract('b')), contract('b', { session_folder: 'x'.repeat(513) }))).kind).toBe('stamp_invalid');
+    const g = contract('c', { session_folder: '/work/repo' });
+    await createOrRead(keyOf(g), g);
+    const r = JSON.parse(readFileSync(file(keyOf(g)), 'utf-8'));
+    r.session_folder = 42;
+    writeFileSync(file(keyOf(g)), JSON.stringify(r));
+    expect((await readRecord(keyOf(g)))?.kind).toBe('stamp_invalid');
+  });
+});
+
+describe('recordFits', () => {
+  it('is false only when the record would break the size limit', () => {
+    expect(recordFits(contract('s1', { session_folder: '/work/repo' }))).toBe(true);
+    expect(recordFits(contract('s1', { organization: 'o'.repeat(256), project: 'p'.repeat(256), repo_key: 'r'.repeat(512) }))).toBe(false);
+  });
+});
+
+describe('attachConsentRef', () => {
+  const REF = 'abcdef0123456789';
+
+  it('freezes a later consent onto a new-contract record and keeps every other field', async () => {
+    const f = contract('s1', { session_folder: '/work/repo' });
+    const created = await createOrRead(keyOf(f), f);
+    expect(await attachConsentRef(keyOf(f), REF)).toBe('attached');
+    expect(await readRecord(keyOf(f))).toMatchObject({ kind: 'existing', record: { ...(created as { record: object }).record, consent_ref: REF } });
+  });
+
+  it('a record that already froze a consent is left as it is', async () => {
+    const f = contract('s1', { consent_ref: '0123456789abcdef' });
+    await createOrRead(keyOf(f), f);
+    expect(await attachConsentRef(keyOf(f), REF)).toBe('already_consented');
+    expect(await readRecord(keyOf(f))).toMatchObject({ record: { consent_ref: '0123456789abcdef' } });
+  });
+
+  it('a record without a funding claim or without a project never gets a consent', async () => {
+    const old = fields('old');
+    await createOrRead(keyOf(old), old);
+    expect(await attachConsentRef(keyOf(old), REF)).toBe('not_eligible');
+    const noProject = contract('np', { project: undefined, project_source: 'none' });
+    await createOrRead(keyOf(noProject), noProject);
+    expect(await attachConsentRef(keyOf(noProject), REF)).toBe('not_eligible');
+    expect(await readRecord(keyOf(old))).not.toMatchObject({ record: { consent_ref: expect.anything() } });
+  });
+
+  it('a missing or invalid record is unavailable and nothing is written', async () => {
+    const f = contract('s1');
+    expect(await attachConsentRef(keyOf(f), REF)).toBe('unavailable');
+    expect(existsSync(file(keyOf(f)))).toBe(false);
+    mkdirSync(evidenceDir(), { recursive: true });
+    writeFileSync(file(keyOf(f)), '{not json');
+    expect(await attachConsentRef(keyOf(f), REF)).toBe('unavailable');
+    expect(readFileSync(file(keyOf(f)), 'utf-8')).toBe('{not json');
   });
 });

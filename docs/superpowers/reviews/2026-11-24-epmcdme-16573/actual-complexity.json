@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated": "2026-11-24T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 9,
+  "size": "XS",
+  "band_range": "6-9",
+  "files_changed": 3,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Single request-usage builder in copilot-cli-otlp.request-usage.ts: agent_id carried for sub-agent-scoped rows only, plus an accounting.usageId fallback for Copilot 1.0.115 record ids (+5/-2 source lines); no layer boundary crossed." },
+    { "dimension": "technical_risk", "reason": "Pass-through of agentId gated on agent scope, and a fallback id read; request_id/event_id/dedupe/tokens unchanged. Follow-up delta adds a sanitized fixture and regression test; backend contract dependency (MR !4956) is outside this diff." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

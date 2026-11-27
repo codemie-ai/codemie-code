@@ -44,10 +44,17 @@ export async function commandExists(command: string): Promise<boolean> {
  *
  * @param command - Command name to locate
  * @param timeoutMs - Kill the underlying `which`/`where.exe` child and resolve `null` if it
- *   hasn't exited by this deadline. Omit to run without a deadline (existing behavior).
+ *   hasn't exited by this deadline, or reject with `throwIfUnanswered`. Omit to run without a
+ *   deadline (existing behavior).
+ * @param options.throwIfUnanswered - Reject instead of resolving `null` when `which`/`where.exe`
+ *   gives no answer: it times out or fails to start. A non-zero exit still resolves `null`.
  * @returns Full path to command, or null if not found
  */
-export async function getCommandPath(command: string, timeoutMs?: number): Promise<string | null> {
+export async function getCommandPath(
+  command: string,
+  timeoutMs?: number,
+  options: { throwIfUnanswered?: boolean } = {}
+): Promise<string | null> {
   try {
     const isWindows = os.platform() === 'win32';
     // On Windows, use full path to where.exe to avoid shell: true deprecation (DEP0190)
@@ -71,8 +78,45 @@ export async function getCommandPath(command: string, timeoutMs?: number): Promi
     }
 
     return null;
-  } catch {
+  } catch (error) {
+    if (options.throwIfUnanswered) throw error;
     return null;
+  }
+}
+
+/**
+ * Get every PATH match for a command, in PATH order.
+ *
+ * @param command - Command name to locate
+ * @param timeoutMs - Kill the `which`/`where.exe` child if it hasn't exited by this deadline
+ * @returns `answered` with the ordered matches (empty on a non-zero exit), or `unanswered`
+ *   when the lookup threw or timed out
+ */
+export async function getCommandMatches(
+  command: string,
+  timeoutMs?: number
+): Promise<{ status: 'answered'; matches: string[] } | { status: 'unanswered' }> {
+  try {
+    const isWindows = os.platform() === 'win32';
+    const whichCommand = isWindows ? 'C:\\Windows\\System32\\where.exe' : 'which';
+
+    // `$PATH:` stops where.exe from searching the cwd first (a repo-local shim would win).
+    const whichArgs = [isWindows ? `$PATH:${command}` : command];
+    const result = timeoutMs
+      ? await exec(whichCommand, whichArgs, { timeout: timeoutMs })
+      : await exec(whichCommand, whichArgs);
+
+    if (result.code !== 0) {
+      return { status: 'answered', matches: [] };
+    }
+
+    const matches = result.stdout
+      .split(/\r?\n|\r/)
+      .map(p => p.trim())
+      .filter(p => p);
+    return { status: 'answered', matches };
+  } catch {
+    return { status: 'unanswered' };
   }
 }
 

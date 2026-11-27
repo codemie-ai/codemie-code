@@ -22,7 +22,6 @@ interface DesktopMetadata {
   lastActivityAt: number;
   model?: string;
   isArchived?: boolean;
-  title?: unknown;
 }
 
 /**
@@ -215,8 +214,7 @@ export async function discoverClaudeDesktopSessions(
         createdAt: metadata.createdAt,
         updatedAt: metadata.lastActivityAt,
         model: metadata.model || companionMetadata?.model,
-        isArchived: metadata.isArchived,
-        ...(typeof metadata.title === 'string' && { title: metadata.title })
+        isArchived: metadata.isArchived
       });
     } catch (error) {
       logger.debug('[claude-desktop-discovery] Failed to read session metadata', {

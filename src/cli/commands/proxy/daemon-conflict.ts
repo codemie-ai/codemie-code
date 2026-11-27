@@ -10,9 +10,6 @@ export function formatDaemonConflict(
     `  port: ${state.port}`,
   ];
 
-  if (state.clientType) {
-    details.push(`  client: ${state.clientType}`);
-  }
   if (state.project) {
     details.push(`  project: ${state.project}`);
   }

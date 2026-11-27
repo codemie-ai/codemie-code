@@ -35,7 +35,7 @@ If you need to authenticate separately or refresh your credentials:
 
 ```bash
 # Authenticate with AI/Run CodeMie SSO
-codemie profile login --url https://your-airun-codemie-instance.com
+codemie profile login
 
 # Check authentication status
 codemie profile status
@@ -94,7 +94,7 @@ codemie profile status              # Check auth-specific issues
 
 # Complete re-authentication
 codemie profile logout
-codemie profile login --url https://your-airun-codemie-instance.com
+codemie profile login
 
 # Reset all configuration
 codemie config reset
@@ -322,6 +322,13 @@ When several MCP servers start together, their proxies take turns: a lock file (
 
 The login (access token, refresh token and the client registration the refresh token belongs to) is stored per MCP server under `~/.codemie/mcp-auth` (directory `0700`, files `0600`). Restarting the CLI then reuses it, or renews it silently with the refresh token, and only opens the browser when that is no longer possible. The files (`<hash>.enc`) hold a long-lived credential, so their content is encrypted with the same machine-bound key as the stored SSO and JWT credentials: a copy taken by a backup, a sync tool or a support bundle cannot be read on another machine. The key is derived from the machine rather than from a secret, so another process running as your user can still decrypt them; keep treating the directory like your SSH keys. Delete the directory to log out of every server. Set `MCP_PROXY_PERSIST_TOKENS=off` to keep everything in memory only, in which case re-authorization is required each session.
 
+Two deliberate limits of this store:
+
+- **No keychain.** Unlike the SSO and JWT credentials, which prefer the platform `CredentialStore` (OS keychain), the MCP login store always uses the encrypted file. Every proxy process reads it unattended and on its own, and that read must never raise a keychain prompt.
+- **POSIX-only protection.** The `0700`/`0600` modes and the machine-bound key protect the files on Linux and macOS. On Windows `chmod` is largely a no-op, so the files rely on the ACLs of your user profile.
+
+Several proxies for the same server can share one login file. When the server refuses a refresh token, the proxy reads the file again before giving up: if a sibling process has already rotated the refresh token and saved the new one, the proxy adopts that login (with its own client registration) instead of discarding it. It renews at most once with the adopted login, and only if the adopted access token needs it.
+
 ### SSO Integration
 
 When running through the CodeMie SSO proxy, the MCP Auth Plugin provides additional capabilities:
@@ -338,16 +345,46 @@ When running through the CodeMie SSO proxy, the MCP Auth Plugin provides additio
 | `MCP_CLIENT_NAME` | `CodeMie CLI` | Client name for OAuth Dynamic Client Registration |
 | `MCP_PROXY_DEBUG` | (unset) | Set to `true` for verbose proxy logging |
 | `MCP_PROXY_PERSIST_TOKENS` | (enabled) | Set to `off` to stop storing logins on disk |
+| `MCP_PROXY_AUTH_TIMEOUT_SECONDS` | `300` | How long the proxy waits for the browser login to finish. A plain decimal integer of seconds from `10` to `3600`; anything else (`0`, fractions, negatives, non-numeric, empty or out-of-range values) is ignored with a debug log and the default `300` is used. Even a small accepted value such as `10` may be too short for a slow interactive login, and the real window is shorter than the setting because the clock starts when the proxy connects (see [Login timing and failure hints](#login-timing-and-failure-hints)) |
 | `CODEMIE_PROXY_PORT` | (auto) | Fixed proxy port for stable auth callback URLs |
 
 Logs: `~/.codemie/logs/mcp-proxy.log`
+
+### Login timing and failure hints
+
+**Timing.** The login window is `MCP_PROXY_AUTH_TIMEOUT_SECONDS` (default 300 seconds). The callback listener is started when the proxy connects, before the `401`, before the wait for the shared login lock and before the browser opens, so everything that happens before the browser opens comes out of the same window. A proxy queued behind other logins therefore has less time left than the setting suggests. With the default, a proxy that waits close to the maximum for the lock has only a minute or so left once its browser opens.
+
+The lock timings derive from the same setting: a proxy gives up waiting for the lock after 0.75 times the timeout, and a lock older than 1.25 times the timeout is considered stale. The lock file records the stale age of the process that created it, so a proxy started with a different setting does not remove a live lock.
+
+**Hints on stderr.** When a login fails, the proxy prints a hint to stderr (visible with `MCP_PROXY_DEBUG` off) and then fails with the original error:
+
+- *Timeout.* The hint names `MCP_PROXY_AUTH_TIMEOUT_SECONDS` and the `MCP_CLIENT_NAME` in effect, and says that if the gateway page showed `insufficient_scope`, `MCP_CLIENT_NAME` is what to change.
+- *`insufficient_scope` callback.* The hint names `MCP_CLIENT_NAME` only. A longer timeout is not suggested as the fix.
+
+The client name in the hint is the one in the environment of the stdio proxy process. The SSO daemon rewrites `client_name` during registration, so the name it registered can differ from the one shown.
+
+Hints never contain tokens, authorization codes, state or the callback URL. The callback page that the proxy serves on a login error HTML-escapes the error code and description sent by the identity provider, strips control characters, truncates each to 200 characters and is served with `Content-Security-Policy: default-src 'none'` and `X-Content-Type-Options: nosniff`.
+
+**The `insufficient_scope` symptom.** The gateway's own page shows `Insufficient Scope - scopes not allowed by IDP: claudeai` and the login never completes.
+
+Verified:
+
+- The symptom was seen with `MCP_CLIENT_NAME="Claude Code (jira)"`.
+- With the default name `CodeMie CLI` the same login succeeds.
+
+Hypotheses, not confirmed:
+
+- The gateway maps client names to scopes, so some names are granted scopes the identity provider does not allow. The proxy sends no `scope` parameter itself.
+- The gateway shows that page itself instead of redirecting to the proxy's `/callback`. If so, the proxy sees no error and the usual symptom is a timeout, which is why the timeout hint also mentions `MCP_CLIENT_NAME`.
+- Whether the MCP client restarts the proxy during a slow login has not been verified. If it does, the listener goes away and the browser fails to reach `/callback`; a longer timeout cannot fix that.
 
 ### Troubleshooting
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
 | Browser doesn't open during auth | `open`/`xdg-open` not available | Copy the URL from logs and open manually |
-| OAuth timeout after 2 minutes | User didn't complete browser authorization | Re-trigger the MCP connection and authorize faster |
+| OAuth timeout (300 seconds by default) | The browser login was not completed in time, or part of the window was spent waiting for another login | Re-trigger the MCP connection and authorize sooner, or raise `MCP_PROXY_AUTH_TIMEOUT_SECONDS`; see [Login timing and failure hints](#login-timing-and-failure-hints) |
+| `insufficient_scope` hint, or gateway page "Insufficient Scope" | The gateway rejected the login for this client name | Change `MCP_CLIENT_NAME` (the default `CodeMie CLI` is known to log in); a longer timeout does not help |
 | `401` persists after auth | Token expired or server rejected it | Check logs for token exchange errors |
 | Connection refused | Remote MCP server unreachable | Verify the URL and network connectivity |
 

@@ -73,7 +73,7 @@ async function lookupCommandPath(): Promise<string | null | 'timeout'> {
 }
 
 /** Walk up from `startDir` to the first `package.json` and return its directory and manifest. */
-async function findFirstManifest(
+export async function findFirstManifest(
   startDir: string,
   platform: NodeJS.Platform
 ): Promise<{ dir: string; manifest: PackageManifest } | null> {
@@ -92,7 +92,8 @@ async function findFirstManifest(
   }
 }
 
-async function resolvePackage(
+/** The package directory and manifest of the install a `codemie` command path belongs to, else why not. */
+export async function resolvePackage(
   hit: string,
   platform: NodeJS.Platform
 ): Promise<{ dir: string; manifest: PackageManifest } | string> {
@@ -214,6 +215,16 @@ export async function verifyActiveCli(
 }
 
 /**
+ * The "Put X ahead of Y on your PATH" bullet shared by the stale-install and PATH-shadow
+ * warnings. A null `binDir` yields the generic wording.
+ */
+export function formatPutAheadLine(binDir: string | null, aheadOfDir: string): string {
+  return binDir
+    ? `  - Put "${binDir}" ahead of "${aheadOfDir}" on your PATH`
+    : `  - Put the bin directory of the new install ahead of "${aheadOfDir}" on your PATH`;
+}
+
+/**
  * Plain-text warning lines for a stale active install. Lines indented by four spaces are
  * commands; callers may style them differently.
  */
@@ -233,11 +244,7 @@ export function formatStaleWarning(
     `  To use the new version:`
   ];
 
-  if (newPrefix) {
-    lines.push(`  - Put "${getNpmBinDir(newPrefix, platform)}" ahead of "${activeDir}" on your PATH`);
-  } else {
-    lines.push(`  - Put the bin directory of the new install ahead of "${activeDir}" on your PATH`);
-  }
+  lines.push(formatPutAheadLine(newPrefix ? getNpmBinDir(newPrefix, platform) : null, activeDir));
 
   if (active.prefix) {
     if (isSamePath(active.prefix, getLegacyNpmPrefixPath(platform), platform)) {

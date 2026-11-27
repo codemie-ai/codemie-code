@@ -3,6 +3,7 @@
  */
 
 import type { SessionAdapter } from './session/BaseSessionAdapter.js';
+import type { ShadowVerdict } from '../../utils/path-shadow.js';
 
 /**
  * Post-install hint - simple text lines shown after installation
@@ -218,6 +219,12 @@ export interface AgentMetadata {
   // === Installation ===
   npmPackage: string | null;       // '@anthropic-ai/claude-code' or null for built-in
   cliCommand: string | null;       // 'claude' or null for built-in
+
+  /**
+   * Set to `false` for agents that do not install through the CodeMie-managed npm prefix
+   * (native installers, bundled binaries), so no PATH shadow check applies. Default: checked.
+   */
+  pathShadowCheck?: false;
 
   /**
    * Latest version tested with the CodeMie backend — a recommendation, not a
@@ -731,6 +738,11 @@ export interface ResumeOwnershipInput {
 export interface ResumeOwnershipResult {
   supported: boolean;
   owned?: boolean;
+  /**
+   * Native agent session id the resume id resolved to. When set and different from the
+   * id the user passed (e.g. a CodeMie session id), the CLI passes this id to the agent instead.
+   */
+  nativeResumeId?: string;
   fallbackResumeCommand?: string;
   auditData?: Record<string, unknown>;
 }
@@ -741,7 +753,8 @@ export enum AgentAdapterType {
 }
 
 export interface OtlpAdapterDeps {
-  ensureOtlpProxy: (agentName: string) => Promise<void>;
+  /** `event` — the hook input's `hook_event_name` as the client sent it, when it has one. */
+  ensureOtlpProxy: (agentName: string, event?: string) => Promise<void>;
   /** Sends one hook invocation's events as a single batch; true only for a 2xx response. */
   forwardOtlpEventsToSpool: (
     events: Record<string, unknown>[],
@@ -750,6 +763,52 @@ export interface OtlpAdapterDeps {
     opts?: { evidenceV?: 1; evidenceLoss?: { sessionId: string; reason: string; events: number } }
   ) => Promise<boolean>;
 }
+
+/** The command a provider-settings check runs for (see `AgentAdapter.checkProviderSettings`). */
+export type ProviderSettingsCheckFlow = 'launch' | 'install' | 'connect';
+
+/** The part of a CodeMie profile a provider-settings check reads. */
+export interface ProviderSettingsProfile {
+  provider?: string;
+}
+
+/**
+ * The client files a `proxy connect` run is about to configure. Only the selected targets are set; the
+ * CLI supplies the paths because only its connectors know where each client keeps its settings.
+ */
+export interface ProviderSettingsConnectTargets {
+  /** Claude Desktop: the applied config file, and its managed settings file (null where the platform has none). */
+  desktop?: { configFile: string; managedFile: string | null };
+  /** VS Code `settings.json` files (stable and Insiders) of the editions that exist. */
+  vscodeSettingsFiles?: string[];
+  /** Claude Code analytics is connected. */
+  claudeCodeOtlp?: boolean;
+}
+
+export interface ProviderSettingsCheckInput {
+  flow: ProviderSettingsCheckFlow;
+  /** False when no question may be asked: no TTY, `CODEMIE_NO_PROMPTS`, `--task`, `--silent`. */
+  canPrompt: boolean;
+  /** The active profile; `null`/absent when there is none. */
+  profile?: ProviderSettingsProfile | null;
+  /** Required for `connect`, ignored otherwise. */
+  connect?: ProviderSettingsConnectTargets;
+}
+
+/** What applying an agreed settings switch did. */
+export interface ProviderSettingsSwitchResult {
+  /** Backup folder of the switched files, or null when nothing needed switching. */
+  backupDir: string | null;
+}
+
+/**
+ * Outcome of a provider-settings check. `proceed.apply` performs the switch the user agreed to and does
+ * nothing when there was nothing to switch, so callers always call it once their own steps are ready.
+ * `stop.guidance` is ready to print; the caller decides how to exit.
+ */
+export type ProviderSettingsCheckOutcome =
+  | { kind: 'proceed'; apply(): Promise<ProviderSettingsSwitchResult> }
+  | { kind: 'stop'; guidance: string };
 
 /**
  * Agent adapter interface - implemented by BaseAgentAdapter
@@ -763,6 +822,8 @@ export interface AgentAdapter {
   install(): Promise<void>;
   uninstall(): Promise<void>;
   isInstalled(): Promise<boolean>;
+  /** Whether another install of this agent shadows the CodeMie-managed one on PATH (win32 only). */
+  checkPathShadow?(opts?: { resolvePrefix?: boolean }): Promise<ShadowVerdict>;
   run(args: string[], env?: Record<string, string>, options?: { dryRun?: boolean }): Promise<void>;
   getVersion(): Promise<string | null>;
   getMetricsConfig(): AgentMetricsConfig | undefined;
@@ -884,4 +945,16 @@ export interface AgentAdapter {
    * @returns Installation method: 'npm', 'native', or 'unknown'
    */
   getInstallationMethod?(): Promise<'npm' | 'native' | 'unknown'>;
+
+  /**
+   * Check the agent's own settings for a cloud-provider selection that would send its traffic around the
+   * CodeMie gateway, and ask the user whether to switch it off (optional). Called before a launch, before
+   * an install, and before `proxy connect` configures the agent's clients. Changes nothing until
+   * `apply()` of a `proceed` outcome is called. For `launch` it may also adjust `process.env`, which the
+   * agent's child environment is built from.
+   *
+   * @param input - The flow, whether a question may be asked, the active profile and, for connect, the targets
+   * @returns `proceed` with the switch to apply, or `stop` with guidance to print
+   */
+  checkProviderSettings?(input: ProviderSettingsCheckInput): Promise<ProviderSettingsCheckOutcome>;
 }

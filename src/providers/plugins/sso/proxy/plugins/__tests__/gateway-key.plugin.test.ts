@@ -114,5 +114,57 @@ describe('GatewayKeyPlugin', () => {
       expect(result).toBe(false);
       expect(res.end).not.toHaveBeenCalled();
     });
+
+    it.each(['claude-desktop', 'vscode-claude-code', 'codex-desktop', 'vscode-byok', 'codemie-daemon'])(
+      'a key named %s gives the request that client and strips the header',
+      async (client) => {
+        const interceptor = plugin.createInterceptor(makePluginContext(KEY));
+        const ctx = makeProxyContext(`Bearer ${KEY}.${client}`);
+        const { res } = makeMockRes();
+
+        expect(await interceptor.handleRequest!(ctx, {} as any, res, {} as any)).toBe(false);
+
+        expect(ctx.agentName).toBe(client);
+        expect(ctx.metadata).toEqual({ gatewayKeyValidated: true, gatewayKeyClient: client });
+        expect(ctx.headers['authorization']).toBeUndefined();
+      }
+    );
+
+    it('the shared key keeps the default client and names none', async () => {
+      const interceptor = plugin.createInterceptor(makePluginContext(KEY));
+      const ctx = { ...makeProxyContext(`Bearer ${KEY}`), agentName: 'codex-desktop' };
+      const { res } = makeMockRes();
+
+      await interceptor.handleRequest!(ctx, {} as any, res, {} as any);
+
+      expect(ctx.agentName).toBe('codex-desktop');
+      expect(ctx.metadata).toEqual({ gatewayKeyValidated: true });
+    });
+
+    it('answers an unknown client name with the 401 of a wrong key', async () => {
+      const interceptor = plugin.createInterceptor(makePluginContext(KEY));
+      const ctx = makeProxyContext(`Bearer ${KEY}.unknown`);
+      const { res, getBody } = makeMockRes();
+
+      expect(await interceptor.handleRequest!(ctx, {} as any, res, {} as any)).toBe(true);
+
+      expect(res.statusCode).toBe(401);
+      expect(JSON.parse(getBody())).toEqual({ type: 'error', error: { type: 'authentication_error', message: 'Invalid API key' } });
+      expect(ctx.agentName).toBe('test');
+      expect(ctx.metadata).toEqual({});
+    });
+
+    it('edge: a second pass over a validated context changes neither the client nor the metadata', async () => {
+      const interceptor = plugin.createInterceptor(makePluginContext(KEY));
+      const ctx = makeProxyContext(`Bearer ${KEY}.codex-desktop`);
+      const { res } = makeMockRes();
+      await interceptor.handleRequest!(ctx, {} as any, res, {} as any);
+      ctx.headers['authorization'] = `Bearer ${KEY}.vscode-byok`;
+
+      await interceptor.handleRequest!(ctx, {} as any, res, {} as any);
+
+      expect(ctx.agentName).toBe('codex-desktop');
+      expect(ctx.metadata).toEqual({ gatewayKeyValidated: true, gatewayKeyClient: 'codex-desktop' });
+    });
   });
 });

@@ -6,16 +6,27 @@
  * proxy renews an expired access token silently instead of opening the browser again.
  *
  * Nothing is shared between endpoints: each endpoint of a gateway (e.g. https://gateway.example/mcp/<name>)
- * demands its own login, so each gets its own file. One writer per file also means proxies that
- * start together never overwrite each other's state.
+ * demands its own login, so each gets its own file. Normally one process writes a file, but adoption
+ * (a proxy picking up a login another proxy just persisted) means two writers per file are possible;
+ * there is no cross-process lock, writes are atomic (temp file + rename) and the last writer wins.
  *
  * Files live in ~/.codemie/mcp-auth (dir 0700, files 0600) as `<hash>.enc`. They contain a refresh
  * token, i.e. a long-lived credential, so the content is encrypted with the same machine-bound
- * AES-256-GCM key as the SSO/JWT credentials (credential-crypto.ts, see CredentialStore): a file that
- * is copied off the machine by a backup, a sync tool or a support bundle is unreadable there. The key
- * is derived from machine facts, not from a secret, so this does not protect against another process
- * running as the same user. MCP_PROXY_PERSIST_TOKENS=off disables reading and writing; deleting the
- * directory logs every endpoint out.
+ * AES-256-GCM key as the SSO/JWT credentials (credential-crypto.ts): a file that is copied off the
+ * machine by a backup, a sync tool or a support bundle is unreadable there. The key is derived from
+ * machine facts, not from a secret, so this does not protect against another process running as the
+ * same user.
+ *
+ * Deviation from CredentialStore (security.ts): that store prefers the OS keychain, whereas this one
+ * always uses the encrypted file. Every proxy process reads its login unattended and per process, which
+ * must not raise a keychain prompt, so the keychain is deliberately not used here (the repo guide
+ * security-practices.md describes the keychain-first behaviour of CredentialStore, not this store).
+ *
+ * The 0700/0600 modes and the machine-bound key protect on POSIX only: chmodSync is largely a no-op on
+ * Windows, where the file relies on the user profile ACLs alone.
+ *
+ * MCP_PROXY_PERSIST_TOKENS=off disables reading and writing; deleting the directory logs every
+ * endpoint out.
  */
 
 import { createHash } from 'crypto';
@@ -74,13 +85,16 @@ function note(resource: URL, message: string): void {
   proxyLog(`[mcp-proxy][tokens] ${resource.href}: ${message}`);
 }
 
-/**
- * The persisted login for `resource`, if it is still usable: a valid access token, or a grant that
- * can renew one. The access token may already be expired when a grant is returned. Never throws.
- */
-export function loadPersistedLogin(resource: URL): PersistedLogin | undefined {
-  if (!enabled()) return undefined;
+/** The decoded file plus what is derived from it, before any decision about its use. */
+interface DecodedFile {
+  data: PersistedFile;
+  grant: RenewalGrant | undefined;
+  /** The access token is valid beyond the skew. */
+  fresh: boolean;
+}
 
+/** Read and decode the file for `resource`. Does not check the kill switch, never deletes, never throws. */
+function decode(resource: URL): DecodedFile | undefined {
   try {
     const data = JSON.parse(
       decryptWithKey(readFileSync(pathFor(resource), 'utf-8'), deriveMachineEncryptionKey()),
@@ -90,28 +104,57 @@ export function loadPersistedLogin(resource: URL): PersistedLogin | undefined {
     const grant: RenewalGrant | undefined =
       data.refresh_token && data.client ? { refreshToken: data.refresh_token, clientInfo: data.client } : undefined;
     const fresh = data.expiresAt !== undefined && data.expiresAt - EXPIRY_SKEW_MS > Date.now();
-
-    if (!fresh && !grant) {
-      note(resource, 'persisted token expired and cannot be renewed, a login is required');
-      forgetPersistedLogin(resource);
-      return undefined;
-    }
-
-    note(resource, fresh
-      ? `restored login (access token valid for another ${Math.round((data.expiresAt! - Date.now()) / 60_000)} min${grant ? ', renewable' : ''})`
-      : 'restored login with an expired access token, renewing with the refresh token');
-    return {
-      tokens: {
-        access_token: data.access_token,
-        token_type: data.token_type,
-        ...(data.scope ? { scope: data.scope } : {}),
-      },
-      expiresAt: data.expiresAt,
-      grant,
-    };
+    return { data, grant, fresh };
   } catch {
     return undefined; // no file, or unreadable (e.g. written on another machine): log in as usual
   }
+}
+
+function toLogin({ data, grant }: DecodedFile): PersistedLogin {
+  return {
+    tokens: {
+      access_token: data.access_token,
+      token_type: data.token_type,
+      ...(data.scope ? { scope: data.scope } : {}),
+    },
+    expiresAt: data.expiresAt,
+    grant,
+  };
+}
+
+/**
+ * The persisted login for `resource`, if it is still usable: a valid access token, or a grant that
+ * can renew one. The access token may already be expired when a grant is returned. A login that is
+ * neither valid nor renewable is deleted. Never throws.
+ */
+export function loadPersistedLogin(resource: URL): PersistedLogin | undefined {
+  if (!enabled()) return undefined;
+
+  const decoded = decode(resource);
+  if (!decoded) return undefined;
+
+  if (!decoded.fresh && !decoded.grant) {
+    note(resource, 'persisted token expired and cannot be renewed, a login is required');
+    forgetPersistedLogin(resource);
+    return undefined;
+  }
+
+  note(resource, decoded.fresh
+    ? `restored login (access token valid for another ${Math.round((decoded.data.expiresAt! - Date.now()) / 60_000)} min${decoded.grant ? ', renewable' : ''})`
+    : 'restored login with an expired access token, renewing with the refresh token');
+  return toLogin(decoded);
+}
+
+/**
+ * Like `loadPersistedLogin`, but read-only: it never deletes the file and writes no log line. Used to
+ * look at what another process persisted without changing it. Never throws.
+ */
+export function peekPersistedLogin(resource: URL): PersistedLogin | undefined {
+  if (!enabled()) return undefined;
+
+  const decoded = decode(resource);
+  if (!decoded || (!decoded.fresh && !decoded.grant)) return undefined;
+  return toLogin(decoded);
 }
 
 /** Persist the current login. Nothing is written if it could not be reused later. */
@@ -160,5 +203,21 @@ export function forgetPersistedLogin(resource: URL): void {
     unlinkSync(pathFor(resource));
   } catch {
     // already gone
+  }
+}
+
+/**
+ * Drop the persisted login for `resource` only if it still holds `refreshToken`. A file with another
+ * refresh token was written by a process that logged in again meanwhile and must survive. Returns
+ * whether the file was removed. Never throws.
+ */
+export function forgetPersistedLoginIf(resource: URL, refreshToken: string): boolean {
+  const decoded = decode(resource);
+  if (decoded?.grant?.refreshToken !== refreshToken) return false;
+  try {
+    unlinkSync(pathFor(resource));
+    return true;
+  } catch {
+    return false; // already gone
   }
 }

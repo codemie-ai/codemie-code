@@ -1,6 +1,7 @@
 import type { AggregatedResult, ParsedSession } from '@/agents/core/session/BaseSessionAdapter.js';
 import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
 import type { DesktopRepositoryResolver } from '@/telemetry/runtime/DesktopRepositoryResolver.js';
+import type { DesktopGatewayState } from '@/telemetry/clients/claude-desktop/claude-desktop.gateway.js';
 
 export interface LocalTelemetryDiscoveredSession {
   externalSessionId: string;
@@ -12,8 +13,6 @@ export interface LocalTelemetryDiscoveredSession {
   updatedAt: number;
   model?: string;
   isArchived?: boolean;
-  /** The session's title in Claude Desktop, when its metadata has one. */
-  title?: string;
 }
 
 export interface DesktopTelemetryRuntimeConfig {
@@ -27,6 +26,16 @@ export interface DesktopTelemetryRuntimeConfig {
   pollIntervalMs: number;
   inactivityTimeoutMs: number;
   repositoryResolver?: DesktopRepositoryResolver;
+  /** The daemon's port and gateway key: Desktop is collected while its applied config points at both. */
+  port: number;
+  gatewayKey: string;
+  /** Reads Desktop's applied config on each poll — its gateway and whether it names one at all; default: the real config. */
+  readDesktopGateway?: () => Promise<DesktopGatewayState>;
+  /**
+   * Told each time Desktop turns connected (the time collection counts from, ISO) or not connected (undefined);
+   * awaited, a failure logged.
+   */
+  onDesktopConnectedChange?: (connectedSince: string | undefined) => Promise<void>;
 }
 
 export interface LocalTelemetryAdapter {

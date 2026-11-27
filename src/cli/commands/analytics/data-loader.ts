@@ -171,6 +171,19 @@ export class MetricsDataLoader {
     this.sessionsDir = sessionsDir || getCodemiePath('sessions');
   }
 
+  /** Whether the record file is a `/clear` generation re-keyed from `filterId` (its `originSessionId`). */
+  private isRekeyedFrom(sessionFile: string, filterId: string): boolean {
+    if (!UUID_PATTERN.test(filterId)) return false;
+    try {
+      const raw = readFileSync(join(this.sessionsDir, sessionFile), 'utf-8');
+      // Most files never name the id: skip the parse for them
+      if (!raw.includes(filterId)) return false;
+      return (JSON.parse(raw) as { originSessionId?: string }).originSessionId === filterId;
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * Load all sessions with optional filtering
    */
@@ -194,8 +207,10 @@ export class MetricsDataLoader {
         // fallback pattern in src/cli/commands/log/reader.ts).
         const sessionId = sessionFile.replace('.json', '').replace(/^completed_/, '');
 
-        // Skip if filtering by session ID (a UUID also selects its `/clear` generations `<uuid>-<gen>`)
-        if (filter?.sessionId && !matchesSessionIdFilter(sessionId, filter.sessionId)) {
+        // Skip if filtering by session ID (a UUID also selects its `/clear` generations `<uuid>-<gen>`, and the
+        // generations re-keyed under a fresh id to stay in the delivery queue, which name it as `originSessionId`)
+        const rekeyed = !!filter?.sessionId && !matchesSessionIdFilter(sessionId, filter.sessionId) && this.isRekeyedFrom(sessionFile, filter.sessionId);
+        if (filter?.sessionId && !rekeyed && !matchesSessionIdFilter(sessionId, filter.sessionId)) {
           continue;
         }
 
@@ -209,7 +224,7 @@ export class MetricsDataLoader {
         seenSessionIds.add(sessionId);
 
         const sessionData = this.loadSession(sessionId);
-        if (!sessionData || !this.matchesFilter(sessionData, filter)) {
+        if (!sessionData || !this.matchesFilter(sessionData, rekeyed ? { ...filter, sessionId: undefined } : filter)) {
           continue;
         }
         sessions.push(sessionData);

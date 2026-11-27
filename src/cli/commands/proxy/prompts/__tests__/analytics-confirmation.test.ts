@@ -11,11 +11,8 @@ import {
   type AnalyticsConfirmationOptions,
 } from '../analytics-confirmation.js';
 
-type MessageScope = AnalyticsConfirmationOptions['scope'];
 type MessageAllowlist = AnalyticsConfirmationOptions['allowlist'];
 
-const GLOBAL_MESSAGE = 'Global analytics will be enabled for all your Claude Code sessions.';
-const PROJECT_MESSAGE = 'Analytics will be enabled for your Claude Code sessions in the project:';
 const INVALID_NOTE = 'The project list in Claude Code settings cannot be read and will be replaced.';
 
 const ALLOWLISTS: Array<[string, MessageAllowlist]> = [
@@ -25,14 +22,11 @@ const ALLOWLISTS: Array<[string, MessageAllowlist]> = [
 ];
 
 function options(
-  scope: MessageScope,
   allowlist: MessageAllowlist,
   extra: Partial<AnalyticsConfirmationOptions> = {},
 ): AnalyticsConfirmationOptions {
   return {
-    scope,
     allowlist,
-    currentProjectPath: '/repos/project-c',
     profile: 'work',
     codeMieUrl: 'https://codemie.example.com',
     ...extra,
@@ -64,40 +58,22 @@ afterEach(() => {
 });
 
 describe('buildAnalyticsConfirmationMessage — Global (default)', () => {
-  it.each(ALLOWLISTS)('shows the profile, CodeMie URL and one message for %s', (_label, allowlist) => {
-    const lines = plainLines(buildAnalyticsConfirmationMessage(options('user', allowlist)));
+  it.each(ALLOWLISTS)('shows only the profile and CodeMie URL for %s', (_label, allowlist) => {
+    const lines = plainLines(buildAnalyticsConfirmationMessage(options(allowlist)));
 
-    expect(lines).toEqual([
-      'Using profile: work',
-      'CodeMie URL: https://codemie.example.com',
-      '',
-      GLOBAL_MESSAGE,
-      '',
-    ]);
-  });
-
-  it('does not list previously enabled projects or mention the current project', () => {
-    const message = stripAnsi(
-      buildAnalyticsConfirmationMessage(
-        options('user', { kind: 'valid', paths: ['/repos/project-a', '/repos/project-b'] }),
-      ),
-    );
-
-    expect(message).not.toContain('/repos/project-a');
-    expect(message).not.toContain('/repos/project-b');
-    expect(message).not.toContain('/repos/project-c');
+    expect(lines).toEqual(['Using profile: work', 'CodeMie URL: https://codemie.example.com', '']);
   });
 
   it('omits the CodeMie URL line when no URL is configured but keeps the profile', () => {
     const lines = plainLines(
-      buildAnalyticsConfirmationMessage(options('user', { kind: 'absent' }, { codeMieUrl: undefined })),
+      buildAnalyticsConfirmationMessage(options({ kind: 'absent' }, { codeMieUrl: undefined })),
     );
 
-    expect(lines).toEqual(['Using profile: work', '', GLOBAL_MESSAGE, '']);
+    expect(lines).toEqual(['Using profile: work', '']);
   });
 
-  it('warns that an unreadable allowlist is replaced, before the message', () => {
-    const lines = plainLines(buildAnalyticsConfirmationMessage(options('user', { kind: 'invalid' })));
+  it('warns that an unreadable allowlist is replaced', () => {
+    const lines = plainLines(buildAnalyticsConfirmationMessage(options({ kind: 'invalid' })));
 
     expect(lines).toEqual([
       'Using profile: work',
@@ -105,66 +81,78 @@ describe('buildAnalyticsConfirmationMessage — Global (default)', () => {
       '',
       INVALID_NOTE,
       '',
-      GLOBAL_MESSAGE,
-      '',
     ]);
   });
 });
 
-describe('buildAnalyticsConfirmationMessage — Project (explicit opt-in)', () => {
-  it.each(ALLOWLISTS)('names the current project under the message for %s', (_label, allowlist) => {
-    const lines = plainLines(buildAnalyticsConfirmationMessage(options('project', allowlist)));
+describe('buildAnalyticsConfirmationMessage — routed clients', () => {
+  it('names the routed client and says it leaves the Claude login', () => {
+    const message = stripAnsi(
+      buildAnalyticsConfirmationMessage(options({ kind: 'absent' }, { routedClients: ['Claude Desktop'] })),
+    );
+
+    expect(message).toContain('Claude Desktop will be routed through the proxy');
+    expect(message).toContain('not your Claude login');
+  });
+
+  it('names two routed clients with "and"', () => {
+    const lines = plainLines(
+      buildAnalyticsConfirmationMessage(
+        options({ kind: 'absent' }, { routedClients: ['VS Code Claude Code extension', 'Claude Desktop'] }),
+      ),
+    );
+
+    expect(lines.slice(2).join(' ')).toContain('VS Code Claude Code extension and Claude Desktop will be routed');
+  });
+
+  it.each([[undefined], [[]]])('adds nothing for routedClients %j', (routedClients) => {
+    const message = stripAnsi(
+      buildAnalyticsConfirmationMessage(options({ kind: 'absent' }, { routedClients })),
+    );
+
+    expect(message).not.toContain('not your Claude login');
+    expect(message).not.toContain('routed');
+  });
+
+  it('puts the note after the unreadable-allowlist note', () => {
+    const lines = plainLines(
+      buildAnalyticsConfirmationMessage(options({ kind: 'invalid' }, { routedClients: ['Claude Desktop'] })),
+    );
+
+    expect(lines.indexOf(INVALID_NOTE)).toBeGreaterThan(-1);
+    expect(lines.findIndex((l) => l.includes('will be routed'))).toBeGreaterThan(lines.indexOf(INVALID_NOTE));
+  });
+});
+
+describe('buildAnalyticsConfirmationMessage — Project scope (explicit opt-in)', () => {
+  it.each(ALLOWLISTS)('adds the analytics repository name for %s', (_label, allowlist) => {
+    const lines = plainLines(buildAnalyticsConfirmationMessage(options(allowlist, { repositoryName: 'owner/repo' })));
 
     expect(lines).toEqual([
       'Using profile: work',
       'CodeMie URL: https://codemie.example.com',
-      '',
-      PROJECT_MESSAGE,
-      '/repos/project-c',
+      'Repository: owner/repo',
       '',
     ]);
   });
 
-  it('mentions the project only once and has no summary line for it at the top', () => {
-    const lines = plainLines(buildAnalyticsConfirmationMessage(options('project', { kind: 'absent' })));
-
-    expect(lines.filter((line) => line.includes('/repos/project-c'))).toHaveLength(1);
-    expect(lines.some((line) => /^Projects?:/.test(line))).toBe(false);
-  });
-
-  it('keeps a project path with spaces on a single line', () => {
-    setColumns(30);
-    const projectPath = 'C:\\Users\\Jane Doe\\my projects\\app';
-
+  it('warns that an unreadable allowlist is replaced, after the project line', () => {
     const lines = plainLines(
-      buildAnalyticsConfirmationMessage(options('project', { kind: 'absent' }, { currentProjectPath: projectPath })),
+      buildAnalyticsConfirmationMessage(options({ kind: 'invalid' }, { repositoryName: 'owner/repo' })),
     );
 
-    expect(lines).toContain(projectPath);
-  });
-
-  it('warns that an unreadable allowlist is replaced, before the message', () => {
-    const lines = plainLines(buildAnalyticsConfirmationMessage(options('project', { kind: 'invalid' })));
-
-    expect(lines.slice(3)).toEqual([INVALID_NOTE, '', PROJECT_MESSAGE, '/repos/project-c', '']);
+    expect(lines.slice(2)).toEqual(['Repository: owner/repo', '', INVALID_NOTE, '']);
   });
 });
 
-describe('buildAnalyticsConfirmationMessage — consistency and removed content', () => {
+describe('buildAnalyticsConfirmationMessage — removed content', () => {
   const allowlists: MessageAllowlist[] = [...ALLOWLISTS.map(([, allowlist]) => allowlist), { kind: 'invalid' }];
 
-  it('words both messages the same way', () => {
-    for (const message of [GLOBAL_MESSAGE, PROJECT_MESSAGE]) {
-      expect(message).toContain('nalytics will be enabled for');
-      expect(message).toContain('your Claude Code sessions');
-      expect(message).not.toMatch(/\b[Ww]e\b/);
-    }
-  });
-
-  it.each(['user', 'project'] as const)('has no settings status or project lists for %s scope', (scope) => {
+  it.each([undefined, 'owner/repo'])('has no enablement message, settings status or project lists (project: %s)', (repositoryName) => {
     for (const allowlist of allowlists) {
-      const message = stripAnsi(buildAnalyticsConfirmationMessage(options(scope, allowlist)));
+      const message = stripAnsi(buildAnalyticsConfirmationMessage(options(allowlist, { repositoryName })));
 
+      expect(message).not.toContain('will be enabled');
       expect(message).not.toContain('Already enabled');
       expect(message).not.toContain('About to add');
       expect(message).not.toContain('not yet configured');
@@ -180,8 +168,8 @@ describe('buildAnalyticsConfirmationMessage — consistency and removed content'
 
 describe('buildAnalyticsConfirmationMessage — layout', () => {
   it('starts every line at column 0', () => {
-    for (const scope of ['user', 'project'] as const) {
-      const lines = plainLines(buildAnalyticsConfirmationMessage(options(scope, { kind: 'invalid' })));
+    for (const repositoryName of [undefined, 'owner/repo']) {
+      const lines = plainLines(buildAnalyticsConfirmationMessage(options({ kind: 'invalid' }, { repositoryName })));
 
       for (const line of lines.filter((l) => l.length > 0)) {
         expect(line).toMatch(/^\S/);
@@ -189,10 +177,10 @@ describe('buildAnalyticsConfirmationMessage — layout', () => {
     }
   });
 
-  it('wraps the message to the terminal width without indenting wrapped lines', () => {
+  it('wraps the note to the terminal width without indenting wrapped lines', () => {
     setColumns(30);
 
-    const lines = plainLines(buildAnalyticsConfirmationMessage(options('user', { kind: 'absent' }))).slice(3);
+    const lines = plainLines(buildAnalyticsConfirmationMessage(options({ kind: 'invalid' }))).slice(3);
     const bodyLines = lines.filter((line) => line.length > 0);
 
     expect(bodyLines.length).toBeGreaterThan(1);
@@ -200,19 +188,20 @@ describe('buildAnalyticsConfirmationMessage — layout', () => {
       expect(line).toMatch(/^\S/);
       expect(line.length).toBeLessThanOrEqual(30);
     }
-    expect(bodyLines.join(' ')).toBe(GLOBAL_MESSAGE);
+    expect(bodyLines.join(' ')).toBe(INVALID_NOTE);
   });
 
   it('falls back to 80 columns when the terminal width is unknown', () => {
     setColumns(undefined);
 
-    const lines = plainLines(buildAnalyticsConfirmationMessage(options('project', { kind: 'invalid' })));
+    const lines = plainLines(buildAnalyticsConfirmationMessage(options({ kind: 'invalid' }, { repositoryName: 'owner/repo' })));
 
     for (const line of lines) {
       expect(line.length).toBeLessThanOrEqual(80);
     }
   });
 });
+
 
 describe('promptAnalyticsConfirmation', () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
@@ -232,7 +221,7 @@ describe('promptAnalyticsConfirmation', () => {
   it('asks Confirm then Decline with an inquirer list, like codemie setup', async () => {
     promptMock.mockResolvedValue({ enable: true });
 
-    await promptAnalyticsConfirmation(options('user', { kind: 'absent' }));
+    await promptAnalyticsConfirmation(options({ kind: 'absent' }));
 
     expect(promptMock).toHaveBeenCalledTimes(1);
     const [questions] = promptMock.mock.calls[0];
@@ -257,7 +246,7 @@ describe('promptAnalyticsConfirmation', () => {
       return { enable: true };
     });
 
-    await promptAnalyticsConfirmation(options('user', { kind: 'absent' }));
+    await promptAnalyticsConfirmation(options({ kind: 'absent' }));
 
     expect(order).toEqual(['log', 'prompt']);
     expect(stripAnsi(String(logSpy.mock.calls[0][0]))).toContain('Using profile: work');
@@ -267,13 +256,13 @@ describe('promptAnalyticsConfirmation', () => {
   it('resolves enable when Confirm is chosen', async () => {
     promptMock.mockResolvedValue({ enable: true });
 
-    await expect(promptAnalyticsConfirmation(options('user', { kind: 'absent' }))).resolves.toBe('enable');
+    await expect(promptAnalyticsConfirmation(options({ kind: 'absent' }))).resolves.toBe('enable');
   });
 
   it('resolves cancel when Decline is chosen', async () => {
     promptMock.mockResolvedValue({ enable: false });
 
-    await expect(promptAnalyticsConfirmation(options('project', { kind: 'absent' }))).resolves.toBe('cancel');
+    await expect(promptAnalyticsConfirmation(options({ kind: 'absent' }))).resolves.toBe('cancel');
   });
 
   it.each(['ExitPromptError', 'AbortPromptError'])('resolves cancel when the prompt is closed (%s)', async (name) => {
@@ -281,12 +270,104 @@ describe('promptAnalyticsConfirmation', () => {
     error.name = name;
     promptMock.mockRejectedValue(error);
 
-    await expect(promptAnalyticsConfirmation(options('user', { kind: 'absent' }))).resolves.toBe('cancel');
+    await expect(promptAnalyticsConfirmation(options({ kind: 'absent' }))).resolves.toBe('cancel');
   });
 
   it('propagates unexpected prompt errors', async () => {
     promptMock.mockRejectedValue(new Error('boom'));
 
-    await expect(promptAnalyticsConfirmation(options('user', { kind: 'absent' }))).rejects.toThrow('boom');
+    await expect(promptAnalyticsConfirmation(options({ kind: 'absent' }))).rejects.toThrow('boom');
+  });
+
+  describe('work-consent question', () => {
+    const answers = (...values: boolean[]): void => {
+      for (const enable of values) promptMock.mockResolvedValueOnce({ enable });
+    };
+
+    it.each([
+      ['project', "Include analytics from personal Claude subscriptions in this repository?"],
+      ['user', "Include analytics from personal Claude subscriptions in any repository?"],
+    ] as const)('asks the unchanged main question first, then a Confirm / Decline list for %s scope, Confirm preselected', async (scope, text) => {
+      answers(true, true);
+
+      await promptAnalyticsConfirmation(options({ kind: 'absent' }, { workConsentQuestion: { scope } }));
+
+      expect(promptMock).toHaveBeenCalledTimes(2);
+      expect(promptMock.mock.calls[0][0][0]).toMatchObject({
+        type: 'list',
+        message: 'Enable Claude Code analytics?',
+        choices: [
+          { name: 'Confirm', value: true },
+          { name: 'Decline', value: false },
+        ],
+      });
+      expect(promptMock.mock.calls[1][0][0]).toMatchObject({
+        type: 'list',
+        message: text,
+        default: true,
+        choices: [
+          { name: 'Confirm', value: true },
+          { name: 'Decline', value: false },
+        ],
+      });
+    });
+
+    it('prints the header once, before the first question', async () => {
+      const order: string[] = [];
+      logSpy.mockImplementation(() => { order.push('log'); });
+      promptMock.mockImplementation(async () => { order.push('prompt'); return { enable: true }; });
+
+      await promptAnalyticsConfirmation(options({ kind: 'absent' }, { workConsentQuestion: { scope: 'user' } }));
+
+      expect(order).toEqual(['log', 'prompt', 'prompt']);
+    });
+
+    it.each([
+      ['main Confirm then consent Confirm', [true, true], 'enable-with-consent'],
+      ['main Confirm then consent Decline', [true, false], 'enable'],
+    ] as const)('%s resolves %s', async (_name, replies, expected) => {
+      answers(...replies);
+
+      await expect(
+        promptAnalyticsConfirmation(options({ kind: 'absent' }, { workConsentQuestion: { scope: 'project' } })),
+      ).resolves.toBe(expected);
+    });
+
+    it('a declined main question cancels without asking the consent question', async () => {
+      answers(false);
+
+      await expect(
+        promptAnalyticsConfirmation(options({ kind: 'absent' }, { workConsentQuestion: { scope: 'project' } })),
+      ).resolves.toBe('cancel');
+      expect(promptMock).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['ExitPromptError', 'AbortPromptError'])('a closed main question (%s) cancels without asking the consent question', async (name) => {
+      const error = new Error('closed');
+      error.name = name;
+      promptMock.mockRejectedValueOnce(error);
+
+      await expect(
+        promptAnalyticsConfirmation(options({ kind: 'absent' }, { workConsentQuestion: { scope: 'user' } })),
+      ).resolves.toBe('cancel');
+      expect(promptMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('a closed consent question cancels', async () => {
+      const error = new Error('closed');
+      error.name = 'ExitPromptError';
+      promptMock.mockResolvedValueOnce({ enable: true }).mockRejectedValueOnce(error);
+
+      await expect(
+        promptAnalyticsConfirmation(options({ kind: 'absent' }, { workConsentQuestion: { scope: 'user' } })),
+      ).resolves.toBe('cancel');
+    });
+
+    it('without workConsentQuestion only the main question is asked (unchanged)', async () => {
+      answers(true);
+
+      await expect(promptAnalyticsConfirmation(options({ kind: 'absent' }))).resolves.toBe('enable');
+      expect(promptMock).toHaveBeenCalledTimes(1);
+    });
   });
 });

@@ -1,0 +1,347 @@
+{
+  "decision": "request-changes",
+  "rationale": "All four lenses and the standards audit ran; all 36 spec and story criteria pass, and every candidate was checked against the source. Request-changes because of 3 blocking findings: two code-quality.md violations no automated gate enforces (the ~150-line resolveLayered(), and a missing JSDoc on an exported function) and an untested handleStatus wiring for the ticket's core fix. Of 8 findings, 5 are advisory; 0 deferred; 11 candidates dismissed (see code-review-dismissed.local.md).",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "ConfigLoader runs its layer merge once, keeping value, layer, env origin and pre-env value per key",
+      "status": "pass",
+      "notes": "resolveLayered() in config.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "load() returns only the merged config; shape and callers unchanged",
+      "status": "pass",
+      "notes": "resolution kept in a WeakMap via modelResolutionOf()"
+    },
+    {
+      "kind": "spec",
+      "item": "loadWithSources() and the override check read the same merge result",
+      "status": "pass",
+      "notes": "duplicated layer list removed"
+    },
+    {
+      "kind": "spec",
+      "item": "--show-sources can no longer read env before .env is loaded",
+      "status": "pass",
+      "notes": "loadDotenv() runs before loadFromEnv()"
+    },
+    {
+      "kind": "spec",
+      "item": "Override only when merged model came from env layer and differs from pre-env value",
+      "status": "pass",
+      "notes": "envModelUsed + describeModel() equality check"
+    },
+    {
+      "kind": "spec",
+      "item": "Three origins shell/dotenv/saved owned by one dependency-free module",
+      "status": "pass",
+      "notes": "src/utils/model-origin.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "The shared helper is the only place that maps an origin to text",
+      "status": "pass",
+      "notes": "overrideCause()/describeModel()"
+    },
+    {
+      "kind": "spec",
+      "item": "dotenv origin: record only keys dotenv added; presence snapshot in same sync block",
+      "status": "pass",
+      "notes": "loadDotenv() present-key set; see advisory CR-008 for Windows key case"
+    },
+    {
+      "kind": "spec",
+      "item": "saved origin: codemie-copilot records its saved pick in-process",
+      "status": "pass",
+      "notes": "bin/codemie-copilot.js recordSavedModelPick()"
+    },
+    {
+      "kind": "spec",
+      "item": "Records count only while CODEMIE_MODEL equals recorded value; resettable for tests",
+      "status": "pass",
+      "notes": "isFromDotenv()/resolveModelEnvOrigin(); resetModelOriginRecords()"
+    },
+    {
+      "kind": "spec",
+      "item": "Any other non-empty CODEMIE_MODEL is shell, including inherited",
+      "status": "pass",
+      "notes": "falls through to 'shell'"
+    },
+    {
+      "kind": "spec",
+      "item": "Shared helper renders the three exact marker formats",
+      "status": "pass",
+      "notes": "asserted in model-origin.test.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "No origin, or model equal to profile model, renders just the model name",
+      "status": "pass",
+      "notes": "describeModel() early return"
+    },
+    {
+      "kind": "spec",
+      "item": "An empty profile model shows N/A",
+      "status": "pass",
+      "notes": "tested for undefined and ''"
+    },
+    {
+      "kind": "spec",
+      "item": "renderProfileInfo() does not change",
+      "status": "pass",
+      "notes": "profile.ts not in diff"
+    },
+    {
+      "kind": "spec",
+      "item": "Status Model row shows helper text from the merge result via ProfileIdentityDisplay",
+      "status": "pass",
+      "notes": "loadStatusConfig() + display.ts model field"
+    },
+    {
+      "kind": "spec",
+      "item": "--show-sources labels shell values (env) and .env values (.env) for every key",
+      "status": "pass",
+      "notes": "envLayerSource() via ENV_LAYER_VARS"
+    },
+    {
+      "kind": "spec",
+      "item": "Status commands use findNearestConfigDir(cwd) with envDir=cwd; loadWithSources gains envDir",
+      "status": "pass",
+      "notes": "profile/index.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "config.ts does not import event-fields/identity-fields.js",
+      "status": "pass",
+      "notes": "only profile/index.ts imports it"
+    },
+    {
+      "kind": "spec",
+      "item": "CODEMIE_MODEL_SOURCE='env' only when the launch used the env model",
+      "status": "pass",
+      "notes": "AgentCLI.ts:441-445"
+    },
+    {
+      "kind": "spec",
+      "item": "CODEMIE_MODEL_ENV_ORIGIN and CODEMIE_PROFILE_MODEL set on every launch, empty unless env",
+      "status": "pass",
+      "notes": "AgentCLI.ts:446-449"
+    },
+    {
+      "kind": "spec",
+      "item": "Both variables decided after exportProviderEnvVars; empty when provider blanked model",
+      "status": "pass",
+      "notes": "parity test covers provider blank"
+    },
+    {
+      "kind": "spec",
+      "item": "Banner builds model text with the shared helper for every agent",
+      "status": "pass",
+      "notes": "BaseAgentAdapter.ts:640-644"
+    },
+    {
+      "kind": "spec",
+      "item": "--show-sources label lists in docs get (.env) added",
+      "status": "pass",
+      "notes": "project-config.md updated; CONFIGURATION.md has no label list"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: CODEMIE_MODEL_SOURCE values/readers unchanged; copilot only records pick",
+      "status": "pass",
+      "notes": "values still cli/env/default"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: env-over-profile precedence and dotenv no-overwrite unchanged",
+      "status": "pass",
+      "notes": "apply() order matches prior merge"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goal: status does not read the codemie-copilot saved-model file",
+      "status": "pass",
+      "notes": "loadStatusConfig() reads none"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC1: env model -> status shows effective model, override marker, replaced profile model",
+      "status": "pass",
+      "notes": "parity tests assert modelText"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC2: marker names shell env / .env / saved pick; shell wins; inherited reads shell",
+      "status": "pass",
+      "notes": "resolveModelEnvOrigin(); config tests"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC3: --show-sources labels a shell model (env) and a .env model (.env)",
+      "status": "pass",
+      "notes": "config-project-override.test.ts"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC4: banner shows same marker text as status, incl. local profile over global",
+      "status": "pass",
+      "notes": "parity tests"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC5a: no/empty/equal CODEMIE_MODEL -> same model, no marker",
+      "status": "pass",
+      "notes": "parity it.each cases"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC5b: --profile, --model, or provider blanking -> no banner marker",
+      "status": "pass",
+      "notes": "parity tests"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC6: CODEMIE_MODEL_SOURCE env only when env model used; --profile -> default",
+      "status": "pass",
+      "notes": "parity --profile case"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC7: from a repo subfolder, status reports the same .codemie as the launcher",
+      "status": "pass",
+      "notes": "loadStatusConfig() tested; handleStatus wiring untested (CR-001)"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC8: tests cover shell, .env and no-override for status text, run() vars and helper",
+      "status": "pass",
+      "notes": "model-override-parity.test.ts"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC9: codemie-copilot saved-pick launch shows the saved-pick marker text",
+      "status": "pass",
+      "notes": "parity test asserts exact text; bin wiring untested (CR-004)"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "git-workflow.md / commitlint.config.cjs: all 5 subjects use <type>(<scope>): <subject> with allowed types (feat, fix) and allowed scopes (cli, agents, config, utils), imperative mood, all under the 100-char subject limit; bodies reference the ticket. Subjects also carry the EPMCDME-17853 key, which the guide's Anti-Patterns table discourages only 'when scope already conveys context'; 10 of the last 40 subjects on the base branch follow the same type(scope): EPMCDME-<id> pattern and the workspace instructions require the key, so this is not counted as a violation"
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "code-quality.md met for .js import extensions, explicit return types on exports, naming, no new console.log debug output or new generic Error, profile/index.ts stays at 499 lines (<500). Unmet: (1) Code Structure Guidelines 'Functions: under 50 lines' - the new private ConfigLoader.resolveLayered() at src/utils/config.ts:201-352 is about 150 lines (it absorbs the former ~130-line load() body plus the loadWithSources() merge, so the length is largely inherited, but the function is new in this change); (2) Comments & Documentation 'JSDoc on all public APIs' - exported resetModelOriginRecords() at src/utils/model-origin.ts:63 has no JSDoc while every other export in the file has one. src/utils/config.ts remains over the 500-line file guideline (1878 lines) but the change shrinks it from 1884, so that is not attributed to this change"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "security-practices.md: no hardcoded secrets; --show-sources still routes every value through maskSensitive() (apiKey/token/password keys masked) with only the source label changed to (.env); banner and profile status model text pass through sanitizeDisplayText(); the new CODEMIE_MODEL_ENV_ORIGIN / CODEMIE_PROFILE_MODEL exports carry only an origin enum and a model name, no credentials; .env is still read only from the launch cwd via path.join(envDir, '.env') with no user-supplied path; no X-CodeMie-* attribution header, Responses user field or JWT claim, nor its derivation source, is touched"
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/profile/index.ts",
+      "line": 136,
+      "title": "handleStatus wiring has no command-level test",
+      "problem": "No test runs the `codemie profile status` command. handleStatus now takes configDir, config and modelText from loadStatusConfig(), reads profiles, the active name and the local-config flag from configDir, and passes `model: modelText` to ProfileDisplay.formatStatus. model-override-parity.test.ts only calls loadStatusConfig() directly, and index.test.ts only calls formatStatus() directly with a hand-built identity.model. The only parseAsync call (index.test.ts:177) runs the list view.",
+      "impact": "If handleStatus stopped passing `model: modelText`, or went back to process.cwd() for listProfiles/getActiveProfileName/resolveIdentityDisplay, `codemie profile status` would again show the stored profile model or a different profile than the launcher uses. That is the exact bug this ticket fixes, and no test would fail. Consumer: `codemie profile status` via createStatusCommand.",
+      "recommendation": "Add a test in src/cli/commands/profile/__tests__/index.test.ts that runs createProfileCommand().parseAsync(['status'], { from: 'user' }) from a repo subfolder with CODEMIE_MODEL set (and a case with a <cwd>/.env). Assert that the printed Model line contains '<env model> (CODEMIE_MODEL from shell env overrides profile: <profile model>)' and that the active profile shown comes from the nearest .codemie."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/utils/config.ts",
+      "line": 201,
+      "title": "resolveLayered exceeds the 50-line function rule",
+      "problem": "code-quality.md Code Structure Guidelines require functions under 50 lines with one responsibility. The new ConfigLoader.resolveLayered() is about 150 lines. One body does defaults, profile selection, global/project/workspace layering, identity dropping, .env loading, env filtering under --profile, CLI overrides and model-resolution bookkeeping. eslint.config.mjs has no max-lines rule, so no automated gate enforces the limit.",
+      "impact": "A documented code-quality rule is unmet by a function this change introduces. That function is now the single merge path behind both load() and loadWithSources(), so every future config change lands in it.",
+      "recommendation": "Split resolveLayered() into named helpers: the identity/workspace step (around lines 259-281) and the --profile env filtering (around lines 294-339, which can become a loop over the protected keys). Leave resolveLayered() as the ordered sequence of apply() calls plus the model-resolution bookkeeping."
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/utils/model-origin.ts",
+      "line": 63,
+      "title": "resetModelOriginRecords export lacks JSDoc",
+      "problem": "code-quality.md Comments & Documentation requires 'JSDoc on all public APIs'. The exported resetModelOriginRecords() has none, unlike every other export in the module. No eslint jsdoc rule enforces it.",
+      "impact": "A documented code-quality rule is unmet on a newly exported function. It is used only by tests, and a reader of the module cannot tell that.",
+      "recommendation": "Add a one-line JSDoc saying it clears the in-process .env and saved-pick records, for tests."
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "bin/codemie-copilot.js",
+      "line": 97,
+      "title": "Saved-pick recording in codemie-copilot untested",
+      "problem": "The 'saved' origin is tested only by calling recordSavedModelPick() by hand (model-override-parity.test.ts, model-origin.test.ts). No test loads bin/codemie-copilot.js, so nothing checks that applySavedModelIfNeeded records the pick after it sets CODEMIE_MODEL.",
+      "impact": "Narrow: a regression only changes label text. If the call were dropped or moved, the codemie-copilot banner would call a saved pick 'CODEMIE_MODEL from shell env' and no test would fail. The model in use is unaffected.",
+      "recommendation": "Move applySavedModelIfNeeded's model handling into a testable module, or add a test that, given a saved model.json and no --model/CODEMIE_MODEL, asserts resolveModelEnvOrigin() returns 'saved'."
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/commands/profile/index.ts",
+      "line": 200,
+      "title": "--show-sources subfolder wiring untested",
+      "problem": "No test runs `codemie profile status --show-sources`. handleStatusWithSources now passes findNearestConfigDir(cwd) as the config dir and cwd as envDir, but the existing tests call ConfigLoader.showWithSources(workingDir) directly with one directory.",
+      "impact": "Narrow: only the directory arguments are untested; the merge and the (.env) label are covered. If it went back to showWithSources() with no arguments, --show-sources run from a subfolder would disagree with plain status and the launcher, and no test would fail.",
+      "recommendation": "Add a test that runs the status command with --show-sources from a repo subfolder holding a .env with CODEMIE_MODEL. Assert '<value> (.env)' and that the profile comes from the parent repo's .codemie."
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/utils/config.ts",
+      "line": 88,
+      "title": "ENV_LAYER_VARS duplicates loadFromEnv variable list",
+      "problem": "ENV_LAYER_VARS is a hand-written copy of the variable names loadFromEnv() reads, and nothing keeps the two in sync. Today they match (config.ts:724-756 reads exactly the listed variables).",
+      "impact": "No behaviour consequence today. If a later change adds a variable to loadFromEnv() but not to ENV_LAYER_VARS, a .env value for that key would always show as (env) in --show-sources.",
+      "recommendation": "Derive both from one table (key -> variable names) that loadFromEnv() also reads, or add a test asserting every key loadFromEnv() can return has an ENV_LAYER_VARS entry."
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/utils/config.ts",
+      "line": 279,
+      "title": "Extra local config read on every load",
+      "problem": "Every load(), including the launch path, now calls loadLocalMultiProviderConfig(workingDir) only to label the tooling-workspace source. load() already reads that file through other calls (config.ts:168, 380, 428).",
+      "impact": "Minor: one more small JSON read per load and no user-visible effect. The read is needed only for --show-sources attribution.",
+      "recommendation": "Reuse the local multi-provider config already read in this pass, or let resolveIdentityFor() return the workspace scope it used, instead of reading the file again."
+    },
+    {
+      "id": "CR-008",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/utils/model-origin.ts",
+      "line": 37,
+      "title": "Windows lowercase .env key mislabelled as shell",
+      "problem": "On Windows, loadDotenv uppercases names for its presence check, but recordDotenvValues stores each key as written in .env, and isFromDotenv('CODEMIE_MODEL') looks it up by exact case. A .env line such as `codemie_model=x` is still read by loadFromEnv, because the Windows environment is case-insensitive, but it is never matched as dotenv.",
+      "impact": "Narrow trigger: a lowercase or mixed-case variable name in .env on Windows. The banner and status then say 'CODEMIE_MODEL from shell env' and --show-sources prints (env) instead of (.env). Workaround: write the name in uppercase.",
+      "recommendation": "Record keys normalized the same way loadDotenv's presence check normalizes them (envKeyId(k)), and normalize the lookup key in isFromDotenv the same way. For example, recordDotenvValues(Object.fromEntries(entries.map(([k, v]) => [envKeyId(k), v]))) plus dotenvValues.get(envKeyId(key)), with envKeyId moved into model-origin.ts or passed in."
+    }
+  ],
+  "deferred": [],
+  "reviewed_head": null
+}

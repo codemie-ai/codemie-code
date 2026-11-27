@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "task": "Surface the original network error code/message instead of a misleading HTTP 500 in codemie sdk CLI commands, fixing inside this repo.",
+  "generated": "2026-11-24T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 15,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "technical_risk", "reason": "The SDK ApiError drops axios code/cause, so a fix in handleSdkError alone cannot recover the original error. The fix needs a hook before the SDK interceptor (client factory in auth.ts) or a heuristic on the ApiError shape. No exact precedent, it depends on SDK internals (^0.1.648), and whether the axios instance is reachable is unverified." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

@@ -1,7 +1,8 @@
 import type { CopilotEvent, CopilotShutdownData } from '@/agents/plugins/copilot-cli/copilot-cli-event-types.js';
 import { extractCopilotToolActivity, type OpenToolCall } from '@/agents/plugins/copilot-cli/copilot-cli.tool-activity.js';
-import { extractSlashCommand } from '@/agents/plugins/copilot-cli/copilot-cli.constants.js';
+import { extractSlashCommand, isSubagentPrompt } from '@/agents/plugins/copilot-cli/copilot-cli.constants.js';
 import { buildUsageRows, stableEventId, USAGE_REQUEST_EVENT_TYPE, type PendingMessage } from './copilot-cli-otlp.request-usage.js';
+import { buildUnhookedToolEvents } from './copilot-cli-otlp.unhooked-tools.js';
 
 export type { PendingMessage };
 
@@ -85,8 +86,12 @@ export function summarizeSlice(
   }
 
   const commands: string[] = [];
+  let userTurns = 0;
   for (const e of events) {
     if (e.type !== 'user.message') continue;
+    // A sub-agent's injected prompt is neither a user turn nor a user-typed command.
+    if (isSubagentPrompt(e.data)) continue;
+    userTurns++;
     const data = (e.data ?? {}) as { content?: string; transformedContent?: string };
     const command = extractSlashCommand(data.content, data.transformedContent);
     if (command) commands.push(command);
@@ -110,14 +115,7 @@ export function summarizeSlice(
       toolCalls,
       toolErrors,
       apiCalls: mainRequests.size,
-      // Mirrors `session.usage_record`'s own `initiator` check above: a sub-agent-dispatched
-      // prompt is not a main-session turn. Degrades safely if Copilot never sets it on
-      // `user.message` — then every message still counts, as before.
-      turns: events.filter((e) => {
-        if (e.type !== 'user.message') return false;
-        const data = (e.data ?? {}) as { initiator?: string };
-        return data.initiator !== 'sub-agent';
-      }).length,
+      turns: userTurns,
       models,
     },
     details: { tools, filesWritten: [...written], filesEdited: [...edited], linesAdded, linesRemoved, commands: [...commands] },
@@ -246,6 +244,7 @@ export function buildDeferredUsageEvents(
   const endedAt = lastShutdown?.timestamp ?? '';
   // A tail-only transcript would yield a final summary that understates the incremental totals, so omit it.
   const outgoing: Record<string, unknown>[] = [...slice.rows];
+  if (!truncated) outgoing.push(...buildUnhookedToolEvents(sessionId, events));
   if (!truncated && !withoutSummary) {
     outgoing.push(buildSessionSummaryEvent({
       sessionId,

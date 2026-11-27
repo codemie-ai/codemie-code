@@ -245,14 +245,13 @@ describe('AC18 post-eviction fixture and AC16 sticky Personal', () => {
     h.cfg.routing = { routed: false, routing_proof: 'proven' };
   };
 
-  it('re-stamp after eviction is allowed; a Personal request answered session_project_conflict is a recorded discard, never accepted', async () => {
-    personal();
+  it('re-stamp after eviction is allowed; a request answered session_project_conflict is a recorded discard, never accepted', async () => {
+    // Corporate: an unconsented Personal session publishes nothing, and this case is about the discard bookkeeping.
     let m = await load();
     await stamp(m, 's1');
     await hook(m, 's1', 'proj-orig');
     await drain(m, 's1');
-    expect(posts()[0].headers['X-CodeMie-Subscription-Type']).toBe('personal');
-    expect(await m.vs.readVerdict(keyOf(m, 's1'))).toMatchObject({ class: 'personal' });
+    expect(posts()[0].headers['X-CodeMie-Subscription-Type']).toBe('corporate');
 
     setLastUsed(recFile(m, 's1'), Date.now() - 91 * DAY);
     process.env.OTLP_ABANDONED_SESSION_GRACE_MINUTES = '0.0001';
@@ -270,7 +269,7 @@ describe('AC18 post-eviction fixture and AC16 sticky Personal', () => {
 
     const status = (await m.st.readStatus('s1'))!;
     expect(posts()).toHaveLength(2);
-    expect(posts()[1].headers).toMatchObject({ 'X-CodeMie-Project': 'proj-new', 'X-CodeMie-Subscription-Type': 'personal' });
+    expect(posts()[1].headers).toMatchObject({ 'X-CodeMie-Project': 'proj-new', 'X-CodeMie-Subscription-Type': 'corporate' });
     expect(status.lastDiscard).toMatchObject({ reason: 'session_project_conflict', stream: 'hooks' });
     expect(status.cursors.hooks).toBe(hooksSize('s1')); // that range only, as a discard
     expect(status.lastLoss).toBeUndefined();
@@ -294,7 +293,7 @@ describe('AC18 post-eviction fixture and AC16 sticky Personal', () => {
     expect((await m.pc.getPolicyState({ ...m.io.forwarderIdentity(credentials())! })).capability).toBe(capability);
   });
 
-  it('sticky Personal on an evidence-capable backend with an expired policy is sent as full evidence', async () => {
+  it('sticky Personal on an evidence-capable backend with an expired policy is still not sent without work consent', async () => {
     personal();
     const m = await load();
     await stamp(m, 's1');
@@ -306,8 +305,8 @@ describe('AC18 post-eviction fixture and AC16 sticky Personal', () => {
     await hook(m, 's1', 'proj-orig');
     await drain(m, 's1');
 
-    expect(posts()).toHaveLength(1);
-    expect(posts()[0].headers).toMatchObject({ 'X-CodeMie-Subscription-Type': 'personal', 'X-CodeMie-Session-Id': 's1' });
+    expect(posts()).toHaveLength(0);
+    expect((await m.st.readStatus('s1'))?.holds?.session?.reason).toBe('work_consent_required');
   });
 
   it('no verdict on an old backend keeps the legacy request (no evidence headers)', async () => {
@@ -327,7 +326,6 @@ describe('AC18 post-eviction fixture and AC16 sticky Personal', () => {
 describe('AC1 headers sent per routing proof', () => {
   it.each([
     ['routed + proven', true, 'proven', 'codemie', 'true'],
-    ['direct + proven, org not in policy', false, 'proven', 'personal', 'false'],
     ['unproven route never personal', false, 'unproven', 'unknown', 'false'],
   ] as const)('%s', async (_n, routed, routing_proof, cls, routedHeader) => {
     h.cfg.org = 'Gmail Personal';

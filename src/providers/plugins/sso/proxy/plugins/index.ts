@@ -9,6 +9,7 @@ import { getPluginRegistry } from './registry.js';
 import { MCPAuthPlugin } from './mcp-auth.plugin.js';
 import { EndpointBlockerPlugin } from './endpoint-blocker.plugin.js';
 import { GatewayKeyPlugin } from './gateway-key.plugin.js';
+import { ClientAttributionPlugin } from './client-attribution.plugin.js';
 import { DesktopModelsPlugin } from './desktop-models.plugin.js';
 import { SSOAuthPlugin } from './sso-auth.plugin.js';
 import { JWTAuthPlugin } from './jwt-auth.plugin.js';
@@ -26,6 +27,7 @@ import { LoggingPlugin } from './logging.plugin.js';
 import { RoutingHeaderInjectorPlugin } from './routing-header-injector.plugin.js';
 import { SSOSessionSyncPlugin } from './sso.session-sync.plugin.js';
 import { OtlpPlugin } from './otlp.plugin.js';
+import { copilotHookLifecycle } from './otlp-spool/copilot-usage-enrichment.js';
 
 /**
  * Register core plugins
@@ -38,7 +40,8 @@ export function registerCorePlugins(): void {
   registry.register(new MCPAuthPlugin()); // Priority 3 - MCP auth relay routing
   registry.register(new EndpointBlockerPlugin()); // Priority 5 - blocks unwanted endpoints early
   registry.register(new GatewayKeyPlugin()); // Priority 7 - validates local gateway auth, strips header before upstream
-  registry.register(new DesktopModelsPlugin()); // Priority 8 - answers Claude Desktop's /v1/models from the project's catalog
+  registry.register(new ClientAttributionPlugin()); // Priority 8, after the gateway key's 7 - settles the request's client (a shared-key Cowork request is claude-desktop) and its Desktop repository
+  registry.register(new DesktopModelsPlugin()); // Priority 9, after the client attribution - answers Claude Desktop's /v1/models from the project's catalog
   registry.register(new SSOAuthPlugin());
   registry.register(new JWTAuthPlugin());
   registry.register(new SSOSessionExpiryPlugin()); // Priority 11 - relabels a rejected session (an oauth2-proxy redirect to /oauth2/start, or the backend's "Authentication failed" 401; acted on alone — see the plugin's own header comment for why) as a parseable 401 and triggers re-auth before any other onUpstreamResponse plugin sees it
@@ -54,7 +57,7 @@ export function registerCorePlugins(): void {
   registry.register(new LoggingPlugin()); // Always enabled - logs to log files at INFO level
   registry.register(new RoutingHeaderInjectorPlugin()); // Priority 55 - copies router decision headers onto the response body so agents persist them
   registry.register(new SSOSessionSyncPlugin()); // Priority 100 - syncs sessions via multiple processors
-  registry.register(new OtlpPlugin()); // Priority 10 - OTLP ingestion
+  registry.register(new OtlpPlugin(copilotHookLifecycle)); // Priority 10 - OTLP ingestion
 }
 
 // Auto-register on import
@@ -65,6 +68,7 @@ export {
   MCPAuthPlugin,
   EndpointBlockerPlugin,
   GatewayKeyPlugin,
+  ClientAttributionPlugin,
   DesktopModelsPlugin,
   SSOAuthPlugin,
   JWTAuthPlugin,

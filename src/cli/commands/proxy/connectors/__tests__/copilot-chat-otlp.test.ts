@@ -4,14 +4,15 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { logger } from '@/utils/logger.js';
+import { getDirname } from '@/utils/paths.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { canonicalizePath } from '@/agents/core/project-allowlist.js';
-import { getCopilotConnectorsConfigPath } from '@/agents/core/copilot-connector-scope.js';
+import { getCopilotConnectorsConfigPath, writeCopilotConnectorScope } from '@/agents/core/copilot-connector-scope.js';
 
 const mocks = vi.hoisted(() => ({ productDir: '', projectRoot: '', home: '' }));
 
@@ -33,6 +34,7 @@ import {
   getCopilotChatHookFileLocationKey,
   getCopilotChatHookFilePath,
   getVsCodeChatSettingsPath,
+  readCopilotChatHookInstall,
   removeCopilotChatOtlpConfig,
   writeCopilotChatOtlpConfig,
 } from '../copilot-chat-otlp.js';
@@ -83,6 +85,37 @@ describe('copilot-chat-otlp connector', () => {
       process.env.CODEMIE_HOME = originalCodemieHome;
     }
     await rm(testDir, { recursive: true, force: true });
+  });
+
+  it('reads back the script the written hook file runs, and nothing without a readable file', async () => {
+    await expect(readCopilotChatHookInstall()).resolves.toBeNull();
+
+    await writeSettingsRaw('{}');
+    await writeCopilotChatOtlpConfig({ scope: 'user' });
+    await expect(readCopilotChatHookInstall()).resolves.toBe(
+      join(getDirname(import.meta.url), '../../../../../../bin/codemie.js')
+    );
+
+    await writeFile(getCopilotChatHookFilePath(), '{ not json');
+    await expect(readCopilotChatHookInstall()).resolves.toBeNull();
+  });
+
+  async function writeHookCommand(command: string): Promise<void> {
+    await mkdir(join(process.env.CODEMIE_HOME!, 'hooks'), { recursive: true });
+    await writeFile(getCopilotChatHookFilePath(), JSON.stringify({ hooks: { SessionStart: [{ type: 'command', command }] } }));
+  }
+
+  it('reads back a Windows script path the writer quoted as a JSON string, its backslashes single again', async () => {
+    const script = 'D:\\a\\codemie-code\\bin\\codemie.js';
+    await writeHookCommand(`${JSON.stringify('C:\\Program Files\\nodejs\\node.exe')} ${JSON.stringify(script)} hook --agent copilot-chat-otlp`);
+
+    await expect(readCopilotChatHookInstall()).resolves.toBe('D:\\a\\codemie-code\\bin\\codemie.js');
+  });
+
+  it('reads back as written a quoted script path that is not the content of a JSON string', async () => {
+    await writeHookCommand('"C:\\Program Files\\nodejs\\node.exe" "D:\\a\\x\\bin\\codemie.js" hook --agent copilot-chat-otlp');
+
+    await expect(readCopilotChatHookInstall()).resolves.toBe('D:\\a\\x\\bin\\codemie.js');
   });
 
   describe('user scope', () => {
@@ -191,6 +224,25 @@ describe('copilot-chat-otlp connector', () => {
       expect(settings[HOOK_LOCATIONS_KEY]).toEqual({ '/other/hooks.json': true });
       expect(await readScopeRecord()).toEqual({ enabled: false });
     });
+
+    it.skipIf(process.platform === 'win32')('full disconnect through a linked hook file deletes its target and the link', async () => {
+      await writeSettingsRaw(JSON.stringify({ [HOOK_LOCATIONS_KEY]: { '/other/hooks.json': true } }));
+      const hookFilePath = getCopilotChatHookFilePath();
+      const target = join(testDir, 'dotfiles', 'copilot-chat-hooks.json');
+      await mkdir(join(testDir, 'codemie-home', 'hooks'), { recursive: true });
+      await mkdir(join(testDir, 'dotfiles'));
+      await writeFile(target, '{}');
+      await symlink(target, hookFilePath);
+      await writeCopilotChatOtlpConfig();
+      expect(JSON.parse(await readFile(target, 'utf-8'))).toHaveProperty('hooks');
+      expect((await lstat(hookFilePath)).isSymbolicLink()).toBe(true);
+
+      const result = await removeCopilotChatOtlpConfig();
+
+      expect(result).toMatchObject({ removed: true, mode: 'full' });
+      expect(existsSync(target)).toBe(false);
+      await expect(lstat(hookFilePath)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
   });
 
   describe('project scope', () => {
@@ -244,6 +296,45 @@ describe('copilot-chat-otlp connector', () => {
       const result = await removeCopilotChatOtlpConfig({ scope: 'project' });
 
       expect(result).toMatchObject({ removed: false, mode: 'noop' });
+    });
+  });
+
+  describe('keepProjectList', () => {
+    async function storeTwoProjects(): Promise<unknown> {
+      await writeCopilotChatOtlpConfig({ scope: 'project' });
+      mocks.projectRoot = projectB;
+      await writeCopilotChatOtlpConfig({ scope: 'project' });
+      return { enabled: true, scope: 'project', paths: [await canonicalizePath(projectA), await canonicalizePath(projectB)] };
+    }
+
+    it('writes a stored list of two projects back as it is with no scope', async () => {
+      const stored = await storeTwoProjects();
+
+      await writeCopilotChatOtlpConfig({ keepProjectList: true });
+
+      expect(await readScopeRecord()).toEqual(stored);
+    });
+
+    it('tracks all projects when nothing is stored', async () => {
+      await writeCopilotChatOtlpConfig({ keepProjectList: true });
+
+      expect(await readScopeRecord()).toEqual({ enabled: true, scope: 'user' });
+    });
+
+    it('resets a stored list with scope user, as without the option', async () => {
+      await storeTwoProjects();
+
+      await writeCopilotChatOtlpConfig({ keepProjectList: true, scope: 'user' });
+
+      expect(await readScopeRecord()).toEqual({ enabled: true, scope: 'user' });
+    });
+
+    it('tracks all projects over a stored disabled record', async () => {
+      await writeCopilotConnectorScope('copilot-chat-otlp', { enabled: false });
+
+      await writeCopilotChatOtlpConfig({ keepProjectList: true });
+
+      expect(await readScopeRecord()).toEqual({ enabled: true, scope: 'user' });
     });
   });
 

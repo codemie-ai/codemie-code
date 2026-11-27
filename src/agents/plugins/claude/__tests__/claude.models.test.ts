@@ -472,3 +472,56 @@ describe('SSO catalog lookup (profile baseUrl first)', () => {
     expect(ssoMock.getStoredCredentials).not.toHaveBeenCalled();
   });
 });
+
+describe('buildModelPickerOptions — extra models of the profile', () => {
+  beforeEach(() => {
+    fetchCodeMieLlmModelsMock.mockReset();
+    fetchCodeMieLlmModelsMock.mockResolvedValue([
+      model({ deployment_name: 'claude-sonnet-5', label: 'Sonnet 5' }),
+      model({ deployment_name: 'grok-4.6', label: 'Grok 4.6' }),
+      model({ deployment_name: 'gemini-3.1-pro', label: 'Gemini 3.1 Pro' }),
+    ]);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const withExtras = (ids: string[]): NodeJS.ProcessEnv =>
+    freshEnv({ CODEMIE_PROFILE_CONFIG: JSON.stringify({ claudeExtraModels: ids }) });
+
+  it('offers Claude models only when the profile selected no extras', async () => {
+    const { buildModelPickerOptions } = await import('../claude.models.js');
+
+    const options = await buildModelPickerOptions(freshEnv());
+
+    expect(options.map((o) => o.model)).toEqual(['claude-sonnet-5']);
+  });
+
+  it('adds a selected non-Claude model under its real ID, marked as not Claude', async () => {
+    const { buildModelPickerOptions } = await import('../claude.models.js');
+
+    const options = await buildModelPickerOptions(withExtras(['grok-4.6']));
+
+    const grok = options.find((o) => o.model === 'grok-4.6');
+    expect(grok?.label).toBe('Grok 4.6');
+    expect(grok?.description).toContain('Not a Claude model');
+    expect(options.some((o) => o.model === 'gemini-3.1-pro')).toBe(false);
+  });
+
+  it('matches a selected model stored under its label', async () => {
+    const { buildModelPickerOptions } = await import('../claude.models.js');
+
+    const options = await buildModelPickerOptions(withExtras(['Gemini 3.1 Pro']));
+
+    expect(options.some((o) => o.model === 'gemini-3.1-pro')).toBe(true);
+  });
+
+  it('leaves a Claude model without the non-Claude note', async () => {
+    const { buildModelPickerOptions } = await import('../claude.models.js');
+
+    const options = await buildModelPickerOptions(withExtras(['grok-4.6']));
+
+    expect(options.find((o) => o.model === 'claude-sonnet-5')?.description).toBeUndefined();
+  });
+});
