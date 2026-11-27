@@ -1,0 +1,129 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "User approved check round; CR-001 resolved"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "CR-001 fix-now chosen by user"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "User approved check round; CR-001 resolved"
+    }
+  ],
+  "reviewed_head": "7167f70a1a4c51440c697615fdbe301d1e96de37",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "Prior verdict had no blocking findings; advisory CR-001 (Windows timeout orphaning the pi child) is resolved by a taskkill /T /F tree kill scoped to win32 + shell + timeout, with child.kill() fallback; other exec() callers keep the unchanged path. Standards and lens audits are final-round only.",
+  "confidence": "high",
+  "check_confidence": "high",
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 0,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/agents/plugins/pi/pi.packages.ts",
+      "line": 35,
+      "title": "Windows timeout may orphan pi install process",
+      "problem": "With shell: true on win32, the exec timeout terminates the cmd.exe wrapper only; the spawned pi install child can keep running in the background.",
+      "impact": "Trigger is narrow: a package install exceeding the 300s timeout on Windows. The install then fails with an error and a stray install may finish later; re-running is a cheap workaround.",
+      "recommendation": "Kill the process tree on timeout (e.g. taskkill /T /F) or document the limitation.",
+      "status": "resolved",
+      "check_notes": "exec.ts timeout on win32+shell runs taskkill /pid <pid> /T /F, falls back to child.kill() on spawn error; non-Windows/non-shell path unchanged.",
+      "fix": {
+        "change": "exec() kills the whole process tree via taskkill /T /F on Windows shell timeout",
+        "test": "src/utils/__tests__/exec-timeout.test.ts"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "AC1",
+      "status": "pass",
+      "notes": "shell: process.platform === 'win32' added in exec options"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC2",
+      "status": "pass",
+      "notes": "Diff touches only pi.packages.ts, pi.plugin.ts, install.ts"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC3",
+      "status": "pass",
+      "notes": "Early return when alreadyInstalled === true; otherwise installs"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC4",
+      "status": "pass",
+      "notes": "Options spread plus alreadyInstalled passed in both branches"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC5",
+      "status": "pending-stage-7",
+      "notes": "typecheck/lint/build not run in review"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC6",
+      "status": "pass",
+      "notes": "Nothing in diff runs installer"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "na",
+      "notes": "standards audit not part of this profile"
+    },
+    {
+      "kind": "code-quality",
+      "status": "na",
+      "notes": "standards audit not part of this profile"
+    },
+    {
+      "kind": "security",
+      "status": "na",
+      "notes": "standards audit not part of this profile"
+    }
+  ],
+  "final_round": {
+    "decision": "approve",
+    "rationale": "Edge-case and acceptance lenses ran cleanly; all acceptance criteria pass (AC5 pending-stage-7). One advisory finding (Windows timeout may orphan the pi child); 0 deferred, 0 dismissed. No fix-pack written (no blocking findings).",
+    "confidence": "high",
+    "risk_flags": []
+  }
+}

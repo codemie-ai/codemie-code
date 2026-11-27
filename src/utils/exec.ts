@@ -138,7 +138,20 @@ export async function exec(
     // Handle timeout
     if (options.timeout) {
       timeoutId = setTimeout(() => {
-        child.kill();
+        if (isWindows && useShell && child.pid !== undefined) {
+          // child.kill() only ends the cmd.exe wrapper on Windows; kill the whole tree
+          try {
+            const killer = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+              stdio: 'ignore',
+              windowsHide: true
+            });
+            killer.on?.('error', () => child.kill());
+          } catch {
+            child.kill();
+          }
+        } else {
+          child.kill();
+        }
         reject(new Error(`Command timed out after ${options.timeout}ms`));
       }, options.timeout);
     }
