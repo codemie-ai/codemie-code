@@ -18,6 +18,16 @@ export type CopilotAnalyticsGateReason =
   | 'scope-disabled'
   | 'scope-untracked';
 
+/**
+ * Gate reasons that are the developer's own filters: analytics off, the project excluded or outside the connector's scope.
+ * `scope-disabled` is not one: a connector that is not enabled is not a developer's filter of a folder.
+ */
+export const COPILOT_FILTER_REASONS: ReadonlySet<CopilotAnalyticsGateReason> = new Set<CopilotAnalyticsGateReason>([
+  'analytics-disabled',
+  'project-excluded',
+  'scope-untracked',
+]);
+
 export type CopilotAnalyticsGateDecision = { tracked: true } | { tracked: false; reason: CopilotAnalyticsGateReason };
 
 export async function evaluateCopilotAnalyticsGate(

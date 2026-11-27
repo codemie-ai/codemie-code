@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "generated": "2026-11-25T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 20,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 15,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Five components in one subsystem (src/mcp): callback-server (typed CallbackTimeoutError/OAuthCallbackError, sanitized and escaped callback page, security headers), mcp-oauth-provider (hints, refresh-rotation adoption, retry), token-store (read-only peek, conditional forget), auth-lock (per-lock stale age), constants (new getMcpAuthTimings abstraction deriving all timings from one env var)." },
+    { "dimension": "technical_risk", "reason": "Closest existing pattern is the already-shipped persisted login and auth lock, which does not cover the new security-sensitive parts: HTML-escaping and control-char stripping of untrusted callback text, and refresh-token rotation races between proxy processes with no cross-process lock (last writer wins). Credential handling is involved, but the change hardens existing behavior and is reversible. Bumped to L, not XL." },
+    { "dimension": "file_change_estimate", "reason": "15 files per diffstat (XL band 11-15): 5 source, 1 doc, 9 test files (helper plus 8 suites). About 60% of the files are tests, so effective production churn is lower than the score suggests." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk: security-sensitive work (untrusted callback text sanitization/escaping, persisted refresh-token handling) reflected in L score",
+    "Technical Risk: enumerated edge/error cases (timeout, oauth error, rotation, lock staleness) each backed by new dedicated test suites"
+  ],
+  "split_recommendation": null
+}

@@ -7,9 +7,9 @@ import {
   stopDaemon,
 } from './daemon-manager.js';
 import { DAEMON_LOCK_COMMAND_BUDGET_MS, withDaemonLock } from './daemon-lock.js';
-import { printNext } from '../../related-commands.js';
-import { startProxy, type ProxyStartOptions } from './start.js';
-import { restartProxy } from './restart.js';
+import { printNext, printNextSteps } from '../../related-commands.js';
+import type { ProxyStartOptions } from './start.js';
+import { resolveCollection } from '../shared/analytics-collection/resolve.js';
 import { disconnectTargets } from './disconnect-orchestrator.js';
 import { disconnectAll } from './disconnect-all.js';
 import { resetMcpAuth, RESET_NEXT_STEPS } from './reset-mcp-auth-orchestrator.js';
@@ -223,7 +223,7 @@ export function createProxyCommand(): Command {
     .option('--profile <name>', 'Profile whose credentials to use')
     .action(async (opts: ProxyStartOptions) => {
       try {
-        await startProxy(opts);
+        await (await resolveCollection()).daemon.start(opts);
         printNext('proxy start');
       } catch (error) {
         printProxyError(error, 'Failed to start proxy');
@@ -236,13 +236,14 @@ export function createProxyCommand(): Command {
     .description('Stop the background proxy daemon')
     .action(async () => {
       try {
+        const plan = (await resolveCollection()).doctor;
         const stopped = await withDaemonLock(DAEMON_LOCK_COMMAND_BUDGET_MS, async () => {
           const { running } = await checkStatus();
           if (running) await stopDaemon();
           return running;
         });
         console.log(stopped ? chalk.green('✓ Proxy stopped') : 'Proxy is not running.');
-        printNext('proxy stop');
+        printNextSteps(plan.nextSteps('stop'));
       } catch (error) {
         printProxyError(error, 'Failed to stop proxy');
       }
@@ -255,7 +256,7 @@ export function createProxyCommand(): Command {
     .option('--profile <name>', 'Profile whose credentials to use (default: the running daemon\'s)')
     .action(async (opts: { profile?: string }) => {
       try {
-        await restartProxy(opts);
+        await (await resolveCollection()).daemon.restart(opts);
         printNext('proxy restart');
       } catch (error) {
         printProxyError(error, 'Failed to restart proxy');
@@ -273,6 +274,7 @@ export function createProxyCommand(): Command {
       if (opts.deep) {
         deprecate(STATUS_DEEP_DEPRECATION, { json: opts.json });
       }
+      const plan = (await resolveCollection()).doctor;
       const { running, state } = await readDaemonStatus();
       if (!running || !state) {
         if (opts.json) {
@@ -280,14 +282,14 @@ export function createProxyCommand(): Command {
         } else {
           console.log('Status: stopped');
         }
-        printNext('proxy status', 'stopped', { json: opts.json });
+        printNextSteps(plan.nextSteps('status'), { json: opts.json });
         return;
       }
 
       const uptimeSec = Math.floor((Date.now() - new Date(state.startedAt).getTime()) / 1000);
       const deep = Boolean(opts.deep);
       // `--deep` keeps its old meaning during the deprecation: the composition runs the authenticated check.
-      const report = await composeProxyDoctor({ authProbe: deep, verbose: false });
+      const report = await composeProxyDoctor({ authProbe: deep, verbose: false, plan });
       const failed = (ids: string[]): boolean =>
         report.sections.some((section) => ids.includes(section.id) && section.status === 'error');
       const healthy = !failed(['daemon']) && !(deep && failed(['auth', 'upstream']));
@@ -316,8 +318,7 @@ export function createProxyCommand(): Command {
       console.log(`  URL:     ${state.url}`);
       console.log(`  Port:    ${state.port}`);
       console.log(`  API Key: ${key}`);
-      console.log(`  Client keys: ${key}.<client> — written by codemie proxy connect`);
-      console.log(`  Profile: ${state.profile}`);
+      for (const line of plan.statusLines({ ...state, gatewayKey: key })) console.log(line);
       if (state.project) {
         console.log(`  Project: ${state.project}`);
       }
@@ -362,6 +363,11 @@ export function createProxyCommand(): Command {
       'With --claude-otlp: also send analytics from personal Claude subscriptions, for this repository (--scope project) or any repository (--scope user). Without it, an interactive connect asks (not with --yes).',
     )
     .action(async (opts: UnifiedConnectOptions) => {
+      try {
+        (await resolveCollection()).guardProxyCommand('connect');
+      } catch (error) {
+        printProxyError(error, 'Failed to connect proxy');
+      }
       if (opts.force) deprecate(CONNECT_FORCE_DEPRECATION);
       if (opts.silent) deprecate(CONNECT_SILENT_DEPRECATION);
       deprecateConnectorFlags(connect, CONNECT_CONNECTOR_FLAGS);
@@ -427,6 +433,11 @@ export function createProxyCommand(): Command {
       insiders?: boolean;
       scope?: 'user' | 'project';
     }) => {
+      try {
+        (await resolveCollection()).guardProxyCommand('disconnect');
+      } catch (error) {
+        printProxyError(error, 'Failed to disconnect proxy');
+      }
       deprecateConnectorFlags(disconnect, DISCONNECT_CONNECTOR_FLAGS);
       if (opts.all) {
         if (opts.scope) {

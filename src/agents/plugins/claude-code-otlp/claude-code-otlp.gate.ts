@@ -14,7 +14,8 @@ export type ClaudeAnalyticsGateReason =
   | 'preferences-corrupt'
   | 'disabled'
   | 'project-excluded'
-  | 'not-in-allowlist';
+  | 'not-in-allowlist'
+  | 'allowlist-unresolved';
 
 export interface ClaudeAnalyticsGateDecision {
   tracked: boolean;
@@ -32,7 +33,14 @@ export async function evaluateClaudeAnalyticsGate(cwd: string | undefined): Prom
   if (await isProjectExcluded(cwd, preferences.value.excludedProjects)) {
     return { tracked: false, reason: 'project-excluded' };
   }
-  if (!(await isProjectTracked(cwd, await readAllowlistState()))) {
+  const allowlist = await readAllowlistState();
+  // A list that cannot be read, or a hook with no folder to match against a non-empty list, is not the developer's
+  // filter: the local mode leaves no exclusion mark for it. On the path to a backend a session already recorded is
+  // still stopped (`onUntrackedHook`).
+  if (allowlist.kind === 'invalid' || (allowlist.kind === 'valid' && allowlist.paths.length > 0 && !cwd)) {
+    return { tracked: false, reason: 'allowlist-unresolved' };
+  }
+  if (!(await isProjectTracked(cwd, allowlist))) {
     return { tracked: false, reason: 'not-in-allowlist' };
   }
   return { tracked: true, reason: 'tracked' };

@@ -203,6 +203,8 @@ codemie --help
 codemie doctor
 ```
 
+Tab completion for bash, zsh and fish: `codemie completion <bash|zsh|fish>`. See [Shell Completions](docs/SHELL-COMPLETIONS.md).
+
 ## Usage
 
 The CodeMie CLI provides two ways to interact with AI agents:
@@ -550,7 +552,7 @@ Providers: CodeMie SSO, Bearer Auth, LiteLLM.
 
 ## Claude Code Statusline
 
-The CodeMie Statusline displays live budget usage, project name, git branch, model, context window percentage, and token counts at the bottom of every Claude Code session.
+The CodeMie Statusline displays a `[⏺ CodeMie]` indicator, live budget usage, project name, git branch, model, context window percentage, and token counts at the bottom of every Claude Code session.
 
 ```bash
 # Install (or update) the statusline
@@ -563,10 +565,14 @@ codemie uninstall statusline
 Once installed, the statusline appears automatically in every claude session:
 
 ```
-[my-project] $4.21/$50 (8%) | (main) | [claude-sonnet-4-5] | ctx:12% in:45.2k out:3.1k
+[⏺ CodeMie] | [my-project] $4.21/$50 (8%) | (main) | [claude-sonnet-4-5] | ctx:12% in:45.2k out:3.1k
 ```
 
+The `[⏺ CodeMie]` segment appears only in sessions launched through CodeMie.
+
 The script is deployed to `~/.claude/codemie-budget-status.js` and registered as a `statusLine` command in `~/.claude/settings.json`. Budget values are cached for 60 seconds to avoid redundant API calls.
+
+**Updating an installed statusline.** The deployed script is a copy, so it does not change by itself when the CLI is upgraded. Every time you launch Claude Code through CodeMie (for example `codemie-claude`), the CLI compares `~/.claude/codemie-budget-status.js` with the bundle shipped in the installed CLI version and rewrites it when they differ, so the next managed launch after an upgrade picks up the new segment automatically. This refresh only rewrites the script: it never installs a statusline that is not there and never edits `~/.claude/settings.json`. A plain `claude` launch does not trigger it, and you can force an update at any time with `codemie install statusline`.
 
 ## Commands
 
@@ -583,7 +589,7 @@ codemie profile          # Manage provider profiles
 codemie models list      # List models available for the current provider
 codemie analytics        # View usage analytics (sessions, tokens, costs, tools)
 codemie analytics --open   # Self-contained HTML dashboard (7 views, cost, date range, light/dark, no server)
-codemie analytics --export json  # Same priced report data as JSON (--export html | json | both)
+codemie analytics --export json  # Same priced report data as JSON (--export html | json | both); the JSON export is deprecated
 codemie workflow <cmd>   # Manage CI/CD workflows
 codemie sdk <resource>   # Manage CodeMie platform assets (assistants, workflows, datasources, integrations, skills, users)
 codemie skill <cmd>      # Manage skills for CodeMie agents (list, validate, reload)
@@ -682,6 +688,8 @@ codemie proxy analytics status
 # Show delivery health: unsent data, the next retry and the last dropped reason
 codemie proxy doctor
 ```
+
+On a machine in the local analytics mode of `codemie analytics sync` (no CLI profile; see [docs/ANALYTICS-SYNC.md](docs/ANALYTICS-SYNC.md#local-analytics-mode)), `codemie proxy doctor` shows a `Local analytics` group in place of the sign-in and delivery ones: the analytics folder, the scheduled job and the last delivery per target.
 
 `disconnect` uninstalls the hooks and allowlist entirely; `analytics disable`/`exclude` turn collection off while keeping the hooks installed, so `analytics enable`/`include` turns it back on instantly.
 
@@ -813,6 +821,8 @@ codemie proxy restart [--profile <name>]   # restart, keeping port and key
 codemie proxy stop
 ```
 
+In the local analytics mode `codemie proxy doctor` reports the local proxy, the analytics folder and the scheduled job; `proxy start` / `restart` act on the local proxy and refuse `--profile`.
+
 `codemie proxy status` prints facts only: state, URL, port, profile, project, the CLI version the daemon was started by and uptime, with the gateway key masked (`--show-key` shows it). When anything is wrong it adds one line, `Issues found — run: codemie proxy doctor`. `codemie proxy clients` lists every client and analytics connector; Claude Code, the VS Code Claude Code extension, Claude Desktop, Copilot Chat and Copilot CLI read `connected`, `not connected` with the command that connects them (`--claude-otlp` / `--copilot-otlp`), or `not found`. `codemie proxy doctor` names what is wrong — a client that points at another port or still holds the shared key, Claude Desktop not collecting, analytics data that was not stored — with the command that fixes it; `--verbose` adds Claude Desktop's directories and recent sessions. Cowork sessions need a CodeMie project for their folder (`no_project` otherwise) and follow `codemie proxy analytics disable` and `codemie proxy analytics exclude`; a session that ran while the proxy was stopped is sent once it runs again, up to 7 days back. Details: [docs/COMMANDS.md](docs/COMMANDS.md#claude-desktop-3p).
 
 ### Linux
@@ -869,6 +879,7 @@ Comprehensive guides are available in the `docs/` directory:
 - **[Configuration](docs/CONFIGURATION.md)** - Setup wizard, environment variables, multi-provider profiles, manual configuration
   - `CODEMIE_INSECURE=1` — disable SSL verification for self-signed certs or local dev environments (SSL is on by default)
 - **[Commands](docs/COMMANDS.md)** - Complete command reference including analytics and workflow commands
+- **[Shell Completions](docs/SHELL-COMPLETIONS.md)** - Tab completion for bash, zsh and fish
 - **[Proxy and Analytics Commands](docs/PROXY-AND-ANALYTICS.md)** - Command groups, worked use cases (setup, diagnosis, scopes, consent, disconnect, team sync) and the deprecation table
 - **[Analytics Report](docs/ANALYTICS-REPORT.md)** - HTML dashboard: all 8 views, filters, session drill-down, cost and efficiency metrics
 - **[Agents](docs/AGENTS.md)** - Per-agent detail (built-in, Claude Code, Claude Code ACP, Gemini, OpenCode; Pi and Kimi are documented in this README)

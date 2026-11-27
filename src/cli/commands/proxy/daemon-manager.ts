@@ -1,16 +1,12 @@
 import { writeFile, readFile, unlink, rename } from 'node:fs/promises';
 import type { ProjectBindingState } from '../../../utils/project-binding.js';
 import { join } from 'node:path';
-import { getCodemieHome, getDirname } from '../../../utils/paths.js';
+import { getCodemieHome } from '@/utils/paths.js';
 import { logger } from '../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../utils/security.js';
-import { ToolExecutionError } from '../../../utils/errors.js';
-import { isOwnerAlive, processStartedAt, spawnDetached } from '../../../utils/processes.js';
+import { isOwnerAlive, processStartedAt } from '@/utils/processes.js';
 import { comparePrereleaseVersions } from '../../../utils/version-utils.js';
 import { fetchProxyHealth } from './health-check.js';
-
-/** Poll interval `spawnDaemon` uses while waiting for the daemon to become ready. */
-const DAEMON_READY_POLL_INTERVAL_MS = 100;
 
 /**
  * Upper bound on how long `spawnDaemon` waits for the daemon to become ready. Exported so
@@ -39,6 +35,8 @@ export interface DaemonState {
   syncCodeMieUrl?: string;
   /** Version of the CLI that started the daemon (absent in state files from older CLIs). */
   version?: string;
+  /** `local` for the daemon of the local mode, which has no upstream; absent for a daemon that serves a backend. */
+  mode?: 'local';
   /** When the daemon noticed Claude Desktop connected to it; absent while it is not. Written by the daemon alone. */
   desktopConnectedSince?: string;
   startedAt: string;
@@ -65,7 +63,8 @@ export interface ProxyConnectionRecord {
   telemetryMode?: 'none' | 'claude-desktop';
 }
 
-const DEFAULT_STATE_FILE = join(getCodemieHome(), 'proxy-daemon.json');
+/** The daemon's state file: written by the daemon, read by every start, stop and status. */
+export const DEFAULT_STATE_FILE = join(getCodemieHome(), 'proxy-daemon.json');
 const CONNECTION_FILE = join(getCodemieHome(), 'proxy-connection.json');
 
 /** The `startedAt` a daemon writes into its state: the start of its own process. */
@@ -298,12 +297,6 @@ export async function hasLegacyClientIdentity(file: string = CONNECTION_FILE): P
   return 'clientType' in record || 'telemetryMode' in record;
 }
 
-/** The port a start records: the one it asked for, once the daemon runs on it, when the record has none. */
-async function startPortToRecord(asked: number | undefined, state: DaemonState): Promise<number | undefined> {
-  if (asked === undefined || state.port !== asked) return undefined;
-  return (await readConnectionRecord())?.port === undefined ? asked : undefined;
-}
-
 /** Creates the connection record from a running daemon when none (valid) exists yet. */
 export async function seedConnectionRecord(
   state: DaemonState,
@@ -358,92 +351,6 @@ export async function isOlderDaemon(state: Pick<DaemonState, 'version'>): Promis
   const own = await getCurrentCliVersion();
   if (!own || typeof state.version !== 'string') return false;
   return comparePrereleaseVersions(state.version, own) === -1;
-}
-
-export interface SpawnOptions {
-  targetUrl: string;
-  provider: string;
-  profile: string;
-  port?: number;
-  gatewayKey?: string;
-  model?: string;
-  project?: string;
-  projectBinding?: ProjectBindingState;
-  syncApiUrl?: string;
-  syncCodeMieUrl?: string;
-  /** Record this start's profile in proxy-connection.json (default true). Not passed to the daemon. */
-  writeRecord?: boolean;
-  /**
-   * With `writeRecord: false`: still record `port` as the record's port once the daemon runs on it, when the
-   * record has none (default true). Not passed to the daemon.
-   */
-  recordPort?: boolean;
-}
-
-export async function spawnDaemon(opts: SpawnOptions): Promise<DaemonState> {
-  const stateFile = DEFAULT_STATE_FILE;
-  const gatewayKey = opts.gatewayKey ?? DEFAULT_GATEWAY_KEY;
-
-  // Locate the daemon binary relative to this compiled file:
-  // dist/cli/commands/proxy/daemon-manager.js → ../../../../bin/proxy-daemon.js
-  const daemonBin = join(getDirname(import.meta.url), '../../../../bin/proxy-daemon.js');
-
-  const args = [
-    daemonBin,
-    '--target-url', opts.targetUrl,
-    '--provider', opts.provider,
-    '--profile', opts.profile,
-    '--gateway-key', gatewayKey,
-    ...(opts.model ? ['--model', opts.model] : []),
-    ...(opts.project ? ['--project', opts.project] : []),
-    ...(opts.projectBinding ? ['--project-binding', opts.projectBinding] : []),
-    '--state-file', stateFile,
-    ...(opts.port ? ['--port', String(opts.port)] : []),
-    ...(opts.syncApiUrl ? ['--sync-api-url', opts.syncApiUrl] : []),
-    ...(opts.syncCodeMieUrl ? ['--sync-codemie-url', opts.syncCodeMieUrl] : []),
-  ];
-
-  // The gateway key is deliberately absent: sanitizeLogArgs redacts by key name and `gatewayKey` matches none of its patterns.
-  logger.debug(
-    '[daemon-manager] Spawning daemon',
-    ...sanitizeLogArgs({
-      daemonBin,
-      targetUrl: opts.targetUrl,
-      provider: opts.provider,
-      profile: opts.profile,
-      port: opts.port,
-      model: opts.model,
-      project: opts.project,
-      syncApiUrl: opts.syncApiUrl,
-      syncCodeMieUrl: opts.syncCodeMieUrl
-    })
-  );
-
-  // The child's pid is the one its daemon writes into the state: a state naming another pid is another daemon.
-  // A failed spawn returns -1, which no state names, so it ends in the timeout below.
-  const pid = spawnDetached(process.execPath, args);
-
-  // Poll for daemon readiness, up to DAEMON_READY_TIMEOUT_MS. A child slower than that is left running: it
-  // comes up and the next start adopts it.
-  const attempts = DAEMON_READY_TIMEOUT_MS / DAEMON_READY_POLL_INTERVAL_MS;
-  for (let i = 0; i < attempts; i++) {
-    await new Promise<void>(r => setTimeout(r, DAEMON_READY_POLL_INTERVAL_MS));
-    const state = await readState(stateFile);
-    if (state && state.pid === pid && (await isDaemonAlive(state))) {
-      const port = await startPortToRecord(opts.port, state);
-      if (opts.writeRecord !== false) {
-        await writeConnectionRecord(state, opts.profile, { port });
-      } else if (opts.recordPort !== false && port !== undefined) {
-        await writeConnectionPort(port);
-      }
-      return state;
-    }
-  }
-
-  throw new ToolExecutionError(
-    'proxy-daemon',
-    `Daemon failed to start within ${DAEMON_READY_TIMEOUT_MS / 1000} seconds. Check logs: ~/.codemie/logs/`
-  );
 }
 
 export async function stopDaemon(): Promise<void> {

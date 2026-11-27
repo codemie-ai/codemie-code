@@ -259,6 +259,8 @@ Note: priorities 14-17 do request-_body_ normalization/sanitization, not header 
 - **Full Request Bypass**: `handleRequest` — optional hook checked in priority order _before_ the standard pipeline; if a plugin returns `true`, it has fully handled the request (response written) and the entire onRequest → forward → onResponseHeaders → stream → onResponseComplete pipeline is skipped. Used for traffic that doesn't go to the configured `targetApiUrl` at all (e.g. MCP Auth's `/mcp_auth` and `/mcp_relay/...` routes to arbitrary MCP servers). The handling plugin owns all security guarantees (SSRF checks etc.) for its own traffic.
 - **Request Lifecycle**: `onRequest`, `onUpstreamResponse`, `onResponseHeaders`, `onResponseChunk`, `onResponseStreamEnd`, `onResponseComplete`, `onError`
 
+**The analytics intake is a part, not a plugin.** `createOtlpIntake` (`plugins/otlp-intake.ts`) answers `/v1/analytics/hooks` and `/v1/analytics/otlp` and appends to the spool; two plugins build it: `OtlpPlugin` (the backend daemon's, with its project names, the Copilot usage enrichment, the stamp-loss record, the send tick and the sweep) and `LocalAnalyticsPlugin` (`plugins/local-analytics.plugin.ts`, the local daemon's: no project names, no tick, no credentials, the sweep that moves sessions into `~/.codemie/analytics/sessions/`). `NoUpstreamPlugin` (`plugins/no-upstream.plugin.ts`, the last in priority order) answers every other request 404 in a daemon that has no upstream. Both are registered disabled.
+
 `onResponseChunk` may return `null` to hold a chunk back. `onResponseStreamEnd(context)` runs once the upstream stream has ended — also when it fails mid-stream — and before the downstream ends: an interceptor returns the bytes it still holds and the proxy writes them to the client, in priority order. It is skipped when the client has already disconnected. The routing header injector (`routing-header-injector.plugin.ts`) uses both: it holds the unfinished last line of a chunk until the first whole `data:` line of the stream, so a `message_start` event cut by a chunk boundary still gets the upstream's `x-litellm-*` / `x-codemie-routing-*` fields; a stream that carries a `content-encoding` is not held or rewritten. For a non-streaming JSON answer it decompresses a `br`, `gzip` or `deflate` body (up to 16 MiB), adds the fields and sends it on uncompressed; a body it cannot decode passes as received.
 
 `onUpstreamResponse(context, upstreamResponse, tools)` runs immediately after the upstream call and before header/streaming hooks. `tools` gives a plugin `readBody()` (buffer the full response), `retry()` (re-issue the same request, e.g. after stripping now-rejected state), and `fromBuffer()` (turn a buffered `Buffer` back into a stream-shaped `IncomingMessage`). Only the Copilot encrypted-content sanitizer uses this hook (see §6.8) — the Codex one instead watches `onResponseChunk` and flips a permanent `onRequest`-time flag; see §6.8 for why these two plugins differ.
@@ -325,6 +327,8 @@ Note: priorities 14-17 do request-_body_ normalization/sanitization, not header 
 **Opt-Out via createInterceptor()**:
 
 - A plugin opts itself out for a given session by throwing `ConfigurationError` from `createInterceptor()` (e.g. SSO Session Sync throws if there's no session ID, credentials aren't SSO, or sync is disabled by config/env var) rather than through a separate enable/disable flag
+
+**A host picks its plugin set** through Layer 2's `register(plugin, { enabled: false })` and `setEnabled(id, enabled)`, beside a plugin's own opt-out: the daemon's entry (`src/bin/proxy-daemon.ts`, through `DaemonComponents` of `src/bin/daemon-components.ts`) enables, for `--mode local`, the gateway key, the local analytics and the no-upstream plugins and disables every other; the backend daemon and the agent wrappers leave the two local plugins disabled.
 
 ### 4.4 Error Handling
 
@@ -953,6 +957,8 @@ The OTLP plugin (`otlp.plugin.ts`) receives Claude Code OTel data and hook event
 
 **Who stamps what.** The hook process (`OtlpAgentAdapter`) stamps every event field: type, truncation, common, agent and context fields (identity, project, CLI version), `schema_version`, `event_id`, `timestamp`. The daemon spool (`otlp.plugin.ts`) only stores the line. The forwarder (`otlp-spool/forwarder.ts`) only forwards it: it owns `baseUrl` and the credentials, and reads nothing from an event except `type` to detect a session end. See [ARCHITECTURE-OTLP-PLUGIN.md](ARCHITECTURE-OTLP-PLUGIN.md). Restart the daemon after upgrading.
 
+In the local analytics mode the local daemon's spool is `~/.codemie/analytics/spool/` (named by `useSpoolRoot` at the plugin's start), and nothing is sent: a session past its grace (`OTLP_ENDED_SESSION_GRACE_MINUTES` after `SessionEnd`, which the local intake marks itself, `OTLP_ABANDONED_SESSION_GRACE_MINUTES` after the last write) is moved into `~/.codemie/analytics/sessions/` by the sweep every `OTLP_SWEEP_INTERVAL_MINUTES`; before each sweep the daemon recovers the end of a Copilot CLI session whose `sessionEnd` hook never came (`recoverMissingSessionEnds`); a session with no hook event is deleted, and one with an exclusion mark is dropped at every sweep.
+
 **Deletion timeline for untracked data**
 
 | Stage   | When                                                                                            | Result                                         |
@@ -1088,6 +1094,7 @@ src/providers/plugins/sso/session/
 
 - **onProxyStart**: Initialization tasks, background services
 - **handleRequest**: Full request bypass for traffic that doesn't target the main upstream (rare — use only when the standard pipeline genuinely doesn't apply)
+- **A part several plugins build**: e.g. the analytics intake `createOtlpIntake`, which `OtlpPlugin` and `LocalAnalyticsPlugin` build with their own parts; a host enables the plugins it needs (`setEnabled`)
 - **onRequest**: Request modification, authentication, validation
 - **onUpstreamResponse**: Inspect/replace the raw upstream response before header/streaming hooks run (buffer-and-retry patterns)
 - **onResponseHeaders**: Header inspection, caching decisions
@@ -1184,6 +1191,18 @@ src/providers/plugins/sso/session/
    │   records health: 'unhealthy' in the state file if it gives up
    └─ Register SIGTERM/SIGINT handlers that stop the watcher, telemetry
        runtime, and proxy, then delete the state file
+
+3c. Local daemon (`--mode local`, the local analytics mode of `codemie analytics sync`):
+   ├─ Parse --state-file, --gateway-key, --port; no --target-url, no profile
+   ├─ Plugins: gateway key, local analytics, no-upstream (every other disabled)
+   ├─ No credentials, no Desktop telemetry runtime; the watcher checks /health
+   │   shallowly every 30s and restarts in-process (up to 3 attempts)
+   └─ State holds mode: 'local' and no targetUrl or provider. A hook's cold start
+       (`ensureLocalOtlpProxy`, `src/cli/commands/proxy/local-daemon.ts`) adopts a
+       live local daemon that is not older, else, under the daemon lock and while
+       the sync settings hold `local: true`, stops whatever runs and spawns the
+       local one; on Claude Code's UserPromptSubmit / PostCompact an older one is
+       adopted as it is
 
 4. Proxy returns URL
    └─ http://localhost:PORT or http://127.0.0.1:PORT (daemon binds 127.0.0.1

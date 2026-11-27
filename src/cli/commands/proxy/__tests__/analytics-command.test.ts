@@ -257,6 +257,7 @@ describe('createProxyAnalyticsCommand', () => {
       vi.doUnmock('../health-check.js');
       vi.doUnmock('../delivery-health.js');
       vi.doUnmock('../analytics-connectors.js');
+      vi.doUnmock('../../analytics/sync/scheduler/index.js');
     });
 
     function mockRunningDaemon(delivery: unknown): {
@@ -421,6 +422,36 @@ describe('createProxyAnalyticsCommand', () => {
       await runCommand(['status', ...flags, '--json']);
       const stopped = JSON.parse(logSpy.mock.calls[0][0] as string);
       expect({ ...withDelivery, delivery: undefined }).toEqual({ ...stopped, delivery: undefined });
+    });
+
+    it('in the local mode reads no delivery health and shows the folder and job lines, in text and in --json', async () => {
+      await writeFile(join(tempDir, 'analytics-sync.json'), JSON.stringify({
+        webhookUrl: 'https://hooks.example.invalid/x?sig=FAKE', format: 'json', includeExternal: 'never', at: '03:00', taskName: 'CodeMieLocalJob', local: true,
+      }));
+      const collectDeliveryHealth = vi.fn();
+      vi.doMock('../delivery-health.js', async () => ({
+        ...(await vi.importActual<typeof import('../delivery-health.js')>('../delivery-health.js')),
+        collectDeliveryHealth,
+      }));
+      // The OS scheduler is not asked: the job reads as registered.
+      vi.doMock('../../analytics/sync/scheduler/index.js', async () => ({
+        ...(await vi.importActual<typeof import('../../analytics/sync/scheduler/index.js')>('../../analytics/sync/scheduler/index.js')),
+        createScheduler: () => ({ query: async () => 'enabled' }),
+      }));
+      const missing = `Local analytics folder is missing (${join(tempDir, 'analytics', 'sessions')}) — Run \`codemie analytics sync install\` again.`;
+
+      await runCommand(['status', '--claude-code-otlp']);
+      const lines = plainOutput().split('\n');
+      logSpy.mockClear();
+      await runCommand(['status', '--claude-code-otlp', '--json']);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+
+      expect(collectDeliveryHealth).not.toHaveBeenCalled();
+      expect(lines.slice(-2)).toEqual([missing, 'Scheduled job CodeMieLocalJob: enabled']);
+      expect(parsed.delivery).toEqual([
+        { status: 'warn', message: `Local analytics folder is missing (${join(tempDir, 'analytics', 'sessions')})`, hint: 'Run `codemie analytics sync install` again.' },
+        { status: 'ok', message: 'Scheduled job CodeMieLocalJob: enabled' },
+      ]);
     });
 
     it.each(connectors)('%j --json has delivery: null when no connector is active, even with unsent data pending', async (flags) => {

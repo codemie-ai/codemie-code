@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-17673_shell-completions-plan",
+  "head": "0642fe46cbf4eb07ed34f39f196b950954cf97b1",
+  "runner": "npm",
+  "started_at": "2026-11-24T13:37:18Z",
+  "completed_at": "2026-11-24T13:45:15Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2908,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 41689,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 17152,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 19423,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 388,
+      "command": "npm run commitlint:last",
+      "exit_code": 0
+    },
+    {
+      "id": "secrets",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 1503,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Output: \"No staged changes to scan\". Run with staged changes (and Docker) to enable; CI scans unconditionally."
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 247972,
+      "command": "npx vitest run --project unit",
+      "exit_code": 0,
+      "notes": "CI also installs zsh and fish (present locally)"
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 133121,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0
+    }
+  ],
+  "failures": {}
+}

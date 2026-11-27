@@ -752,9 +752,28 @@ export enum AgentAdapterType {
   OTLP,
 }
 
+/**
+ * How a hook adapter collects: each step is handed the adapter's own check, and the policy decides whether and how it
+ * runs. Generic: it knows no adapter, no store and no mode.
+ */
+export interface CollectionPolicy {
+  /** The per-hook session gate, after the tracked check. */
+  admit(sessionId: string | undefined, gate: () => Promise<'continue' | 'stop' | 'retry-after-proxy-start'>): Promise<'continue' | 'stop' | 'retry-after-proxy-start'>;
+  /** The evidence inputs of a hook context; `undefined` stamps nothing. */
+  evidenceInputs<T>(build: () => Promise<T>): Promise<T | undefined>;
+  /** The sign-in check of an enforced event; `allowed` is the adapter's own "ok" answer. */
+  authorize<T>(check: () => Promise<T>, allowed: T): Promise<T>;
+  /** An untracked hook; `byFilter` is true when the developer's own filters left it out. */
+  onUntracked(sessionId: string | undefined, byFilter: boolean, stopMarker: () => Promise<void>): Promise<void>;
+  /** The block reason of an enforced event when the connector scope file is corrupt: what to do, in this mode's words. */
+  scopeCorruptReason(): string;
+}
+
 export interface OtlpAdapterDeps {
   /** `event` — the hook input's `hook_event_name` as the client sent it, when it has one. */
   ensureOtlpProxy: (agentName: string, event?: string) => Promise<void>;
+  /** The collection policy this hook runs under. */
+  policy: CollectionPolicy;
   /** Sends one hook invocation's events as a single batch; true only for a 2xx response. */
   forwardOtlpEventsToSpool: (
     events: Record<string, unknown>[],

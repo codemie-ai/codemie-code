@@ -591,7 +591,9 @@ export function fmt(n) {
 const C = {
   reset:  '\x1b[0m',
   purple: '\x1b[38;2;177;185;249m',
+  boldPurple: '\x1b[1;38;2;177;185;249m',
   green:  '\x1b[0;32m',
+  brightGreen: '\x1b[1;92m',
   yellow: '\x1b[0;33m',
   red:    '\x1b[0;31m',
   cyan:   '\x1b[0;36m',
@@ -623,8 +625,16 @@ export function truncate(text, max) {
   return chars.length <= max ? text : `${chars.slice(0, max - 1).join('')}…`;
 }
 
-export function buildStatusLine({ projectName, branch, model, actualModel, ctxPct, tokIn, tokOut, cost, costExact, durationMs, budget = null as { pct: number; text: string } | null, budgetError = null as string | null }) {
+// A CodeMie-managed session is launched with CODEMIE_SESSION_ID (same discriminator as launchMode()
+// in src/agents/core/evidence/routing.ts). An empty or whitespace-only value counts as not managed.
+export function isManagedSession(env: NodeJS.ProcessEnv = process.env): boolean {
+  return Boolean(env.CODEMIE_SESSION_ID?.trim());
+}
+
+export function buildStatusLine({ projectName, branch, model, actualModel, ctxPct, tokIn, tokOut, cost, costExact, durationMs, budget = null as { pct: number; text: string } | null, budgetError = null as string | null, managed = false }) {
   const parts: string[] = [];
+
+  if (managed) parts.push(`${c(C.boldPurple, '[')}${c(C.brightGreen, '⏺')}${c(C.boldPurple, ' CodeMie]')}`);
 
   if (projectName) parts.push(c(C.purple, `[${truncate(projectName, MAX_PROJECT_CHARS)}]`));
   if (budget)            parts.push(c(budgetColor(budget.pct), budget.text));
@@ -863,7 +873,7 @@ export async function main() {
   // unreachable API, no such endpoint) is not worth a permanent warning slot — the segment simply
   // disappears until a lookup succeeds.
   const budgetError = budgetResult.budgetError === 'reauthenticate' ? budgetResult.budgetError : null;
-  process.stdout.write(buildStatusLine({ ...basic, budget: budgetResult.budget, budgetError, branch, actualModel, cost, costExact }));
+  process.stdout.write(buildStatusLine({ ...basic, budget: budgetResult.budget, budgetError, branch, actualModel, cost, costExact, managed: isManagedSession() }));
 }
 
 // Compares decoded paths (not raw strings) so this correctly matches even when the

@@ -1,4 +1,6 @@
+import { BackendPolicy } from '@/agents/core/collection-policy.js';
 import { evidenceDir } from '../evidence/record-store.js';
+const backendPolicy = new BackendPolicy();
 import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
 import { createHash } from 'node:crypto';
 import { format } from 'node:util';
@@ -98,8 +100,11 @@ vi.mock('@/cli/commands/proxy/daemon-manager.js', async () => ({
   writeConnectionRecord: writeConnectionRecordMock,
   seedConnectionRecord: seedConnectionRecordMock,
   checkStatus: checkStatusMock,
-  spawnDaemon: spawnDaemonMock,
   stopDaemon: stopDaemonMock,
+}));
+vi.mock('@/cli/commands/proxy/daemon-spawn.js', async () => ({
+  ...(await vi.importActual<typeof import('@/cli/commands/proxy/daemon-spawn.js')>('@/cli/commands/proxy/daemon-spawn.js')),
+  spawnDaemon: spawnDaemonMock,
 }));
 
 const { OtlpAgentAdapter } = await import('../OtlpAgentAdapter.js');
@@ -176,7 +181,7 @@ const tokenWith = (claims: Record<string, unknown>): string =>
 describe('OtlpAgentAdapter.processOtlpEvent', () => {
   const ensureOtlpProxy = vi.fn(async () => {});
   const forwardToSpool = vi.fn(async () => true);
-  const deps = { ensureOtlpProxy, forwardOtlpEventsToSpool: forwardToSpool };
+  const deps = { policy: backendPolicy, ensureOtlpProxy, forwardOtlpEventsToSpool: forwardToSpool };
   let adapter: FakeAdapter;
 
   const run = (input: Partial<FakeInput> = {}) =>
@@ -275,7 +280,7 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       const { ensureOtlpProxy: realEnsureOtlpProxy } = await import('@/cli/commands/proxy/otlp-cold-start.js');
       await adapter.processOtlpEvent(
         JSON.stringify({ cwd: '/repo', payload: [{ a: 1 }], hook_event_name: event }),
-        { ensureOtlpProxy: realEnsureOtlpProxy, forwardOtlpEventsToSpool: forwardToSpool }
+        { policy: backendPolicy, ensureOtlpProxy: realEnsureOtlpProxy, forwardOtlpEventsToSpool: forwardToSpool }
       );
     };
 
@@ -370,7 +375,7 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
 
       await adapter.processOtlpEvent(
         JSON.stringify({ cwd: '/repo', payload: [{ a: 1 }], block: true }),
-        { ensureOtlpProxy: realEnsureOtlpProxy, forwardOtlpEventsToSpool: forwardToSpool }
+        { policy: backendPolicy, ensureOtlpProxy: realEnsureOtlpProxy, forwardOtlpEventsToSpool: forwardToSpool }
       );
 
       expect(spawnDaemonMock).toHaveBeenCalledTimes(1);
@@ -983,7 +988,7 @@ describe('OtlpAgentAdapter.processOtlpEvent', () => {
       });
       // No proxy came up, so the spool refuses the batch; a later hook finds it accepted.
       forwardToSpool.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
-      const realDeps = { ensureOtlpProxy: realEnsureOtlpProxy, forwardOtlpEventsToSpool: forwardToSpool };
+      const realDeps = { policy: backendPolicy, ensureOtlpProxy: realEnsureOtlpProxy, forwardOtlpEventsToSpool: forwardToSpool };
       const input = JSON.stringify({ cwd: '/repo', payload: [{ a: 1 }] });
 
       await adapter.processOtlpEvent(input, realDeps);

@@ -5,9 +5,11 @@
  *   - callback-server.ts: the ephemeral localhost HTTP server that catches the
  *     `?code=…&state=…` redirect (started on an OS-assigned port, hit with a real
  *     fetch — no browser involved).
- *   - mcp-oauth-provider.ts: the in-memory OAuthClientProvider — client metadata /
- *     redirect_uri construction, token / client-info / code-verifier storage,
- *     invalidateCredentials scoping, and the callback-server lifecycle. The browser
+ *   - mcp-oauth-provider.ts: the OAuthClientProvider's provider-side behaviour — client
+ *     metadata / redirect_uri construction, token / client-info / code-verifier
+ *     get/save round-trips, invalidateCredentials scoping, and the callback-server
+ *     lifecycle. Persisted-login restore, renewal and the on-disk token store have their
+ *     own files (mcp-auth-renewal, mcp-token-store, mcp-auth-two-start). The browser
  *     launch (execFile) is mocked so no real browser opens.
  *
  * The actual token exchange (authorization_code → tokens) lives in the MCP SDK's
