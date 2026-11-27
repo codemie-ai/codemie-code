@@ -472,7 +472,8 @@ describe('SSOSessionSyncPlugin', () => {
       afterEach(() => {
         if (previousHome === undefined) delete process.env.CODEMIE_HOME;
         else process.env.CODEMIE_HOME = previousHome;
-        rmSync(home, { recursive: true, force: true });
+        // maxRetries absorbs Windows ENOTEMPTY/EBUSY while the OS still releases a handle under sessions/
+        rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       });
 
       function syncAnswering(...statuses: number[]): void {
