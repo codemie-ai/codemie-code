@@ -1,0 +1,63 @@
+{
+  "head": "d6ef4481",
+  "decision": "request-changes",
+  "rationale": "2 blocking findings: AC5a — selectBudgetRow returns the shared-pot project row unconditionally without checking is_shared_limit, so a member's personal override is unreachable (critical); null-project cache bypass allows a stale budget from a prior no-project session to be served for an explicitly off-CodeMie profile before the codeMieUrl null guard fires (major). 3 total findings including 1 advisory; 2 dismissed (1 false-positive: whitespace cache miss claim does not hold; 1 already-handled: AC7 error string filtered by main() line 900). Standards review not applicable (compact profile, no standards guides).",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    { "kind": "story-ac", "item": "AC1 — project CLI row selected when session project has a CLI budget", "status": "pass", "notes": "selectBudgetRow case-insensitively matches project row; test AC1 covers it." },
+    { "kind": "story-ac", "item": "AC2 — personal CLI row not shown when project budget applies", "status": "pass", "notes": "selectBudgetRow returns project row and exits; personal row is never reached." },
+    { "kind": "story-ac", "item": "AC3 — reset date shown matches the selected row's budget_reset_at", "status": "pass", "notes": "formatBudgetSegment(row) called with row from selectBudgetRow; row.budget_reset_at used correctly." },
+    { "kind": "story-ac", "item": "AC4 — no project selected: is_default row returned", "status": "pass", "notes": "Step 2 finds is_default===true ending with ' (cli)'. Tests AC4 cover it." },
+    { "kind": "story-ac", "item": "AC4a — project without CLI budget: falls back to is_default row", "status": "pass", "notes": "No project-name match; step 2 returns is_default row. Test AC4a covers it." },
+    { "kind": "story-ac", "item": "AC5 — shared-pot project row selected (is_shared_limit:true)", "status": "pass", "notes": "Shared-pot row matched by name same as any project row. Test AC5 covers it." },
+    { "kind": "story-ac", "item": "AC5a — shared-pot project with personal override: member's own spend shown", "status": "partial", "notes": "Project-name row returned unconditionally; is_shared_limit not checked; personal override row unreachable. See CR-001." },
+    { "kind": "story-ac", "item": "AC6 — per-member project allowance: user's own spend shown", "status": "pass", "notes": "Per-member allowance row matched by name, same path as AC1. No special casing required." },
+    { "kind": "story-ac", "item": "AC7 — no matching row: no budget segment shown", "status": "partial", "notes": "throw new Error caught as budgetError:'budget row not found'; filtered at main() line 900 to null before rendering. UI behavior correct but internal path differs from spec." },
+    { "kind": "story-ac", "item": "AC8 — profile+project switch causes cache miss", "status": "pass", "notes": "CACHE_SCHEMA bumped to 3; cache key includes project field. Test AC8 covers it." },
+    { "kind": "story-ac", "item": "AC9 — off-CodeMie profile: no budget shown, rest of statusline unaffected", "status": "pass", "notes": "sessionCodeMieUrl returns undefined; guard at line 803 fires. Note: stale cache can bypass this guard (see CR-002)." }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "na", "notes": "Standards review not applicable; compact profile with no standards guides." },
+    { "kind": "code-quality", "status": "na", "notes": "Standards review not applicable; compact profile with no standards guides." },
+    { "kind": "security", "status": "na", "notes": "Standards review not applicable; compact profile with no standards guides." }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/plugin/statusline.ts",
+      "line": 93,
+      "title": "Shared-pot personal override row unreachable",
+      "problem": "selectBudgetRow returns the project-name-matched row unconditionally (line 101) when a project is active, without inspecting is_shared_limit. For a shared-pot project where the member has a personal override row (email (cli)), the override is never reached. D5 specifies the member's own row should be matched first; the implementation does the opposite.",
+      "impact": "A member of a shared-pot project who has a personal override row sees the team's aggregate shared spend and limit instead of their own. The personal override row is unreachable via any code path once a project-name match is found.",
+      "recommendation": "After finding projectRow, if projectRow.is_shared_limit is true, attempt a secondary lookup for the email-keyed override row (emailTarget = `${userEmail.trim().toLowerCase()} (cli)`); if found, return it instead. Add a test for the AC5a path: shared-pot row + email override row present, selectBudgetRow(rows, 'shared-proj', 'member@example.com') should return the email row."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/plugin/statusline.ts",
+      "line": 784,
+      "title": "Off-CodeMie profile can serve stale cached budget",
+      "problem": "The cache validation block (lines 783–795) runs before the sessionCodeMieUrl null guard at line 803. When activeProject is null (codeMieProject === null, explicitly off CodeMie) the cache key becomes project:''. A prior session on the same profile that had no project selected also wrote project:''. If that cache entry is still within TTL it passes all validity checks and returns at line 791, bypassing the guard that would otherwise return {budget:null, budgetError:null}.",
+      "impact": "A user who explicitly opts a profile out of CodeMie (codeMieProject: null) may see a stale budget segment in the status line until CACHE_TTL_MS expires. The status bar shows budget information the profile is no longer entitled to display.",
+      "recommendation": "Add an early-return guard before the cache read: if (earlyProfile?.codeMieProject === null) return { budget: null, budgetError: null }; This matches the intent of the existing comment 'Explicitly off CodeMie — no project' and prevents the cache from serving stale data for opted-out profiles. Update the AC9 test to also cover the cache-hit path for a null-project profile."
+    },
+    {
+      "id": "CR-003",
+      "kind": "evidence",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/agents/plugins/claude/plugin/__tests__/statusline.test.ts",
+      "title": "Null/undefined rows guard test removed",
+      "problem": "The test verifying selectBudgetRow returns undefined when rows is null or undefined was removed in this change. The guard at line 94 (if (!Array.isArray(rows)) return undefined) still exists but is no longer covered by any dedicated test.",
+      "impact": "If the upstream API returns a non-array value, the guard still fires correctly, but future refactors could silently remove it without a failing test. Narrow trigger: requires upstream API shape drift.",
+      "recommendation": "Re-add the removed tests: it('returns undefined when rows is null', () => { expect(selectBudgetRow(null, 'p', 'e')).toBeUndefined(); }) and a matching undefined case."
+    }
+  ],
+  "deferred": []
+}

@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "task": "Make the Claude plugin statusline budget segment show the budget CodeMie actually charges (session project, else default project, else personal), handling shared-pot vs per-member projects, with project-aware caching and no wrong figures on failure.",
+  "generated": "2026-11-23T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 18,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "requirements_clarity", "reason": "Per-project CLI row shape, shared-pot vs per-member discriminator, personal-override field, whole-project spend and default-project marker are unverified in the repo; D3 and D4 are left open to developers, so design decisions and rework risk remain." },
+    { "dimension": "technical_risk", "reason": "No precedent for project-aware row selection against an unverified backend contract. The single-slot per-profile budget cache must become project-aware (AC8). The negative cases (AC7, AC9) require no fallback to another budget's figures. The statusline cannot import ConfigLoader, so project resolution must be mirrored inline. The closest pattern, sessionCodeMieUrl, covers URL resolution but not project or budget selection." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped: acceptance criteria enumerate edge and error variants (AC5/5a/6/7/8/9) and the existing resolveBudget tests cover no project-selection, project-keyed-cache or shared-pot cases",
+    "Requirements Clarity bumped: open design decisions D3/D4 and a vague backend payload contract"
+  ],
+  "split_recommendation": null
+}

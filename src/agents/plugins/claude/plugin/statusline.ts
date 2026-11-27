@@ -37,7 +37,7 @@ const CONFIG_FILE = path.join(HOME, 'codemie-cli.config.json');
 const CREDS_DIR = path.join(HOME, 'credentials');
 const CACHE_TTL_MS = 60_000;
 const BUDGET_FETCH_TIMEOUT_MS = 2_000; // an unreachable API must not stall every render
-const CACHE_SCHEMA = 2; // bump when the cache.value shape changes, to discard stale pre-upgrade entries
+const CACHE_SCHEMA = 3; // bump when the cache.value shape changes, to discard stale pre-upgrade entries
 
 const ENCRYPTION_KEY = deriveMachineEncryptionKey();
 
@@ -80,18 +80,57 @@ export async function getAuthHeaders(codeMieUrl) {
 
 // --- Pure functions (unit-testable, no filesystem/network access) ---
 
-export function matchBudgetRow(rows, userEmail) {
-  if (!Array.isArray(rows) || !userEmail) return null;
-  const target = `${userEmail.trim().toLowerCase()} (cli)`;
-  return rows.find(r => r.project_name?.trim().toLowerCase() === target) ?? null;
+interface BudgetRow {
+  project_name: string;
+  current_spending: number;
+  total: number;
+  budget_reset_at: string;
+  budget_limit: number;
+  is_default?: boolean;
+  is_shared_limit?: boolean;
+}
+
+export function selectBudgetRow(rows: BudgetRow[], project: string | null | undefined, userEmail: string): BudgetRow | undefined {
+  if (!Array.isArray(rows)) return undefined;
+
+  // When a project is selected, show the budget that CodeMie charges against —
+  // the project's own CLI allocation, not the user's personal one.
+  if (project) {
+    const target = `${project.trim().toLowerCase()} (cli)`;
+    const projectRow = rows.find(r => r.project_name?.trim().toLowerCase() === target);
+    if (projectRow) {
+      // A member's fixed override changes this same row (is_shared_limit: false, own limit);
+      // it never arrives as a separate `<email> (cli)` row, which is the personal budget.
+      return projectRow;
+    }
+  }
+
+  // No project is selected, or the selected project has no CLI budget — show
+  // whatever CodeMie would charge by default. The backend marks this row with
+  // is_default: true so we don't have to know the user's email format.
+  const defaultRow = rows.find(r => r.is_default === true && r.project_name?.trim().toLowerCase().endsWith(' (cli)'));
+  if (defaultRow) return defaultRow;
+
+  // Guard against backend API changes where is_default stops being returned —
+  // the email-keyed row is always the personal CLI budget.
+  if (userEmail) {
+    const emailTarget = `${userEmail.trim().toLowerCase()} (cli)`;
+    return rows.find(r => r.project_name?.trim().toLowerCase() === emailTarget);
+  }
+
+  return undefined;
 }
 
 export function formatBudgetSegment(row) {
   if (!row) return null;
-  const pct = Math.round(row.total ?? 0);
+  // parseFloat handles numbers and numeric strings; null/undefined/''/text give NaN. Spend the
+  // backend reports as unavailable must not be shown as $0.00, so no segment.
+  const spend = parseFloat(row.current_spending);
+  if (Number.isNaN(spend)) return null;
+  const pct = Math.round(parseFloat(row.total)) || 0;
   const reset = row.budget_reset_at ? new Date(row.budget_reset_at).toLocaleDateString() : '?';
   return {
-    text: `$${row.current_spending.toFixed(2)} (${pct}%) resets ${reset}`,
+    text: `$${spend.toFixed(2)} (${pct}%) resets ${reset}`,
     pct,
   };
 }
@@ -722,9 +761,31 @@ export async function resolveBudget({
     ? sessionProfile
     : config.activeProfile;
 
+  // Pre-compute activeProject from config and env — needed for the cache key so a
+  // profile-project switch causes a cache miss (AC8). The profile object is available here
+  // because the config is already parsed; the guard check below re-reads it and exits early
+  // when any required field is absent.
+  const earlyProfile = config.profiles?.[profileName];
+  let activeProject: string | null = null;
+  if (earlyProfile?.codeMieProject === null) {
+    // Explicitly off CodeMie — no project.
+    activeProject = null;
+  } else if (process.env.CODEMIE_PROJECT?.trim()) {
+    activeProject = process.env.CODEMIE_PROJECT.trim();
+  } else if (typeof earlyProfile?.codeMieProject === 'string' && earlyProfile.codeMieProject) {
+    activeProject = earlyProfile.codeMieProject;
+  } else if (typeof config.workspace?.codeMieProject === 'string' && config.workspace.codeMieProject) {
+    activeProject = config.workspace.codeMieProject;
+  }
+
+  // Explicitly opted out of CodeMie — skip budget entirely; don't let a stale cache
+  // from a prior no-project session on the same profile bypass this guard.
+  if (earlyProfile?.codeMieProject === null) return { budget: null, budgetError: null };
+
   // Fast path: fresh cache, skip the network. Discard any entry that isn't this schema version
-  // (e.g. a pre-upgrade string-shaped value) or that was written for a different profile —
-  // budgets are per-profile, and two sessions on different profiles share this one cache file.
+  // (e.g. a pre-upgrade string-shaped value), that was written for a different profile, or that
+  // was written for a different project — budgets are per-profile and per-project, and two
+  // sessions on different profiles or projects share this one cache file.
   //
   // A failed lookup is cached too (`value: null` plus its `error`) and served for the same TTL.
   // Caching only successes made every timeout, HTTP error or missing row fall through to a live
@@ -735,6 +796,7 @@ export async function resolveBudget({
     const cache = JSON.parse(await readFile(CACHE_FILE, 'utf8'));
     const fresh = cache.schema === CACHE_SCHEMA
       && cache.profile === profileName
+      && cache.project === (activeProject ?? '')
       && Date.now() - cache.ts < CACHE_TTL_MS;
     if (fresh && typeof cache.value === 'object' && cache.value !== null && typeof cache.value.text === 'string') {
       return { budget: cache.value, budgetError: null };
@@ -783,7 +845,7 @@ export async function resolveBudget({
     try {
       await writeFile(
         CACHE_FILE,
-        JSON.stringify({ schema: CACHE_SCHEMA, profile: profileName, ts: Date.now(), value: budget, error: budgetError }),
+        JSON.stringify({ schema: CACHE_SCHEMA, profile: profileName, project: activeProject ?? '', ts: Date.now(), value: budget, error: budgetError }),
         'utf8'
       );
     } catch {
@@ -810,7 +872,7 @@ export async function resolveBudget({
     if (!contentType.includes('json')) return await remember(null, null);
 
     const json = await res.json() as { data?: { rows?: unknown[] } };
-    const row = matchBudgetRow(json?.data?.rows, userEmail);
+    const row = selectBudgetRow(json?.data?.rows as BudgetRow[], activeProject, userEmail);
     if (!row) throw new Error('budget row not found');
 
     return await remember(formatBudgetSegment(row), null);

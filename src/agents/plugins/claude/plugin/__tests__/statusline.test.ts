@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { resolve, dirname, basename, join } from 'path';
 import { pathToFileURL } from 'url';
 import {
-  matchBudgetRow,
+  selectBudgetRow,
   formatBudgetSegment,
   extractBasicInfo,
   formatDuration,
@@ -23,35 +23,58 @@ const YELLOW = '\x1b[0;33m';
 const GREEN = '\x1b[0;32m';
 const RED = '\x1b[0;31m';
 
-describe('matchBudgetRow', () => {
-  const rows = [
-    { project_name: 'nikita_levyankov@epam.com (cli)', current_spending: 500.26, total: 100.05, budget_reset_at: '2026-07-13T00:00:18.663000Z' },
-    { project_name: 'nikita_levyankov@epam.com', current_spending: 6.05, total: 5.04, budget_reset_at: '2026-07-17T09:30:34.278000Z' },
-    { project_name: 'nikita_levyankov@epam.com (premium)', current_spending: 24.93, total: 83.11, budget_reset_at: '2026-07-18T16:55:53.270000Z' },
-  ];
+describe('selectBudgetRow', () => {
+  const projectRow = { project_name: 'my-project (cli)', current_spending: 5, total: 4,
+    budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 120, is_default: false, is_shared_limit: false };
+  const personalRow = { project_name: 'user@epam.com (cli)', current_spending: 1.78, total: 1.19,
+    budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 150, is_default: true, is_shared_limit: false };
+  const sharedRow = { project_name: 'shared-proj (cli)', current_spending: 13, total: 11,
+    budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 200, is_default: false, is_shared_limit: true };
+  const rows = [projectRow, personalRow, sharedRow];
 
-  it('matches only the "(cli)" suffixed row for the given email', () => {
-    const row = matchBudgetRow(rows, 'nikita_levyankov@epam.com');
-    expect(row).toEqual(rows[0]);
+  it('AC1: selects the project row when project matches', () => {
+    expect(selectBudgetRow(rows, 'my-project', 'user@epam.com')).toBe(projectRow);
   });
 
-  it('returns null when no row matches the email', () => {
-    expect(matchBudgetRow(rows, 'someone-else@epam.com')).toBeNull();
+  it('AC1: matches case-insensitively', () => {
+    expect(selectBudgetRow(rows, 'MY-PROJECT', 'user@epam.com')).toBe(projectRow);
   });
 
-  it('returns null when rows is not an array', () => {
-    expect(matchBudgetRow(undefined, 'x@y.com')).toBeNull();
-    expect(matchBudgetRow(null, 'x@y.com')).toBeNull();
+  it('AC2: does not return the personal row when a project row exists', () => {
+    expect(selectBudgetRow(rows, 'my-project', 'user@epam.com')).not.toBe(personalRow);
   });
 
-  it('returns null when userEmail is falsy', () => {
-    expect(matchBudgetRow(rows, '')).toBeNull();
-    expect(matchBudgetRow(rows, undefined)).toBeNull();
+  it('AC4: no project → is_default row returned', () => {
+    expect(selectBudgetRow(rows, null, 'user@epam.com')).toBe(personalRow);
+    expect(selectBudgetRow(rows, undefined, 'user@epam.com')).toBe(personalRow);
   });
 
-  it('matches regardless of email casing or surrounding whitespace', () => {
-    expect(matchBudgetRow(rows, 'Nikita_Levyankov@EPAM.com')).toEqual(rows[0]);
-    expect(matchBudgetRow(rows, '  nikita_levyankov@epam.com  ')).toEqual(rows[0]);
+  it('AC4a: project with no CLI row → is_default fallback', () => {
+    expect(selectBudgetRow(rows, 'unknown-project', 'user@epam.com')).toBe(personalRow);
+  });
+
+  it('AC7: no matching rows at all → undefined', () => {
+    expect(selectBudgetRow([], 'my-project', 'user@epam.com')).toBeUndefined();
+  });
+
+  it('is_default absent safety net: match by email pattern when no is_default field', () => {
+    const noDefaultRows = [{ ...personalRow, is_default: undefined }];
+    expect(selectBudgetRow(noDefaultRows, null, 'user@epam.com')).toBeDefined();
+  });
+
+  it('AC5: shared-limit row selected when project matches', () => {
+    expect(selectBudgetRow(rows, 'shared-proj', 'user@epam.com')).toBe(sharedRow);
+  });
+
+  it('AC5a: member with a fixed override sees the project row carrying their own limit', () => {
+    const overrideProjectRow = { project_name: 'shared-proj (cli)', current_spending: 2, total: 5,
+      budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 40, is_default: false, is_shared_limit: false };
+    expect(selectBudgetRow([overrideProjectRow, personalRow], 'shared-proj', 'user@epam.com')).toBe(overrideProjectRow);
+  });
+
+  it('AC5: shared-pot member keeps the pot even when a non-default personal CLI row exists', () => {
+    const nonDefaultPersonal = { ...personalRow, is_default: false };
+    expect(selectBudgetRow([sharedRow, nonDefaultPersonal], 'shared-proj', 'user@epam.com')).toBe(sharedRow);
   });
 });
 
@@ -67,6 +90,26 @@ describe('formatBudgetSegment', () => {
 
   it('returns null for a null row', () => {
     expect(formatBudgetSegment(null)).toBeNull();
+  });
+
+  it('returns null when spend is unavailable (current_spending null) instead of throwing', () => {
+    const row = { current_spending: null, budget_limit: 40, total: null, budget_reset_at: null, spend_unavailable: true };
+    expect(formatBudgetSegment(row)).toBeNull();
+  });
+
+  it.each([undefined, '', 'abc', NaN])('returns null for unusable spend %p', (spend) => {
+    expect(formatBudgetSegment({ current_spending: spend, total: 10, budget_reset_at: '2026-12-01T00:00:00Z' })).toBeNull();
+  });
+
+  it('accepts numeric strings for spend and percentage', () => {
+    const result = formatBudgetSegment({ current_spending: '12.5', total: '41.4', budget_reset_at: '2026-07-15T00:00:00.000Z' });
+    expect(result.text).toContain('$12.50');
+    expect(result.text).toContain('41%');
+    expect(result.pct).toBe(41);
+  });
+
+  it('treats an unusable percentage as 0% while still showing the spend', () => {
+    expect(formatBudgetSegment({ current_spending: 3, total: null, budget_reset_at: null }).text).toBe('$3.00 (0%) resets ?');
   });
 });
 
@@ -391,7 +434,7 @@ describe('resolveBudget', () => {
   };
 
   it('returns the fresh cached value without touching the network when cache is fresh', async () => {
-    const readFile = readFileFor(CONFIG, { schema: 2, profile: 'default', ts: Date.now(), value: { text: 'cached', pct: 5 } });
+    const readFile = readFileFor(CONFIG, { schema: 3, profile: 'default', project: '', ts: Date.now(), value: { text: 'cached', pct: 5 } });
     const fetchImpl = vi.fn();
     const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl: vi.fn() });
     expect(result).toEqual({ budget: { text: 'cached', pct: 5 }, budgetError: null });
@@ -401,7 +444,7 @@ describe('resolveBudget', () => {
   it('ignores a cache entry written for a different profile', async () => {
     // Budgets are per-profile and every session shares one cache file, so an entry from another
     // profile must not be shown here — it would report someone else's budget for up to the TTL.
-    const readFile = readFileFor(CONFIG, { schema: 2, profile: 'other-profile', ts: Date.now(), value: { text: 'cached', pct: 5 } });
+    const readFile = readFileFor(CONFIG, { schema: 3, profile: 'other-profile', project: '', ts: Date.now(), value: { text: 'cached', pct: 5 } });
     const getAuthHeadersImpl = vi.fn().mockResolvedValue(null);
     const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl: vi.fn(), getAuthHeadersImpl });
     expect(result).toEqual({ budget: null, budgetError: 'reauthenticate' }); // fell through to a live lookup
@@ -427,6 +470,239 @@ describe('resolveBudget', () => {
     const getAuthHeadersImpl = vi.fn().mockRejectedValue(new Error('keychain locked'));
     const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl: vi.fn(), getAuthHeadersImpl });
     expect(result).toEqual({ budget: null, budgetError: 'keychain locked' });
+  });
+
+  it('AC1: CODEMIE_PROJECT env var selects the project row over personal row', async () => {
+    // env: CODEMIE_PROJECT='my-project'; profile has no codeMieProject
+    const projectRow = { project_name: 'my-project (cli)', current_spending: 5, total: 4, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 120, is_default: false };
+    const personalRow = { project_name: 'me@x.com (cli)', current_spending: 1.78, total: 1.19, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 150, is_default: true };
+    const readFile = readFileFor({
+      activeProfile: 'default',
+      userEmail: 'me@x.com',
+      workspace: { codeMieUrl: 'https://x' },
+      profiles: { default: { baseUrl: 'https://x/api' } },
+    });
+    const getAuthHeadersImpl = vi.fn().mockResolvedValue({ cookie: 'a=b' });
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ data: { rows: [projectRow, personalRow] } }),
+    });
+    const prevProject = process.env.CODEMIE_PROJECT;
+    process.env.CODEMIE_PROJECT = 'my-project';
+    try {
+      const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl });
+      expect(result.budgetError).toBeNull();
+      expect(result.budget?.text).toContain('$5.00');
+    } finally {
+      if (prevProject === undefined) delete process.env.CODEMIE_PROJECT;
+      else process.env.CODEMIE_PROJECT = prevProject;
+    }
+  });
+
+  it('AC4: no CODEMIE_PROJECT, no profile.codeMieProject → is_default row selected', async () => {
+    const projectRow = { project_name: 'some-project (cli)', current_spending: 5, total: 4, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 120, is_default: false };
+    const personalRow = { project_name: 'me@x.com (cli)', current_spending: 1.78, total: 1.19, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 150, is_default: true };
+    const readFile = readFileFor({
+      activeProfile: 'default',
+      userEmail: 'me@x.com',
+      workspace: { codeMieUrl: 'https://x' },
+      profiles: { default: { baseUrl: 'https://x/api' } },
+    });
+    const getAuthHeadersImpl = vi.fn().mockResolvedValue({ cookie: 'a=b' });
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ data: { rows: [projectRow, personalRow] } }),
+    });
+    const prevProject = process.env.CODEMIE_PROJECT;
+    delete process.env.CODEMIE_PROJECT;
+    try {
+      const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl });
+      expect(result.budgetError).toBeNull();
+      expect(result.budget?.text).toContain('$1.78');
+    } finally {
+      if (prevProject !== undefined) process.env.CODEMIE_PROJECT = prevProject;
+    }
+  });
+
+  it('AC9: profile with codeMieProject === null → budget is null (off CodeMie path unchanged)', async () => {
+    const readFile = readFileFor({
+      activeProfile: 'default',
+      userEmail: 'me@x.com',
+      workspace: { codeMieUrl: 'https://x' },
+      profiles: { default: { baseUrl: 'https://x/api', codeMieProject: null } },
+    });
+    const fetchImpl = vi.fn();
+    const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl: vi.fn() });
+    expect(result).toEqual({ budget: null, budgetError: null });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('AC9: profile with codeMieProject === null → budget is null even when cache is fresh', async () => {
+    // The early-return guard must fire before the cache is consulted — a stale cache entry
+    // written by a prior no-project session on the same profile must not be served once the
+    // profile is explicitly opted out of CodeMie (codeMieProject: null).
+    const readFile = readFileFor(
+      {
+        activeProfile: 'default',
+        userEmail: 'me@x.com',
+        workspace: { codeMieUrl: 'https://x' },
+        profiles: { default: { baseUrl: 'https://x/api', codeMieProject: null } },
+      },
+      // Fresh cache with matching project:''; would hit if the guard didn't fire first.
+      { schema: 3, profile: 'default', project: '', ts: Date.now(), value: { text: 'stale budget', pct: 5 } }
+    );
+    const fetchImpl = vi.fn();
+    const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl: vi.fn() });
+    expect(result).toEqual({ budget: null, budgetError: null });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('profile.codeMieProject selects the project row when CODEMIE_PROJECT env var is absent', async () => {
+    const projectRow = { project_name: 'my-project (cli)', current_spending: 5, total: 4, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 120, is_default: false };
+    const personalRow = { project_name: 'me@x.com (cli)', current_spending: 1.78, total: 1.19, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 150, is_default: true };
+
+    const readFile = readFileFor({
+      activeProfile: 'default',
+      userEmail: 'me@x.com',
+      workspace: { codeMieUrl: 'https://x' },
+      profiles: { default: { baseUrl: 'https://x/api', codeMieProject: 'my-project' } },
+    });
+    const getAuthHeadersImpl = vi.fn().mockResolvedValue({ cookie: 'a=b' });
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ data: { rows: [projectRow, personalRow] } }),
+    });
+
+    const prevProject = process.env.CODEMIE_PROJECT;
+    delete process.env.CODEMIE_PROJECT;
+    try {
+      const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl });
+
+      expect(result.budgetError).toBeNull();
+      expect(result.budget?.text).toContain('$5.00');
+    } finally {
+      if (prevProject !== undefined) process.env.CODEMIE_PROJECT = prevProject;
+    }
+  });
+
+  it('workspace.codeMieProject is used when neither env var nor profile.codeMieProject is set', async () => {
+    const projectRow = { project_name: 'ws-project (cli)', current_spending: 3, total: 2, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 100, is_default: false };
+    const personalRow = { project_name: 'me@x.com (cli)', current_spending: 1.78, total: 1.19, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 150, is_default: true };
+
+    const readFile = readFileFor({
+      activeProfile: 'default',
+      userEmail: 'me@x.com',
+      workspace: { codeMieUrl: 'https://x', codeMieProject: 'ws-project' },
+      profiles: { default: { baseUrl: 'https://x/api' } },
+    });
+    const getAuthHeadersImpl = vi.fn().mockResolvedValue({ cookie: 'a=b' });
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ data: { rows: [projectRow, personalRow] } }),
+    });
+
+    const prevProject = process.env.CODEMIE_PROJECT;
+    delete process.env.CODEMIE_PROJECT;
+    try {
+      const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl });
+
+      expect(result.budgetError).toBeNull();
+      expect(result.budget?.text).toContain('$3.00');
+    } finally {
+      if (prevProject !== undefined) process.env.CODEMIE_PROJECT = prevProject;
+    }
+  });
+
+  it('CODEMIE_PROJECT env var takes precedence over profile.codeMieProject', async () => {
+    const envRow = { project_name: 'env-project (cli)', current_spending: 7, total: 5, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 140, is_default: false };
+    const profileRow = { project_name: 'profile-project (cli)', current_spending: 2, total: 1, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 200, is_default: false };
+    const personalRow = { project_name: 'me@x.com (cli)', current_spending: 1.78, total: 1.19, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 150, is_default: true };
+
+    const readFile = readFileFor({
+      activeProfile: 'default',
+      userEmail: 'me@x.com',
+      workspace: { codeMieUrl: 'https://x' },
+      profiles: { default: { baseUrl: 'https://x/api', codeMieProject: 'profile-project' } },
+    });
+    const getAuthHeadersImpl = vi.fn().mockResolvedValue({ cookie: 'a=b' });
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ data: { rows: [envRow, profileRow, personalRow] } }),
+    });
+
+    const prevProject = process.env.CODEMIE_PROJECT;
+    process.env.CODEMIE_PROJECT = 'env-project';
+    try {
+      const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl });
+
+      expect(result.budgetError).toBeNull();
+      expect(result.budget?.text).toContain('$7.00');
+    } finally {
+      if (prevProject === undefined) delete process.env.CODEMIE_PROJECT;
+      else process.env.CODEMIE_PROJECT = prevProject;
+    }
+  });
+
+  it('AC7 at resolveBudget level: no matching row → budget null, non-reauthenticate error (filtered to null by main)', async () => {
+    // selectBudgetRow returns undefined → resolveBudget throws 'budget row not found' →
+    // caught internally → budgetError set. main() only forwards 'reauthenticate', so the
+    // status bar shows no segment and no error — this test pins the resolveBudget contract.
+    const unrelatedRow = { project_name: 'other-project (cli)', current_spending: 5, total: 4, budget_reset_at: '2026-12-01T00:00:00Z', budget_limit: 120, is_default: false };
+
+    const readFile = readFileFor({
+      activeProfile: 'default',
+      userEmail: 'me@x.com',
+      workspace: { codeMieUrl: 'https://x' },
+      profiles: { default: { baseUrl: 'https://x/api' } },
+    });
+    const getAuthHeadersImpl = vi.fn().mockResolvedValue({ cookie: 'a=b' });
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ data: { rows: [unrelatedRow] } }),
+    });
+
+    const prevProject = process.env.CODEMIE_PROJECT;
+    process.env.CODEMIE_PROJECT = 'unknown-project';
+    try {
+      const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl });
+
+      expect(result.budget).toBeNull();
+      expect(result.budgetError).toBe('budget row not found');
+    } finally {
+      if (prevProject === undefined) delete process.env.CODEMIE_PROJECT;
+      else process.env.CODEMIE_PROJECT = prevProject;
+    }
+  });
+
+  it('AC8: cache miss when same profile but different project', async () => {
+    // A fresh cache written for project 'proj-a' must not be used when the session is on 'proj-b'
+    const readFile = readFileFor(
+      {
+        activeProfile: 'default',
+        userEmail: 'me@x.com',
+        workspace: { codeMieUrl: 'https://x' },
+        profiles: { default: { baseUrl: 'https://x/api' } },
+      },
+      // Cache entry written for 'proj-a'
+      { schema: 3, profile: 'default', project: 'proj-a', ts: Date.now(), value: { text: 'stale', pct: 5 } }
+    );
+    const getAuthHeadersImpl = vi.fn().mockResolvedValue(null); // force reauthenticate on cache miss
+    const prevProject = process.env.CODEMIE_PROJECT;
+    process.env.CODEMIE_PROJECT = 'proj-b'; // different project
+    try {
+      const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl: vi.fn(), getAuthHeadersImpl });
+      // Should have missed the cache and attempted a live fetch (which fails with 'reauthenticate')
+      expect(result).toEqual({ budget: null, budgetError: 'reauthenticate' });
+    } finally {
+      if (prevProject === undefined) delete process.env.CODEMIE_PROJECT;
+      else process.env.CODEMIE_PROJECT = prevProject;
+    }
   });
 });
 

@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "generated": "2026-11-27T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 3, "label": "M" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 18,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 3,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "technical_risk",
+      "reason": "Statusline shows money figures; a wrong budget (personal vs project, shared pot vs per-member allowance, member override) is a correctness failure, and failures must never display a wrong figure. About 10 acceptance criteria (project budget, personal fallback, default project, shared pot, member override, per-member allowance, project switch, not-connected profile) each needed a distinct profile/project state. Shared pot and member override could not be created easily and required a purpose-built local backend. Delivered-effort scoring: verification dominated total time."
+    },
+    {
+      "dimension": "dependencies",
+      "reason": "No new packages, but the work depended on environment prerequisites: a local backend emulating shared-pot and member-override projects, plus a separate user per scenario. Scored M for delivered verification-environment setup, not package count. Judgment call, applied per developer instruction."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Code lives in the Claude plugin statusline, but correctness depended on the CodeMie budget backend (External), profile/config resolution (Service), and the statusline output (UI), each exercised end to end under multiple actors. Scored M on verification breadth."
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "Code is self-contained in the Claude plugin statusline (selectBudgetRow, resolveBudget, project-aware cache key), but the selection logic spans three budget sources and two project models (shared pot vs per-member), so M rather than S."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "About 10 criteria with non-obvious shared-pot vs per-member semantics, which needed confirmation against real backend behavior."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped: financial figures shown to users; wrong-figure-on-failure must be prevented",
+    "Verification effort (multi-actor, local backend setup) reflected in Dependencies and Affected Layers per developer instruction"
+  ],
+  "split_recommendation": null
+}
