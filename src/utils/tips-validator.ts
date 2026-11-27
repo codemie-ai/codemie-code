@@ -10,6 +10,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import type { Command } from 'commander';
 import { listDeprecations } from '../cli/deprecation.js';
 import type { DeprecationEntry } from '../cli/deprecation.js';
+import { isHiddenOption } from '../cli/hidden.js';
 
 export type ValidationResult = { ok: true } | { ok: false; reason: string };
 
@@ -197,7 +198,7 @@ export function scanDocs(paths: string[], entries: readonly DeprecationEntry[] =
 /** Every long flag a visible (not hidden) option of any command in the tree offers. */
 function offeredFlags(cmd: Command, out = new Set<string>()): Set<string> {
   for (const opt of cmd.options) {
-    if (opt.long && !(opt as unknown as { hidden?: boolean }).hidden) out.add(opt.long);
+    if (opt.long && !isHiddenOption(opt)) out.add(opt.long);
   }
   for (const sub of cmd.commands) offeredFlags(sub, out);
   return out;
