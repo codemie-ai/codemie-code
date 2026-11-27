@@ -8,7 +8,7 @@ import chalk from 'chalk';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../utils/security.js';
-import { writeClaudeCodeOtlpConfig } from './connectors/claude-code-otlp.js';
+import { CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE, writeClaudeCodeOtlpConfig } from './connectors/claude-code-otlp.js';
 import type { AllowlistScope } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 import { readAllowlistState } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 import { resolveProjectRoot } from '@/utils/project-root.js';
@@ -44,6 +44,7 @@ export async function runClaudeCodeOtlp(options: ClaudeCodeOtlpRunOptions): Prom
   const label = CLAUDE_CODE_OTLP_LABEL;
   try {
     await writeClaudeCodeOtlpConfig({
+      promptStatus: CODEMIE_USER_PROMPT_HOOK_STATUS_MESSAGE,
       overwrite: options.overwrite,
       scope: options.scope,
       keepProjectList: options.keepProjectList,

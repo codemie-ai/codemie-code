@@ -8,7 +8,8 @@ import chalk from 'chalk';
 import { HealthCheckFormatter } from '../../doctor/formatter.js';
 import { printNext } from '../../../related-commands.js';
 import { composeProxyDoctor, type ProxyDoctorReport, type ProxyDoctorVerbose } from './compose.js';
-import { PROXY_DOCTOR_GROUPS } from './groups.js';
+import type { ProxyDoctorGroup } from './groups.js';
+import { resolveCollection } from '../../shared/analytics-collection/resolve.js';
 
 interface ProxyDoctorCliOptions {
   verbose?: boolean;
@@ -43,10 +44,10 @@ function formatVerbose(verbose: ProxyDoctorVerbose): string[] {
   return lines;
 }
 
-/** One heading per display group that has sections, in the fixed group order. */
-function displaySections(report: ProxyDoctorReport): void {
+/** One heading per display group that has sections, in the plan's group order. */
+function displaySections(report: ProxyDoctorReport, groups: readonly ProxyDoctorGroup[]): void {
   const formatter = new HealthCheckFormatter();
-  for (const group of PROXY_DOCTOR_GROUPS) {
+  for (const group of groups) {
     const details = report.sections.filter((section) => group.ids.includes(section.id));
     if (details.length === 0) continue;
     formatter.displayCheck({
@@ -71,13 +72,14 @@ export function createProxyDoctorCommand(): Command {
     .option('-v, --verbose', 'Include Claude Desktop directories and sessions, and config file paths')
     .option('--json', 'Emit the diagnosis as one JSON document')
     .action(async (opts: ProxyDoctorCliOptions) => {
-      const report = await composeProxyDoctor({ authProbe: true, verbose: Boolean(opts.verbose) });
+      const plan = (await resolveCollection()).doctor;
+      const report = await composeProxyDoctor({ authProbe: true, verbose: Boolean(opts.verbose), plan });
       const hasError = report.sections.some((s) => s.status === 'error');
 
       if (opts.json) {
         console.log(JSON.stringify(report, null, 2));
       } else {
-        displaySections(report);
+        displaySections(report, plan.groups);
         if (report.verbose) {
           for (const line of formatVerbose(report.verbose)) console.log(line);
           console.log();

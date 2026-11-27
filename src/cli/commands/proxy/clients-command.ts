@@ -9,6 +9,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 
 import { printNext } from '../../related-commands.js';
+import { resolveCollection } from '../shared/analytics-collection/resolve.js';
 import { logger } from '@/utils/logger.js';
 import { readDaemonStatus } from './daemon-manager.js';
 import {
@@ -65,6 +66,7 @@ async function readAnalyticsClientInfo(): Promise<Map<string, AnalyticsClientInf
     const daemon = running ? state : null;
     const commands = daemon === null || Boolean(daemon.version);
     const rows = await collectAnalyticsClients(daemon);
+    const { remedies } = (await resolveCollection()).doctor;
     return new Map(rows.map((row) => {
       // The extension's analytics ride on hooks, apart from the route this table row is about; others judge the row's own state.
       const extension = row.client === 'vscode-claude-code';
@@ -72,8 +74,8 @@ async function readAnalyticsClientInfo(): Promise<Map<string, AnalyticsClientInf
         ANALYTICS_CLIENT_TARGET_IDS[row.client],
         {
           found: row.found,
-          hint: analyticsClientHint(extension ? row : { ...row, connected: false }, commands),
-          ...(extension && row.routed && { note: analyticsClientHint({ ...row, connected: true }, commands) }),
+          hint: analyticsClientHint(extension ? row : { ...row, connected: false }, commands, remedies),
+          ...(extension && row.routed && { note: analyticsClientHint({ ...row, connected: true }, commands, remedies) }),
         },
       ];
     }));

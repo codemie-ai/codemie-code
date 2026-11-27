@@ -31,7 +31,8 @@ export function setupCheckReport(now: Date): SyncReport {
 
   return {
     fileName: `setup-check-${stamp}.json`,
-    bytes: Buffer.from(`${JSON.stringify(payload, null, 2)}\n`, 'utf-8')
+    bytes: Buffer.from(`${JSON.stringify(payload, null, 2)}\n`, 'utf-8'),
+    contentType: 'application/json'
   };
 }
 

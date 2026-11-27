@@ -1,0 +1,412 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.check",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "User approved check round; CR-001..CR-005 resolved (CR-005 via caller reword + re-pin)"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "User: fix CR-001..CR-005 now (CR-005: repo uses conventional commits); CR-006..CR-009 fix-later"
+    },
+    {
+      "gate": "code-review.check",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "User approved check round; CR-001..CR-005 resolved (CR-005 via caller reword + re-pin)"
+    }
+  ],
+  "reviewed_head": "389b6fe37fb8929b71969e33b660b8418a3fec52",
+  "rounds": [
+    "final",
+    "check"
+  ],
+  "rationale": "All five fix-set findings verified: CR-001, CR-002, CR-004 against current source; CR-003 and CR-005 via mapped decisions. CR-005 is resolved by decision only; the caller must still reword the 10 local commit subjects and re-pin after this round. Advisory findings were not in the fix set.",
+  "confidence": "low",
+  "check_confidence": "high",
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 3,
+    "moot": 0,
+    "decided": 2,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "docs/SHELL-COMPLETIONS.md",
+      "title": "Docs lack per-shell verify steps",
+      "problem": "Acceptance criterion 4 requires documentation explaining how to enable and verify completions separately for Bash, Zsh and Fish. The Bash, Zsh and Fish sections give enable steps only; the word 'verify' does not appear in the file.",
+      "impact": "Required story criterion is partially unmet; users cannot confirm that completions loaded.",
+      "recommendation": "Add a 'Verify' step to each of the Bash, Zsh and Fish sections (for example type `codemie <Tab>` and the expected top-level commands), and align the doc with the final decisions on root options and file fallback.",
+      "status": "resolved",
+      "check_notes": "Verify steps added for bash, zsh and fish in docs/SHELL-COMPLETIONS.md",
+      "fix": {
+        "change": "Added a Verify step to the Bash, Zsh and Fish sections of SHELL-COMPLETIONS.md",
+        "test": "n/a"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/completion/tree.ts",
+      "line": 35,
+      "title": "Valued options lack file-completion fallback",
+      "problem": "Spec says valued options without choices fall back to file completion. PATH_PLACEHOLDER = /[<[](path|file|dir)[>\\]]/i matches only exact placeholder names, so `<filePath>`, `<directory>`, `<config-file>` and every other valued option offer nothing (kind 'value').",
+      "impact": "Path-valued options get no completion in any shell; tests and docs lock in the divergent behavior.",
+      "recommendation": "Fall back to file completion for valued options with no choices (or widen the regex to include directory, filepath, output and variants), then update tests and docs.",
+      "status": "resolved",
+      "check_notes": "tree.ts: valued options without choices (except --task) are path kind; snapshots and test updated",
+      "fix": {
+        "change": "Valued options without choices now get file completion (--task stays value-less); snapshots and docs updated",
+        "test": "src/cli/completion/__tests__/tree.test.ts"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "decision",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "src/cli/completion/tree.ts",
+      "line": 91,
+      "title": "Root options offered at every node",
+      "problem": "Spec states global options are not inherited (only root offers --task, -V, --version). effectiveOptions merges root options into every node; snapshots, integration tests and docs assert the inverse. A tree.ts comment says Commander empirically accepts them there.",
+      "impact": "Tab after a subcommand suggests --version/-V/--task, which may not be real options of that command (criterion 3: suggestions reflect the real interface). Which behavior is intended needs a human decision.",
+      "recommendation": "Decide: follow the spec (offer root options only at root) or amend the spec and docs to match the verified inherited behavior; then align tree.ts, snapshots, tests and docs.",
+      "status": "decided",
+      "check_notes": "Decision recorded: keep inherited root options; docs amended",
+      "fix": {
+        "change": "Decision: keep inherited root options; spec.md and SHELL-COMPLETIONS.md amended to match",
+        "test": "n/a"
+      },
+      "decision": {
+        "outcome": "Keep inherited root options at every node; amend spec and docs",
+        "rationale": "CLI accepts root options after a subcommand (codemie list --version)"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/utils/invocation-context.ts",
+      "line": 28,
+      "title": "Root options before completion bypass silencing",
+      "problem": "completion is detected only as argv[2] === 'completion'. `codemie --debug completion bash` (any root option first) skips the quiet path, so migrations, the update prompt and the what's-new notice can write to stdout. The spec also asks for silencing through getInvocationContext/shouldRunUpgradeNotice; whatsnew.ts is unchanged and bin/codemie.js uses call-site guards.",
+      "impact": "Eval'ed or redirected script can be corrupted when a root option precedes the command. Trigger is uncommon, but failure is silent.",
+      "recommendation": "Detect the first non-dash argv word, e.g. `argv.slice(2).find(a => !a.startsWith('-')) === 'completion'` (account for valued root options), and route it through the shared silent/output-contract path including shouldRunUpgradeNotice.",
+      "status": "resolved",
+      "check_notes": "firstCommandWord skips root options and --task value; bin/codemie.js guards use invocation.completion; test added",
+      "fix": {
+        "change": "Completion detection takes the first non-option word, skipping --task's value",
+        "test": "src/utils/__tests__/invocation-context.test.ts"
+      },
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-005",
+      "kind": "decision",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "unknown",
+      "title": "Ticket key in all commit subjects",
+      "problem": "Standards review: git-workflow.md lists the ticket key in the commit subject as an anti-pattern (reference it in the body footer). All 10 commits carry EPMCDME-17673 in the subject. Commit-format is a blocking standard.",
+      "impact": "Blocks the workflow standard; rewording requires rewriting history, which needs a human decision (squash-merge title may make it moot).",
+      "recommendation": "Reword subjects without the ticket key and put it in the body footer, or confirm the squash-merge title covers it and accept the deviation.",
+      "status": "decided",
+      "check_notes": "Decision recorded with rationale; pending caller action: reword 10 local commit subjects then re-pin",
+      "fix": {
+        "change": "Handled by the caller: commit subjects get reworded after the check round",
+        "test": "n/a"
+      },
+      "decision": {
+        "outcome": "Caller rewords commit subjects after the check round",
+        "rationale": "History rewrite is outside review-fix mode"
+      },
+      "disposition": {
+        "rationale": "Repo uses conventional commits, so the subjects must be fixed (user decision)",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "bin/codemie.js",
+      "line": 28,
+      "title": "Completion errors may be swallowed",
+      "problem": "The logger console sink is nulled for completion; a generate failure logged via logger would not reach stderr.",
+      "impact": "Narrow trigger: generate failing is unlikely; Commander argument errors still print.",
+      "recommendation": "Route the logger console to stderr for completion instead of null.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/completion/bash.ts",
+      "title": "Option terminator -- not handled in walk",
+      "problem": "Words after `--` that start with '-' are treated as options, so the tracked node can desync.",
+      "impact": "Rare sequence; wrong suggestions only, easily avoided.",
+      "recommendation": "Treat `--` as end of options in the bash, zsh and fish walkers.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-008",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/completion/index.ts",
+      "line": 14,
+      "title": "readVersion silently falls back to 1.0.0",
+      "problem": "readVersion swallows all errors and returns '1.0.0', so a wrong stamp appears in the header used to detect stale scripts.",
+      "impact": "Only when package.json cannot be read; misleads stale-script detection.",
+      "recommendation": "Throw a clear error instead of returning a fake version.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-009",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/cli/completion/tree.ts",
+      "line": 39,
+      "title": "Positional choices not completed",
+      "problem": "Only option choices are modelled; `codemie completion <Tab>` does not offer bash/zsh/fish and `codemie help <Tab>` offers no command names.",
+      "impact": "Convenience gap; subcommands and options are still offered. Docs do not mention it.",
+      "recommendation": "Model positional argument choices, or document the limitation.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "completion command createCompletionCommand registered in program.ts with .choices(bash,zsh,fish)",
+      "status": "pass",
+      "notes": "completion.ts uses Argument('<shell>').choices; registered"
+    },
+    {
+      "kind": "spec",
+      "item": "Root found via parent chain, no second program",
+      "status": "pass",
+      "notes": "rootOf(command)"
+    },
+    {
+      "kind": "spec",
+      "item": "Only script on stdout; errors to stderr",
+      "status": "pass",
+      "notes": "single write; tested"
+    },
+    {
+      "kind": "spec",
+      "item": "Missing/unsupported shell: stderr, exit 1, empty stdout",
+      "status": "pass",
+      "notes": "covered in completion.test.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "--help describes three shells with one install line each",
+      "status": "pass",
+      "notes": "addHelpText examples"
+    },
+    {
+      "kind": "spec",
+      "item": "tree model: aliases, hidden excluded, implicit help, -h/-V on root",
+      "status": "pass",
+      "notes": "tree.ts + hidden.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "Emitters pure, shared escape.ts, generate(shell, root)",
+      "status": "pass",
+      "notes": "switch instead of registry; equivalent"
+    },
+    {
+      "kind": "spec",
+      "item": "Walk semantics: flags skipped, valued option consumes word, alias descent",
+      "status": "pass",
+      "notes": "integration tests"
+    },
+    {
+      "kind": "spec",
+      "item": "Alias shows same description in zsh and fish",
+      "status": "pass",
+      "notes": "asserted"
+    },
+    {
+      "kind": "spec",
+      "item": "Global options not inherited: only root offers --task/-V/--version",
+      "status": "fail",
+      "notes": "effectiveOptions merges root options into every node"
+    },
+    {
+      "kind": "spec",
+      "item": "--task value completes nothing",
+      "status": "pass",
+      "notes": "tested"
+    },
+    {
+      "kind": "spec",
+      "item": ".choices() values offered after the option",
+      "status": "pass",
+      "notes": "bash, zsh, fish"
+    },
+    {
+      "kind": "spec",
+      "item": "Valued options without choices fall back to file completion",
+      "status": "fail",
+      "notes": "only <path|file|dir> placeholders get files; others offer nothing"
+    },
+    {
+      "kind": "spec",
+      "item": "Bash 3.2 compatible, no bash-completion dependency",
+      "status": "pass",
+      "notes": "case + compgen; grep test"
+    },
+    {
+      "kind": "spec",
+      "item": "Zsh #compdef/_describe with source and fpath guard",
+      "status": "pass",
+      "notes": "pty tests"
+    },
+    {
+      "kind": "spec",
+      "item": "Fish complete -c with state helper",
+      "status": "pass",
+      "notes": "complete -C test"
+    },
+    {
+      "kind": "spec",
+      "item": "Startup silencing via getInvocationContext/shouldRunUpgradeNotice",
+      "status": "partial",
+      "notes": "call-site isCompletion bypass; whatsnew.ts unchanged; argv[2] only"
+    },
+    {
+      "kind": "spec",
+      "item": "Stdout-purity test with migrations/update enabled",
+      "status": "pass",
+      "notes": "stdout-purity.test.ts"
+    },
+    {
+      "kind": "spec",
+      "item": "Docs: per-shell enable AND verify steps; README/COMMANDS pointers",
+      "status": "partial",
+      "notes": "enable steps present; no verify step per shell"
+    },
+    {
+      "kind": "spec",
+      "item": "Docs: regenerate guidance, caching, WSL notes",
+      "status": "pass",
+      "notes": "present"
+    },
+    {
+      "kind": "spec",
+      "item": "Unit tests tree/escape/snapshots; sync guard",
+      "status": "pass",
+      "notes": "present"
+    },
+    {
+      "kind": "spec",
+      "item": "Behavioral tests bash/fish/zsh pty, gated by availability",
+      "status": "pass",
+      "notes": "present"
+    },
+    {
+      "kind": "spec",
+      "item": "CI installs zsh and fish",
+      "status": "pass",
+      "notes": "ci.yml step"
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goals respected",
+      "status": "pass",
+      "notes": "none violated"
+    },
+    {
+      "kind": "spec",
+      "item": "Final npm run ci passes",
+      "status": "pending-stage-7",
+      "notes": "Stage 7 owns execution evidence"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "fail",
+      "notes": "All 10 subjects embed ticket key EPMCDME-17673; git-workflow.md anti-pattern says reference it in body footer"
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "Sampled new src files conform: kebab-case, .js imports, explicit return types, no any"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "Emitters escape per shell; no credentials or unsafe paths"
+    }
+  ],
+  "final_round": {
+    "decision": "request-changes",
+    "rationale": "All four lenses and standards ran; confidence low because decision_needed items remain (spec vs implementation on inherited root options; ticket key in commit subjects). Docs lack a per-shell verify step (AC4), valued options have no file fallback, and root options before `completion` bypass startup silencing. 4 advisory (inside findings total), 0 deferred, 15 dismissed as noise (see code-review-dismissed.local.md).",
+    "confidence": "low",
+    "risk_flags": []
+  }
+}

@@ -8,16 +8,20 @@
  *
  * `runSync` resolves identity once, then loops over the targets configured in `settings`
  * (webhook, then git, in that order — whichever of `webhookUrl`/`git` is present). Each
- * target gets its own marker-derived window, its own `buildReport` call, its own delivery
- * attempt and its own marker move, so one target's failure never blocks or rolls back
+ * target gets its own marker-derived window, its own `exportSource.build` call, its own delivery
+ * attempt of every built file and its own marker move, so one target's failure never blocks or rolls back
  * another's delivery (AC7/AC8).
  *
  * `runSync` never throws and never calls `process.exit`. Every outcome for a target —
  * success, a skipped empty window, or a failure — prints and appends exactly one line via
  * {@link formatLogLine}:
- *   `<ISO> ok sent <name> <bytes> target=<id>`
+ *   `<ISO> ok sent <name> <bytes> target=<id>` (one file), `<ISO> ok sent <n> files <total bytes> target=<id>`
  *   `<ISO> skip <reason> target=<id>`
  *   `<ISO> fail <setup|export|send> <redacted detail> target=<id>`
+ * An `ok sent` line may carry ` (warning: <what>)` once or twice before ` target=<id>`: the build's `warning` (a part
+ * of the run not built for a reason that may pass), then its `leftOut` (sessions no run can build), then the marker's
+ * own warning. A `skip` line carries the `leftOut` note alone: a build with no file and a `warning` is a `fail export`
+ * line with that warning's text.
  * A setup failure resolved before any target is chosen (no settings file, no configured
  * target, no resolvable identity) carries no ` target=<id>` suffix and counts for every
  * target in `status`; a target whose own marker cannot be read fails `setup` with its
@@ -26,8 +30,8 @@
  * a report-build failure -> `export`; a webhook delivery failure -> `export` when it is an
  * `ExportTooLargeError` (its message carries the byte count), else `send`; a git delivery
  * failure is always `send`, with its detail carrying {@link gitHint}. The marker for a
- * target only moves (to the run's `now()`) after that target's delivery resolves — never on
- * `skip` or `fail`. A marker write that fails after delivery keeps the `ok sent` outcome
+ * target only moves (to the run's `now()`) after a delivery whose files carry no `warning` — a `leftOut` alone does not
+ * hold it; a `skip` and a `fail` move nothing. A marker write that fails after delivery keeps the `ok sent` outcome
  * (exit 0 for that target) with a warning suffix; a run-log append that fails is ignored.
  */
 import { appendFile, chmod, mkdir } from 'fs/promises';
@@ -41,14 +45,12 @@ import { realIdentityDeps, resolveSyncIdentity } from './identity.js';
 import { readMarker, writeMarker } from './marker.js';
 import { includeExternalFor } from './policy.js';
 import { errorMessage, redactSecrets } from './redact.js';
-import { buildSyncReport } from './report-builder.js';
 import { createGitRunner, gitHint } from './targets/git-client.js';
 import { GitTarget, gitMarkerPath } from './targets/git-target.js';
 import { sendWebhook } from './targets/webhook-target.js';
-import type { SyncReport, SyncSettings } from './types.js';
+import type { ExportSource, SyncFiles, SyncReport, SyncSettings } from './types.js';
+import type { AnalyticsCollection } from '../../shared/analytics-collection/types.js';
 import { dailyWindow } from './window.js';
-import { SessionsSource } from '../sources/sessions-source.js';
-import type { AnalyticsSource } from '../sources/types.js';
 
 /** A `codemie analytics sync` delivery target. */
 export type TargetId = 'webhook' | 'git';
@@ -58,15 +60,14 @@ export interface SyncDeps {
   now(): Date;
   loadSettings(): Promise<SyncSettings | null>;
   resolveIdentity(): Promise<string>;
-  buildReport: typeof buildSyncReport;
-  deliver(target: TargetId, settings: SyncSettings, email: string, report: SyncReport): Promise<void>;
+  /** Builds the files one target gets for its window. */
+  exportSource: ExportSource;
+  deliver(target: TargetId, settings: SyncSettings, email: string, reports: SyncReport[]): Promise<void>;
   readMarker(target: TargetId, now: Date): Promise<Date | null>;
   writeMarker(target: TargetId, at: Date): Promise<void>;
   appendLog(line: string): Promise<void>;
   print(line: string): void;
   platform: NodeJS.Platform;
-  /** The analytics data source `buildReport` loads sessions from. */
-  source: AnalyticsSource;
 }
 
 type Outcome = 'ok' | 'skip' | 'fail';
@@ -142,28 +143,39 @@ async function runTarget(
     return true;
   }
 
-  let report: SyncReport | null;
+  let reports: SyncFiles | null;
   try {
-    report = await deps.buildReport({ source: deps.source, window, email, includeExternal, now });
+    reports = await deps.exportSource.build({ window, email, includeExternal, now });
   } catch (err) {
     await emit(deps, now, 'fail', `export ${errorMessage(err)}`, target);
     return true;
   }
 
-  if (report === null) {
-    await emit(deps, now, 'skip', `no sessions in window ${window.label}`, target);
+  // Both are named on the line: a `warning` holds the marker, a `leftOut` (sessions no run can build) does not.
+  const buildWarning = reports?.warning === undefined ? '' : ` (warning: ${reports.warning})`;
+  const leftOutWarning = reports?.leftOut === undefined ? '' : ` (warning: ${reports.leftOut})`;
+  // No file and a `warning`: the build failed to make what it had to send.
+  if (reports !== null && reports.length === 0 && reports.warning !== undefined) {
+    await emit(deps, now, 'fail', `export ${reports.warning}${leftOutWarning}`, target);
+    return true;
+  }
+  if (reports === null || reports.length === 0) {
+    await emit(deps, now, 'skip', `no sessions in window ${window.label}${leftOutWarning}`, target);
     return false;
   }
 
   try {
-    await deps.deliver(target, settings, email, report);
+    await deps.deliver(target, settings, email, reports);
   } catch (err) {
     await emit(deps, now, 'fail', deliveryFailureDetail(target, err), target);
     return true;
   }
 
-  const markerWarning = await moveMarker(deps, target, now);
-  await emit(deps, now, 'ok', `sent ${report.fileName} ${report.bytes.length}${markerWarning}`, target);
+  // A run with a `warning` leaves the marker, so the next run covers this window again.
+  const markerWarning = reports.warning === undefined ? await moveMarker(deps, target, now) : '';
+  const total = reports.reduce((sum, report) => sum + report.bytes.length, 0);
+  const sent = reports.length === 1 ? `${reports[0].fileName} ${total}` : `${reports.length} files ${total}`;
+  await emit(deps, now, 'ok', `sent ${sent}${buildWarning}${leftOutWarning}${markerWarning}`, target);
   return false;
 }
 
@@ -235,36 +247,37 @@ async function appendSyncLog(line: string): Promise<void> {
   await chmod(logPath, LOG_FILE_MODE);
 }
 
-/** Deliver `report` to `target`. Only called for a target `configuredTargets` already found
+/** Deliver `reports` to `target`. Only called for a target `configuredTargets` already found
  * present on `settings`, so the "missing settings" branches below are defensive, not a
  * normal path. */
 async function deliverToTarget(
   target: TargetId,
   settings: SyncSettings,
   email: string,
-  report: SyncReport
+  reports: SyncReport[]
 ): Promise<void> {
   if (target === 'webhook') {
     if (settings.webhookUrl === undefined) {
       throw new SyncTargetMissingError();
     }
-    await sendWebhook(settings.webhookUrl, report);
+    await sendWebhook(settings.webhookUrl, reports);
     return;
   }
 
   if (settings.git === undefined) {
     throw new SyncTargetMissingError();
   }
-  await new GitTarget(settings.git, email, createGitRunner()).deliver(report);
+  await new GitTarget(settings.git, email, createGitRunner()).deliver(reports);
 }
 
-/** Real dependencies for `runSync`: real clock, settings, identity, markers, fs and network. */
-export function realSyncDeps(): SyncDeps {
+/** Real dependencies for `runSync`: real clock, settings, identity, markers, fs and network; the file comes from
+ * `collection`'s export source. */
+export function realSyncDeps(collection: Pick<AnalyticsCollection, 'exportSource'>): SyncDeps {
   return {
     now: () => new Date(),
     loadSettings: () => loadSyncSettings(),
     resolveIdentity: () => resolveSyncIdentity(realIdentityDeps),
-    buildReport: buildSyncReport,
+    exportSource: collection.exportSource(),
     deliver: deliverToTarget,
     readMarker: (target: TargetId, now: Date) =>
       target === 'git' ? readMarker(now, gitMarkerPath()) : readMarker(now),
@@ -275,6 +288,5 @@ export function realSyncDeps(): SyncDeps {
       console.log(line);
     },
     platform: process.platform,
-    source: new SessionsSource(),
   };
 }

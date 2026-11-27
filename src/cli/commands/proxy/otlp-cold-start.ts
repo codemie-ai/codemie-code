@@ -13,11 +13,11 @@ import {
   readConnectionRecord,
   readState,
   seedConnectionRecord,
-  spawnDaemon,
   stopDaemon,
   writeState,
   type DaemonState,
 } from './daemon-manager.js';
+import { spawnDaemon } from './daemon-spawn.js';
 import { DAEMON_LOCK_HOOK_BUDGET_MS, withDaemonLock } from './daemon-lock.js';
 import {
   assertSsoCredentials,
@@ -36,6 +36,11 @@ import { CLAUDE_CODE_OTLP_AGENT_NAME } from '../../../agents/plugins/claude-code
  * Another client's hook of the same event name replaces it.
  */
 const ADOPT_OLDER_DAEMON_EVENTS: ReadonlySet<string> = new Set(['UserPromptSubmit', 'PostCompact']);
+
+/** Whether a hook of `agentName` on `event` adopts a live daemon of an older CLI as it is. */
+export function adoptsOlderDaemon(agentName: string, event?: string): boolean {
+  return agentName === CLAUDE_CODE_OTLP_AGENT_NAME && event !== undefined && ADOPT_OLDER_DAEMON_EVENTS.has(event);
+}
 
 /** A daemon state a start can rebuild the daemon from: one that names its upstream. */
 export type RestartableState = DaemonState & { targetUrl: string; provider: string };
@@ -97,7 +102,7 @@ async function ssoCredentialsProblem(config: LoadedConfig, name: string): Promis
  * Loads the recorded profile (a repo-local one wins over the global one) and checks it can
  * start a daemon. Returns the config, or the reason it cannot, with the scope that was found.
  */
-async function resolveColdStartProfile(
+export async function resolveColdStartProfile(
   name: string
 ): Promise<{ scope?: 'local' | 'global'; config?: LoadedConfig; skipReason?: string }> {
   const cwd = process.cwd();
@@ -125,11 +130,13 @@ function warnStartingWithoutCredentials(name: string, problem: string, scope?: s
 }
 
 /**
- * Adopts the state's daemon when it is alive and not of an older CLI (or `acceptOlder`): seeds the connection
- * record and re-points Claude Code's OTLP endpoint at it.
+ * Adopts the state's daemon when it is alive, not the local mode's daemon, and not of an older CLI (or
+ * `acceptOlder`): seeds the connection record and re-points Claude Code's OTLP endpoint at it. The local mode's daemon
+ * has no upstream and no profile, so a backend hook never adopts it.
  */
 async function adoptLiveDaemon(state: DaemonState | null, acceptOlder: boolean): Promise<boolean> {
   if (!state || !(await isDaemonAlive(state))) return false;
+  if (state.mode === 'local') return false;
   if (!acceptOlder && (await isOlderDaemon(state))) return false;
   await seedConnectionRecord(state);
   await refreshClaudeCodeOtlpEndpoint(state);
@@ -156,6 +163,15 @@ async function startDaemon(
 }
 
 /**
+ * The working directory's profile as a cold start without a connection record loads it: the active profile's name,
+ * then the config for it. Shared with `resolveHookCredentials`, so a hook names the login that start will use.
+ */
+export async function loadWorkingDirectoryProfile(cwd: string = process.cwd()): Promise<LoadedConfig> {
+  const activeProfileName = await ConfigLoader.getActiveProfileName(cwd);
+  return ConfigLoader.load(cwd, activeProfileName ? { name: activeProfileName } : undefined);
+}
+
+/**
  * Cold start when there is no usable connection record and no live daemon (first hook after an
  * upgrade, or a deleted or malformed record): start on the working directory's profile as hooks
  * did before the record existed. The daemon's successful start creates the record. Like the
@@ -166,6 +182,7 @@ async function coldStartOnWorkingDirectoryProfile(port: number, stopOlder: boole
   const cwd = process.cwd();
   let name = 'default';
   try {
+    // Same two steps as loadWorkingDirectoryProfile, kept apart so a load failure still names the active profile.
     const activeProfileName = await ConfigLoader.getActiveProfileName(cwd);
     if (activeProfileName) name = activeProfileName;
     const config = await ConfigLoader.load(cwd, activeProfileName ? { name: activeProfileName } : undefined);
@@ -209,8 +226,7 @@ async function coldStartOnWorkingDirectoryProfile(port: number, stopOlder: boole
  * on without the daemon.
  */
 export async function ensureOtlpProxy(agentName: string, event?: string): Promise<void> {
-  const acceptOlder =
-    agentName === CLAUDE_CODE_OTLP_AGENT_NAME && event !== undefined && ADOPT_OLDER_DAEMON_EVENTS.has(event);
+  const acceptOlder = adoptsOlderDaemon(agentName, event);
   if (await adoptLiveDaemon(await readState(), acceptOlder)) return;
 
   await withDaemonLock(DAEMON_LOCK_HOOK_BUDGET_MS, async () => {
@@ -222,7 +238,7 @@ export async function ensureOtlpProxy(agentName: string, event?: string): Promis
       await startFromState(state, port);
       return;
     }
-    // Not adopted above, so a daemon still alive here is an older one this event does not accept.
+    // Not adopted above, so a daemon still alive here is an older one this event does not accept, or the local mode's.
     await coldStartOnRecord(port, state !== null && (await isDaemonAlive(state)));
   });
 }

@@ -99,7 +99,7 @@ Singleton accessor; returns a `PluginRegistry` that manages plugin ordering and 
 |--------|---------|
 | `register(plugin, config?)` | Register at startup; lower `priority` = earlier execution |
 | `initialize(context)` | Called by proxy on `start()`; returns `ProxyInterceptor[]` |
-| `setEnabled(id, enabled)` | Toggle plugin at runtime |
+| `setEnabled(id, enabled)` | Toggle plugin at runtime; the daemon's entry picks its plugin set with it (`--mode local` enables the gateway key, `LocalAnalyticsPlugin` and `NoUpstreamPlugin`; `LocalAnalyticsPlugin` and `NoUpstreamPlugin` are the two registered with `{ enabled: false }`) |
 | `getAll()` / `getConfig(id)` / `updateConfig(id, updates)` | Inspect / mutate |
 | `clear()` | Reset for tests |
 
@@ -194,7 +194,9 @@ user timer/Task Scheduler) always runs. Detection (`isScheduledSyncRun`,
 When detected, `bin/codemie.js` runs pending migrations with `silent: true`, and skips the
 CLI update check/prompt and the once-per-upgrade "what's new" notice — the job has no
 terminal and no user to notify. A manual `codemie analytics sync run` (no `--scheduled`)
-keeps today's normal interactive startup. See
+keeps today's normal interactive startup. On a machine in the local analytics mode the same
+run delivers the `.otlp.jsonl.gz` of `~/.codemie/analytics/sessions/`, cut into files no larger
+than 70 MB when one would be larger, beside the JSON report; the invocation and its startup are the same. See
 [ANALYTICS-REPORT.md](../../../docs/ANALYTICS-REPORT.md#scheduled-delivery-analytics-sync)
 for the full `sync` command surface.
 

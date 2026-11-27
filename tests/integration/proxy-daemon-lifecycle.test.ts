@@ -348,7 +348,8 @@ describe.skipIf(!existsSync(DAEMON_DIST))('Proxy daemon lifecycle (real spawn)',
   // writes its state, which is all a start waits for.
   it('a replacement cut between the stop and the spawn leaves the dead daemon\'s state, from which a hook brings it back with its project', async () => {
     const port = await freeLoopbackPort();
-    const first = await dm.spawnDaemon({
+    const { spawnDaemon } = await import('../../src/cli/commands/proxy/daemon-spawn.js');
+    const first = await spawnDaemon({
       targetUrl: upstreamUrl, provider: 'ai-run-sso', profile: 'lifecycle-sso', port, project: 'lifecycle-project', writeRecord: false,
     });
     startedPids.push(first.pid);

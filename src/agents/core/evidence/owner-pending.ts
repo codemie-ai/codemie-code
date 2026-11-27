@@ -29,6 +29,11 @@ export interface PendingOwnerEntry {
   /** Hook-time folder and the project it resolved to (ignoring the session pin), so replay can re-check an existing record's scope. */
   cwd?: string;
   project_at_cwd?: string;
+  /**
+   * Set for a batch the hook built under a verified owner and could not hand to the daemon (not reachable, not a missing
+   * owner). It has no identity outage to age out of, so replay appends it behind any live bytes of the session.
+   */
+  undelivered?: true;
   events: Record<string, unknown>[];
 }
 

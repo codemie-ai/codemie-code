@@ -240,6 +240,16 @@ describe('OtlpPlugin — POST /v1/analytics/otlp/v1/{signal} (application/json)'
     });
   });
 
+  it('writes an export with records of two sessions as one line to the file of the first session id', async () => {
+    const other = 'c73ecba6-c21a-415d-b40f-cb0cdb416156';
+    const record = (id: string) => ({ attributes: [{ key: 'session.id', value: { stringValue: id } }] });
+    const body = JSON.stringify({ resourceLogs: [{ scopeLogs: [{ logRecords: [record(SESSION_ID), record(other)] }] }] });
+
+    await postOtlpJson('logs', body);
+
+    expect(appendSpoolMock.mock.calls).toEqual([[SESSION_ID, 'logsJson', body + '\n']]);
+  });
+
   it('routes metrics and traces to their own JSON stream', async () => {
     await postOtlpJson('metrics', JSON.stringify({ sessionId: SESSION_ID }));
     expect(appendSpoolMock.mock.calls[0][1]).toBe('metricsJson');

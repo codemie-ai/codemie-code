@@ -101,7 +101,7 @@ describe('GitTarget integration (local bare repos)', () => {
     const reportB = report('bob');
 
     const aDir = join(root, 'a-work');
-    const raceRun = raceOnFirstPush(run, () => targetB.deliver(reportB));
+    const raceRun = raceOnFirstPush(run, () => targetB.deliver([reportB]));
     let aPushCalls = 0;
     let aRebaseCalls = 0;
     const countingRun: GitRunner = async (args, opts) => {
@@ -112,7 +112,7 @@ describe('GitTarget integration (local bare repos)', () => {
     const targetA = new GitTarget(settings, 'alice@example.com', countingRun, aDir);
     const reportA = report('alice');
 
-    await targetA.deliver(reportA);
+    await targetA.deliver([reportA]);
 
     // Proves the rebase-retry path actually ran (B's push really did land in between A's
     // fetch/reset and A's own push), not just that the end state happens to look right.
@@ -143,7 +143,7 @@ describe('GitTarget integration (local bare repos)', () => {
     const target = new GitTarget(settings, 'carol@example.com', run, workDir);
     const carolReport = report('carol');
 
-    await target.deliver(carolReport);
+    await target.deliver([carolReport]);
 
     const verifyDir = cloneForVerification();
     const content = readFileSync(
@@ -164,13 +164,13 @@ describe('GitTarget integration (local bare repos)', () => {
 
     const raceRun = raceOnFirstPush(run, async () => {
       for (const other of others) {
-        await other.target.deliver(other.report);
+        await other.target.deliver([other.report]);
       }
     });
     const targetA = new GitTarget(settings, 'alice@example.com', raceRun, join(root, 'a-work'));
     const reportA = report('alice');
 
-    await targetA.deliver(reportA);
+    await targetA.deliver([reportA]);
 
     const verifyDir = cloneForVerification();
     expect(JSON.parse(readFileSync(join(verifyDir, 'alice-example-com', reportA.fileName), 'utf-8'))).toEqual({
@@ -188,11 +188,37 @@ describe('GitTarget integration (local bare repos)', () => {
     const workDir = join(root, 'frank-work');
     const settings: GitSettings = { repoUrl };
 
-    await new GitTarget(settings, 'frank@example.com', run, workDir).deliver(report('frank'));
+    await new GitTarget(settings, 'frank@example.com', run, workDir).deliver([report('frank')]);
     const second: SyncReport = { fileName: 'second.report.json', bytes: Buffer.from('{"n":2}', 'utf-8') };
-    await new GitTarget(settings, 'frank@example.com', run, workDir).deliver(second);
+    await new GitTarget(settings, 'frank@example.com', run, workDir).deliver([second]);
 
     const verifyDir = cloneForVerification();
     expect(readFileSync(join(verifyDir, 'frank-example-com', 'second.report.json'), 'utf-8')).toBe('{"n":2}');
+  }, 30_000);
+
+  it('pushes a file the target repository ignores alongside the report', async () => {
+    const seedDir = join(root, 'seed');
+    writeFileSync(join(seedDir, '.gitignore'), '*.gz\n');
+    git(['add', '-A'], seedDir);
+    git(['-c', 'user.name=seed', '-c', 'user.email=seed@example.com', 'commit', '-m', 'ignore gz'], seedDir);
+    git(['push', 'origin', 'HEAD:main'], seedDir);
+
+    const reportFile = report('gina');
+    const otlpFile: SyncReport = { fileName: 'gina.otlp.jsonl.gz', bytes: Buffer.from('otlp', 'utf-8') };
+    await new GitTarget({ repoUrl }, 'gina@example.com', createGitRunner(), join(root, 'gina-work')).deliver([
+      otlpFile,
+      reportFile,
+    ]);
+
+    const verifyDir = cloneForVerification();
+    const tracked = execFileSync('git', ['ls-files', '--', 'gina-example-com'], { cwd: verifyDir })
+      .toString()
+      .trim()
+      .split('\n')
+      .sort();
+    expect(tracked).toEqual([
+      'gina-example-com/codemie-analytics-gina-example-com-2026-11-03.report.json',
+      'gina-example-com/gina.otlp.jsonl.gz',
+    ]);
   }, 30_000);
 });

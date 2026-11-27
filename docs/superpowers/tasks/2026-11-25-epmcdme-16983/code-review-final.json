@@ -1,0 +1,349 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.final",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "Verdict approve, 0 blocking; CR-001..004 accepted as recommended (fix-later); DF-001 (callback ignores OAuth state, pre-existing) deferred"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "Verdict approve, 0 blocking; CR-001..004 accepted as recommended (fix-later); DF-001 (callback ignores OAuth state, pre-existing) deferred"
+    }
+  ],
+  "reviewed_head": "aac34e48916c2bb9693a8a39efa7939c412c4d86",
+  "rounds": [
+    "final"
+  ],
+  "rationale": "All four lenses and the standards audit ran; after reading the code no blocking finding remains: 4 advisory (first-refusal forget path, callback sanitize gaps, untested lock wiring), 1 deferred (callback ignores OAuth state, pre-existing; see code-review-deferred.local.md) and 13 dismissed. The security standards row stays partial (CredentialStore deviation is user-approved and documented; state check is pre-existing), so confidence is medium.",
+  "confidence": "medium",
+  "check_confidence": null,
+  "risk_flags": [
+    "auth",
+    "security"
+  ],
+  "open": 0,
+  "closed": {
+    "fixed": 0,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/mcp/auth/callback-server.ts",
+      "line": 111,
+      "title": "Empty error after sanitizing gives blank error",
+      "problem": "An error query value made only of control characters sanitizes to an empty string; OAuthCallbackError is then built with an empty oauthError and the page and message ('OAuth error: ') show nothing. Only the description is guarded with || undefined.",
+      "impact": "Trigger is a malformed or hostile error parameter; the user sees a blank failure reason. No behavior consequence beyond a less readable message.",
+      "recommendation": "const safeError = sanitize(error) || 'unknown_error';",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/mcp/auth/callback-server.ts",
+      "line": 212,
+      "title": "sanitize leaves line separators and bidi controls",
+      "problem": "sanitize strips only C0/C1 control characters. U+2028/U+2029 and bidi override or isolate characters (U+202A-202E, U+2066-2069) in the untrusted error and error_description reach the thrown message, stderr/logs and the page.",
+      "impact": "Trigger needs a hostile or compromised authorization server or local caller to craft the parameters; effect is log-line spoofing, not code execution. The page itself is HTML-escaped. Reachability read: the parameters are attacker-influenced query values.",
+      "recommendation": "Extend the character class to also remove \\u2028\\u2029\\u200e\\u200f\\u202a-\\u202e\\u2066-\\u2069.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/mcp/auth/mcp-oauth-provider.ts",
+      "line": 208,
+      "title": "First-refusal path forgets login too eagerly",
+      "problem": "When the first refresh is refused and nothing newer is persisted, renewSilently deletes the persisted login via unconditional forgetPersistedLogin, for any OAuthError code including server_error. The retry path instead uses GRANT_ENDING_CODES and forgetPersistedLoginIf, and the doc comment says server errors may be transient and keep the grant. A sibling that persists a rotated login between the peek and the unlink would also lose its file.",
+      "impact": "Trigger is a transient OAuth-shaped server_error from the token endpoint, or a sibling write inside the very short peek-to-unlink window; the user must log in again in the browser. The spec says unchanged/absent persisted token keeps the existing forget behavior, so this is hardening, and a test currently locks in the deletion.",
+      "recommendation": "Apply the retry path's rule: gate on GRANT_ENDING_CODES.has(error.code) and call forgetPersistedLoginIf(this.serverUrl, grant.refreshToken); update the 'forgets on any OAuthError code' test accordingly.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/mcp/auth/mcp-oauth-provider.ts",
+      "line": 252,
+      "title": "Provider-to-lock timing wiring is untested",
+      "problem": "redirectToAuthorization passes lockMaxWaitMs and lockStaleMs from getMcpAuthTimings() to acquireAuthLock, but no test asserts that wiring: lock tests use literal options and timing tests check only the pure function.",
+      "impact": "Swapping or dropping the options would keep all tests green and break the 0.75T / 1.25T invariant; no behavior consequence today.",
+      "recommendation": "Add a provider-level test: set MCP_PROXY_AUTH_TIMEOUT_SECONDS=10, call redirectToAuthorization, read mcp-auth.lock and assert staleAfterMs === 12500.",
+      "status": "wont-fix",
+      "disposition": {
+        "rationale": "recommended action accepted",
+        "source": "hitl",
+        "action": "fix-later"
+      }
+    }
+  ],
+  "deferred": [
+    {
+      "id": "DF-001",
+      "severity": "major",
+      "file": "src/mcp/auth/callback-server.ts",
+      "line": 130,
+      "title": "Callback does not verify OAuth state",
+      "problem": "/callback resolves with a code or rejects on error= without any state check; the provider implements no state(), so a local page or process can abort or inject into a pending login.",
+      "preexisting": "state was already read and dropped, and no state() existed, before this change; PKCE limits injected codes."
+    }
+  ],
+  "coverage_graded_at": "final",
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "Scope 1: close stale premise (recommendation only)",
+      "status": "na",
+      "notes": "No repo change expected; lives in PR description and final report."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 2: MCP_PROXY_AUTH_TIMEOUT_SECONDS integer 10..3600 else 300 s",
+      "status": "pass",
+      "notes": "getMcpAuthTimings in constants.ts with debug log on fallback; covered by mcp-auth-timeout.test.ts."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 2: helper returns T, 0.75T, 1.25T timings",
+      "status": "pass",
+      "notes": "Exact values asserted at 10 and 3600."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 2: callback server default uses helper, provider passes value",
+      "status": "pass",
+      "notes": "callback-server.ts default and explicit provider value."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 2: acquireAuthLock takes options, lock records staleAfterMs",
+      "status": "pass",
+      "notes": "isStale uses recorded value with legacy fallback."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 3: typed CallbackTimeoutError and OAuthCallbackError",
+      "status": "pass",
+      "notes": "Messages unchanged; asserted in tests."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 3: single catch site prints hints and rethrows original",
+      "status": "pass",
+      "notes": "instanceof only; dispose passthrough covered."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 3: timeout and insufficient_scope hints name correct env vars",
+      "status": "pass",
+      "notes": "Asserted in mcp-auth-hints.test.ts."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 3: callback page escaped, truncated, CSP and nosniff",
+      "status": "pass",
+      "notes": "Applied on every response; tests cover script, newline, truncation, headers."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 3: no secrets in new messages or logs",
+      "status": "pass",
+      "notes": "Hints carry only env names and client name."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 3: docs/AUTHENTICATION.md updated",
+      "status": "pass",
+      "notes": "Env row, timing/hints section, troubleshooting rows present."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 4: peek persisted login without side effects",
+      "status": "pass",
+      "notes": "peekPersistedLogin never deletes or logs."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 4: adopt sibling's newer grant via seed()",
+      "status": "pass",
+      "notes": "allowAdopt parameter gates adoption; bridge callers pass only fetchFn."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 4: renew once only if needed",
+      "status": "pass",
+      "notes": "tokenNeedsRenewal gate then single retry."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 4: failed retry forgets only grant-ending codes via compare-then-forget",
+      "status": "pass",
+      "notes": "GRANT_ENDING_CODES plus forgetPersistedLoginIf."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 4: unchanged/absent token keeps existing forget behavior",
+      "status": "pass",
+      "notes": "Kept; see CR-003 for hardening."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 5: CredentialStore deviation and POSIX-only protection documented",
+      "status": "pass",
+      "notes": "token-store.ts header and AUTHENTICATION.md."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 5: stale header of mcp-auth.test.ts corrected",
+      "status": "pass",
+      "notes": "Header rewritten; no .ai-run guide edits."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 6: token-store tests",
+      "status": "pass",
+      "notes": "mcp-token-store.test.ts covers listed cases."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 6: auth-lock tests",
+      "status": "pass",
+      "notes": "mcp-auth-lock.test.ts covers listed cases."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 6: timeout and callback tests",
+      "status": "pass",
+      "notes": "Timeout, callback-errors and hints tests present."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 6: callback error tests",
+      "status": "pass",
+      "notes": "Typed errors, stderr hints, passthrough, escaping."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 6: provider tests and two-start regression",
+      "status": "pass",
+      "notes": "mcp-auth-renewal.test.ts and mcp-auth-two-start.test.ts."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 6: run src/mcp tests, lint zero warnings, typecheck",
+      "status": "pending-stage-7",
+      "notes": "Execution evidence only."
+    },
+    {
+      "kind": "spec",
+      "item": "Scope 7: no commit/push/branch/PR/Jira action; final report",
+      "status": "na",
+      "notes": "Process constraint, not auditable from diff."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC1: default 300 s, valid 10..3600 honoured, else fallback",
+      "status": "pass",
+      "notes": "Including direct startCallbackServer()."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC2: max-wait < callback < stale; recorded stale age used",
+      "status": "pass",
+      "notes": "Multipliers asserted at both bounds."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC3: timeout and insufficient_scope hints on stderr, no secrets",
+      "status": "pass",
+      "notes": "Discriminated by instanceof."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC4: callback page escapes, truncates, strips control chars, CSP",
+      "status": "pass",
+      "notes": "See CR-001 and CR-002 for sanitize edge cases."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC5: peek, adopt, single renewal, no unlink of newer file",
+      "status": "pass",
+      "notes": "renewSilently and forgetPersistedLoginIf."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC6: valid persisted login restores without renewal or browser",
+      "status": "pass",
+      "notes": "mcp-auth-two-start.test.ts."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC7: docs/AUTHENTICATION.md content",
+      "status": "pass",
+      "notes": "All items present."
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC8: tests exist; tests/lint/typecheck pass",
+      "status": "pending-stage-7",
+      "notes": "Execution results owned by Stage 7."
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "na",
+      "notes": "git log diff_base..HEAD lists no commits: the change is uncommitted working-tree edits, so there are no commit subjects to check against git-workflow.md"
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "Changed src/mcp files (auth-lock, callback-server, mcp-oauth-provider, token-store, constants) were read in full: .js import extensions and import type used, explicit return types on exports, files under 500 lines, no console.log, JSDoc on exports, comments explain why. Changed-file list taken from git status because the committed three-dot diff is empty."
+    },
+    {
+      "kind": "security",
+      "status": "partial",
+      "notes": "No hardcoded secrets, no raw credential logging, file modes 0700/0600 set. Gaps: token-store.ts persists in its own encrypted file instead of CredentialStore (documented deviation); callback accepted without any state/CSRF check."
+    }
+  ],
+  "final_round": {
+    "decision": "approve",
+    "rationale": "All four lenses and the standards audit ran; after reading the code no blocking finding remains: 4 advisory (first-refusal forget path, callback sanitize gaps, untested lock wiring), 1 deferred (callback ignores OAuth state, pre-existing; see code-review-deferred.local.md) and 13 dismissed. The security standards row stays partial (CredentialStore deviation is user-approved and documented; state check is pre-existing), so confidence is medium.",
+    "confidence": "medium",
+    "risk_flags": [
+      "auth",
+      "security"
+    ]
+  }
+}

@@ -1,4 +1,5 @@
 import { Command, Option } from 'commander';
+import { markHidden } from './hidden.js';
 import { getInvocationContext } from '../utils/invocation-context.js';
 
 export interface DeprecationEntry {
@@ -87,7 +88,7 @@ export function deprecatedCommand(entry: DeprecationEntry, name: string): Comman
 function hide(cmd: Command): Command {
   // Commander's public way to hide a command is addCommand(cmd, { hidden: true }),
   // which only applies at registration; set the flag directly so it holds either way.
-  (cmd as unknown as { _hidden: boolean })._hidden = true;
+  markHidden(cmd);
   return cmd;
 }
 

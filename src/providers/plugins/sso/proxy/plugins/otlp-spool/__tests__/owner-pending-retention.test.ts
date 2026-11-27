@@ -95,14 +95,14 @@ describe('owner-pending handover keeps the original age as an exact range', () =
     return n;
   };
 
-  async function holdAtT0(d: Daemon): Promise<void> {
+  async function holdAtT0(d: Daemon, extra: { undelivered?: true } = {}): Promise<void> {
     const fields = {
       session_id: SESSION, launch_mode: 'native' as const, routed_via_codemie: false, routing_proof: 'unproven' as const,
       project: 'A', project_source: 'none' as const, api_identity: d.apiIdentity(API), collection_generation: 0,
     };
     const stored = await d.enqueuePendingOwner({
       fp: d.credentialFingerprint(credentials), agentName: 'claude-code-otlp', api_identity: d.apiIdentity(API),
-      session_id: SESSION, fields, cwd: '/work', project_at_cwd: 'A', events: [hookEvent(1)],
+      session_id: SESSION, fields, cwd: '/work', project_at_cwd: 'A', events: [hookEvent(1)], ...extra,
     }, T0);
     expect(stored).toBe(true);
   }
@@ -167,6 +167,18 @@ describe('owner-pending handover keeps the original age as an exact range', () =
     await d.processPendingOwner(credentials as never, T0 + DAY - 2 * MIN);
     expect(await queued()).toBe(0);
     expect((await d.readStatus(SESSION))!.carriedAge!.hooks).toEqual([expect.objectContaining({ since: T0 })]);
+  });
+
+  it.each([
+    ['an undelivered start the daemon never took', { undelivered: true as const }, 'daemon_undelivered_expired'],
+    ['an entry held for an unresolved owner', {}, 'owner_unresolved_expired'],
+  ])('expiry names its own loss: %s', async (_name, extra, reason) => {
+    const d = await daemon();
+    await holdAtT0(d, extra);
+    at(DAY + MIN);
+    await d.processPendingOwner(undefined, T0 + DAY + MIN); // no login at all: only the sweep runs
+    expect(await queued()).toBe(0);
+    expect((await d.readStatus(SESSION))!.stampLoss).toMatchObject({ reason, events: 1 });
   });
 
   it.each(['session hold', 'endpoint mismatch'])('%s: at the carried deadline only the carried hook bytes are dropped; fresh hooks/logs/metrics keep their own windows', async (kind) => {
@@ -262,6 +274,23 @@ describe('owner-pending handover keeps the original age as an exact range', () =
     expect(twice.map((l) => JSON.parse(JSON.parse(l).hookEvent).event_id)).toEqual(['e1', 'e1']); // duplicate copy, identical event_id (backend dedupes by identity)
     expect((await d.readStatus(SESSION))!.carriedAge!.hooks!.map((x) => x.since)).toEqual([T0, T0]); // age present for both copies
     expect(await queued()).toBe(0);
+  });
+
+  it('EPMCDME-17854: an undelivered start lands behind a later hook that reached the spool first (backend unavailable); an identity-outage entry still waits for the prefix', async () => {
+    const d = await daemon();
+    await holdAtT0(d, { undelivered: true });
+    await d.appendSpool(SESSION, 'hooks', rawLine(7), ['A']); // the later hook, live; nothing is acknowledged (backend down)
+    at(MIN);
+    await d.processPendingOwner(credentials as never, T0 + MIN);
+
+    expect(await queued()).toBe(0);
+    const ids = (await readFile(join(state.root, SESSION + '.hooks.ndjson'), 'utf8')).trim().split('\n').map((l) => JSON.parse(JSON.parse(l).hookEvent).event_id);
+    expect(ids).toEqual(['e7', 'e1']); // each exactly once
+    expect((await d.readStatus(SESSION))!.carriedAge).toBeUndefined(); // plain data: no original-age range, no head requirement
+
+    await holdAtT0(d); // identity-outage entry (R3): unchanged, waits until the prefix is acknowledged
+    await d.processPendingOwner(credentials as never, T0 + MIN);
+    expect(await queued()).toBe(1);
   });
 
   it('a plain append gets no carried age', async () => {

@@ -28,11 +28,11 @@ import {
   isOlderDaemon,
   readConnectionRecord,
   readState,
-  spawnDaemon,
   stopDaemon,
   writeConnectionRecord,
   type DaemonState,
 } from './daemon-manager.js';
+import { spawnDaemon } from './daemon-spawn.js';
 import { DAEMON_LOCK_COMMAND_BUDGET_MS, DaemonLockError, withDaemonLock } from './daemon-lock.js';
 import { reportDaemonProfileIdentity } from '../../../agents/core/launch-identity.js';
 import { describeProjectBinding, sanitizeDisplayText, type ProjectBindingState } from '../../../utils/project-binding.js';
