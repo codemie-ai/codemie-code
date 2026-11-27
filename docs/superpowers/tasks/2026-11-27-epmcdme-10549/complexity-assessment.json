@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "task": "Add dedicated docs/COMMANDS.md sections for the 10 registered-but-undocumented top-level CLI commands (plus a decision on completion) and add a bidirectional doc-vs-registry coverage vitest check that runs in npm run ci (EPMCDME-10549).",
+  "generated": "2026-11-27T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 14,
+  "size": "S",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "requirements_clarity",
+      "reason": "The ACs are clear, but the story's premises differ from the code: the registry has 30 top-level commands (completion has no dedicated section; the story and task say 29 or 10 plus a pending decision) and lives in src/cli/program.ts, not index.ts. The matching rule is open: the 19 existing sections use irregular heading shapes (## X Commands, ## MCP Command, ### `codemie x`, Documentation & Knowledge Tools for docs), four commands already have two sections, and the reverse direction needs a way to tell command sections from sub-feature headings. These are design decisions with rework risk, so L."
+    }
+  ],
+  "red_flags_applied": [
+    "Requirements Clarity bumped from M to L: premises contradicted by code (29 vs 30 commands, completion decision pending) and the heading-matching rule is undecided"
+  ],
+  "split_recommendation": null
+}
