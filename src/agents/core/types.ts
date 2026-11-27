@@ -105,9 +105,10 @@ export interface ProviderLifecycleHooks {
 
   /**
    * Called to enrich CLI arguments (provider-specific)
-   * Can inject additional flags or modify existing ones
+   * Can inject additional flags or modify existing ones.
+   * `env` is the env the agent child is spawned with; only hooks that must hand the child a value derived from the args use it.
    */
-  enrichArgs?: (args: string[], config: AgentConfig) => string[];
+  enrichArgs?: (args: string[], config: AgentConfig, env?: NodeJS.ProcessEnv) => string[];
 
   /**
    * Called when agent session starts (provider-specific)
@@ -172,7 +173,7 @@ export interface AgentLifecycle {
    */
   beforeRun?: (this: any, env: NodeJS.ProcessEnv, config: AgentConfig) => Promise<NodeJS.ProcessEnv>;
   afterRun?: (this: any, exitCode: number, env: NodeJS.ProcessEnv) => Promise<void>;
-  enrichArgs?: (args: string[], config: AgentConfig) => string[];
+  enrichArgs?: (args: string[], config: AgentConfig, env?: NodeJS.ProcessEnv) => string[];
   onSessionStart?: (this: any, sessionId: string, env: NodeJS.ProcessEnv) => Promise<void>;
   onSessionEnd?: (this: any, exitCode: number, env: NodeJS.ProcessEnv) => Promise<void>;
 }

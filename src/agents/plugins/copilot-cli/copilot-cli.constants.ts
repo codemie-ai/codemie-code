@@ -75,3 +75,5 @@ export const COPILOT_CLI_CLIENT_TYPE = 'codemie-copilot';
 export const FULL_SESSION_UUID = new RegExp(`^${SESSION_UUID_PATTERN}$`, 'i');
 /** Set by the managed launcher when it pins Copilot's own session id via `--session-id`. */
 export const PINNED_NATIVE_SESSION_ENV = 'CODEMIE_COPILOT_NATIVE_SESSION_ID';
+/** The endpoint the launcher handed Copilot; read by hooks only when Copilot strips COPILOT_PROVIDER_BASE_URL from them. */
+export const LAUNCH_PROVIDER_BASE_URL_ENV = 'CODEMIE_COPILOT_LAUNCH_BASE_URL';

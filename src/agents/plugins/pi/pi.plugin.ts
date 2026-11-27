@@ -58,10 +58,9 @@ function hasSessionSelectionFlag(args: string[]): boolean {
 /**
  * Reconcile CodeMie's CLI surface with Pi's session flags before the run starts.
  *
- * Two argv-derived facts are needed later by hooks that cannot see argv:
- * `beforeRun` receives only `env`, and `enrichArgs` receives no env at all. Both
- * are published through `envOverrides`, which `BaseAgentAdapter` spreads into the
- * run-scoped `env` object that also reaches `onSessionEnd` and session discovery.
+ * Pi publishes two argv-derived facts through `envOverrides` before `beforeRun`,
+ * which has no argv. The run-scoped env also reaches `enrichArgs` as an optional
+ * third argument and is available to `onSessionEnd` and session discovery.
  */
 export function preparePiInvocation(
   args: string[],

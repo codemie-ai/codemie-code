@@ -837,7 +837,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // Lifecycle hook: enrichArgs (provider-aware)
     // Enrich args with agent-specific defaults (e.g., --profile, --model)
     // Must run AFTER beforeRun so env vars are available
-    let enrichedArgs = await executeEnrichArgs(this.metadata.lifecycle, this.metadata.name, args, this.extractConfig(env));
+    let enrichedArgs = await executeEnrichArgs(this.metadata.lifecycle, this.metadata.name, args, this.extractConfig(env), env);
 
     // Apply argument transformations using declarative flagMappings
     let transformedArgs: string[];
