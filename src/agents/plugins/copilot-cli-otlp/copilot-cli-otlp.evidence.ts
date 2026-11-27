@@ -5,6 +5,7 @@ import { currentEvidenceIdentity } from '@/agents/core/evidence/hook-identity.js
 import { hasPendingOwnerSession } from '@/agents/core/evidence/owner-pending.js';
 import { fundingRoute, routedViaCodemie, type RoutingInput } from '@/agents/core/evidence/routing.js';
 import type { EvidenceInputs } from '@/agents/core/evidence/stamp.js';
+import { LAUNCH_PROVIDER_BASE_URL_ENV } from '@/agents/plugins/copilot-cli/copilot-cli.constants.js';
 
 /** Explicit Copilot `sessionStart` sources that begin a session. */
 const FRESH_SOURCES = new Set(['new', 'startup']);
@@ -46,7 +47,9 @@ export function copilotRouteProof(managed: boolean, env: NodeJS.ProcessEnv = pro
       CODEMIE_SESSION_ID: env['CODEMIE_SESSION_ID'],
       CODEMIE_BASE_URL: env['CODEMIE_BASE_URL'],
       CODEMIE_TARGET_API_URL: env['CODEMIE_TARGET_API_URL'],
-      ANTHROPIC_BASE_URL: env['COPILOT_PROVIDER_BASE_URL'],
+      // Copilot 1.0.114 strips COPILOT_PROVIDER_BASE_URL from hooks. The fallback describes the launcher's
+      // endpoint, so the pin or an existing session record is still needed to bind a funding claim.
+      ANTHROPIC_BASE_URL: env['COPILOT_PROVIDER_BASE_URL'] ?? env[LAUNCH_PROVIDER_BASE_URL_ENV],
     },
     codemieProvider,
     profileBaseUrl: profile.baseUrl,
