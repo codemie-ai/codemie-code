@@ -29,7 +29,8 @@ const PROFILE = 'subscription';
 
 // Stands in for Claude Code. `--version` answers the supported version check; any other run records
 // its arguments and runs the first command hook of SessionStart and SessionEnd in every
-// --plugin-dir's hooks/hooks.json (until `--`), with Claude Code's hook payload on stdin.
+// --plugin-dir's hooks/hooks.json (until `--`), with Claude Code's hook payload on stdin. Each hook run keeps its
+// command and the end of its stderr, so a failing hook says why.
 const STUB_CLAUDE = `
 const fs = require('fs');
 const path = require('path');
@@ -73,12 +74,14 @@ for (const [event, fields] of events) {
         session_id: sessionId, transcript_path: transcript, cwd: process.cwd(), hook_event_name: event, ...fields,
       });
       let code = 0;
+      let stderr = '';
       try {
-        execSync(hook.command, { input, stdio: ['pipe', 'ignore', 'ignore'], timeout: (hook.timeout ?? 60) * 1000 });
+        execSync(hook.command, { input, stdio: ['pipe', 'ignore', 'pipe'], timeout: (hook.timeout ?? 60) * 1000 });
       } catch (error) {
         code = error.status ?? -1;
+        stderr = String(error.stderr ?? error.message).slice(-2000);
       }
-      hookRuns.push({ event, dir, code });
+      hookRuns.push({ event, dir, code, command: hook.command, stderr });
     }
   }
 }
@@ -89,7 +92,7 @@ interface ClaudeRun {
   args: string[];
   pluginDirs: string[];
   sessionId: string;
-  hookRuns: Array<{ event: string; dir: string; code: number }>;
+  hookRuns: Array<{ event: string; dir: string; code: number; command: string; stderr: string }>;
 }
 
 interface SessionRecord {
@@ -203,6 +206,16 @@ function setUp(): Workspace {
   };
 }
 
+// The end of the CLI's debug logs in the temp home: the wrapper logs there how it installed the extension's hooks.
+function debugLogTail(home: string): string {
+  const logs = join(home, 'logs');
+  if (!existsSync(logs)) return '(no debug log)';
+  return readdirSync(logs)
+    .filter((name) => name.startsWith('debug-'))
+    .map((name) => `${name}:\n${readFileSync(join(logs, name), 'utf-8').slice(-4000)}`)
+    .join('\n');
+}
+
 function report(run: CliRun, workspace: Workspace): string {
   return `exit ${run.code}\nstdout: ${run.stdout}\nstderr: ${run.stderr}\nclaude runs: ${JSON.stringify(workspace.claudeRuns(), null, 2)}`;
 }
@@ -220,9 +233,10 @@ describe.skipIf(process.platform === 'win32')('codemie-claude with a --plugin-di
       expect(first.code, report(first, workspace)).toBe(0);
       const [started] = workspace.claudeRuns();
       expect(started.pluginDirs, 'plugin directories Claude Code was given').toEqual([workspace.extensionDir, userPlugin]);
+      const extensionHooks = started.hookRuns.filter((run) => run.dir === workspace.extensionDir);
       expect(
-        started.hookRuns.filter((run) => run.dir === workspace.extensionDir),
-        'session hooks of the extension'
+        extensionHooks.map(({ event, dir, code }) => ({ event, dir, code })),
+        `session hooks of the extension: ${JSON.stringify(extensionHooks, null, 2)}\n${debugLogTail(workspace.home)}`
       ).toEqual([
         { event: 'SessionStart', dir: workspace.extensionDir, code: 0 },
         { event: 'SessionEnd', dir: workspace.extensionDir, code: 0 },
