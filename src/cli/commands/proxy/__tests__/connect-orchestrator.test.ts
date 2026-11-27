@@ -1895,7 +1895,8 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
 
       expect(printed()).toContain(
-        'VS Code Claude Code extension: skipped — VS Code not installed; re-run `codemie proxy connect --claude-otlp` after installing');
+        '  VS Code is not installed, so Claude Code extension sessions aren\'t included in CodeMie analytics. ' +
+        'To use the CodeMie proxy instead, install VS Code and run `codemie proxy connect --claude-otlp`.');
       expect(printed().some((line) => line.startsWith('✗ VS Code Claude Code extension'))).toBe(false);
       expect(printed().some((line) => line.includes('Could not configure the VS Code Claude Code extension'))).toBe(false);
       expect(printed().some((line) => line.startsWith('VS Code Claude Code extension: configured'))).toBe(false);
@@ -1916,18 +1917,21 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
       await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], insiders: true, yes: true });
 
       expect(printed()).toContain(
-        'VS Code Claude Code extension: skipped — VS Code Insiders not installed; ' +
-        're-run `codemie proxy connect --claude-otlp --insiders` after installing');
+        '  VS Code Insiders is not installed, so Claude Code extension sessions aren\'t included in CodeMie analytics. ' +
+        'To use the CodeMie proxy instead, install VS Code Insiders and run `codemie proxy connect --claude-otlp --insiders`.');
       expect(process.exitCode).toBe(0);
     });
 
     describe('the route decision of --claude-otlp', () => {
       const EXTENSION_SKIP =
-        '✓ VS Code Claude Code extension: analytics on (uses your Claude login; model routing unchanged)';
+        '✓ VS Code Claude Code extension configured (uses your Claude login; model routing unchanged)';
       const BILLING = '  Its model requests now go through the gateway, not your Claude login.';
-      const DESKTOP_SWITCH =
-        'Desktop analytics needs the gateway; to switch it: ' +
-        'codemie proxy connect --claude-desktop';
+      const DESKTOP_PERSONAL_ROUTE_SKIP =
+        '  Claude Desktop is still using your personal subscription, so its sessions aren\'t included in CodeMie analytics. ' +
+        'To use the CodeMie proxy instead, run `codemie proxy connect --claude-desktop` and restart Claude Desktop.';
+      const DESKTOP_OTHER_GATEWAY_ROUTE_SKIP =
+        '  Claude Desktop is using another gateway, so its sessions aren\'t included in CodeMie analytics. ' +
+        'To use the CodeMie proxy instead, run `codemie proxy connect --claude-desktop` and restart Claude Desktop.';
 
       async function decisions(vscode: 'route' | 'refresh' | 'skip' | 'skip-other-gateway', desktop: 'route' | 'refresh' | 'skip-other-gateway' | 'skip-1p') {
         const state = await import('../claude-client-config-state.js');
@@ -1982,7 +1986,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
         expect(w.writeVsCodeClaudeCodeConfig).not.toHaveBeenCalled();
         const lines = printed();
         const skip = lines.indexOf(
-          '✓ VS Code Claude Code extension: analytics on (uses another gateway or key; model routing unchanged)');
+          '✓ VS Code Claude Code extension configured (uses another gateway or key; model routing unchanged)');
         expect(skip).toBeGreaterThanOrEqual(0);
         expect(lines[skip + 1]).toBe('  To route it through the proxy: codemie proxy connect --vscode-claude-code');
         expect(lines).not.toContain(EXTENSION_SKIP);
@@ -2042,13 +2046,13 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
         await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
 
         expect(w.writeDesktopConfig).toHaveBeenCalled();
-        expect(printed()).toContain('To use your Claude login instead: codemie proxy disconnect --claude-desktop');
+        expect(printed()).toContain('  To use your Claude login instead: codemie proxy disconnect --claude-desktop');
       });
 
       it.each([
-        ['skip-1p', '– Claude Desktop: skipped — uses your own Claude account. '],
-        ['skip-other-gateway', '– Claude Desktop: skipped — it uses another gateway. '],
-      ] as const)('Desktop %s: not written, skip line with the switch command, no billing line', async (decision, prefix) => {
+        ['skip-1p', DESKTOP_PERSONAL_ROUTE_SKIP],
+        ['skip-other-gateway', DESKTOP_OTHER_GATEWAY_ROUTE_SKIP],
+      ] as const)('Desktop %s: not written, skip line with the switch command, no billing line', async (decision, warning) => {
         await withFreshDaemon();
         await onMachine('desktop', 'vscode', 'claude');
         const w = await writers();
@@ -2058,7 +2062,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
         await connectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'], yes: true });
 
         expect(w.writeDesktopConfig).not.toHaveBeenCalled();
-        expect(printed()).toContain(prefix + DESKTOP_SWITCH);
+        expect(printed()).toContain(warning);
         expect(printed().some((line) => line.includes('Its model requests now'))).toBe(false);
       });
 
@@ -2838,7 +2842,7 @@ describe('connectTargets — the other clients moved off the shared key', () => 
     expect(printed().some((line) => line.includes('Codex desktop'))).toBe(false);
   });
 
-  it('moves a Codex config that is a symbolic link through the link, and a second connect leaves it', async () => {
+  it.skipIf(process.platform === 'win32')('moves a Codex config that is a symbolic link through the link, and a second connect leaves it', async () => {
     const target = join(clientHome, 'dotfiles-config.toml');
     await writeAt(target, codexConfig('Bearer gk'));
     await mkdir(dirname(codexConfigPath()), { recursive: true });
