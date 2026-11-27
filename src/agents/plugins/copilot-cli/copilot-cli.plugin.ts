@@ -13,6 +13,7 @@ import {
   COPILOT_CLI_AGENT_NAME,
   COPILOT_CLI_CLIENT_TYPE,
   COPILOT_CLI_DISPLAY_NAME,
+  LAUNCH_PROVIDER_BASE_URL_ENV,
   PINNED_NATIVE_SESSION_ENV,
 } from './copilot-cli.constants.js';
 import { getCopilotHome, getCopilotSessionStateRoot, sameDirectory } from './copilot-cli.paths.js';
@@ -173,6 +174,7 @@ function buildCopilotProviderEnv(env: NodeJS.ProcessEnv): Record<string, string>
   const providerType = /^claude/i.test(env.CODEMIE_MODEL) ? 'anthropic' : 'openai';
   const providerEnv: Record<string, string> = {
     COPILOT_PROVIDER_BASE_URL: env.CODEMIE_BASE_URL,
+    [LAUNCH_PROVIDER_BASE_URL_ENV]: env.CODEMIE_BASE_URL,
     COPILOT_PROVIDER_TYPE: providerType,
     COPILOT_MODEL: env.CODEMIE_MODEL,
     COPILOT_PROVIDER_MODEL_ID: env.CODEMIE_MODEL,
@@ -315,7 +317,7 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
 
       return env;
     },
-    enrichArgs(args: string[], _config: AgentConfig): string[] {
+    enrichArgs(args: string[], _config: AgentConfig, spawnEnv?: NodeJS.ProcessEnv): string[] {
       const enriched = [...args];
 
       // --task is CodeMie's prompt flag (rewritten to --prompt later by flagMappings);
@@ -342,8 +344,11 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
       if (codemieSessionId && !selectsSession) {
         enriched.push('--session-id', codemieSessionId);
         process.env[PINNED_NATIVE_SESSION_ENV] = codemieSessionId;
+        // The child's env was built before this hook ran: hand the pin to the env it is spawned with.
+        if (spawnEnv) spawnEnv[PINNED_NATIVE_SESSION_ENV] = codemieSessionId;
       } else {
         delete process.env[PINNED_NATIVE_SESSION_ENV];
+        if (spawnEnv) delete spawnEnv[PINNED_NATIVE_SESSION_ENV];
       }
 
       return enriched;
