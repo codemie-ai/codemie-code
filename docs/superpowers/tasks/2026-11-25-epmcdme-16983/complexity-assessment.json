@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "task": "Resolve EPMCDME-16983 (MCP OAuth tokens reportedly not persisted): verify the stale premise on >=0.16.7, close/redirect PR #708, and harden the already-shipped token-store/auth-lock persistence (tests, refresh-rotation race, CredentialStore deviation, Windows modes).",
+  "generated": "2026-11-17T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 5, "label": "XL" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 18,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "requirements_clarity",
+      "reason": "Requirements clarity is low because the premise is stale and the true scope (verify-and-close vs. hardening) is undetermined. The ticket's root cause (no disk store, memory-only McpOAuthProvider) is contradicted by main at v0.16.9: token-store.ts and auth-lock.ts shipped in #678 (v0.16.7). The ticket has no acceptance criteria. Whether the symptom still reproduces on >=0.16.7 is unverified, and the outcome ranges from no code change (reproduce, close, redirect PR #708) to a hardening effort. Which hardening items are in scope (tests, rotation race, CredentialStore, Windows modes) is an unmade decision, so the score is XL (5). It would fall to S or M once a reproduction result and a scope decision exist."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "The closest existing pattern is token-store.ts itself (per-endpoint 0600/0700 encrypted file with atomic rename), but it does not cover the security-sensitive aspects of the hardening. Those are a refresh-token rotation race between two proxies on the same endpoint, which has no cross-process lock on the read-modify-write; a machine-derived AES key where security-practices.md mandates CredentialStore; and chmod being a no-op on Windows. These gaps are treated as divergence and bumped to L (4). The code is auth/token-handling and so security-sensitive. There is no test precedent for multi-process concurrency, and the code under change has zero existing unit coverage (no regression net). The validation scenario (two stdio proxies, one endpoint) needs an environment setup that has no precedent in the repo."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped to L: affects authentication/token storage (auth red flag), and the closest pattern (token-store.ts) does not cover rotation-race or CredentialStore/secret-handling concerns",
+    "Requirements Clarity bumped to XL: stale ticket premise, no acceptance criteria, and scope (verify-and-close vs. hardening) undetermined"
+  ],
+  "split_recommendation": null
+}
