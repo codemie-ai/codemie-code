@@ -469,14 +469,16 @@ export async function runAnalyticsReductionStep(): Promise<void> {
     return;
   }
 
-  const progress: ReductionProgress = { flagWritten: false, flagTurnedOff: false };
+  const progress: ReductionProgress = { flagWritten: false, flagTurnedOff: false, globalOffPending: false };
   try {
     if (!(await applyReductionChoice(reduction, ctx, progress))) {
       return; // turned off: nothing more to offer
     }
   } catch (error) {
     const message = error instanceof ConfigurationError || error instanceof Error ? error.message : String(error);
-    if (progress.flagWritten) {
+    if (progress.globalOffPending) {
+      console.log(chalk.yellow(`Prompts are hidden for ${ctx.projectName}, but reduction could not be turned off for all projects, so it stays on for all of them: ${message}`));
+    } else if (progress.flagWritten) {
       console.log(chalk.yellow(`Prompts are ${progress.flagTurnedOff ? 'no longer hidden' : 'hidden'} for ${ctx.projectName}, but the list of projects with this setting could not be updated: ${message}`));
     } else {
       console.log(chalk.red(`Could not save the analytics privacy setting: ${message}`));
@@ -500,6 +502,8 @@ interface ReductionContext {
 interface ReductionProgress {
   flagWritten: boolean;
   flagTurnedOff: boolean;
+  /** The project flag and list entry are saved and only the global switch-off is pending ("On for this project only"). */
+  globalOffPending: boolean;
 }
 
 function printAnalyticsPrivacyIntro(): void {
@@ -591,7 +595,9 @@ async function applyReductionChoice(reduction: ReductionChoice, ctx: ReductionCo
   progress.flagWritten = true;
   await addOptedInProject(ctx.projectDir);
   if (reduction === 'projectOnly') {
+    progress.globalOffPending = true;
     await writeGlobalReductionFlag(false);
+    progress.globalOffPending = false;
     console.log(chalk.green('✓ Turned off for all projects'));
   }
   console.log(chalk.green(`✓ Prompts hidden in analytics for ${ctx.projectName}`));

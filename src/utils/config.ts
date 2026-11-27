@@ -1023,31 +1023,23 @@ export class ConfigLoader {
    * Works with local config if it exists, otherwise global
    */
   static async deleteProfile(profileName: string, workingDir: string = process.cwd()): Promise<void> {
-    // Check if local config exists
-    const hasLocal = await this.hasLocalConfig(workingDir);
+    // The local file is used only when it is multi-provider and holds the profile: a file with only
+    // the `analytics` block (EPMCDME-17748) is not a profile store, so deletion falls through to global.
+    const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
+    const localConfig = (await this.hasLocalConfig(workingDir))
+      ? await this.loadLocalMultiProviderConfig(workingDir)
+      : undefined;
 
-    if (hasLocal) {
-      // Delete from local config
-      const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
-      const config = await this.loadJsonConfig(localConfigPath);
+    if (localConfig?.profiles[profileName]) {
+      delete localConfig.profiles[profileName];
 
-      if (isMultiProviderConfig(config)) {
-        if (!config.profiles[profileName]) {
-          throw new Error(`Profile "${profileName}" not found in local config`);
-        }
-
-        delete config.profiles[profileName];
-
-        // If we deleted the active profile, switch to another one (if any exist)
-        if (config.activeProfile === profileName) {
-          const remainingProfiles = Object.keys(config.profiles);
-          config.activeProfile = remainingProfiles.length > 0 ? remainingProfiles[0] : '';
-        }
-
-        await fs.writeFile(localConfigPath, JSON.stringify(config, null, 2), 'utf-8');
-      } else {
-        throw new Error('Local config is not in multi-provider format');
+      // If we deleted the active profile, switch to another one (if any exist)
+      if (localConfig.activeProfile === profileName) {
+        const remainingProfiles = Object.keys(localConfig.profiles);
+        localConfig.activeProfile = remainingProfiles.length > 0 ? remainingProfiles[0] : '';
       }
+
+      await fs.writeFile(localConfigPath, JSON.stringify(localConfig, null, 2), 'utf-8');
     } else {
       // Delete from global config
       const config = await this.loadMultiProviderConfig();

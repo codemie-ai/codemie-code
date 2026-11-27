@@ -336,8 +336,11 @@ export function parsePromptFields(prompt: string): PromptFields {
 /** Upper bound on refs returned by `findTicketRefs` / `findMrRefs`. */
 const MAX_REFS = 20;
 
-/** `#24`, `org/repo#24`, `AB#123`: digits only after the `#`, so `#fff` and `# Plan` never match; a bare prefix is 1-4 letters, so `secret#5` is not a ref. */
-const HASH_REF_RE = /(?<![A-Za-z0-9_/.&#-])(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|[A-Za-z]{1,4})?#\d+(?![A-Za-z0-9_])/g;
+/**
+ * `#24`, `org/repo#24`, `AB#123`: digits only after the `#`, so `#fff` and `# Plan` never match; a bare prefix is 1-4 letters, so `secret#5` is not a ref.
+ * Neither segment of `org/repo` may hold a dot, so a file path with a line anchor (`src/login.ts#42`) is not a ref; a dotted repo name (`vercel/next.js#7`) is dropped with it.
+ */
+const HASH_REF_RE = /(?<![A-Za-z0-9_/.&#-])(?:[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+|[A-Za-z]{1,4})?#\d+(?![A-Za-z0-9_])/g;
 
 /** `!456`, a GitLab merge request. */
 const BANG_REF_RE = /(?<![A-Za-z0-9_!])!\d+(?![A-Za-z0-9_])/g;

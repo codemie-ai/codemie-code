@@ -24,7 +24,7 @@ Rules for code that touches these files:
 
 - **Carry the `analytics` block over.** Any code that rewrites a config file from scratch (as `initProjectConfig` did) erases the setting, and the user's data then goes out unreduced without a warning. Load the existing file and keep `analytics`, or write through `writeProjectReductionFlag` / `writeGlobalReductionFlag`, which merge a single key and keep indentation. `MultiProviderConfig` has an optional `analytics` field for this reason.
 - **A project file may hold only `analytics`.** `loadLocalMultiProviderConfig` reads it as an empty config that keeps the block; it must never throw "Unrecognized config format" for it, and it never changes which profile is active.
-- **An unreadable file is "on".** Rewriting an unreadable project config keeps reduction on and logs a warning.
+- **An unreadable file is "on".** An unreadable project config is never overwritten: the rewrite (`initProjectConfig`) fails with a `ConfigurationError` and writes nothing, and every reader treats the file as "on".
 - **Read every level.** The hook, report and metrics decisions use `findAllConfigDirs`, so a nested `.codemie` without the key does not shadow the repository root's.
 
 ---
