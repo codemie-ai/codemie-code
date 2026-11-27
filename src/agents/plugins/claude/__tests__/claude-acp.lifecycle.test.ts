@@ -87,6 +87,7 @@ describe('claude-acp lifecycle', () => {
   });
 
   it('start sends SessionStart through the hook pipeline with the claude-acp agent', async () => {
+    rmSync(join(root, 'codemie', 'sessions', `${SESSION_ID}.json`));
     await ClaudeAcpPluginMetadata.lifecycle!.onSessionStart!(SESSION_ID, env());
     expect(hook.processEvent).toHaveBeenCalledTimes(1);
     const [event, config] = hook.processEvent.mock.calls[0];

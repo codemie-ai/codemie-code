@@ -77,6 +77,14 @@ export const ClaudeAcpPluginMetadata: AgentMetadata = {
 
     async onSessionStart(sessionId: string, env: NodeJS.ProcessEnv) {
       try {
+        // A hook may already have created the live record under the agent's own session id; a start
+        // under the CodeMie id would read as a new generation and move that record aside.
+        const { SessionStore } = await import('../../core/session/SessionStore.js');
+        const live = await new SessionStore().loadSession(sessionId);
+        if (live && live.status === 'active' && live.endTime === undefined) {
+          logger.debug(`[claude-acp] Live record exists for session ${sessionId}; SessionStart skipped`);
+          return;
+        }
         const { processEvent } = await import('../../../cli/commands/hook.js');
         await processEvent({
           hook_event_name: 'SessionStart',
@@ -99,10 +107,15 @@ export const ClaudeAcpPluginMetadata: AgentMetadata = {
         return;
       }
 
+      // The agent's own id when a hook already correlated the record: SessionEnd under another id
+      // would be read as a different generation and split the record.
+      let endSessionId = sessionId;
       try {
         const { SessionStore } = await import('../../core/session/SessionStore.js');
         const { ClaudeSessionAdapter } = await import('./claude.session.js');
         const record = await new SessionStore().loadSession(sessionId);
+        const nativeId = record?.correlation?.agentSessionId;
+        if (nativeId && nativeId !== 'unknown') endSessionId = nativeId;
         const adapter = new ClaudeSessionAdapter(ClaudePluginMetadata);
         const transcripts = record ? await adapter.locateTranscript(record) : [];
 
@@ -138,7 +151,7 @@ export const ClaudeAcpPluginMetadata: AgentMetadata = {
         const { processEvent } = await import('../../../cli/commands/hook.js');
         await processEvent({
           hook_event_name: 'SessionEnd',
-          session_id: sessionId,
+          session_id: endSessionId,
           transcript_path: '',
           permission_mode: 'default',
           cwd: process.cwd(),

@@ -1462,6 +1462,40 @@ describe('a copilot-cli record whose transcript lookup could not conclude', () =
     expect(hook.processEvent.mock.calls[0][0]).toMatchObject({ session_id: 'native-codex', transcript_path: '' });
   });
 
+  it('a stale claude-acp record naming no transcript resolves ClaudeSessionAdapter.locateTranscript and ends over the located file', async () => {
+    const { ClaudeSessionAdapter } = await import('../../../plugins/claude/claude.session.js');
+    const located = join(home, 'located.jsonl');
+    writeFileSync(located, '{}\n');
+    const spy = vi.spyOn(ClaudeSessionAdapter.prototype, 'locateTranscript').mockResolvedValue([located]);
+    const stale = record({ agentName: 'claude-acp', correlation: { status: 'pending', retryCount: 0 } });
+    save(stale);
+    const hook = pipeline();
+
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+    const lookups = spy.mock.calls.map(([lookedUp]) => lookedUp);
+    spy.mockRestore();
+
+    expect(lookups).toHaveLength(1);
+    expect(lookups[0]).toMatchObject({ sessionId: stale.sessionId, agentName: 'claude-acp' });
+    expect(hook.processEvent.mock.calls.map(([event]) => event.transcript_path)).toContain(located);
+  });
+
+  it('a claude record that already names its transcript does not call locateTranscript', async () => {
+    const { ClaudeSessionAdapter } = await import('../../../plugins/claude/claude.session.js');
+    const named = join(home, 'named.jsonl');
+    writeFileSync(named, '{}\n');
+    const spy = vi.spyOn(ClaudeSessionAdapter.prototype, 'locateTranscript').mockResolvedValue([]);
+    save(record({ correlation: { status: 'matched', retryCount: 0, agentSessionId: 'native-1', agentSessionFile: named } }));
+    const hook = pipeline();
+
+    await reconcileOtherSessions({ env: launchEnv, ownSessionId: 'own', pipeline: hook }).done;
+    const lookups = spy.mock.calls.length;
+    spy.mockRestore();
+
+    expect(lookups).toBe(0);
+    expect(hook.processEvent).toHaveBeenCalledTimes(1);
+  });
+
   it('the plugin\'s SessionStart stores the run\'s home on the record', async () => {
     const { CopilotCliPluginMetadata } = await import('../../../plugins/copilot-cli/copilot-cli.plugin.js');
     const id = uuid();
