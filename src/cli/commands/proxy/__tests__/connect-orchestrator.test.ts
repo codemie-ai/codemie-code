@@ -3273,7 +3273,7 @@ describe('ensureOtlpProxy', () => {
       await expect(s.ensureOtlpProxy(AGENT)).rejects.toThrow('unreadable config');
 
       expect(warnings(s.warn)).toEqual([expect.stringContaining('cold start failed (profile: work)')]);
-      expect(s.daemon.spawnDaemon).not.toHaveBeenCalled();
+      expect(s.spawner.spawnDaemon).not.toHaveBeenCalled();
     });
 
     it('still starts, with a warning naming the profile, when SSO credentials are missing', async () => {
