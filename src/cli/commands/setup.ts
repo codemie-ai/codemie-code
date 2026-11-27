@@ -35,10 +35,12 @@ export function createSetupCommand(): Command {
   command
     .description('Interactive setup wizard for CodeMie Code')
     .option('--force', 'Force re-setup even if config exists')
+    .option('--no-browser', 'Do not open a browser for SSO login: print the URL and paste the result back')
+    .option('--headless', 'Alias for --no-browser')
     .option('-v, --verbose', 'Enable verbose debug output with detailed API logs')
     .addCommand(createAssistantsSetupCommand().name('assistants'))
     .addCommand(createSkillsSetupCommand().name('skills'))
-    .action(async (options: { force?: boolean; verbose?: boolean }) => {
+    .action(async (options: { force?: boolean; verbose?: boolean; browser?: boolean; headless?: boolean }) => {
       // Enable debug mode if verbose flag is set
       if (options.verbose) {
         process.env.CODEMIE_DEBUG = 'true';
@@ -51,7 +53,7 @@ export function createSetupCommand(): Command {
       }
 
       try {
-        await runSetupWizard(options.force);
+        await runSetupWizard(options.force, options.browser === false || options.headless === true);
       } catch (error: unknown) {
         logger.error('Setup failed:', error);
         process.exit(1);
@@ -61,7 +63,7 @@ export function createSetupCommand(): Command {
   return command;
 }
 
-async function runSetupWizard(force?: boolean): Promise<void> {
+async function runSetupWizard(force?: boolean, headless = false): Promise<void> {
   // Show ecosystem introduction
   FirstTimeExperience.showEcosystemIntro();
 
@@ -207,7 +209,10 @@ async function runSetupWizard(force?: boolean): Promise<void> {
   }
 
   // Step 1: Get all registered providers from ProviderRegistry
-  const registeredProviders = ProviderRegistry.getAllProviders();
+  // Moonshot Subscription signs in through Kimi Code's own browser flow, so it is not offered headless.
+  const registeredProviders = ProviderRegistry.getAllProviders().filter(
+    p => !(headless && p.name === 'moonshot-subscription')
+  );
   const allProviderChoices = getAllProviderChoices(registeredProviders);
 
   const { provider } = await inquirer.prompt([
@@ -230,7 +235,7 @@ async function runSetupWizard(force?: boolean): Promise<void> {
   }
 
   // Use plugin-based setup flow
-  await handlePluginSetup(provider, setupSteps, profileName, isUpdate, storageLocation);
+  await handlePluginSetup(provider, setupSteps, profileName, isUpdate, { storageLocation, headless });
 }
 
 /**
@@ -243,13 +248,13 @@ async function handlePluginSetup(
   setupSteps: any,
   profileName: string | null,
   isUpdate: boolean,
-  storageLocation: 'global' | 'local' = 'global'
+  { storageLocation = 'global', headless = false }: { storageLocation?: 'global' | 'local'; headless?: boolean } = {}
 ): Promise<void> {
   try {
     const providerTemplate = ProviderRegistry.getProvider(providerName);
 
     // Step 1: Get credentials
-    const credentials = await setupSteps.getCredentials(isUpdate);
+    const credentials = await (headless ? setupSteps.getCredentials(isUpdate, { headless: true }) : setupSteps.getCredentials(isUpdate));
 
     // Step 2: Fetch models
     const modelsSpinner = ora('Fetching available models...').start();

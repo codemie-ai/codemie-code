@@ -17,6 +17,11 @@ import { withVerifiedOwner } from '../../core/credential-owner.js';
 import { ensureApiBase } from '../../core/codemie-auth-helpers.js';
 import { logger } from '../../../utils/logger.js';
 import { effectiveExpiresAt } from './sso.expiry.js';
+import { parseSSOToken, MISSING_COOKIES } from './sso.token-parser.js';
+import { promptForPastedToken, ABORT_MESSAGE } from './sso.paste-prompt.js';
+import { ConfigurationError } from '../../../utils/errors.js';
+
+const HEADLESS_MAX_ATTEMPTS = 3;
 
 function escapeHtml(str: string): string {
   return str
@@ -108,34 +113,45 @@ export class CodeMieSSO {
     process.once('SIGINT', sigintHandler);
     process.once('SIGTERM', sigtermHandler);
 
+    if (config.headless && config.quiet) {
+      // quiet exists for callers whose stdout must stay clean (a hook's JSON). Headless login's
+      // whole job is to print the URL the user must open, so the two cannot be combined.
+      return { success: false, error: 'Headless login cannot run with quiet output: it prints the sign-in URL.' };
+    }
+
     try {
-      // 1. Start local callback server
-      const port = await this.startLocalServer();
-
-      // 2. Construct SSO URL (following plugin pattern)
-      const codeMieBase = ensureApiBase(config.codeMieUrl);
-      const ssoUrl = `${codeMieBase}/v1/auth/login/${port}`;
-
-      // 3. Launch browser
-      if (!config.quiet) {
-        console.log(chalk.white(`Opening browser for authentication...`));
-        console.log(chalk.dim(`  If browser does not open, visit: ${ssoUrl}`));
+      let result: SSOAuthResult;
+      if (config.headless) {
+        result = await this.authenticateHeadless(config);
       } else {
-        logger.info(`[SSO] Opening browser for authentication: ${ssoUrl}`);
-      }
-      if (process.platform === 'win32') {
-        // explorer.exe is Windows-native and has no PowerShell dependency,
-        // avoiding failures on machines where WDAC/AppLocker blocks Start-Process.
-        spawn('explorer.exe', [ssoUrl], { detached: true, stdio: 'ignore' }).unref();
-      } else {
-        await open(ssoUrl);
-      }
+        // 1. Start local callback server
+        const port = await this.startLocalServer();
 
-      // 4. Wait for callback with timeout and abort signal
-      const result = await this.waitForCallback(
-        config.timeout || 120000,
-        this.abortController.signal
-      );
+        // 2. Construct SSO URL (following plugin pattern)
+        const codeMieBase = ensureApiBase(config.codeMieUrl);
+        const ssoUrl = `${codeMieBase}/v1/auth/login/${port}`;
+
+        // 3. Launch browser
+        if (!config.quiet) {
+          console.log(chalk.white(`Opening browser for authentication...`));
+          console.log(chalk.dim(`  If browser does not open, visit: ${ssoUrl}`));
+        } else {
+          logger.info(`[SSO] Opening browser for authentication: ${ssoUrl}`);
+        }
+        if (process.platform === 'win32') {
+          // explorer.exe is Windows-native and has no PowerShell dependency,
+          // avoiding failures on machines where WDAC/AppLocker blocks Start-Process.
+          spawn('explorer.exe', [ssoUrl], { detached: true, stdio: 'ignore' }).unref();
+        } else {
+          await open(ssoUrl);
+        }
+
+        // 4. Wait for callback with timeout and abort signal
+        result = await this.waitForCallback(
+          config.timeout || 120000,
+          this.abortController.signal
+        );
+      }
 
       // 5. Store credentials if successful
       if (result.success && result.apiUrl && result.cookies) {
@@ -158,8 +174,11 @@ export class CodeMieSSO {
       return result;
 
     } catch (error) {
-      // Handle abort as user cancellation
-      if (error instanceof Error && error.name === 'AbortError') {
+      // Handle abort as user cancellation: the browser path rejects with a plain AbortError,
+      // the paste prompt with ConfigurationError(ABORT_MESSAGE)
+      const isBrowserAbort = error instanceof Error && (error.name === 'AbortError' || error.message === 'AbortError');
+      const isPasteAbort = error instanceof ConfigurationError && error.message === ABORT_MESSAGE;
+      if (isBrowserAbort || isPasteAbort) {
         return {
           success: false,
           error: 'Authentication cancelled by user'
@@ -179,6 +198,45 @@ export class CodeMieSSO {
 
       this.cleanup();
     }
+  }
+
+  /**
+   * Paste-back login: print the login URL, read the pasted token (raw or full redirect URL).
+   * No server, no browser. Bounded retries under one overall deadline.
+   */
+  private async authenticateHeadless(config: SSOAuthConfig): Promise<SSOAuthResult> {
+    const signal = this.abortController!.signal;
+    const deadline = Date.now() + (config.timeout || 120000);
+    // Never bound: the backend only needs a plausible callback port to build the redirect
+    const fakePort = 49152 + Math.floor(Math.random() * 16000);
+    const ssoUrl = `${ensureApiBase(config.codeMieUrl)}/v1/auth/login/${fakePort}`;
+
+    // The paste-back flow exists to print the URL, so quiet cannot apply to it
+    console.log(chalk.white('Open this URL in a browser on any machine and sign in:'));
+    console.log(`  ${ssoUrl}`);
+    console.log(chalk.dim(
+      '  After sign-in the browser is redirected to a localhost address and may show a connection error.\n' +
+      '  That is expected: copy the full address from the browser address bar and paste it below.'
+    ));
+
+    let lastError = 'Authentication failed';
+    for (let attempt = 1; attempt <= HEADLESS_MAX_ATTEMPTS; attempt++) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        return { success: false, error: 'Authentication timeout - no response received' };
+      }
+      const pasted = await promptForPastedToken({ deadlineMs: remaining, signal });
+      try {
+        const parsed = await parseSSOToken(pasted, { codeMieUrl: this.codeMieUrl, signal });
+        return { success: true, apiUrl: parsed.apiUrl, cookies: parsed.cookies };
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : 'Authentication failed';
+        if (attempt < HEADLESS_MAX_ATTEMPTS) {
+          console.log(chalk.yellow(`${lastError} (attempt ${attempt}/${HEADLESS_MAX_ATTEMPTS})`));
+        }
+      }
+    }
+    return { success: false, error: lastError };
   }
 
   /**
@@ -345,60 +403,19 @@ export class CodeMieSSO {
    * Handle OAuth callback from browser
    */
   private async handleCallback(url: URL): Promise<SSOAuthResult> {
+    // The browser path keeps its original failure texts. The paste-back wording
+    // ("copy the full address from the browser") does not fit a redirect that already landed here.
+    if (!url.searchParams.get('token') && !url.searchParams.get('auth') && !url.searchParams.get('data')) {
+      return { success: false, error: 'Missing token parameter in OAuth callback' };
+    }
     try {
-      const query = url.searchParams;
-      let raw = query.get('token') || query.get('auth') || query.get('data');
-
-      if (!raw) {
-        // Try to extract from URL-encoded query
-        const decoded = decodeURIComponent(url.search);
-        const match = /(?:^|[?&])token=([^&]+)/.exec(decoded);
-        if (match && match[1]) raw = match[1];
-      }
-
-      if (!raw) {
-        throw new Error('Missing token parameter in OAuth callback');
-      }
-
-      // Decode base64 token (following plugin pattern)
-      const token = JSON.parse(Buffer.from(raw, 'base64').toString('ascii'));
-
-      if (!token.cookies) {
-        throw new Error('Token missing cookies field');
-      }
-
-      // Try to fetch config.js to resolve actual API URL
-      let apiUrl = ensureApiBase(this.codeMieUrl);
-      try {
-        const configResponse = await fetch(`${apiUrl}/config.js`, {
-          headers: {
-            'cookie': Object.entries(token.cookies)
-              .map(([key, value]) => `${key}=${value}`)
-              .join(';')
-          }
-        });
-
-        if (configResponse.ok) {
-          const configText = await configResponse.text();
-          const viteApiMatch = /VITE_API_URL:\s*"([^"]+)"/.exec(configText);
-          if (viteApiMatch && viteApiMatch[1]) {
-            apiUrl = viteApiMatch[1].replace(/\/$/, '');
-          }
-        }
-      } catch {
-        // Silently fallback to default API URL - config.js fetch is optional
-      }
-
-      return {
-        success: true,
-        apiUrl,
-        cookies: token.cookies
-      };
-
+      const parsed = await parseSSOToken(url.href, { codeMieUrl: this.codeMieUrl });
+      return { success: true, apiUrl: parsed.apiUrl, cookies: parsed.cookies };
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : String(error)
+        error: message === MISSING_COOKIES ? 'Token missing cookies field' : message
       };
     }
   }

@@ -103,17 +103,55 @@ describe('SSOSetupSteps platform URL resolution', () => {
     });
   });
 
+  describe('headless', () => {
+    it('getCredentials passes headless to authenticate', async () => {
+      mockPrompt.mockResolvedValue({ codeMieUrl: P });
+      mockAuthenticate.mockResolvedValue({ success: false, error: 'x' });
+      await expect(SSOSetupSteps.getCredentials(false, { headless: true })).rejects.toThrow();
+      expect(mockAuthenticate).toHaveBeenCalledWith({ codeMieUrl: P, timeout: 120000, headless: true });
+    });
+
+    it('getCredentials without options is unchanged', async () => {
+      mockPrompt.mockResolvedValue({ codeMieUrl: P });
+      mockAuthenticate.mockResolvedValue({ success: false, error: 'x' });
+      await expect(SSOSetupSteps.getCredentials()).rejects.toThrow();
+      expect(mockAuthenticate).toHaveBeenCalledWith({ codeMieUrl: P, timeout: 120000 });
+    });
+
+  });
+
   describe('promptForReauth', () => {
     it('re-authenticates against the profile baseUrl when codeMieUrl is missing', async () => {
-      mockPrompt.mockResolvedValue({ confirm: true });
+      mockPrompt.mockResolvedValue({ choice: 'browser' });
       mockAuthenticate.mockResolvedValue({ success: true });
       const ok = await SSOSetupSteps.promptForReauth!({ provider: 'ai-run-sso', baseUrl: P } as never);
       expect(ok).toBe(true);
       expect(mockAuthenticate).toHaveBeenCalledWith({ codeMieUrl: P, timeout: 120000 });
     });
 
+    it('paste choice authenticates headless', async () => {
+      mockPrompt.mockResolvedValue({ choice: 'paste' });
+      mockAuthenticate.mockResolvedValue({ success: true });
+      const ok = await SSOSetupSteps.promptForReauth!({ provider: 'ai-run-sso', baseUrl: P } as never);
+      expect(ok).toBe(true);
+      expect(mockAuthenticate).toHaveBeenCalledWith({ codeMieUrl: P, timeout: 120000, headless: true });
+    });
+
+    it('no choice declines without authenticating', async () => {
+      mockPrompt.mockResolvedValue({ choice: 'no' });
+      const ok = await SSOSetupSteps.promptForReauth!({ provider: 'ai-run-sso', baseUrl: P } as never);
+      expect(ok).toBe(false);
+      expect(mockAuthenticate).not.toHaveBeenCalled();
+    });
+
+    it('offers browser as the default choice', async () => {
+      mockPrompt.mockResolvedValue({ choice: 'no' });
+      await SSOSetupSteps.promptForReauth!({ provider: 'ai-run-sso', baseUrl: P } as never);
+      expect(mockPrompt.mock.calls[0][0][0]).toMatchObject({ type: 'list', default: 'browser' });
+    });
+
     it('bails when there is no URL at all', async () => {
-      mockPrompt.mockResolvedValue({ confirm: true });
+      mockPrompt.mockResolvedValue({ choice: 'browser' });
       const ok = await SSOSetupSteps.promptForReauth!({ provider: 'ai-run-sso' } as never);
       expect(ok).toBe(false);
       expect(mockAuthenticate).not.toHaveBeenCalled();

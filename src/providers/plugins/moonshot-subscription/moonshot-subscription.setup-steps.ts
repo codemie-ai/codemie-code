@@ -22,7 +22,7 @@ import { commandExists } from '../../../utils/processes.js';
 export const MoonshotSubscriptionSetupSteps: ProviderSetupSteps = {
   name: 'moonshot-subscription',
 
-  async getCredentials(_isUpdate = false): Promise<ProviderCredentials> {
+  async getCredentials(_isUpdate = false, options?: { headless?: boolean }): Promise<ProviderCredentials> {
     logger.info('Moonshot Subscription Setup');
     logger.info('This provider uses Kimi Code native browser authentication.');
     logger.info('CodeMie will not store a Moonshot API key for this profile.');
@@ -56,7 +56,9 @@ export const MoonshotSubscriptionSetupSteps: ProviderSetupSteps = {
       );
 
       logger.info('Authenticating to CodeMie platform...');
-      const authResult = await authenticateWithCodeMie(codeMieUrl, 120000);
+      const authResult = options?.headless
+        ? await authenticateWithCodeMie(codeMieUrl, 120000, true)
+        : await authenticateWithCodeMie(codeMieUrl, 120000);
 
       if (!authResult.success) {
         throw new ConfigurationError(`CodeMie authentication failed: ${authResult.error || 'Unknown error'}`);

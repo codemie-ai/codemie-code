@@ -15,6 +15,17 @@ import { getDirname } from '../../utils/paths.js';
 import { installSystemProxyDispatcher } from '../../utils/system-proxy-dispatcher.js';
 import { isNonInteractiveEnvironment } from '../../utils/interactive.js';
 import { BUILTIN_AGENT_NAME } from '../registry.js';
+
+/**
+ * The two ways to fix invalid analytics auth at agent launch: a browser login and a headless one.
+ * Exported so the wording is tested directly.
+ */
+export function analyticsReauthHintLines(codeMieUrl: string): string[] {
+  return [
+    `  Re-authenticate later with: codemie profile login --url ${codeMieUrl}`,
+    `  No browser on this machine? Run: codemie profile login --no-browser --url ${codeMieUrl}`,
+  ];
+}
 import { ClaudePluginMetadata } from '../plugins/claude/claude.plugin.js';
 import { CodeMieCodePluginMetadata } from '../plugins/codemie-code.plugin.js';
 import { GeminiPluginMetadata } from '../plugins/gemini/gemini.plugin.js';
@@ -413,7 +424,10 @@ export class AgentCLI {
 
               if (!reauthed) {
                 console.log(chalk.yellow('⚠️  CodeMie analytics authentication is invalid — session metrics will not be uploaded.'));
-                console.log(chalk.white(`  Re-authenticate later with: codemie profile login --url ${config.codeMieUrl}\n`));
+                for (const line of analyticsReauthHintLines(config.codeMieUrl)) {
+                  console.log(chalk.white(line));
+                }
+                console.log('');
                 logger.warn(`Analytics auth invalid for ${config.codeMieUrl}: ${analyticsAuth.error}`);
               }
             } else {

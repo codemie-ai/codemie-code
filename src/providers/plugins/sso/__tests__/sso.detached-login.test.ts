@@ -818,3 +818,20 @@ describe('last sign-in per CodeMie URL', () => {
     expect(spawnDetached).not.toHaveBeenCalled();
   });
 });
+
+describe('describeLogin headless hint', () => {
+  const HINT = 'codemie profile login --no-browser';
+
+  it.each([
+    ['started', describeLogin('started')],
+    ['started (auto resume)', describeLogin('started', { resume: 'auto' })],
+    ['in-progress', describeLogin('in-progress')],
+    ['cooldown', describeLogin('cooldown')],
+    ['failed (open failed)', describeLogin('failed')],
+    ['wait failed', describeLogin('started', { wait: { status: 'failed', error: 'x' } })],
+    ['wait succeeded (still unauthenticated)', describeLogin('started', { wait: { status: 'succeeded' } })],
+    ['wait timeout', describeLogin('started', { wait: { status: 'timeout' } })],
+  ])('%s mentions the --no-browser route', (_label, text) => {
+    expect(text).toContain(HINT);
+  });
+});

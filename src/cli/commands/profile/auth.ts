@@ -10,15 +10,27 @@ import {
   getStoredPlatformCredentials
 } from '../../../providers/core/codemie-auth-helpers.js';
 
+interface HeadlessFlags {
+  /** commander sets browser=false for --no-browser */
+  browser?: boolean;
+  headless?: boolean;
+}
+
+function isHeadless(options: HeadlessFlags): boolean {
+  return options.browser === false || options.headless === true;
+}
+
 // Export individual commands for profile (not nested under 'auth')
 export function createLoginCommand(): Command {
   const command = new Command('login');
   command
     .description('Authenticate with AI/Run CodeMie SSO')
     .option('--url <url>', 'AI/Run CodeMie URL to authenticate with')
-    .action(async (options: { url?: string }) => {
+    .option('--no-browser', 'Do not open a browser: print the login URL and paste the result back')
+    .option('--headless', 'Alias for --no-browser')
+    .action(async (options: { url?: string } & HeadlessFlags) => {
       try {
-        await handleLogin(options.url);
+        await handleLogin(options.url, isHeadless(options));
       } catch (error: unknown) {
         logger.error('Login failed:', error);
         process.exit(1);
@@ -50,9 +62,11 @@ export function createRefreshCommand(): Command {
 
   command
     .description('Refresh SSO credentials')
-    .action(async () => {
+    .option('--no-browser', 'Do not open a browser: print the login URL and paste the result back')
+    .option('--headless', 'Alias for --no-browser')
+    .action(async (options: HeadlessFlags) => {
       try {
-        await handleRefresh();
+        await handleRefresh(isHeadless(options));
       } catch (error: unknown) {
         logger.error('Refresh failed:', error);
         process.exit(1);
@@ -62,7 +76,7 @@ export function createRefreshCommand(): Command {
   return command;
 }
 
-async function handleLogin(url?: string): Promise<void> {
+async function handleLogin(url?: string, headless = false): Promise<void> {
   const config = await ConfigLoader.load();
 
   const codeMieUrl = url || getPlatformUrl(config);
@@ -72,14 +86,16 @@ async function handleLogin(url?: string): Promise<void> {
     return;
   }
 
-  const spinner = ora('Launching SSO authentication...').start();
+  // Headless login prompts for input, so a spinner would fight with the terminal
+  const spinner = headless ? undefined : ora('Launching SSO authentication...').start();
 
   try {
     const sso = new CodeMieSSO();
-    const result = await sso.authenticate({ codeMieUrl, timeout: 120000 });
+    const result = await sso.authenticate({ codeMieUrl, timeout: 120000, ...(headless ? { headless: true } : {}) });
 
     if (result.success) {
-      spinner.succeed(chalk.green('SSO authentication successful'));
+      if (spinner) spinner.succeed(chalk.green('SSO authentication successful'));
+      else console.log(chalk.green('SSO authentication successful'));
       console.log(chalk.cyan(`🔗 Connected to: ${codeMieUrl}`));
       console.log(chalk.cyan(`🔑 Credentials stored securely`));
 
@@ -93,12 +109,16 @@ async function handleLogin(url?: string): Promise<void> {
       console.log('  ' + chalk.white('• Explore more:') + '         ' + chalk.cyan('codemie --help'));
       console.log('');
     } else {
-      spinner.fail(chalk.red('SSO authentication failed'));
+      if (spinner) spinner.fail(chalk.red('SSO authentication failed'));
+      else console.log(chalk.red('SSO authentication failed'));
       console.log(chalk.red(`Error: ${result.error}`));
+      process.exitCode = 1;
     }
   } catch (error) {
-    spinner.fail(chalk.red('Authentication error'));
+    if (spinner) spinner.fail(chalk.red('Authentication error'));
+    else console.log(chalk.red('Authentication error'));
     console.log(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+    process.exitCode = 1;
   }
 }
 
@@ -122,7 +142,7 @@ async function handleLogout(): Promise<void> {
   }
 }
 
-async function handleRefresh(): Promise<void> {
+async function handleRefresh(headless = false): Promise<void> {
   const config = await ConfigLoader.load();
 
   // Check if current provider uses SSO authentication
@@ -141,9 +161,12 @@ async function handleRefresh(): Promise<void> {
     return;
   }
 
-  // Clear existing credentials and re-authenticate against the same URL
-  const sso = new CodeMieSSO();
-  await sso.clearStoredCredentials(url);
+  // Re-authenticate against the same URL. Headless login can fail on a bad paste, so it must not
+  // clear first: a successful login overwrites the stored credentials for this URL anyway.
+  if (!headless) {
+    const sso = new CodeMieSSO();
+    await sso.clearStoredCredentials(url);
+  }
 
-  await handleLogin(url);
+  await handleLogin(url, headless);
 }

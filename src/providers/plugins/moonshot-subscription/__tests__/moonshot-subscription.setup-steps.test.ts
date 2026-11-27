@@ -95,6 +95,18 @@ describe('MoonshotSubscriptionSetupSteps', () => {
     });
   });
 
+  describe('headless', () => {
+    it('passes headless to the analytics-sync login', async () => {
+      mockPrompt.mockResolvedValue({ enableCodeMieAnalytics: true });
+      mockPromptForCodeMieUrl.mockResolvedValue('https://codemie.lab.epam.com');
+      mockAuthenticateWithCodeMie.mockResolvedValue({ success: false, error: 'x' });
+
+      await expect(MoonshotSubscriptionSetupSteps.getCredentials(false, { headless: true })).rejects.toThrow();
+
+      expect(mockAuthenticateWithCodeMie).toHaveBeenCalledWith('https://codemie.lab.epam.com', 120000, true);
+    });
+  });
+
   describe('fetchModels', () => {
     it('returns an empty list so setup prompts for manual entry (no live catalog for this provider)', async () => {
       const models = await MoonshotSubscriptionSetupSteps.fetchModels({});

@@ -10,6 +10,7 @@ import { ProviderRegistry } from '../../core/registry.js';
 import type { CodeMieConfigOptions } from '../../../env/types.js';
 import { logger } from '../../../utils/logger.js';
 import { ConfigurationError } from '../../../utils/errors.js';
+import { hasInteractiveTerminal, NO_TTY_MESSAGE } from '../../../utils/interactive.js';
 import { AnthropicSubscriptionTemplate } from './anthropic-subscription.template.js';
 import {
   DEFAULT_CODEMIE_BASE_URL,
@@ -23,10 +24,44 @@ import {
   runClaudeBrowserLogin
 } from './anthropic-subscription.auth.js';
 
+const HEADLESS_INSTRUCTIONS = [
+  'No browser on this machine? Two ways to sign in to Claude Code:',
+  '  1. `claude auth login` (starting now): open the printed URL on any machine, then paste the code back here.',
+  '  2. Run `claude setup-token` on a machine with a browser, then export CLAUDE_CODE_OAUTH_TOKEN with the result here and rerun setup.'
+].join('\n');
+
+// Same TTY requirement as the SSO paste prompt (NO_TTY_MESSAGE), with the Claude routes appended
+const NO_TTY_CLAUDE_MESSAGE =
+  `${NO_TTY_MESSAGE} ` +
+  'Run setup from one to use `claude auth login`, or run `claude setup-token` on a machine with a browser, ' +
+  'export CLAUDE_CODE_OAUTH_TOKEN here, then run setup again.';
+
+const LOGIN_NOT_COMPLETED_MESSAGE =
+  'Claude login did not complete. Retry `claude auth login` (paste the code it prints back into the prompt), ' +
+  'or run `claude setup-token` on a machine with a browser and export CLAUDE_CODE_OAUTH_TOKEN here, then run setup again.';
+
+/**
+ * Headless `claude auth login`: needs a terminal, prints both sign-in routes first, and replaces
+ * the CLI's bare failure text (such as a timeout) with a message that names both routes.
+ *
+ * @throws ConfigurationError when stdin or stdout is not a TTY, or when the login does not complete.
+ */
+async function runHeadlessClaudeLogin(): Promise<void> {
+  if (!hasInteractiveTerminal()) {
+    throw new ConfigurationError(NO_TTY_CLAUDE_MESSAGE);
+  }
+  console.log(HEADLESS_INSTRUCTIONS);
+  try {
+    await runClaudeBrowserLogin();
+  } catch {
+    throw new ConfigurationError(LOGIN_NOT_COMPLETED_MESSAGE);
+  }
+}
+
 export const AnthropicSubscriptionSetupSteps: ProviderSetupSteps = {
   name: 'anthropic-subscription',
 
-  async getCredentials(_isUpdate = false): Promise<ProviderCredentials> {
+  async getCredentials(_isUpdate = false, options?: { headless?: boolean }): Promise<ProviderCredentials> {
     logger.info('Anthropic Subscription Setup');
     logger.info('This provider uses Claude Code native browser authentication.');
     logger.info('CodeMie will not store an Anthropic API key for this profile.');
@@ -36,15 +71,22 @@ export const AnthropicSubscriptionSetupSteps: ProviderSetupSteps = {
     const currentStatus = await getClaudeAuthStatus();
     if (!currentStatus.loggedIn) {
       logger.info('Claude Code is not authenticated yet.');
-      logger.info('Launching native Claude browser login...');
-      await runClaudeBrowserLogin();
+      if (options?.headless) {
+        await runHeadlessClaudeLogin();
+      } else {
+        logger.info('Launching native Claude browser login...');
+        await runClaudeBrowserLogin();
+      }
     } else {
       logger.success('Claude Code is already authenticated');
     }
 
     const finalStatus = await getClaudeAuthStatus();
     if (!finalStatus.loggedIn) {
-      throw new ConfigurationError('Claude Code authentication is required. Complete `claude auth login` and run setup again.');
+      throw new ConfigurationError(
+        'Claude Code authentication is required. Complete `claude auth login` (paste the code it prints back into the prompt), ' +
+        'or run `claude setup-token` on a machine with a browser and export CLAUDE_CODE_OAUTH_TOKEN here, then run setup again.'
+      );
     }
 
     logger.success(`Claude native auth confirmed (${finalStatus.authMethod || 'unknown'})`);
@@ -69,7 +111,9 @@ export const AnthropicSubscriptionSetupSteps: ProviderSetupSteps = {
       );
 
       logger.info('Authenticating to CodeMie platform...');
-      const authResult = await authenticateWithCodeMie(codeMieUrl, 120000);
+      const authResult = options?.headless
+        ? await authenticateWithCodeMie(codeMieUrl, 120000, true)
+        : await authenticateWithCodeMie(codeMieUrl, 120000);
 
       if (!authResult.success) {
         throw new ConfigurationError(`CodeMie authentication failed: ${authResult.error || 'Unknown error'}`);

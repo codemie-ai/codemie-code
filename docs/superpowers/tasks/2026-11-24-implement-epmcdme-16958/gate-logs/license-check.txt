@@ -1,0 +1,16 @@
+
+> @codemieai/code@0.17.3 license-check
+> node scripts/license-check.js
+
+├─ MIT: 393
+├─ Apache-2.0: 109
+├─ ISC: 31
+├─ BSD-2-Clause: 9
+├─ BSD-3-Clause: 5
+├─ (MIT OR Apache-2.0): 1
+├─ Python-2.0: 1
+├─ (MIT OR WTFPL): 1
+├─ (BSD-2-Clause OR MIT OR Apache-2.0): 1
+├─ 0BSD: 1
+└─ (MIT OR CC0-1.0): 1
+
