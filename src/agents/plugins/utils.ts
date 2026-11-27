@@ -5,6 +5,19 @@ import { logger } from '../../utils/logger.js';
 const FORWARD_TIMEOUT_MS = 3_000;
 
 /**
+ * fetch reports a refused connection as `TypeError: fetch failed` whose `cause` is the socket error; for a name that resolves to
+ * several addresses (`localhost`) the cause is an `AggregateError` that carries the code itself and lists one error per address.
+ */
+function isConnectionRefused(err: unknown): boolean {
+  const code = (error: unknown): unknown => (typeof error === 'object' && error !== null ? Reflect.get(error, 'code') : undefined);
+  if (code(err) === 'ECONNREFUSED') return true;
+  const cause = err instanceof Error ? err.cause : undefined;
+  if (code(cause) === 'ECONNREFUSED') return true;
+  const each = cause instanceof AggregateError ? cause.errors : [];
+  return each.length > 0 && each.every((one) => code(one) === 'ECONNREFUSED');
+}
+
+/**
  * Forward one hook invocation's complete, wire-ready events to the local proxy daemon's
  * analytics spool endpoint, as a single batch so the outcome is all-or-nothing.
  *
@@ -12,12 +25,14 @@ const FORWARD_TIMEOUT_MS = 3_000;
  * - POSTs { agentName, hookEvents } to /v1/analytics/hooks
  * - Returns true for an empty list or a 2xx response; false for a missing daemon, a thrown
  *   error, an abort, or a non-2xx status
+ * - `opts.undelivered.value` is set when the daemon certainly did not take the batch: no daemon state, a refused
+ *   connection, or a 401. A timeout, a reset or any other status leaves it false (the batch may be spooled).
  * - Fixed 3s abort timeout. Never throws, never affects the hook's exit code.
  */
 export async function forwardOtlpEventsToSpool(
   events: Record<string, unknown>[],
   agentName: string,
-  opts?: { evidenceV?: 1; evidenceLoss?: { sessionId: string; reason: string; events: number } }
+  opts?: { evidenceV?: 1; evidenceLoss?: { sessionId: string; reason: string; events: number }; undelivered?: { value: boolean } }
 ): Promise<boolean> {
   if (events.length === 0 && !opts?.evidenceLoss) {
     return true;
@@ -28,6 +43,7 @@ export async function forwardOtlpEventsToSpool(
 
     if (!state) {
       logger.debug('forwardOtlpEventsToSpool: daemon unavailable, skipping forward');
+      if (opts?.undelivered) opts.undelivered.value = true;
       return false;
     }
 
@@ -48,12 +64,16 @@ export async function forwardOtlpEventsToSpool(
       });
       if (!response.ok) {
         logger.debug(`forwardOtlpEventsToSpool: daemon responded ${response.status}`);
+        // 401 is answered before anything is spooled (gateway key, or a daemon still awaiting its login), so the daemon did not take the batch.
+        if (response.status === 401 && opts?.undelivered) opts.undelivered.value = true;
       }
       return response.ok;
     } finally {
       clearTimeout(timeout);
     }
   } catch (err) {
+    // Only a refused connection proves nothing was sent; a timeout or a reset may come after the daemon spooled the batch.
+    if (opts?.undelivered && isConnectionRefused(err)) opts.undelivered.value = true;
     const reason = err instanceof Error && err.name === 'AbortError' ? 'timeout' : err instanceof Error ? err.message : String(err);
     logger.debug(`forwardOtlpEventsToSpool: ${reason}`);
     return false;
