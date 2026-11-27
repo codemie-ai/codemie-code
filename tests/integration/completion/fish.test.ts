@@ -47,6 +47,10 @@ suite('fish completion (real fish)', () => {
   const complete = (line: string): string[] => raw(line).map(l => l.split('\t')[0]).sort();
   const sorted = (a: string[]): string[] => [...a].sort();
   const ROOT_OPTS = ['--task', '-V', '--version', '-h', '--help'];
+  // Root options (--task, -V, --version) are valid only before the subcommand (positional-options mode),
+  // so below the root only -h/--help is offered.
+  const HELP_OPTS = ['-h', '--help'];
+  const ROOT_ONLY_OPTS = ['--task', '-V', '--version'];
 
   // Fish only offers options once the word being completed starts with '-'.
   it('root offers subcommands, aliases and help; options after a dash', () => {
@@ -65,19 +69,19 @@ suite('fish completion (real fish)', () => {
     expect(desc('ls')).toBe(desc('list'));
   });
 
-  it('subcommand offers its options plus root options, no hidden', () => {
+  it('subcommand offers its own options plus -h/--help, no hidden', () => {
     expect(complete('tool list -')).toEqual(
-      sorted(['-v', '--verbose', '--format', '--out', '--cfg', '--name', ...ROOT_OPTS])
+      sorted(['-v', '--verbose', '--format', '--out', '--cfg', '--name', ...HELP_OPTS])
     );
   });
 
   it('alias descends to the same node', () => {
-    expect(complete('tool ls --v')).toEqual(['--verbose', '--version']);
+    expect(complete('tool ls --v')).toEqual(['--verbose']);
   });
 
   it('nested node offers its children, hidden absent', () => {
     expect(complete('tool a ')).toEqual(['b', 'help']);
-    expect(complete('tool a -')).toEqual(sorted(ROOT_OPTS));
+    expect(complete('tool a -')).toEqual(sorted(HELP_OPTS));
   });
 
   it('leaf offers only its options', () => {
@@ -112,12 +116,18 @@ suite('fish completion (real fish)', () => {
   it('optional-value options do not consume the next word', () => {
     expect(complete('tool list --cfg a x')).toEqual([]);
     expect(complete('tool list --cfg -')).toEqual(
-      sorted(['-v', '--verbose', '--format', '--out', '--cfg', '--name', ...ROOT_OPTS])
+      sorted(['-v', '--verbose', '--format', '--out', '--cfg', '--name', ...HELP_OPTS])
     );
   });
 
-  it('root option accepted after a subcommand takes its value', () => {
-    expect(complete('tool list --task ')).toEqual([]);
+  it('does not offer root options below the root (positional-options mode)', () => {
+    for (const line of ['tool list -', 'tool a -', 'tool a b c -']) {
+      const out = complete(line);
+      for (const o of ROOT_ONLY_OPTS) expect(out, line).not.toContain(o);
+    }
+    expect(complete('tool list --ver')).toEqual(['--verbose']);
+    expect(complete('tool list --ta')).toEqual([]);
+    expect(complete('tool -')).toEqual(expect.arrayContaining(ROOT_ONLY_OPTS));
   });
 
   it('treats -- as end-of-options: nothing is offered after it', () => {

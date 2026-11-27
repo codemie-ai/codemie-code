@@ -162,6 +162,35 @@ describe('completion sync guard', () => {
         expect(leaked).toEqual([]);
       });
 
+      // Positional-options mode (src/cli/program.ts): root options are valid only before the subcommand name, so
+      // below the root a node may offer only its own options plus the implicit -h/--help.
+      it('offers root options at the root only; other nodes offer only their own options plus -h/--help', () => {
+        const rootNode = nodes.find((n) => n.path.length === 0) as WalkNode;
+        const rootOnly = rootNode.visibleOptions.filter((o) => o !== '-h' && o !== '--help');
+        expect(rootOnly).toEqual(expect.arrayContaining(['--task', '-V', '--version']));
+        const rootOffered = scripts[shell].words.get(resolveNode(scripts[shell], []) as string) ?? new Set<string>();
+        for (const o of ['--task', '-V', '--version', '-h', '--help']) expect(rootOffered.has(o), `<root>: ${o}`).toBe(true);
+
+        const extra: string[] = [];
+        for (const n of nodes) {
+          if (n.path.length === 0) continue;
+          const id = resolveNode(scripts[shell], n.path);
+          if (id === undefined) continue;
+          const allowed = new Set([...n.visibleOptions, '-h', '--help']);
+          for (const w of scripts[shell].words.get(id) ?? new Set<string>()) {
+            if (w.startsWith('-') && !allowed.has(w)) extra.push(`${n.path.join(' ')}: ${w}`);
+          }
+        }
+        expect(extra).toEqual([]);
+      });
+
+      it.each([['proxy', 'status'], ['list'], ['doctor']])('does not offer --version, -V or --task at "%s"', (...path) => {
+        const id = resolveNode(scripts[shell], path);
+        expect(id).toBeDefined();
+        const offered = scripts[shell].words.get(id as string) ?? new Set<string>();
+        for (const o of ['--version', '-V', '--task']) expect(offered.has(o), o).toBe(false);
+      });
+
       // Position-aware (per-node) rather than a whole-script substring check: `inspect`, `connect-folder` etc.
       // may legitimately appear as other names or inside descriptions elsewhere in the script.
       it.each([

@@ -19,13 +19,6 @@ _tool() {
           '1:--format') kind=c; vals=('json' 'text' 'two words');;
           '1:--out') kind=f;;
           '1:--name') kind=f;;
-          '1:--task') kind=n;;
-          '2:--task') kind=n;;
-          '3:--task') kind=n;;
-          '4:--task') kind=n;;
-          '5:--task') kind=n;;
-          '6:--task') kind=n;;
-          '7:--task') kind=n;;
         esac
         if [[ -n "$kind" ]]; then
           if (( i + 1 >= CURRENT )); then vmode="$kind"; break; fi
@@ -53,13 +46,13 @@ _tool() {
   esac
   case "$node" in
     0) cmds=('list:List things (it'\\''s fine)' 'ls:List things (it'\\''s fine)' 'a:Group a' 'help:display help for command'); opts=('--version:output the version number' '-V:output the version number' '--task:Run a task' '--help:display help for command' '-h:display help for command'); pos=();;
-    1) cmds=(); opts=('--verbose:Verbose' '-v:Verbose' '--format:Output format' '--out:Output file' '--cfg:Config file' '--name:Free-form value' '--help:display help for command' '-h:display help for command' '--version:output the version number' '-V:output the version number' '--task:Run a task'); pos=();;
-    2) cmds=('b' 'help:display help for command'); opts=('--help:display help for command' '-h:display help for command' '--version:output the version number' '-V:output the version number' '--task:Run a task'); pos=();;
-    3) cmds=('c' 'help:display help for command'); opts=('--help:display help for command' '-h:display help for command' '--version:output the version number' '-V:output the version number' '--task:Run a task'); pos=();;
-    4) cmds=(); opts=('--deep:Deep' '--help:display help for command' '-h:display help for command' '--version:output the version number' '-V:output the version number' '--task:Run a task'); pos=('red' 'green' 'two words');;
-    5) cmds=(); opts=('--help:display help for command' '-h:display help for command' '--version:output the version number' '-V:output the version number' '--task:Run a task'); pos=();;
-    6) cmds=(); opts=('--help:display help for command' '-h:display help for command' '--version:output the version number' '-V:output the version number' '--task:Run a task'); pos=();;
-    7) cmds=(); opts=('--help:display help for command' '-h:display help for command' '--version:output the version number' '-V:output the version number' '--task:Run a task'); pos=();;
+    1) cmds=(); opts=('--verbose:Verbose' '-v:Verbose' '--format:Output format' '--out:Output file' '--cfg:Config file' '--name:Free-form value' '--help:display help for command' '-h:display help for command'); pos=();;
+    2) cmds=('b' 'help:display help for command'); opts=('--help:display help for command' '-h:display help for command'); pos=();;
+    3) cmds=('c' 'help:display help for command'); opts=('--help:display help for command' '-h:display help for command'); pos=();;
+    4) cmds=(); opts=('--deep:Deep' '--help:display help for command' '-h:display help for command'); pos=('red' 'green' 'two words');;
+    5) cmds=(); opts=('--help:display help for command' '-h:display help for command'); pos=();;
+    6) cmds=(); opts=('--help:display help for command' '-h:display help for command'); pos=();;
+    7) cmds=(); opts=('--help:display help for command' '-h:display help for command'); pos=();;
   esac
   (( $#cmds )) && _describe 'command' cmds
   (( $#opts )) && _describe 'option' opts

@@ -66,7 +66,7 @@ export function emitZsh(model: NodeModel, version: string): string {
       edges.push(`        ${pats}) node=${idOf.get(sub)};;`);
     }
 
-    const opts = effectiveOptions(model, node);
+    const opts = effectiveOptions(node);
     for (const opt of opts) {
       if (opt.takesValue !== 'required') continue;
       const pats = optionNames(opt).map(n => q(`${id}:${n}`)).join('|');

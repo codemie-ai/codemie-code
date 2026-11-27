@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { Argument, Command, Option } from 'commander';
 import { markHidden } from '@/cli/hidden.js';
+import { createProgram } from '@/cli/program.js';
 import { buildModel, effectiveOptions } from '../tree.js';
 
 function sample(): Command {
-  const root = new Command('tool').version('1.2.3').option('--task <task>', 'Run a task');
+  const root = new Command('tool').enablePositionalOptions().version('1.2.3').option('--task <task>', 'Run a task');
   const list = root.command('list').alias('ls').description('List things');
   list.option('-v, --verbose', 'Verbose');
   list.addOption(new Option('--format <fmt>', 'Output format').choices(['json', 'text']));
@@ -91,24 +92,49 @@ describe('buildModel', () => {
 describe('effectiveOptions', () => {
   const model = buildModel(sample());
   const list = model.subs.find(s => s.name === 'list') as typeof model;
+  const longsOf = (n: typeof model): (string | undefined)[] => effectiveOptions(n).map(o => o.long);
 
-  it('merges root options into a subcommand, deduped, node own options first', () => {
-    const opts = effectiveOptions(model, list);
-    const longs = opts.map(o => o.long);
-    expect(longs).toEqual(expect.arrayContaining(['--task', '--version', '--verbose', '--format']));
+  it('returns only the node own options below the root (no root options)', () => {
+    const longs = longsOf(list);
+    expect(longs).toEqual(expect.arrayContaining(['--verbose', '--format', '--help']));
+    expect(longs).not.toContain('--task');
+    expect(longs).not.toContain('--version');
+    expect(effectiveOptions(list).some(o => o.short === '-V')).toBe(false);
     expect(longs.filter(l => l === '--help')).toHaveLength(1);
-    expect(opts.filter(o => o.short === '-h')).toHaveLength(1);
   });
 
-  it('lets the node own option win over a root option with the same name', () => {
-    const root = { ...model, options: [{ long: '--x', description: 'root', takesValue: 'none' as const, valueKind: 'none' as const, choices: [] }] };
-    const node = { ...list, options: [{ long: '--x', description: 'own', takesValue: 'required' as const, valueKind: 'value' as const, choices: ['a'] }] };
-    const opts = effectiveOptions(root, node);
-    expect(opts).toHaveLength(1);
-    expect(opts[0].description).toBe('own');
+  it('keeps all root options at the root', () => {
+    expect(longsOf(model)).toEqual(expect.arrayContaining(['--task', '--version', '--help']));
+    expect(longsOf(model)).toEqual(model.options.map(o => o.long));
   });
 
-  it('returns the root options unchanged for the root itself', () => {
-    expect(effectiveOptions(model, model).map(o => o.long)).toEqual(model.options.map(o => o.long));
+  it('pins the premise: with positional options, a root option after a subcommand is unknown', () => {
+    const program = sample();
+    program.exitOverride().configureOutput({ writeOut: () => undefined, writeErr: () => undefined });
+    program.commands.forEach(c => c.exitOverride().configureOutput({ writeOut: () => undefined, writeErr: () => undefined }));
+    expect(() => program.parse(['node', 'tool', 'list', '--version'])).toThrow(/unknown option '--version'/);
+    expect(() => program.parse(['node', 'tool', 'list', '-V'])).toThrow(/unknown option '-V'/);
+  });
+});
+
+describe('real createProgram() tree', () => {
+  const model = buildModel(createProgram());
+  const find = (...path: string[]): typeof model => {
+    let node = model;
+    for (const name of path) node = node.subs.find(s => s.name === name) as typeof model;
+    expect(node, path.join(' ')).toBeDefined();
+    return node;
+  };
+
+  it('offers --task, -V and --version at the root', () => {
+    const opts = effectiveOptions(model);
+    expect(opts.some(o => o.long === '--task')).toBe(true);
+    expect(opts.some(o => o.long === '--version' && o.short === '-V')).toBe(true);
+  });
+
+  it.each([['proxy', 'status'], ['list'], ['doctor']])('does not offer root options at %s', (...path) => {
+    const opts = effectiveOptions(find(...path));
+    expect(opts.some(o => o.long === '--version' || o.short === '-V' || o.long === '--task')).toBe(false);
+    expect(opts.some(o => o.long === '--help')).toBe(true);
   });
 });

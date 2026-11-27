@@ -13,7 +13,11 @@ import { markHidden } from '@/cli/hidden.js';
  *       zz (hidden)
  */
 export function buildFixtureRoot(): Command {
-  const root = new Command('tool').version('1.2.3').option('--task <task>', 'Run a task');
+  // Mirror src/cli/program.ts: root options are only valid before the subcommand name.
+  const root = new Command('tool')
+    .enablePositionalOptions()
+    .version('1.2.3')
+    .option('--task <task>', 'Run a task');
   const list = root.command('list').alias('ls').description("List things (it's fine)");
   list.option('-v, --verbose', 'Verbose');
   list.addOption(

@@ -2,15 +2,13 @@ import type { Command, Option } from 'commander';
 import { isHiddenCommand, isHiddenOption } from '@/cli/hidden.js';
 
 /*
- * Root-option rule (verified empirically against the built CLI):
- *   `codemie list --version` prints the version and `codemie list --task x`
- *   reaches the --task handler, i.e. root options (--task, -V, --version) are
- *   accepted AFTER a subcommand (src/cli/index.ts scans argv for --task).
- *   Therefore emitters offer the root's options at every node, not only root.
- * buildModel itself records each node's own options only; the root-only
- * `-V/--version` and `--task` live on the root node. Emitters MUST obtain a
- * node's offered options through `effectiveOptions(root, node)`, which merges
- * the root's options with the node's own (deduped by long/short; node wins).
+ * Root-option rule: src/cli/program.ts enables commander's positional-options
+ * mode (`.enablePositionalOptions()`), so the root's options (--task, -V,
+ * --version) are recognised only BEFORE the subcommand name. `codemie list
+ * --version` and `codemie proxy status -V` fail with "unknown option", so they
+ * are never offered below the root. buildModel records each node's own options
+ * (plus an implicit -h/--help); emitters obtain a node's offered options
+ * through `effectiveOptions(node)`.
  */
 
 export type ValueKind = 'none' | 'value' | 'path';
@@ -93,19 +91,11 @@ export function buildModel(root: Command): NodeModel {
   return buildNode(root);
 }
 
-function sameOption(a: OptionModel, b: OptionModel): boolean {
-  return (!!a.long && a.long === b.long) || (!!a.short && a.short === b.short);
-}
-
 /**
- * Options offered at `node`: the node's own options followed by the root's
- * options that the node does not redeclare (matched by long or short name).
+ * Options offered at `node`: the node's own options only. The root keeps its
+ * own (--task, -V/--version, -h/--help); descendants never inherit them because
+ * commander runs in positional-options mode (see the rule at the top of this file).
  */
-export function effectiveOptions(root: NodeModel, node: NodeModel): OptionModel[] {
-  if (node === root) return [...root.options];
-  const merged = [...node.options];
-  for (const opt of root.options) {
-    if (!merged.some(m => sameOption(m, opt))) merged.push(opt);
-  }
-  return merged;
+export function effectiveOptions(node: NodeModel): OptionModel[] {
+  return [...node.options];
 }

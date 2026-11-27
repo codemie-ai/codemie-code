@@ -7,7 +7,7 @@ Startup work (migrations, update check, what's-new) is skipped for `codemie comp
 ## What gets completed
 
 - Commands and subcommands at every level. Hidden commands and options are never offered.
-- Options, including the root options (`--task`, `-V`, `--version`). The CLI accepts root options after a subcommand (for example `codemie list --version`), so completion offers them at every node.
+- Options of the command being completed, plus `-h`/`--help`. The root options (`--task`, `-V`, `--version`) are offered only at the root (`codemie -<Tab>`). The CLI parses with positional options enabled, so root options are recognised only before the subcommand name: `codemie list --version` and `codemie proxy status -V` fail with `unknown option`, and completion does not suggest them below the root.
 - Option values: the declared choices when an option has them, file paths for every other valued option.
 - bash and zsh offer commands and options at every position. fish offers options only once the typed word starts with `-`.
 - Positional choices: a leaf command (no subcommands) whose first argument declares choices offers them in place of a free word, for example `codemie completion <Tab>` offers `bash`, `zsh` and `fish`. Only the first registered argument is modeled, and it keeps being offered at later positions of that command.

@@ -20,13 +20,6 @@ text
 two words';;
         '1:--out') kind=f;;
         '1:--name') kind=f;;
-        '1:--task') kind=n;;
-        '2:--task') kind=n;;
-        '3:--task') kind=n;;
-        '4:--task') kind=n;;
-        '5:--task') kind=n;;
-        '6:--task') kind=n;;
-        '7:--task') kind=n;;
         esac
         if [ -n "$kind" ]; then
           if [ $((i + 1)) -ge "$COMP_CWORD" ]; then vmode="$kind"; break; fi
@@ -73,48 +66,27 @@ help
 --cfg
 --name
 --help
--h
---version
--V
---task';;
+-h';;
         2) words='b
 help
 --help
--h
---version
--V
---task';;
+-h';;
         3) words='c
 help
 --help
--h
---version
--V
---task';;
+-h';;
         4) words='--deep
 --help
 -h
---version
--V
---task
 red
 green
 two words';;
         5) words='--help
--h
---version
--V
---task';;
+-h';;
         6) words='--help
--h
---version
--V
---task';;
+-h';;
         7) words='--help
--h
---version
--V
---task';;
+-h';;
       esac
       COMPREPLY=( $(compgen -W "$words" -- "$cur") )
       ;;

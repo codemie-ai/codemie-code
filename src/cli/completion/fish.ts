@@ -71,7 +71,7 @@ export function emitFish(model: NodeModel, version: string): string {
       for (const ch of node.positionalChoices) rules.push(`${c} ${at(String(id))} -f -a ${arg(ch)}`);
     }
 
-    for (const opt of effectiveOptions(model, node)) {
+    for (const opt of effectiveOptions(node)) {
       rules.push(`${c} ${at(String(id))} ${optionFlags(opt)} -d ${q(opt.description)}`);
       if (opt.takesValue !== 'required') continue;
       const key = optionKey(id, opt);
