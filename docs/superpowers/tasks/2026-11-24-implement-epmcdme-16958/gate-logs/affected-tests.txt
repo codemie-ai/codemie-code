@@ -1,0 +1,229 @@
+
+ RUN  v4.1.5 C:/Projects/Epam/codemie-code-dev/codemie-code
+
+(node:69788) [DEP0187] DeprecationWarning: Passing invalid argument types to fs.existsSync is deprecated
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Deprecated: codemie proxy connect --claude-code-otlp — use codemie proxy connect --claude-otlp (it also connects Claude Desktop and the VS Code Claude Code extension) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy connect --claude-code-otlp — use codemie proxy connect --claude-otlp (it also connects Claude Desktop and the VS Code Claude Code extension) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+ ❯ |unit| src/cli/commands/proxy/connectors/__tests__/codex-desktop-roundtrip.test.ts (20 tests | 1 failed | 2 skipped) 1460ms
+     × moves a config file that is a symbolic link through the link, and a second move leaves it 11ms
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy inspect desktop — use codemie proxy doctor --verbose instead (removal on 2026-12-31)
+Deprecated: codemie proxy inspect desktop — use codemie proxy doctor --verbose instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+[33m⚠️  CodeMie profile "work" has no project of its own; this session uses project "config-project" (last saved by setup, possibly for another profile). To fix: launch this profile once in a terminal, or run `codemie setup`.[39m
+[33m[39mDeprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy connect --claude-code-otlp — use codemie proxy connect --claude-otlp (it also connects Claude Desktop and the VS Code Claude Code extension) instead (removal on 2026-12-31)
+Deprecated: codemie proxy connect --claude-code-otlp — use codemie proxy connect --claude-otlp (it also connects Claude Desktop and the VS Code Claude Code extension) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy connect --claude-code-otlp — use codemie proxy connect --claude-otlp (it also connects Claude Desktop and the VS Code Claude Code extension) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy connect --copilot-chat-otlp — use codemie proxy connect --copilot-otlp (it connects both Copilot Chat and Copilot CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy connect --copilot-cli-otlp — use codemie proxy connect --copilot-otlp (it connects both Copilot Chat and Copilot CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy connect --copilot-chat-otlp — use codemie proxy connect --copilot-otlp (it connects both Copilot Chat and Copilot CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy connect --copilot-cli-otlp — use codemie proxy connect --copilot-otlp (it connects both Copilot Chat and Copilot CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy disconnect --copilot-chat-otlp — use codemie proxy disconnect --copilot-otlp (it disconnects both Copilot Chat and Copilot CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --claude-code-otlp — use codemie proxy analytics --claude-otlp instead (removal on 2026-12-31)
+Deprecated: codemie proxy disconnect --copilot-cli-otlp — use codemie proxy disconnect --copilot-otlp (it disconnects both Copilot Chat and Copilot CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy connect --claude-code-otlp — use codemie proxy connect --claude-otlp (it also connects Claude Desktop and the VS Code Claude Code extension) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy connect --claude-code-otlp — use codemie proxy connect --claude-otlp (it also connects Claude Desktop and the VS Code Claude Code extension) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-cli-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+Deprecated: codemie proxy analytics --copilot-chat-otlp — use codemie proxy analytics --copilot-otlp (it covers both Copilot connectors, Chat and CLI) instead (removal on 2026-12-31)
+ ❯ |unit| src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts (297 tests | 1 failed | 7 skipped) 33703ms
+     × moves a Codex config that is a symbolic link through the link, and a second connect leaves it 13ms
+error: unknown command 'config'
+error: unknown option '--from'
+error: unknown option '--to'
+error: unknown option '--last'
+Deprecated: codemie analytics --include-external — use codemie analytics --include-external always instead (removal on 2026-12-31)
+[33m⚠️  CodeMie profile "g" has no project of its own; this session uses project "profile-project" (last saved by setup, possibly for another profile). To fix: launch this profile once in a terminal, or run `codemie setup`.[39m
+[33m[39m- Fetching user integrations...
+- Fetching user integrations...
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |unit| src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts > connectTargets — the other clients moved off the shared key > moves a Codex config that is a symbolic link through the link, and a second connect leaves it
+Error: EPERM: operation not permitted, symlink 'C:\Users\ANDREI~1\AppData\Local\Temp\connect-client-home-qZExpx\dotfiles-config.toml' -> 'C:\Users\ANDREI~1\AppData\Local\Temp\connect-client-home-qZExpx\.codex\config.toml'
+ ❯ src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts:2766:5
+    2764|     await writeAt(target, codexConfig('Bearer gk'));
+    2765|     await mkdir(dirname(codexConfigPath()), { recursive: true });
+    2766|     await symlink(target, codexConfigPath());
+       |     ^
+    2767|
+    2768|     await connect({ claudeDesktop: true });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  |unit| src/cli/commands/proxy/connectors/__tests__/codex-desktop-roundtrip.test.ts > moveCodexDesktopToNamedKey > moves a config file that is a symbolic link through the link, and a second move leaves it
+Error: EPERM: operation not permitted, symlink 'C:\Users\ANDREI~1\AppData\Local\Temp\codex-home-l0thVo\dotfiles-config.toml' -> 'C:\Users\ANDREI~1\AppData\Local\Temp\codex-home-l0thVo\config.toml'
+ ❯ src/cli/commands/proxy/connectors/__tests__/codex-desktop-roundtrip.test.ts:283:5
+    281|     const target = join(codexHome, 'dotfiles-config.toml');
+    282|     writeFileSync(target, olderConnectConfig('Bearer codemie-proxy'));
+    283|     symlinkSync(target, getCodexDesktopConfigPath());
+       |     ^
+    284|
+    285|     await expect(moveCodexDesktopToNamedKey('codemie-proxy', 4001)).re…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed | 382 passed (384)
+      Tests  2 failed | 7310 passed | 50 skipped (7362)
+   Start at  21:05:16
+   Duration  315.93s (transform 15.37s, setup 4.40s, import 372.48s, tests 1084.72s, environment 75ms)
+

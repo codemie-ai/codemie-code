@@ -1,0 +1,23 @@
+
+> @codemieai/code@0.17.3 commitlint:last
+> commitlint --from HEAD~1 --to HEAD --verbose
+
+⧗   input: fix(providers): address remaining code review findings for headless login
+
+- Reject headless login combined with quiet output (it prints the sign-in URL)
+- Share the no-TTY message and check via utils/interactive; reuse in Anthropic setup
+- Strip terminal escape sequences from pasted input, cap paste length, and
+  leave no timer or listener behind when raw mode fails
+- Keep the caller's stdin encoding and pause state
+- Remove the unused headless parameter from promptForReauth
+- Reject cookies that are empty or not strings
+- Fall back to a manual signal when AbortSignal.any is unavailable (Node 20.0-20.2)
+- Stop storing credentials when the caller aborts during the config.js fetch
+- Move the analytics re-auth hint into an exported helper with tests
+
+Ticket: EPMCDME-16958
+
+Generated with AI
+
+Co-Authored-By: codemie-ai <codemie.ai@gmail.com>
+✔   found 0 problems, 0 warnings

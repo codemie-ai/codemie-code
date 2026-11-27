@@ -1,0 +1,4 @@
+
+> @codemieai/code@0.17.3 lint
+> eslint {src,tests}/**/*.ts src/agents/plugins/pi/extension/*.js --max-warnings=0
+

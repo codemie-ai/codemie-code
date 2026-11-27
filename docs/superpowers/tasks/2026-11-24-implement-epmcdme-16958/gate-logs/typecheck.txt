@@ -1,0 +1,4 @@
+
+> @codemieai/code@0.17.3 typecheck
+> tsc --noEmit
+

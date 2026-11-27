@@ -1,0 +1,89 @@
+
+> @codemieai/code@0.17.3 build
+> tsc && tsc-alias && npm run copy-plugin && npm run bundle-statusline && npm run bundle-omp-extension
+
+
+> @codemieai/code@0.17.3 copy-plugin
+> node scripts/copy-plugins.js
+
+Copying plugin assets...
+
+Processing Claude plugin:
+  - Removing old C:\Projects\Epam\codemie-code-dev\codemie-code\dist\agents\plugins\claude\plugin
+  - Creating C:\Projects\Epam\codemie-code-dev\codemie-code\dist\agents\plugins\claude\plugin
+  - Copying from C:\Projects\Epam\codemie-code-dev\codemie-code\src\agents\plugins\claude\plugin
+  ✓ Claude plugin copied successfully
+
+Processing Gemini extension:
+  - Removing old C:\Projects\Epam\codemie-code-dev\codemie-code\dist\agents\plugins\gemini\extension
+  - Creating C:\Projects\Epam\codemie-code-dev\codemie-code\dist\agents\plugins\gemini\extension
+  - Copying from C:\Projects\Epam\codemie-code-dev\codemie-code\src\agents\plugins\gemini\extension
+  ✓ Gemini extension copied successfully
+
+Processing Kimi extension:
+  - Removing old C:\Projects\Epam\codemie-code-dev\codemie-code\dist\agents\plugins\kimi\extension
+  - Creating C:\Projects\Epam\codemie-code-dev\codemie-code\dist\agents\plugins\kimi\extension
+  - Copying from C:\Projects\Epam\codemie-code-dev\codemie-code\src\agents\plugins\kimi\extension
+  ✓ Kimi extension copied successfully
+
+Processing Pi run-ledger extension:
+  - Removing old C:\Projects\Epam\codemie-code-dev\codemie-code\dist\agents\plugins\pi\extension
+  - Creating C:\Projects\Epam\codemie-code-dev\codemie-code\dist\agents\plugins\pi\extension
+  - Copying from C:\Projects\Epam\codemie-code-dev\codemie-code\src\agents\plugins\pi\extension
+  ✓ Pi run-ledger extension copied successfully
+
+Processing Top-level assets:
+  - Removing old C:\Projects\Epam\codemie-code-dev\codemie-code\dist\assets
+  - Creating C:\Projects\Epam\codemie-code-dev\codemie-code\dist\assets
+  - Copying from C:\Projects\Epam\codemie-code-dev\codemie-code\assets
+  ✓ Top-level assets copied successfully
+
+Processing Analytics report assets (CSS + Chart.js):
+  - Removing old C:\Projects\Epam\codemie-code-dev\codemie-code\dist\cli\commands\analytics\report\assets
+  - Creating C:\Projects\Epam\codemie-code-dev\codemie-code\dist\cli\commands\analytics\report\assets
+  - Copying from C:\Projects\Epam\codemie-code-dev\codemie-code\src\cli\commands\analytics\report\assets
+  ✓ Analytics report assets (CSS + Chart.js) copied successfully
+
+Processing Analytics report client app:
+  - Removing old C:\Projects\Epam\codemie-code-dev\codemie-code\dist\cli\commands\analytics\report\client
+  - Creating C:\Projects\Epam\codemie-code-dev\codemie-code\dist\cli\commands\analytics\report\client
+  - Copying from C:\Projects\Epam\codemie-code-dev\codemie-code\src\cli\commands\analytics\report\client
+  ✓ Analytics report client app copied successfully
+
+Processing Analytics sync bootstrap flow template:
+  - Removing old C:\Projects\Epam\codemie-code-dev\codemie-code\dist\cli\commands\analytics\sync\bootstrap\flow-template
+  - Creating C:\Projects\Epam\codemie-code-dev\codemie-code\dist\cli\commands\analytics\sync\bootstrap\flow-template
+  - Copying from C:\Projects\Epam\codemie-code-dev\codemie-code\src\cli\commands\analytics\sync\bootstrap\flow-template
+  ✓ Analytics sync bootstrap flow template copied successfully
+
+Processing Analytics report template:
+  ✓ Analytics report template copied successfully
+
+Processing Model pricing table:
+  ✓ Model pricing table copied successfully
+
+Processing Routing headers domain module:
+  ✓ Routing headers domain module copied successfully
+
+Processing Bedrock pricing domain module:
+  ✓ Bedrock pricing domain module copied successfully
+
+Plugin assets copied successfully!
+
+> @codemieai/code@0.17.3 bundle-statusline
+> node scripts/bundle-statusline.mjs
+
+
+  dist\agents\plugins\claude\plugin\statusline.bundle.mjs  45.3kb
+
+⚡ Done in 15ms
+Statusline bundled successfully!
+
+> @codemieai/code@0.17.3 bundle-omp-extension
+> node scripts/bundle-omp-extension.mjs
+
+
+  dist\cli\commands\proxy\connectors\omp\codemie-models.bundle.js  8.8kb
+
+⚡ Done in 12ms
+omp extension bundled successfully!
