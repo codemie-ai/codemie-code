@@ -233,7 +233,9 @@ describe('disconnectTargets — the analytics aggregates', () => {
    */
   async function machine(
     found: Array<'desktop' | 'vscode' | 'vscodeInsiders' | 'claude'>,
-    configured: Array<'desktop' | 'desktopProxy' | 'claudeCode' | 'routeStable' | 'routeInsiders'> = [],
+    configured: Array<
+      'desktop' | 'desktopProxy' | 'claudeCode' | 'routeStable' | 'routeInsiders' | 'foreignStable' | 'foreignInsiders'
+    > = [],
   ): Promise<void> {
     if (found.includes('desktop')) await mkdir(join(home, 'Applications', 'Claude.app'), { recursive: true });
     vi.doMock('@/telemetry/clients/claude-desktop/claude-desktop.paths.js', async (importOriginal) => ({
@@ -275,6 +277,11 @@ describe('disconnectTargets — the analytics aggregates', () => {
       // The extension's route in an edition's settings.json, pointed at a local CodeMie gateway.
       readVsCodeClaudeCodeGateway: async (_key: string, insiders = false) =>
         configured.includes(insiders ? 'routeInsiders' : 'routeStable') ? { port: 4001, key: 'named' } : null,
+      // What the client-target table asks: the route is CodeMie's (`ours`), another gateway's (`foreign`) or none.
+      readVsCodeClaudeCodeRouteState: async (_key: string, insiders = false) => {
+        if (configured.includes(insiders ? 'routeInsiders' : 'routeStable')) return 'ours';
+        return configured.includes(insiders ? 'foreignInsiders' : 'foreignStable') ? 'foreign' : 'none';
+      },
     }));
     vi.doMock('../connectors/claude-code-otlp.js', async (importOriginal) => ({
       ...(await importOriginal<typeof import('../connectors/claude-code-otlp.js')>()),
@@ -418,6 +425,16 @@ describe('disconnectTargets — the analytics aggregates', () => {
 
     it('an installed edition with no route: nothing to disconnect for that edition', async () => {
       await machine(['vscode', 'vscodeInsiders'], ['routeInsiders']);
+      const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+
+      await disconnectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });
+
+      expect(removers.vscode.mock.calls).toEqual([['codemie-proxy', true]]);
+      expect(lines()).toContain('VS Code Claude Code extension: nothing to disconnect.');
+    });
+
+    it('an edition on another tool\'s gateway is not removed: nothing to disconnect for it', async () => {
+      await machine(['vscode', 'vscodeInsiders'], ['routeInsiders', 'foreignStable']);
       const { disconnectTargets } = await import('../disconnect-orchestrator.js');
 
       await disconnectTargets({ targets: CLAUDE, aggregates: ['claude-otlp'] });

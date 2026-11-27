@@ -71,6 +71,8 @@ import {
   aggregateConnectExamples,
   aggregateFlagOf,
   aggregateListRows,
+  EXTENSION_ANALYTICS_ON,
+  EXTENSION_ANALYTICS_ON_OTHER_GATEWAY,
   failAggregateInvalidProjectList,
   failDesktopWithoutCodeMieUrl,
   memberFlag,
@@ -182,10 +184,8 @@ export function routeBillingLine(): string {
   return `  Its model requests now go through the gateway, not your Claude login.`;
 }
 
-const EXTENSION_SKIP_LINE =
-  '✓ VS Code Claude Code extension: analytics on (uses your Claude login; model routing unchanged)';
-const EXTENSION_OTHER_GATEWAY_SKIP_LINE =
-  '✓ VS Code Claude Code extension: analytics on (uses another gateway or key; model routing unchanged)';
+const EXTENSION_SKIP_LINE = `✓ VS Code Claude Code extension: ${EXTENSION_ANALYTICS_ON}`;
+const EXTENSION_OTHER_GATEWAY_SKIP_LINE = `✓ VS Code Claude Code extension: ${EXTENSION_ANALYTICS_ON_OTHER_GATEWAY}`;
 const EXTENSION_SWITCH_HINT = '  To route it through the proxy: codemie proxy connect --vscode-claude-code';
 const DESKTOP_SWITCH_HINT =
   'Desktop analytics needs the gateway; to switch it: codemie proxy connect --claude-desktop';

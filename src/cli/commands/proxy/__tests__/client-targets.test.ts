@@ -37,7 +37,15 @@ vi.mock('../daemon-manager.js', async (importOriginal) => ({
 const APPLIED_DESKTOP_GATEWAY = { port: 4001, apiKey: 'secret-gateway-key.claude-desktop' };
 const desktopReads = vi.hoisted(() => ({
   applied: vi.fn(),
+  /** The applied config when its key is CodeMie's (`readDesktopGateway`), else null. */
+  owned: vi.fn(),
   codemie: vi.fn(),
+}));
+const gatewayReads = vi.hoisted(() => ({
+  /** `readVsCodeClaudeCodeRouteState`: the extension's route is `ours`, `foreign` or `none`. */
+  extension: vi.fn(),
+  /** `readCodexDesktopGateway`. */
+  codex: vi.fn(),
 }));
 vi.mock('@/telemetry/clients/claude-desktop/claude-desktop.gateway.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/telemetry/clients/claude-desktop/claude-desktop.gateway.js')>()),
@@ -45,16 +53,17 @@ vi.mock('@/telemetry/clients/claude-desktop/claude-desktop.gateway.js', async (i
 }));
 vi.mock('../connectors/desktop.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../connectors/desktop.js')>()),
-  readDesktopGateway: async () => ({ port: 4001 }),
+  readDesktopGateway: (...args: unknown[]) => desktopReads.owned(...args),
   readCodeMieDesktopGateway: (...args: unknown[]) => desktopReads.codemie(...args),
 }));
 vi.mock('../connectors/vscode-claude-code.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../connectors/vscode-claude-code.js')>()),
   readVsCodeClaudeCodeGateway: async () => null,
+  readVsCodeClaudeCodeRouteState: (...args: unknown[]) => gatewayReads.extension(...args),
 }));
 vi.mock('../connectors/codex-desktop-named-key.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../connectors/codex-desktop-named-key.js')>()),
-  readCodexDesktopGateway: async () => null,
+  readCodexDesktopGateway: (...args: unknown[]) => gatewayReads.codex(...args),
 }));
 vi.mock('../connectors/vscode.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../connectors/vscode.js')>()),
@@ -173,7 +182,10 @@ describe('client-target table', () => {
     });
     readDaemonStatus.mockResolvedValue({ running: true, state: STATE });
     desktopReads.applied.mockReset().mockResolvedValue(APPLIED_DESKTOP_GATEWAY);
+    desktopReads.owned.mockReset().mockResolvedValue({ port: 4001 });
     desktopReads.codemie.mockReset().mockResolvedValue(null);
+    gatewayReads.extension.mockReset().mockResolvedValue('none');
+    gatewayReads.codex.mockReset().mockResolvedValue(null);
     collectAnalyticsClients.mockResolvedValue(ANALYTICS_ROWS);
     originalFetch = globalThis.fetch;
     globalThis.fetch = vi.fn(async () => ({
@@ -237,6 +249,7 @@ describe('client-target table', () => {
     const desktop = CLIENT_TARGETS.find((target) => target.id === 'claude-desktop');
     // A foreign config is applied: the applied reader sees no loopback gateway.
     desktopReads.applied.mockResolvedValue(null);
+    desktopReads.owned.mockResolvedValue(null);
 
     desktopReads.codemie.mockResolvedValue(null);
     expect(await desktop?.isConnected()).toBe(false);
@@ -246,6 +259,44 @@ describe('client-target table', () => {
     expect((await listConnectedClientTargets()).map((target) => target.id)).toContain('claude-desktop');
     // What Desktop actually uses (the status/doctor key reading) stays on the applied entry.
     expect(await desktop?.gateway?.read(STATE)).toBeNull();
+  });
+
+  it('Claude Desktop applied on another tool\'s gateway is not connected, and not a disconnect --all target', async () => {
+    const { CLIENT_TARGETS, listConnectedClientTargets } = await import('../client-targets.js');
+    const desktop = CLIENT_TARGETS.find((target) => target.id === 'claude-desktop');
+    desktopReads.applied.mockResolvedValue({ port: 4999, apiKey: 'other-tool-key' });
+    desktopReads.owned.mockResolvedValue(null);
+
+    expect(await desktop?.isConnected()).toBe(false);
+    expect((await listConnectedClientTargets()).map((target) => target.id)).not.toContain('claude-desktop');
+  });
+
+  it.each([
+    ['vscode-claude-code', false],
+    ['vscode-claude-code-insiders', true],
+  ])('%s is connected only for a route of CodeMie\'s: ours, not another gateway or a key of its own', async (id, insiders) => {
+    const { CLIENT_TARGETS } = await import('../client-targets.js');
+    const extension = CLIENT_TARGETS.find((target) => target.id === id);
+
+    for (const [route, connected] of [['ours', true], ['foreign', false], ['none', false]] as const) {
+      gatewayReads.extension.mockResolvedValue(route);
+      expect(await extension?.isConnected(), route).toBe(connected);
+    }
+    // No daemon state is recorded here, so the route is judged by the shared default key, in its own edition.
+    const { DEFAULT_GATEWAY_KEY } = await import('../daemon-manager.js');
+    expect(gatewayReads.extension).toHaveBeenLastCalledWith(DEFAULT_GATEWAY_KEY, insiders);
+  });
+
+  it('Codex desktop on a key this proxy refuses is not connected; on the shared key, on another port, it is', async () => {
+    const { CLIENT_TARGETS } = await import('../client-targets.js');
+    const codex = CLIENT_TARGETS.find((target) => target.id === 'codex-desktop');
+
+    gatewayReads.codex.mockResolvedValue({ port: 4999, key: 'refused' });
+    expect(await codex?.isConnected()).toBe(false);
+    gatewayReads.codex.mockResolvedValue({ port: 4999, key: 'shared' });
+    expect(await codex?.isConnected()).toBe(true);
+    gatewayReads.codex.mockResolvedValue(null);
+    expect(await codex?.isConnected()).toBe(false);
   });
 
   it('each row disconnects through its own remover, with the Insiders flag and the user scope', async () => {

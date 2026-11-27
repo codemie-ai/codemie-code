@@ -22,11 +22,17 @@ import { getClaudeSettingsPath } from '@/agents/plugins/claude-code-otlp/claude-
 import { DEFAULT_GATEWAY_KEY, readState, type DaemonState } from './daemon-manager.js';
 import { ANALYTICS_CONNECTORS, type AnalyticsConnectorId, type ConnectorScopeRead } from './analytics-connectors.js';
 import { vendorFlag } from './flag-list.js';
-import { getDesktopBaseDir, moveDesktopToNamedKey, readCodeMieDesktopGateway } from './connectors/desktop.js';
+import {
+  getDesktopBaseDir,
+  moveDesktopToNamedKey,
+  readCodeMieDesktopGateway,
+  readDesktopGateway,
+} from './connectors/desktop.js';
 import {
   getVsCodeClaudeCodeSettingsPath,
   moveVsCodeClaudeCodeToNamedKey,
   readVsCodeClaudeCodeGateway,
+  readVsCodeClaudeCodeRouteState,
 } from './connectors/vscode-claude-code.js';
 import { moveCodexDesktopToNamedKey, readCodexDesktopGateway } from './connectors/codex-desktop-named-key.js';
 import { getCodexDesktopConfigPath } from './connectors/codex-desktop.js';
@@ -116,12 +122,31 @@ async function readDesktopConfigured(state: DaemonState): Promise<ConnectorGatew
 }
 
 /**
- * Claude Desktop has something for `disconnect` to clean: its applied config points at a local gateway, or its CodeMie
- * entry (`CodeMie Proxy`) points at the local proxy while another config is applied.
+ * Claude Desktop is connected to CodeMie: its applied config points at a local gateway with a key CodeMie's daemon
+ * accepts, or its CodeMie entry (`CodeMie Proxy`) points at the local proxy while another config is applied. The pair
+ * `disconnect` acts on, so `proxy clients` never names a disconnect that has nothing to remove: an applied config on
+ * another tool's gateway is not connected.
  */
 async function isDesktopConnected(): Promise<boolean> {
-  if ((await readDesktopConfigured(await probeDaemonState())) !== null) return true;
+  if ((await readDesktopGateway()) !== null) return true;
   return (await readCodeMieDesktopGateway()) !== null;
+}
+
+/**
+ * The extension's model route is CodeMie's: a loopback `ANTHROPIC_BASE_URL` with a key the daemon accepts. The state
+ * `connect` and `disconnect` decide by; another gateway, or a key or provider of the user's own, is not connected.
+ */
+function isExtensionConnected(insiders: boolean): () => Promise<boolean> {
+  return async () => (await readVsCodeClaudeCodeRouteState((await probeDaemonState()).gatewayKey, insiders)) === 'ours';
+}
+
+/**
+ * A gateway config is connected to CodeMie when it points at a local gateway and its key is not one the daemon
+ * refuses. A config that holds no key (VS Code BYOK) reads connected on the gateway alone.
+ */
+async function isGatewayConnected(gateway: ClientGatewaySpec): Promise<boolean> {
+  const read = await gateway.read(await probeDaemonState());
+  return read !== null && read.key !== 'refused';
 }
 
 function gatewayTarget(
@@ -129,7 +154,7 @@ function gatewayTarget(
 ): ClientTarget {
   return {
     ...target,
-    isConnected: target.isConnected ?? (async () => (await target.gateway.read(await probeDaemonState())) !== null),
+    isConnected: target.isConnected ?? (() => isGatewayConnected(target.gateway)),
   };
 }
 
@@ -171,7 +196,8 @@ export const CLIENT_TARGETS: readonly ClientTarget[] = [
     flag: '--claude-desktop',
     label: 'Claude Desktop',
     configLocation: () => join(getDesktopBaseDir(), 'configLibrary'),
-    // `gateway.read` stays on the applied entry (what Desktop uses); connected also counts a non-applied CodeMie entry.
+    // `gateway.read` stays on the applied entry (what Desktop uses); connected judges its key, and also counts a
+    // non-applied CodeMie entry.
     isConnected: isDesktopConnected,
     disconnect: () => disconnectClaudeDesktop(),
     // Its Cowork sessions go through the same analytics delivery.
@@ -192,6 +218,7 @@ export const CLIENT_TARGETS: readonly ClientTarget[] = [
     flag: '--vscode-claude-code',
     label: 'VS Code Claude Code extension',
     configLocation: () => getVsCodeClaudeCodeSettingsPath(false),
+    isConnected: isExtensionConnected(false),
     disconnect: () => disconnectVsCodeClaudeCode(false),
     carriesAnalytics: false,
     gateway: {
@@ -208,6 +235,7 @@ export const CLIENT_TARGETS: readonly ClientTarget[] = [
     flag: '--vscode-claude-code --insiders',
     label: 'VS Code Insiders Claude Code extension',
     configLocation: () => getVsCodeClaudeCodeSettingsPath(true),
+    isConnected: isExtensionConnected(true),
     disconnect: () => disconnectVsCodeClaudeCode(true),
     carriesAnalytics: false,
     gateway: {
