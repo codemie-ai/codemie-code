@@ -1,0 +1,146 @@
+{
+  "schema": 1,
+  "branch": "fix/epmcdme-17708-desktop-connect",
+  "head": "9bdb0f66dc307373c7d8a1decb49d203468fa782",
+  "runner": "npm",
+  "started_at": "2026-11-24T15:09:27Z",
+  "completed_at": "2026-11-24T15:25:38Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2019,
+      "command": "npm run license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3681,
+      "command": "npm run lint",
+      "exit_code": 0
+    },
+    {
+      "id": "typecheck",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5002,
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 11892,
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 201926,
+      "command": "npx vitest run --project unit",
+      "exit_code": 1,
+      "notes": "Failing specs are in src/cli/commands/__tests__/hook.session-delivery.test.ts and src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts, neither touched by the diff; mostly 30s timeouts. Failing set changed between runs (isolated rerun of both files: 1 different spec failed in hook.session-delivery) - timing-sensitive, caller to rule."
+    },
+    {
+      "id": "integration",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 102918,
+      "command": "npx vitest run --project cli",
+      "exit_code": 0,
+      "notes": "Also covers CI test-ubuntu step; CI test-windows job not runnable locally (needs a windows-latest runner)."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 659,
+      "command": "npm run validate:secrets",
+      "exit_code": 0,
+      "notes": "Self-skip: exited 0 but printed \"No staged changes to scan\" - scans only staged files. Owed to CI Security job (reusable-secrets-detection). To run locally: stage the branch changes (Docker running) or run gitleaks over 5edd7e24c1703c32113765bb805d7ec6466da241..HEAD."
+    },
+    {
+      "id": "commitlint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 528,
+      "command": "npm run commitlint:last",
+      "exit_code": 0,
+      "notes": "Checks HEAD~1..HEAD only; full branch range covered by hook-commitlint-range."
+    },
+    {
+      "id": "pre-commit-aggregate",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 8852,
+      "command": "npm run check:pre-commit",
+      "exit_code": 0
+    },
+    {
+      "id": "full-ci",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 215015,
+      "command": "npm run ci",
+      "exit_code": 1,
+      "notes": "Failed at the vitest unit step (3 copilot-managed-report specs timed out at 30s); same flaky specs as the unit gate. Stops at first failure, so the trailing vitest --project cli step did not run inside this gate (it passed standalone as 'integration')."
+    },
+    {
+      "id": "hook-commitlint-range",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 846,
+      "command": "npx --no -- commitlint --from 5edd7e24c1703c32113765bb805d7ec6466da241 --to HEAD --verbose",
+      "exit_code": 0,
+      "notes": ".husky/commit-msg runs commitlint --edit on every commit; replayed over all 5 branch commits."
+    },
+    {
+      "id": "hook-lint-staged-related",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 209623,
+      "command": "npx vitest related --run --exclude 'tests/integration/agent-*.test.ts' --exclude tests/integration/cli-commands/models.test.ts <changed *.ts files in 5edd7e24c1703c32113765bb805d7ec6466da241...HEAD>",
+      "exit_code": 0,
+      "notes": "Mirrors .husky/pre-commit lint-staged '*.ts' vitest related step over the branch diff (nothing staged); eslint half covered by lint gate."
+    },
+    {
+      "id": "ci-secrets-detection",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "codemie-ai/ci-workflows/.github/workflows/reusable-secrets-detection.yml@main",
+      "exit_code": null,
+      "notes": "Remote reusable workflow; not runnable locally. Local equivalent self-skipped (see secrets)."
+    },
+    {
+      "id": "ci-pr-title",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "codemie-ai/ci-workflows/.github/workflows/reusable-commit-lint.yml@main",
+      "exit_code": null,
+      "notes": "Lints PR title; no PR exists yet. Remote reusable workflow."
+    },
+    {
+      "id": "ci-test-windows",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "npx vitest run --project unit && npx vitest run --project cli (windows-latest)",
+      "exit_code": null,
+      "notes": "Requires a Windows runner; not reachable locally."
+    }
+  ],
+  "failures": {
+    "unit": "    1683|     expect(existsSync(join(sessionsDir, `${session.sessionId}.json`)))\u2026\n    1684|     expect(readRecord(session.sessionId).droppedAt).toBeUndefined();\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[1/4]\u23af\n\n FAIL  |unit| src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts > analytics --agent copilot-cli --last 24h --export json > keeps the report shape the Collector consumes\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n \u276f src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts:134:3\n    132|   });\n    133|\n    134|   it('keeps the report shape the Collector consumes', async () => {\n       |   ^\n    135|     const r = await report('copilot-cli');\n    136|\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[2/4]\u23af\n\n FAIL  |unit| src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts > analytics --agent copilot-cli --last 24h --export json > leaves Claude output unchanged by the Copilot data\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n \u276f src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts:148:3\n    146|   });\n    147|\n    148|   it('leaves Claude output unchanged by the Copilot data', async () =>\u2026\n       |   ^\n    149|     const r = await report('claude');\n    150|\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[3/4]\u23af\n\n FAIL  |unit| src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts > analytics cost over copilot runs and kept sessions > prices a resumed copilot run from its own window of the shared native session, not into the session it resumed\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n \u276f src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts:178:3\n    176|   }\n    177|\n    178|   it('prices a resumed copilot run from its own window of the shared n\u2026\n       |   ^\n    179|     const base = NOW - HOUR / 2;\n    180|     const file = resumedSession(base);\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[4/4]\u23af\n\n\n Test Files  2 failed | 661 passed (663)\n      Tests  4 failed | 12649 passed (12653)\n   Start at  17:09:54\n   Duration  200.42s (transform 38.70s, setup 5.26s, import 233.26s, tests 679.79s, environment 68ms)\n\n",
+    "full-ci": "     \u00d7 keeps the report shape the Collector consumes 30168ms\n     \u00d7 leaves Claude output unchanged by the Copilot data 30008ms\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af Failed Tests 3 \u23af\u23af\u23af\u23af\u23af\u23af\u23af\n\n FAIL  |unit| src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts > analytics --agent copilot-cli --last 24h --export json > reports correct turns, model and token totals, and keeps a zero-turn session at 0 turns\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n \u276f src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts:120:3\n    118|   });\n    119|\n    120|   it('reports correct turns, model and token totals, and keeps a zero-\u2026\n       |   ^\n    121|     const r = await report('copilot-cli');\n    122|     const by = (id: string) => r.sessions.find((s) => s.sessionId === \u2026\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[1/3]\u23af\n\n FAIL  |unit| src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts > analytics --agent copilot-cli --last 24h --export json > keeps the report shape the Collector consumes\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n \u276f src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts:134:3\n    132|   });\n    133|\n    134|   it('keeps the report shape the Collector consumes', async () => {\n       |   ^\n    135|     const r = await report('copilot-cli');\n    136|\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[2/3]\u23af\n\n FAIL  |unit| src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts > analytics --agent copilot-cli --last 24h --export json > leaves Claude output unchanged by the Copilot data\nError: Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with \"testTimeout\".\n \u276f src/cli/commands/analytics/__tests__/copilot-managed-report.test.ts:148:3\n    146|   });\n    147|\n    148|   it('leaves Claude output unchanged by the Copilot data', async () =>\u2026\n       |   ^\n    149|     const r = await report('claude');\n    150|\n\n\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af\u23af[3/3]\u23af\n\n\n Test Files  1 failed | 662 passed (663)\n      Tests  3 failed | 12650 passed (12653)\n   Start at  17:15:25\n   Duration  196.93s (transform 35.14s, setup 4.67s, import 219.82s, tests 653.90s, environment 56ms)\n\n"
+  }
+}

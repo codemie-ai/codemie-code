@@ -1,0 +1,31 @@
+{
+  "decision": "request-changes",
+  "rationale": "One real regression: install unregisters only owned jobs that query() reported enabled, so disabled or unqueryable old/default jobs are left behind (verified in install.ts). The standards audit had a coverage gap (security checklist not read). 7 candidates dismissed as by-design or below the floor (uninstall abort on unreadable settings is AC9, shared log is spec, case collisions, prompt default); stale-test gaps are not flagged per user instruction.",
+  "confidence": "low",
+  "risk_flags": ["public-api"],
+  "business_review": [
+    {"kind": "story-ac", "item": "AC4: suffix persisted; uninstall/status use resolved name; default install unchanged", "status": "partial", "notes": "Default install no longer unregisters the default name unconditionally"},
+    {"kind": "story-ac", "item": "AC5: reinstall with new suffix leaves exactly one job", "status": "partial", "notes": "Disabled/unqueryable old or default jobs are not unregistered"},
+    {"kind": "story-ac", "item": "AC1-3, AC6-AC11", "status": "pass", "notes": "Per acceptance lens"}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "na", "notes": "git-workflow guide was supplied, but diff_base..HEAD holds no commits: the change is uncommitted working-tree edits, so there are no subjects to check"},
+    {"kind": "code-quality", "status": "pass", "notes": "No console.log, require(), any, or missing .js extensions. Function and file length limits were not measured"},
+    {"kind": "security", "status": "na", "notes": "Security checklist not read (guide at .ai-run/guides/security/security-practices.md not opened). Spot check found no issue; Windows XML generation not reviewed"}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/analytics/sync/install.ts",
+      "line": 342,
+      "title": "Install skips unregistering non-enabled owned jobs",
+      "problem": "snapshotPreviousInstall keeps in previous.jobs only owned names whose query() returned enabled (query errors map to disabled), and replaceJob unregisters only previous.jobs. The previous code unregistered the default name unconditionally, and unregister() is documented to remove enabled or disabled jobs. A disabled or unqueryable old-suffix or default-name job is left on disk. PreviousInstall.names ('the only names install may unregister') is populated but never used.",
+      "impact": "Reinstall under a new name can leave a stale job registered, breaking the 'exactly one job' guarantee (AC4/AC5, spec step 7). A transient query failure silently skips removal. Reachability confirmed by reading the code.",
+      "recommendation": "In replaceJob, unregister every name in previous.names (tolerant of absent jobs). Keep restorePreviousInstall limited to previous.jobs (previously enabled)."
+    }
+  ],
+  "deferred": []
+}

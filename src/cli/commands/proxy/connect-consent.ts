@@ -13,6 +13,7 @@ import { currentEvidenceIdentity } from '@/agents/core/evidence/hook-identity.js
 import { connectAllFolders, connectFolder } from '@/agents/core/evidence/consent-store.js';
 import type { AllowlistScope } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.allowlist.js';
 import { resolveConsentProject } from './consent-project.js';
+import { RESEND_COMMAND } from './analytics-targets.js';
 import type { TargetResult } from './connect-orchestrator.js';
 
 /** The label of the consent step in the connect summary. */
@@ -41,6 +42,7 @@ export async function recordConnectConsent(scope: AllowlistScope): Promise<Targe
       await connectFolder({ ...identity, project: await resolveConsentProject(root) }, root);
     }
     console.log(chalk.green(`✓ Analytics from personal Claude subscriptions will be sent for ${scope === 'user' ? 'any repository' : 'this repository'} (applies to new sessions only).`));
+    console.log(chalk.dim(`  Sessions already held for lack of consent: ${RESEND_COMMAND}`));
     return { label: WORK_CONSENT_LABEL, ok: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

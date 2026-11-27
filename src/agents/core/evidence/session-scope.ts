@@ -1,3 +1,4 @@
+import { readClaudeAnalyticsPreferences } from '@/agents/plugins/claude-code-otlp/claude-code-otlp.preferences.js';
 import { consentHolds } from './consent-store.js';
 import type { EvidenceRecord } from './record-store.js';
 import type { StopReason } from './stop-marker.js';
@@ -16,6 +17,17 @@ const canon = (p: string): string => p.trim().toLowerCase();
 
 /** A frozen collection generation is the evidence that the session's scope was recorded; the funding claim is a separate wire fact. */
 export const hasScopeEvidence = (record: EvidenceRecord): boolean => record.collection_generation !== undefined;
+
+/**
+ * The collection generation `record` must still match: the Claude preference's, except for an agent with its own
+ * collection controls (Copilot: its enable/exclusion gate stops new hooks), whose generation never changes.
+ * `undefined` = unreadable preferences (nothing is sent).
+ */
+export async function currentGeneration(record: EvidenceRecord): Promise<number | undefined> {
+  if (record.agent === 'copilot-cli-otlp') return 0;
+  const prefs = await readClaudeAnalyticsPreferences();
+  return prefs.kind === 'ok' ? prefs.value.collectionGeneration : undefined;
+}
 
 /**
  * Why a recorded session must stop for content seen under `facts`, or undefined when it still holds.

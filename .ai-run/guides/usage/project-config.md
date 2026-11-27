@@ -12,7 +12,7 @@ Settings resolve in this order (highest wins):
 CLI args > Environment variables > Project config > Global config > Defaults
 ```
 
-Diagnostic: `codemie profile status --show-sources` prints each field with its source label (`cli`, `env`, `project`, `global`, `default`).
+Diagnostic: `codemie profile status --show-sources` prints each field with its source label (`cli`, `env` for the shell, `.env` for a value loaded from `<cwd>/.env`, `project`, `global`, `default`).
 
 ---
 
