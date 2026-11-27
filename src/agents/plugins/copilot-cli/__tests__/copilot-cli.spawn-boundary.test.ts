@@ -100,11 +100,12 @@ describe('Copilot child spawn boundary', () => {
     expect(env[PINNED_NATIVE_SESSION_ENV]).toBeUndefined();
   });
 
-  it('a different endpoint that is still present, or no launch copy, never proves the route', async () => {
+  it('rejects a mismatched endpoint or a missing launch copy', async () => {
     const { env } = await launch(['-p', 'hi']);
     expect(copilotRouteProof(true, { ...env, COPILOT_PROVIDER_BASE_URL: 'https://byok.example.org/v1' })).toBeUndefined();
     const stripped = { ...env };
     delete stripped['COPILOT_PROVIDER_BASE_URL'];
+    expect(copilotRouteProof(true, { ...stripped, [LAUNCH_PROVIDER_BASE_URL_ENV]: 'https://byok.example.org/v1' })).toBeUndefined();
     delete stripped[LAUNCH_PROVIDER_BASE_URL_ENV];
     expect(copilotRouteProof(true, stripped)).toBeUndefined();
     expect(copilotRouteProof(false, env)).toBeUndefined();
