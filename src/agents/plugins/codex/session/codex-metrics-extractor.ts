@@ -8,6 +8,7 @@
 import type { FileOperation } from '../../../core/metrics/types.js';
 import type { CodexRolloutRecord } from '../codex-message-types.js';
 import { extractCodexNamedInvocations } from './codex-named-invocations.js';
+import { collectApplyPatchCalls } from './codex-apply-patch.js';
 
 interface ResponseItemPayload {
   type?: string;
@@ -16,48 +17,6 @@ interface ResponseItemPayload {
   arguments?: string;
   input?: string;
   output?: string;
-  status?: string;
-}
-
-/**
- * Parse a Codex `apply_patch` envelope into per-file operations. Handles Add / Update / Delete
- * headers and attributes added/removed lines to the file they appear under (the patch groups
- * hunks beneath each `*** <Op> File:` header), instead of splitting a session-wide total evenly.
- */
-function fileOpsFromPatch(patch: string): FileOperation[] {
-  const ops: FileOperation[] = [];
-  let current: { op: FileOperation; added: number; removed: number } | null = null;
-  const flush = (): void => {
-    if (current) {
-      current.op.linesAdded = current.added;
-      current.op.linesRemoved = current.removed;
-      current.op.linesModified = current.added + current.removed;
-      ops.push(current.op);
-      current = null;
-    }
-  };
-  for (const line of patch.split('\n')) {
-    const header = /^\*\*\* (Add|Update|Delete) File: (.+)$/.exec(line.trim());
-    if (header) {
-      flush();
-      current = {
-        op: { type: header[1] === 'Delete' ? 'delete' : 'edit', path: header[2].trim() },
-        added: 0,
-        removed: 0,
-      };
-      continue;
-    }
-    if (!current) {
-      continue;
-    }
-    if (line.startsWith('+') && !line.startsWith('+++')) {
-      current.added += 1;
-    } else if (line.startsWith('-') && !line.startsWith('---')) {
-      current.removed += 1;
-    }
-  }
-  flush();
-  return ops;
 }
 
 /** Tool + file-op + named-invocation metrics from rollout records. */
@@ -67,6 +26,8 @@ export function extractCodexMetrics(records: CodexRolloutRecord[]): ParsedSessio
   const fileOperations: FileOperation[] = [];
   const callTool = new Map<string, string>();
   const resolved = new Set<string>();
+  const patchCalls = collectApplyPatchCalls(records);
+  const patchOk = new Map(patchCalls.map((c) => [c.callId, c.ok]));
 
   for (const record of records) {
     if (record.type === 'event_msg') {
@@ -113,17 +74,25 @@ export function extractCodexMetrics(records: CodexRolloutRecord[]): ParsedSessio
         }
       }
     } else if (item.type === 'custom_tool_call' && item.name === 'apply_patch' && item.input) {
+      // A call without a result yet is skipped, as the incremental processor does, so both paths agree.
+      const outcome = item.call_id ? patchOk.get(item.call_id) : undefined;
+      if (outcome === undefined) {
+        continue;
+      }
       toolCounts.apply_patch = (toolCounts.apply_patch || 0) + 1;
       if (!toolStatus.apply_patch) {
         toolStatus.apply_patch = { success: 0, failure: 0 };
       }
-      if (item.status === 'completed' || !item.status) {
+      if (outcome === true) {
         toolStatus.apply_patch.success += 1;
       } else {
         toolStatus.apply_patch.failure += 1;
       }
-      fileOperations.push(...fileOpsFromPatch(item.input));
     }
+  }
+
+  for (const call of patchCalls) {
+    if (call.ok) fileOperations.push(...call.fileOperations);
   }
 
   for (const [toolName, count] of Object.entries(toolCounts)) {
