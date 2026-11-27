@@ -23,6 +23,7 @@ import { hookEventProjectNames } from './session-project.js';
 
 const STALE_TMP_MS = 60 * 60_000;
 const EXPIRED_REASON = 'owner_unresolved_expired';
+const UNDELIVERED_EXPIRED_REASON = 'daemon_undelivered_expired';
 
 const list = (dir: string): Promise<string[]> => readdir(dir).catch(() => []);
 
@@ -44,16 +45,25 @@ async function sweepPending(now: number): Promise<void> {
           const bytes = (await stat(path)).size;
           let sessionId = '';
           let events = 1;
+          let undelivered = false;
           try {
             const entry = JSON.parse(await readFile(path, 'utf8')) as Partial<PendingOwnerEntry>;
             sessionId = typeof entry.session_id === 'string' ? entry.session_id : '';
             events = Array.isArray(entry.events) ? Math.max(1, entry.events.length) : 1;
+            undelivered = entry.undelivered === true;
           } catch {
-            /* unreadable: still expires */
+            /* unreadable: still expires, with the identity-outage reason */
           }
           await unlink(path);
-          logger.warn('[owner-pending] held hook events dropped: owner not resolved within the retention window', ...sanitizeLogArgs({ reason: EXPIRED_REASON, bytes, events }));
-          if (sessionId && isSafeSessionId(sessionId)) await recordStampLoss(sessionId, EXPIRED_REASON, events, now);
+          // A known-owner entry the daemon never took has no unresolved owner: it names its own loss.
+          const reason = undelivered ? UNDELIVERED_EXPIRED_REASON : EXPIRED_REASON;
+          logger.warn(
+            undelivered
+              ? '[owner-pending] held hook events dropped: the daemon did not take them within the retention window'
+              : '[owner-pending] held hook events dropped: owner not resolved within the retention window',
+            ...sanitizeLogArgs({ reason, bytes, events })
+          );
+          if (sessionId && isSafeSessionId(sessionId)) await recordStampLoss(sessionId, reason, events, now);
         }
       } catch (error) {
         logger.debug(`[owner-pending] sweep skipped an entry: ${error instanceof Error ? error.name : 'error'}`);
@@ -129,7 +139,7 @@ async function replayEntry(
   const covered = lifecycle?.skipAppend(entry.agentName, entry.session_id, events);
   let deduplicated = false;
   const skipIf = covered && (async (): Promise<boolean> => (deduplicated = await covered()));
-  const appended = await appendSpool(entry.session_id, 'hooks', lines.join('\n') + '\n', events.flatMap((event) => hookEventProjectNames(event)), { carriedSince: entry.first_at, skipIf });
+  const appended = await appendSpool(entry.session_id, 'hooks', lines.join('\n') + '\n', events.flatMap((event) => hookEventProjectNames(event)), { carriedSince: entry.undelivered ? undefined : entry.first_at, skipIf });
   if (!appended && !deduplicated) return false; // not the head of the pending range, or too many ranges: stays queued with its original age
   await rename(path, path.replace(/\.json$/, '.done'));
   await unlink(path.replace(/\.json$/, '.done')).catch(() => undefined);

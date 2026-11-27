@@ -8,7 +8,8 @@ import { resolveIdentityFields, resolveProjectAtCwd, type IdentityFields, type P
 import { resolveBranchStory } from './story-resolver.js';
 import { stampEvidence, type EvidenceInputs } from './evidence/stamp.js';
 import { frozenProfileOf, type EvidenceRecord } from './evidence/record-store.js';
-import { enqueuePendingOwner } from './evidence/owner-pending.js';
+import { enqueuePendingOwner, type PendingFields } from './evidence/owner-pending.js';
+import type { SSOCredentials } from '@/providers/core/types.js';
 
 export type ForwardDecision<TBlockOutput = Record<string, unknown>> =
   | {
@@ -41,6 +42,8 @@ interface PreparedForward {
   failure?: string;
   /** The events are durably held for their login (owner not resolved yet): the hook batch counts as accepted. */
   pendingStored?: true;
+  /** The stamped record and its login, from which an undelivered batch can be held (see `holdsUntilDelivered`). */
+  stamped?: { record: EvidenceRecord; fp: string };
 }
 
 /** Common fields an event may bring itself: its own non-empty value wins. All others are stamped. */
@@ -142,9 +145,10 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       }
 
       // Commit-after-send: a handler with a cursor to protect (parse-state offsets) hands
-      // back `finalize`, which persists its state only when `accepted` is true. This keeps
-      // the whole invocation's events a single all-or-nothing unit: on failure nothing is
-      // committed, so the next hook re-derives and re-sends the same events.
+      // back `finalize`, which persists its state only when `accepted` is true: the spool
+      // took the batch, or it is durably in the owner-pending queue. This keeps the whole
+      // invocation's events a single all-or-nothing unit: on failure nothing is committed,
+      // so the next hook re-derives and re-sends the same events.
       let accepted = false;
       try {
         if (decision.payload.length === 0) {
@@ -154,19 +158,13 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
 
         const context = await this.extractHookContext(hookInput);
         const batch = await this.prepareForward(context, decision, hookInput);
-        const args: Parameters<OtlpAdapterDeps['forwardOtlpEventsToSpool']> = batch.options
-          ? [batch.events, this.name, batch.options]
-          : [batch.events, this.name];
-        // One transport call site; retries reuse the same prepared bytes and event IDs.
-        const send = (): Promise<boolean> => forwardOtlpEventsToSpool(...args);
         if (batch.pendingStored) {
           accepted = true; // durable: finalize commits any source cursor, a retry would only duplicate
         } else if (batch.failure) {
           // Loss reporting is best-effort and never acknowledges source data.
-          if (batch.options?.evidenceLoss) await send().catch(() => false);
+          if (batch.options?.evidenceLoss) await forwardOtlpEventsToSpool(batch.events, this.name, batch.options).catch(() => false);
         } else {
-          accepted = await send();
-          if (!accepted && decision.retryOnce) accepted = await send();
+          accepted = await this.deliver(forwardOtlpEventsToSpool, context, batch, decision.retryOnce === true, hookInput);
         }
         if (!accepted && this.requiresSpoolAcceptance(hookInput)) {
           throw new AnalyticsSourceError(batch.failure ?? 'Local analytics spool did not accept the hook event batch');
@@ -183,6 +181,35 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     }
   }
 
+  /**
+   * The transport step: one send, one retry when the handler asks for it (same prepared bytes and event IDs). A batch whose
+   * loss would lose the whole session is held for the daemon only when every attempt was certainly not taken (no daemon state,
+   * refused connection, or a 401 answered before any spool): one attempt that may have reached it (timeout, reset, other error
+   * status) means it may already be spooled, so it is neither held nor replayed. A held batch counts as accepted.
+   */
+  private async deliver(
+    forward: OtlpAdapterDeps['forwardOtlpEventsToSpool'],
+    context: OtlpHookContext,
+    batch: PreparedForward,
+    retryOnce: boolean,
+    hookInput: TInput
+  ): Promise<boolean> {
+    const hold = batch.stamped && this.holdsUntilDelivered(hookInput) ? batch.stamped : undefined;
+    const undelivered = { value: false };
+    const options = hold ? { ...batch.options, undelivered } : batch.options;
+    let maybeReceived = false;
+    const send = async (): Promise<boolean> => {
+      undelivered.value = false;
+      const ok = await (options ? forward(batch.events, this.name, options) : forward(batch.events, this.name));
+      if (!ok && !undelivered.value) maybeReceived = true;
+      return ok;
+    };
+    let accepted = await send();
+    if (!accepted && retryOnce) accepted = await send();
+    if (!accepted && hold && !maybeReceived) accepted = await this.holdUndelivered(context, batch.events, hold);
+    return accepted;
+  }
+
   /** Prepare data or a loss report before the single transport step; no source cursor is committed here. */
   private async prepareForward(
     context: OtlpHookContext,
@@ -190,6 +217,8 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     hookInput: TInput
   ): Promise<PreparedForward> {
     let record: EvidenceRecord | undefined;
+    let stamped: PreparedForward['stamped'];
+    let stampedCredentials: SSOCredentials | undefined;
     if (context.evidenceInputs) {
       const stamp = await stampEvidence(context, context.evidenceInputs, this.projectPolicy);
       if (!stamp.ok) {
@@ -207,16 +236,21 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
         };
       }
       record = stamp.record;
+      stamped = { record: stamp.record, fp: stamp.fp };
+      // Only the fresh-start recovery names its events from the stamping login: it resolved that login without daemon state, which the
+      // event identity lookup (daemon state only) would not find. Every other hook keeps resolving identity as before.
+      if (context.evidenceInputs.recoverWithoutDaemon === true) stampedCredentials = stamp.credentials;
       if ((await this.recordGate(context, record)) === 'stop') return { events: [], failure: 'Session scope check stopped publication; hook event not enqueued' };
     }
     const [commonFields, agentFields] = await Promise.all([
-      this.resolveCommonFields(context, record),
+      this.resolveCommonFields(context, record, stampedCredentials),
       this.resolveAgentFields(hookInput),
     ]);
     const invocation: InvocationContext = { cwd: context.cwd, hookTime: new Date(), commonFields, agentFields };
     return {
       events: decision.payload.map((hookEvent) => this.buildEvent(hookEvent, invocation)),
       options: record ? { evidenceV: 1 } : undefined,
+      stamped,
     };
   }
 
@@ -258,6 +292,47 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
       logger.debug(`[${this.name}] holding events for owner failed: ${error instanceof Error ? error.name : 'error'}`);
       return false;
     }
+  }
+
+  /**
+   * Parks the already-built events (same ids, hook-time facts) in the owner-pending queue, bound to the login that
+   * stamped them; the daemon appends them to the spool once it runs and checks the session's scope again at that point.
+   * `true` only when they are durably on disk.
+   */
+  private async holdUndelivered(
+    context: OtlpHookContext,
+    events: Record<string, unknown>[],
+    { record, fp }: NonNullable<PreparedForward['stamped']>
+  ): Promise<boolean> {
+    try {
+      const { schema: _schema, owner_hash: _owner, created: _created, last_used: _lastUsed, ...fields }: EvidenceRecord = record;
+      const held: PendingFields = fields;
+      const ok = await enqueuePendingOwner({
+        fp,
+        agentName: this.name,
+        api_identity: held.api_identity,
+        session_id: held.session_id,
+        fields: held,
+        cwd: context.cwd,
+        project_at_cwd: await resolveProjectAtCwd(context.cwd, held.profile, this.projectPolicy),
+        undelivered: true,
+        events,
+      });
+      if (ok) logger.warn(`[${this.name}] daemon did not take the batch (not reachable or not signed in); ${events.length} event(s) held until it is ready`);
+      else logger.warn(`[${this.name}] daemon did not take the batch and the ${events.length} event(s) could not be held (queue unavailable or full)`);
+      return ok;
+    } catch (error) {
+      logger.debug(`[${this.name}] holding undelivered events failed: ${error instanceof Error ? error.name : 'error'}`);
+      return false;
+    }
+  }
+
+  /**
+   * Events of this hook whose loss would lose the whole session (its start): when the daemon is certainly unreachable
+   * they are held for it instead of dropped. Other events keep commit-after-send. Default: none.
+   */
+  protected holdsUntilDelivered(_input: TInput): boolean {
+    return false;
   }
 
   /**
@@ -391,10 +466,10 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     return hookTime.toISOString();
   }
 
-  private async resolveCommonFields(context: OtlpHookContext, record?: EvidenceRecord): Promise<CommonFields> {
+  private async resolveCommonFields(context: OtlpHookContext, record?: EvidenceRecord, stampedCredentials?: SSOCredentials): Promise<CommonFields> {
     const [repoFields, identityFields] = await Promise.all([
       resolveRepoFields(context),
-      resolveIdentityFields(context, record, this.projectPolicy),
+      resolveIdentityFields(context, record, this.projectPolicy, stampedCredentials),
     ]);
     return { ...repoFields, ...identityFields };
   }
