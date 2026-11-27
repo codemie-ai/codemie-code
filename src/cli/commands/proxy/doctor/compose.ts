@@ -27,11 +27,8 @@ import { readClientTargetStates, type ClientTargetState } from '../client-target
 import { DELIVERY_REASONS } from '../delivery-health.js';
 import type { inspectDesktopProxy } from '../inspect-desktop.js';
 import {
-  CONNECT_COMMAND,
   DEBUG_COMMAND,
   LOGIN_COMMAND,
-  RESTART_COMMAND,
-  START_COMMAND,
   claudeOtlpSections,
   clientSections,
   cliPathSections,
@@ -45,9 +42,8 @@ import {
   type ConnectorEntry,
   type Sections,
 } from './sections.js';
-import { deliverySections } from './delivery-sections.js';
-import { PROXY_DOCTOR_GROUPS } from './groups.js';
-import { CLAUDE_OTLP_FLAG, COPILOT_OTLP_FLAG } from '../flag-list.js';
+import type { ProxyDoctorGroup } from './groups.js';
+import type { DoctorPlan, DoctorRemedies } from './plan.js';
 
 /**
  * Stable section ids. An id repeats when a section has several findings (one entry per finding).
@@ -60,6 +56,7 @@ import { CLAUDE_OTLP_FLAG, COPILOT_OTLP_FLAG } from '../flag-list.js';
  * - `claude-code-otlp`: Claude Code's native OTLP endpoint against the live daemon
  * - `connectors`: analytics connectors' scope and collection preferences
  * - `cli-path`: an older CodeMie CLI first on PATH
+ * - `local`: the local mode's analytics folder, its scheduled job and its deliveries
  * - `verbose`: a failure while gathering the `--verbose` detail
  */
 export type ProxyDoctorSectionId =
@@ -72,6 +69,7 @@ export type ProxyDoctorSectionId =
   | 'claude-code-otlp'
   | 'connectors'
   | 'cli-path'
+  | 'local'
   | 'verbose';
 
 export interface ProxyDoctorSection extends HealthCheckDetail {
@@ -114,6 +112,8 @@ export interface ProxyDoctorOptions {
   /** Run the authenticated upstream probe (one keyed request) when the daemon is running and signed in. */
   authProbe: boolean;
   verbose: boolean;
+  /** The collection mode's remedies, sections, groups and daemon label. */
+  plan: DoctorPlan;
 }
 
 /** Upper bound of the authenticated probe: its `/health` read plus its keyed request. */
@@ -135,17 +135,18 @@ interface DaemonContact {
 }
 
 /** The last problem the daemon's own watcher recorded in its state, when it marked itself unhealthy. */
-function recordedHealthIssue(state: DaemonState): Sections {
+function recordedHealthIssue(state: DaemonState, remedies: DoctorRemedies): Sections {
   if (state.health !== 'unhealthy' || !state.healthReason) return [];
   return [{
     id: 'daemon',
     status: 'warn',
     message: `The proxy recorded a health problem: ${state.healthReason}`,
-    hint: renderHint({ reason: 'the proxy reported itself unhealthy', command: RESTART_COMMAND }),
+    hint: renderHint({ reason: 'the proxy reported itself unhealthy', command: remedies.restart }),
   }];
 }
 
-async function contactDaemon(state: DaemonState): Promise<DaemonContact> {
+async function contactDaemon(state: DaemonState, plan: DoctorPlan): Promise<DaemonContact> {
+  const { remedies } = plan;
   let body: unknown;
   try {
     const res = await fetchProxyHealth(state.port);
@@ -156,7 +157,7 @@ async function contactDaemon(state: DaemonState): Promise<DaemonContact> {
           id: 'daemon',
           status: 'error',
           message: `Proxy health endpoint returned ${res.status}`,
-          hint: renderHint({ reason: 'the proxy is not healthy', command: RESTART_COMMAND }),
+          hint: renderHint({ reason: 'the proxy is not healthy', command: remedies.restart }),
         }],
       };
     }
@@ -168,7 +169,7 @@ async function contactDaemon(state: DaemonState): Promise<DaemonContact> {
         id: 'daemon',
         status: 'error',
         message: `Proxy not responding on ${state.url}: ${errorText(error)}`,
-        hint: renderHint({ reason: 'the proxy is not responding', command: RESTART_COMMAND }),
+        hint: renderHint({ reason: 'the proxy is not responding', command: remedies.restart }),
       }],
     };
   }
@@ -182,24 +183,30 @@ async function contactDaemon(state: DaemonState): Promise<DaemonContact> {
         message: typeof replyPid === 'number'
           ? `Port ${state.port} is answered by another process (pid ${replyPid}), not the proxy (pid ${state.pid})`
           : `The process on port ${state.port} did not confirm it is the proxy (pid ${state.pid})`,
-        hint: renderHint({ reason: 'the proxy does not own its port', command: RESTART_COMMAND }),
+        hint: renderHint({ reason: 'the proxy does not own its port', command: remedies.restart }),
       }],
     };
   }
-  const running = `Running at ${state.url} (pid ${state.pid}, profile ${state.profile}`;
-  const recorded = recordedHealthIssue(state);
+  const running = `Running at ${state.url} (pid ${state.pid}, ${plan.daemonLabel(state)}`;
+  const recorded = recordedHealthIssue(state, remedies);
   const daemon: ProxyDoctorSection = state.version
     ? { id: 'daemon', status: 'ok', message: `${running}, version ${state.version})` }
     : {
       id: 'daemon',
       status: 'warn',
       message: `${running}, started by an older CLI)`,
-      hint: renderHint({ reason: 'older proxy', command: RESTART_COMMAND }),
+      hint: renderHint({ reason: 'older proxy', command: remedies.restart }),
     };
   return { verified: true, sections: [daemon, ...recorded], reply: parseAnalyticsReply(body, state.pid) };
 }
 
-async function authSections(state: DaemonState, reply: AnalyticsHealthReply | undefined, authProbe: boolean): Promise<Sections> {
+/** Sign-in sections of a running daemon whose `/health` answered with its own pid. */
+export async function authSections(
+  state: DaemonState,
+  reply: AnalyticsHealthReply | undefined,
+  authProbe: boolean,
+  remedies: DoctorRemedies
+): Promise<Sections> {
   const loginHint = renderHint({ reason: 'CodeMie sign-in required', command: LOGIN_COMMAND });
   if (reply?.credentials === 'stale') {
     // An awaiting-login daemon opens a browser sign-in on any keyed request: never probe it.
@@ -222,7 +229,7 @@ async function authSections(state: DaemonState, reply: AnalyticsHealthReply | un
       id: 'upstream',
       status: 'error',
       message: `Authenticated check failed: ${errorText(error)}`,
-      hint: renderHint({ reason: 'the proxy did not answer the authenticated check', command: RESTART_COMMAND }),
+      hint: renderHint({ reason: 'the proxy did not answer the authenticated check', command: remedies.restart }),
     }];
   }
   if (probe.healthy) {
@@ -242,18 +249,18 @@ async function authSections(state: DaemonState, reply: AnalyticsHealthReply | un
   }];
 }
 
-function stoppedSections(nothingConnected: boolean, targets: ClientTargetState[] | null): Sections {
+function stoppedSections(nothingConnected: boolean, targets: ClientTargetState[] | null, remedies: DoctorRemedies): Sections {
   if (nothingConnected) {
     return [{
       id: 'daemon',
       status: 'info',
       message: 'Proxy is not running',
-      hint: renderHint({ reason: 'nothing is connected to the proxy', command: CONNECT_COMMAND }),
+      hint: renderHint({ reason: 'nothing is connected to the proxy', command: remedies.connect() }),
     }];
   }
   // Hook-based connectors start the proxy on their next event; every other connected target needs it running.
   const clients = connectedTargets(targets).filter((target) => !target.readHookInstall);
-  const startHint = renderHint({ reason: 'the proxy is stopped', command: START_COMMAND });
+  const startHint = renderHint({ reason: 'the proxy is stopped', command: remedies.start });
   return clients.length > 0
     ? [{
       id: 'daemon',
@@ -335,6 +342,7 @@ interface FillContext {
   targets: ClientTargetState[] | null;
   analyticsActive: boolean;
   nothingConnected: boolean;
+  remedies: DoctorRemedies;
 }
 
 /**
@@ -342,7 +350,7 @@ interface FillContext {
  * or `info`, never a warning. While nothing is connected the daemon line alone names `codemie proxy connect` (AC14).
  */
 function emptyGroupSection(id: ProxyDoctorSectionId, sections: Sections, ctx: FillContext): ProxyDoctorSection | null {
-  const { state, nothingConnected } = ctx;
+  const { state, nothingConnected, remedies } = ctx;
   const connectHint = (reason: string, command: string): Pick<ProxyDoctorSection, 'hint'> =>
     nothingConnected ? {} : { hint: renderHint({ reason, command }) };
   switch (id) {
@@ -356,7 +364,7 @@ function emptyGroupSection(id: ProxyDoctorSectionId, sections: Sections, ctx: Fi
       const connected = connectedTargets(ctx.targets);
       return connected.length > 0
         ? { id, status: 'ok', message: `Clients connected: ${connected.map((target) => target.label).join(', ')}` }
-        : { id, status: 'info', message: 'No clients connected', ...connectHint('nothing routes through the proxy', CONNECT_COMMAND) };
+        : { id, status: 'info', message: 'No clients connected', ...connectHint('nothing routes through the proxy', remedies.connect()) };
     }
     case 'connectors':
       return {
@@ -364,7 +372,7 @@ function emptyGroupSection(id: ProxyDoctorSectionId, sections: Sections, ctx: Fi
         status: 'info',
         message: 'None connected',
         ...(nothingConnected ? {} : {
-          hint: renderHint({ reason: 'no analytics collected', action: `run: ${CONNECT_COMMAND} ${CLAUDE_OTLP_FLAG} (or ${COPILOT_OTLP_FLAG})` }),
+          hint: renderHint({ reason: 'no analytics collected', action: `run: ${remedies.connectAnalytics}` }),
         }),
       };
     case 'delivery':
@@ -386,9 +394,9 @@ function emptyGroupSection(id: ProxyDoctorSectionId, sections: Sections, ctx: Fi
 }
 
 /** Adds one `ok`/`info` line to every display group no check reported on, so each group always renders. */
-function fillEmptyGroups(sections: Sections, ctx: FillContext): Sections {
+function fillEmptyGroups(sections: Sections, ctx: FillContext, groups: readonly ProxyDoctorGroup[]): Sections {
   const filled = [...sections];
-  for (const group of PROXY_DOCTOR_GROUPS) {
+  for (const group of groups) {
     if (filled.some((s) => group.ids.includes(s.id))) continue;
     const line = emptyGroupSection(group.ids[0], filled, ctx);
     if (line) filled.push(line);
@@ -398,6 +406,8 @@ function fillEmptyGroups(sections: Sections, ctx: FillContext): Sections {
 
 /** Builds the proxy diagnosis. Never rejects. */
 export async function composeProxyDoctor(opts: ProxyDoctorOptions): Promise<ProxyDoctorReport> {
+  const { plan } = opts;
+  const { remedies } = plan;
   const sections: Sections = [];
   let running = false;
   let state: DaemonState | null = null;
@@ -408,7 +418,7 @@ export async function composeProxyDoctor(opts: ProxyDoctorOptions): Promise<Prox
       id: 'daemon',
       status: 'error',
       message: `Proxy state could not be read: ${errorText(error)}`,
-      hint: renderHint({ reason: 'the proxy state file is unreadable', command: RESTART_COMMAND }),
+      hint: renderHint({ reason: 'the proxy state file is unreadable', command: remedies.restart }),
     });
   }
   if (!running) state = null;
@@ -434,29 +444,31 @@ export async function composeProxyDoctor(opts: ProxyDoctorOptions): Promise<Prox
 
   if (!state) {
     if (!sections.some((s) => s.id === 'daemon')) {
-      sections.push(...stoppedSections(nothingConnected, targets));
+      sections.push(...stoppedSections(nothingConnected, targets, remedies));
     }
-    sections.push(...connectorSections(connectors));
+    sections.push(...connectorSections(connectors, remedies));
     sections.push(...(await guarded('cli-path', 'CLI path', cliPathSections)));
+    sections.push(...(await plan.extraSections()));
   } else {
     const live = state;
     let verifiedReply: AnalyticsHealthReply | undefined;
     const contact = await guarded('daemon', 'Proxy health', async () => {
-      const result = await contactDaemon(live);
+      const result = await contactDaemon(live, plan);
       if (!result.verified) return result.sections;
       verifiedReply = result.reply;
-      return [...result.sections, ...(await guarded('auth', 'Sign-in', () => authSections(live, result.reply, opts.authProbe)))];
+      return [...result.sections, ...(await guarded('auth', 'Sign-in', () => plan.authSections(live, result.reply, plan.authProbe(opts.authProbe))))];
     });
     sections.push(...contact);
     const rest = await Promise.all([
-      guarded('clients', 'Clients', () => clientSections(live, targets, connectors, nothingConnected)),
-      analyticsActive ? guarded('delivery', 'Analytics delivery', () => deliverySections(live, verifiedReply)) : Promise.resolve([]),
-      guarded('desktop', 'Claude Desktop', () => desktopSections(live)),
-      guarded('claude-code-otlp', 'Claude Code OTLP endpoint', () => claudeOtlpSections(live, claudeScope)),
-      Promise.resolve(connectorSections(connectors)),
+      guarded('clients', 'Clients', () => clientSections(live, targets, connectors, nothingConnected, remedies)),
+      analyticsActive ? guarded('delivery', 'Analytics delivery', () => plan.deliverySections(live, verifiedReply)) : Promise.resolve([]),
+      guarded('desktop', 'Claude Desktop', () => desktopSections(live, remedies)),
+      guarded('claude-code-otlp', 'Claude Code OTLP endpoint', () => claudeOtlpSections(live, claudeScope, remedies)),
+      Promise.resolve(connectorSections(connectors, remedies)),
       guarded('cli-path', 'CLI path', cliPathSections),
     ]);
     for (const group of rest) sections.push(...group);
+    sections.push(...(await plan.extraSections()));
   }
 
   const report: ProxyDoctorReport = { sections: [], nothingConnected };
@@ -465,7 +477,7 @@ export async function composeProxyDoctor(opts: ProxyDoctorOptions): Promise<Prox
     report.verbose = detail.verbose;
     sections.push(...detail.sections);
   }
-  const filled = fillEmptyGroups(dropDuplicateSignIn(sections), { state, targets, analyticsActive, nothingConnected });
+  const filled = fillEmptyGroups(dropDuplicateSignIn(sections), { state, targets, analyticsActive, nothingConnected, remedies }, plan.groups);
   report.sections = scrubKey(filled, state?.gatewayKey);
   return report;
 }

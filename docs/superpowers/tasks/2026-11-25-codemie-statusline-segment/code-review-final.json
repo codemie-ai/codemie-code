@@ -1,0 +1,90 @@
+{
+  "schema": "sdlc-factory/code-review-final@1",
+  "passed": true,
+  "decision": "approve",
+  "gate_decision": {
+    "gate": "code-review.final",
+    "decision": "approve",
+    "source": "hitl",
+    "rationale": "CR-001 fixed in 2906e6a2; no findings remain"
+  },
+  "gates": [
+    {
+      "gate": "code-review.final",
+      "decision": "request-changes",
+      "source": "hitl",
+      "rationale": "CR-001 fix-now"
+    },
+    {
+      "gate": "code-review.final",
+      "decision": "approve",
+      "source": "hitl",
+      "rationale": "CR-001 fixed in 2906e6a2; no findings remain"
+    }
+  ],
+  "reviewed_head": "2906e6a2b3275aa255cb6528986f10b681527802",
+  "rounds": [
+    "final"
+  ],
+  "rationale": "Acceptance, blind and verification-gap lenses did not run (compact profile, no spec); only the edge-case lens ran, so confidence is low. One minor advisory kept (env-inherited false positive); 0 deferred, 0 dismissed.",
+  "confidence": "low",
+  "check_confidence": null,
+  "risk_flags": [],
+  "open": 0,
+  "closed": {
+    "fixed": 0,
+    "moot": 0,
+    "decided": 0,
+    "wont_fix": 0
+  },
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "minor",
+      "triage": "advisory",
+      "file": "src/agents/plugins/claude/plugin/statusline.ts",
+      "line": 629,
+      "title": "Managed indicator trusts inherited env var",
+      "problem": "isManagedSession returns Boolean(env.CODEMIE_SESSION_ID). A plain claude started from a shell inheriting CODEMIE_SESSION_ID from a managed session, or a whitespace-only value, counts as managed.",
+      "impact": "Narrow trigger: requires a nested shell inside a managed session while the injected statusLine entry is still present in settings.json (it is injected and removed per managed session). Same discriminator as launchMode() in routing.ts, so behavior is consistent. Cosmetic indicator only.",
+      "recommendation": "Optionally trim: return Boolean(env.CODEMIE_SESSION_ID?.trim());",
+      "status": "fixed",
+      "fix": {
+        "change": "isManagedSession trims CODEMIE_SESSION_ID so whitespace-only is not managed",
+        "test": "statusline.test.ts: is false when CODEMIE_SESSION_ID is whitespace only"
+      },
+      "disposition": {
+        "rationale": "user chose fix-now: trim whitespace-only CODEMIE_SESSION_ID",
+        "source": "hitl",
+        "action": "fix-now"
+      }
+    }
+  ],
+  "deferred": [],
+  "coverage_graded_at": "final",
+  "business_review": [],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "na",
+      "notes": "Standards audit not part of this profile."
+    },
+    {
+      "kind": "code-quality",
+      "status": "na",
+      "notes": "Standards audit not part of this profile."
+    },
+    {
+      "kind": "security",
+      "status": "na",
+      "notes": "Standards audit not part of this profile."
+    }
+  ],
+  "final_round": {
+    "decision": "approve",
+    "rationale": "Acceptance, blind and verification-gap lenses did not run (compact profile, no spec); only the edge-case lens ran, so confidence is low. One minor advisory kept (env-inherited false positive); 0 deferred, 0 dismissed.",
+    "confidence": "low",
+    "risk_flags": []
+  }
+}

@@ -3,7 +3,7 @@ import { logger } from '@/utils/logger.js';
 import { AgentRegistry } from '@/agents/registry.js';
 import { CONTINUE_SESSION_ENV_KEY, RESUME_SESSION_ENV_KEY, SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY, type Session } from '@/agents/core/session/types.js';
 import type { BaseHookEvent, HookTransformer, MCPConfigSummary, ExtensionsScanSummary } from '@/agents/core/types.js';
-import { ensureOtlpProxy } from './proxy/otlp-cold-start.js';
+import { resolveCollection } from './shared/analytics-collection/resolve.js';
 import { forwardOtlpEventsToSpool } from '@/agents/plugins/utils.js';
 import { ensureCodeMieSsoAuth, ensureCodeMieSsoAuthOrWait, type AuthGateInput } from '@/providers/plugins/sso/sso.auth-gate.js';
 import { describeLogin } from '@/providers/plugins/sso/sso.detached-login.js';
@@ -1660,7 +1660,12 @@ export function createHookCommand(): Command {
         const analyticsAgent = AgentRegistry.getAnalyticsAgent(opts.agent!);
         if (analyticsAgent) {
           const otlpInput = opts.event ? injectEventName(input, opts.event) : input;
-          await analyticsAgent.processOtlpEvent(otlpInput, { ensureOtlpProxy, forwardOtlpEventsToSpool });
+          const collection = await resolveCollection();
+          await analyticsAgent.processOtlpEvent(otlpInput, {
+            ensureOtlpProxy: collection.launcher,
+            policy: collection.hookPolicy(),
+            forwardOtlpEventsToSpool,
+          });
           await logger.close();
           process.exitCode = 0;
           return;

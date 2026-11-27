@@ -50,6 +50,8 @@ export interface StatusDeps {
   reductionStatus(): Promise<string>;
   now(): Date;
   print(line: string): void;
+  /** The mode's own lines, printed after the first line of an installed status. */
+  modeLines(): string[];
 }
 
 /** One parsed outcome line from the run log. */
@@ -59,7 +61,7 @@ export interface LastRun {
 }
 
 // Matches a run-log line's `<ISO> <outcome> ...` prefix (see `run-sync.ts#formatLogLine`):
-// `ok sent <name> <bytes>` | `skip <reason>` | `fail <category> <detail>`, with an optional
+// `ok sent <name> <bytes>` | `ok sent <n> files <total bytes>` | `skip <reason>` | `fail <category> <detail>`, with an optional
 // trailing ` target=<id>` (single leading space, very end of line). Lines that don't start
 // this way (legacy collector lines, stack traces) are ignored.
 const LAST_RUN_LINE = /^(\S+) ((?:ok sent|skip|fail \w+).*)$/;
@@ -132,6 +134,11 @@ export function parseLastFailure(log: string, target: TargetId): LastRun | null 
   return last;
 }
 
+/** Whether a parsed outcome is a run that ended `ok sent` or `skip` with a warning on its line. */
+export function endedWithWarning(outcome: string): boolean {
+  return (outcome.startsWith('ok sent') || outcome.startsWith('skip')) && outcome.includes(' (warning: ');
+}
+
 /** Turn a parsed outcome (`ok sent ...` | `skip ...` | `fail <category> ...`) into the
  * human text status prints: "sent / skipped / failed", each with its detail. */
 function describeOutcome(outcome: string): string {
@@ -147,20 +154,33 @@ function describeOutcome(outcome: string): string {
   return outcome;
 }
 
-function lastRunText(lastRun: LastRun | null): string {
+/** The status line of the last run: `never`, or its time and its outcome as sent / skipped / failed with the detail. */
+export function lastRunText(lastRun: LastRun | null): string {
   return lastRun === null ? 'never' : `${lastRun.at} — ${describeOutcome(lastRun.outcome)}`;
 }
 
-/** The "Last successful send"/"Last successful push" value for `target`: the marker time,
- * `never`, or — when the marker cannot be read (EACCES, EISDIR) —
- * `unknown (<redacted reason>)`, so status reports instead of rejecting. */
-async function lastMarkerText(deps: StatusDeps, target: TargetId, now: Date): Promise<string> {
+/** A target's marker: its time, none yet, or the redacted reason it cannot be read. */
+export type MarkerState =
+  | { kind: 'at'; at: Date }
+  | { kind: 'none' }
+  | { kind: 'unreadable'; reason: string };
+
+/** The marker of `target`; a marker that cannot be read (EACCES, EISDIR) is answered, not thrown. */
+export async function readMarkerState(deps: StatusDeps, target: TargetId, now: Date): Promise<MarkerState> {
   try {
     const marker = await deps.readMarker(target, now);
-    return marker === null ? 'never' : marker.toISOString();
+    return marker === null ? { kind: 'none' } : { kind: 'at', at: marker };
   } catch (err) {
-    return `unknown (${errorMessage(err)})`;
+    return { kind: 'unreadable', reason: errorMessage(err) };
   }
+}
+
+/** The "Last successful send"/"Last successful push" value for `target`: the marker time,
+ * `never`, or — when the marker cannot be read — `unknown (<redacted reason>)`. */
+async function lastMarkerText(deps: StatusDeps, target: TargetId, now: Date): Promise<string> {
+  const state = await readMarkerState(deps, target, now);
+  if (state.kind === 'none') return 'never';
+  return state.kind === 'at' ? state.at.toISOString() : `unknown (${state.reason})`;
 }
 
 /** `path` is a normalised posix-relative path within the repo; `undefined` means the repo
@@ -190,6 +210,9 @@ export async function runStatus(deps: StatusDeps): Promise<number> {
   const log = await deps.readLog();
 
   deps.print(`Analytics sync: ${enabled}`);
+  for (const line of deps.modeLines()) {
+    deps.print(line);
+  }
   deps.print(`  OS job name:           ${jobName}`);
   if (enabled === 'disabled') {
     deps.print('  The OS job is missing or disabled outside the CLI. Run install again (the command your team lead shared):');
@@ -231,9 +254,10 @@ async function readSyncLog(): Promise<string | null> {
 }
 
 /** Real dependencies for `runStatus`: the real settings store, scheduler query, run log read
- * and marker read, and `console.log`. */
-export function createRealStatusDeps(): StatusDeps {
+ * and marker read, `console.log`, and `modeLines` for the mode's own lines. */
+export function createRealStatusDeps(modeLines: StatusDeps['modeLines']): StatusDeps {
   return {
+    modeLines,
     loadSettings: () => loadSyncSettings(),
     schedulerFor: (name: string) => createScheduler(createRealSchedulerDeps(), name),
     readLog: readSyncLog,

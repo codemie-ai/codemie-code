@@ -1,7 +1,7 @@
 /**
  * Git delivery target for `codemie analytics sync`.
  *
- * Pushes the analytics export as a JSON file into a team-owned git repository, under
+ * Pushes the analytics export's files, in one commit, into a team-owned git repository, under
  * `<git-path>/<lowercased email slug>/` only — never anywhere else in the repo, and the
  * working copy is never force-pushed. Member identity isolation (each developer only ever
  * writes inside their own slug folder) means one member's push can never race another's:
@@ -22,9 +22,10 @@
  * Every positional value reaches git after `--` or behind a fixed prefix (`origin/`,
  * `HEAD:`, `refs/heads/`), so none can be parsed as an option.
  *
- * `deliver`/`testPush` write under the target's slug folder, stage only that folder
- * (`git add --`), skip the commit entirely when nothing changed (`git diff --cached
- * --quiet` exits 0), and otherwise commit with `-c user.email=<email> -c user.name=<email>`
+ * `deliver`/`testPush` write under the target's slug folder, stage only the files they wrote,
+ * by path and with ignore rules overridden (`git add -f --`), skip the commit entirely when
+ * nothing changed (`git diff --cached --quiet` exits 0), and otherwise commit with
+ * `-c user.email=<email> -c user.name=<email>`
  * (so the shared working copy never depends on a locally configured git identity), with
  * commit signing off, hooks disabled and `--no-verify`, so the unattended job never blocks
  * on a signing prompt or a user's global hook, before pushing (also `--no-verify`). A push
@@ -82,16 +83,24 @@ export class GitTarget {
     private readonly dir: string = gitWorkingCopyPath()
   ) {}
 
-  /** Commits and pushes `<git-path>/<slug>/<report.fileName>`. */
-  async deliver(report: SyncReport): Promise<void> {
+  /** Writes every report as `<git-path>/<slug>/<fileName>`, then commits and pushes them as one commit. */
+  async deliver(reports: SyncReport[]): Promise<void> {
     const branch = await this.ensureWorkingCopy();
     const relFolder = this.slugFolder();
 
     const absFolder = this.absoluteFolder(relFolder);
     await mkdir(absFolder, { recursive: true });
-    await writeFile(join(absFolder, report.fileName), report.bytes);
+    const paths: string[] = [];
+    for (const report of reports) {
+      await writeFile(join(absFolder, report.fileName), report.bytes);
+      paths.push(`${relFolder}/${report.fileName}`);
+    }
 
-    await this.commitAndPush(branch, relFolder, `analytics sync: ${relFolder}/${report.fileName}`);
+    const message =
+      reports.length === 1
+        ? `analytics sync: ${relFolder}/${reports[0].fileName}`
+        : `analytics sync: ${relFolder} (${reports.length} files)`;
+    await this.commitAndPush(branch, relFolder, paths, message);
   }
 
   /** Commits and pushes `<git-path>/<slug>/.codemie-sync-check`, used by `install` to prove
@@ -105,7 +114,12 @@ export class GitTarget {
     await mkdir(absFolder, { recursive: true });
     await writeFile(join(absFolder, CHECK_FILE_NAME), new Date().toISOString());
 
-    await this.commitAndPush(branch, relFolder, 'analytics sync: connectivity check');
+    await this.commitAndPush(
+      branch,
+      relFolder,
+      [`${relFolder}/${CHECK_FILE_NAME}`],
+      'analytics sync: connectivity check'
+    );
   }
 
   private slugFolder(): string {
@@ -237,8 +251,10 @@ export class GitTarget {
     );
   }
 
-  private async commitAndPush(branch: string, relFolder: string, message: string): Promise<void> {
-    await this.run(['add', '--', relFolder], { cwd: this.dir });
+  /** Stages `paths` (relative to the working copy) with `-f`, so an ignore rule of the target
+   * repository never leaves a written file out of the commit. */
+  private async commitAndPush(branch: string, relFolder: string, paths: string[], message: string): Promise<void> {
+    await this.run(['add', '-f', '--', ...paths], { cwd: this.dir });
 
     if (!(await this.hasStagedChanges(relFolder))) {
       logger.debug(`[sync:git] nothing to commit for ${relFolder}`);

@@ -1,8 +1,8 @@
 import { logger } from '@/utils/logger.js';
 import { extractRepository } from '@/utils/paths.js';
-import { AnalyticsSourceError } from '@/utils/errors.js';
+import { AnalyticsSourceError, CodeMieError } from '@/utils/errors.js';
 import { boundedText, maskAndBoundFields, MAX_PROMPT_CHARS } from './otlp-field-limits.js';
-import { AgentAdapterType, type OtlpAdapterDeps } from './types.js';
+import { AgentAdapterType, type CollectionPolicy, type OtlpAdapterDeps } from './types.js';
 import { resolveRepoFields, type RepoFields } from './event-fields/repo-fields.js';
 import { findAllConfigDirs, resolveIdentityFields, resolveProjectAtCwd, type IdentityFields, type ProjectPolicy } from './event-fields/identity-fields.js';
 import { resolveBranchStory } from './story-resolver.js';
@@ -82,7 +82,25 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
   }
   readonly type = AgentAdapterType.OTLP;
 
+  /** The policy of the `processOtlpEvent` call in progress. */
+  private activePolicy?: CollectionPolicy;
+
+  /** The collection policy of the hook being processed; only set inside `processOtlpEvent`. */
+  protected get policy(): CollectionPolicy {
+    if (!this.activePolicy) throw new CodeMieError(`[${this.name}] no collection policy outside processOtlpEvent`);
+    return this.activePolicy;
+  }
+
   public async processOtlpEvent(rawHookInput: string, deps: OtlpAdapterDeps): Promise<void> {
+    this.activePolicy = deps.policy;
+    try {
+      await this.processWithPolicy(rawHookInput, deps);
+    } finally {
+      this.activePolicy = undefined;
+    }
+  }
+
+  private async processWithPolicy(rawHookInput: string, deps: OtlpAdapterDeps): Promise<void> {
     const { ensureOtlpProxy, forwardOtlpEventsToSpool } = deps;
     // JSON.parse failures intentionally propagate to the caller.
     const hookInput = this.parseHookInput(rawHookInput);
@@ -100,12 +118,14 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
     // data to the backend.
     if (!(await this.isTracked(hookInput))) {
       logger.debug(`[${this.name}] project not in analytics allowlist, ignoring hook event`);
-      await this.onUntrackedHook(hookInput);
+      await this.policy.onUntracked(this.sessionIdOf(hookInput), await this.untrackedByFilter(hookInput), () => this.onUntrackedHook(hookInput));
       return;
     }
 
-    // Per-hook session transition check (stop markers, folder / consent / generation changes). Adapters without one continue.
-    const transition = await this.transitionGate(hookInput);
+    // The policy decides whether the adapter's per-hook session transition check (stop markers, folder / consent /
+    // generation changes) runs: the backend policy runs it and answers what it answered, a deferred decision included;
+    // the local mode's policy never does. Adapters without one continue.
+    const transition = await this.policy.admit(this.sessionIdOf(hookInput), () => this.transitionGate(hookInput));
     if (transition === 'stop') return;
 
     try {
@@ -280,6 +300,19 @@ export abstract class OtlpAgentAdapter<TInput = unknown, TBlockOutput = Record<s
 
   /** Optional host-specific response when a recognized hook cannot be tracked. */
   protected async onUntrackedHook(_input: TInput): Promise<void> {}
+
+  /**
+   * Called after `isTracked` answered false: whether the developer's own filters (off, excluded, out of scope) left the
+   * hook out. An adapter without such filters answers false.
+   */
+  protected async untrackedByFilter(_input: TInput): Promise<boolean> {
+    return false;
+  }
+
+  /** The session id this adapter's events carry for the hook; none for an adapter that does not name one. */
+  protected sessionIdOf(_input: TInput): string | undefined {
+    return undefined;
+  }
 
   /** Enforcement adapters opt in; other adapters retain commit-after-send retry behavior. */
   protected requiresSpoolAcceptance(_input: TInput): boolean {

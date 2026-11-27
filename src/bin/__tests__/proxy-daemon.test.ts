@@ -369,4 +369,145 @@ describe('proxy-daemon entry point', () => {
     await import('../proxy-daemon.js');
     expect(watcherCallbacks.onUnauthorized).toBeUndefined();
   });
+
+  it('the watcher\'s check reaches the upstream through the gateway with the state\'s gateway key', async () => {
+    const { createServer } = await import('node:http');
+    const authorizations: Array<string | undefined> = [];
+    const server = createServer((req, res) => {
+      if (req.url?.startsWith('/v1/llm_models')) authorizations.push(req.headers.authorization);
+      res.writeHead(200, { 'content-type': 'application/json' }).end('{}');
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const { port } = server.address() as { port: number };
+      // The proxy is mocked: the port it answers is where the watcher looks, and this server stands in for it.
+      proxyStart.mockResolvedValue({ port, url: `http://127.0.0.1:${port}` });
+      process.argv.push('--gateway-key', 'codemie-proxy-test');
+      await import('../proxy-daemon.js');
+      const state = JSON.parse(await readFile(stateFile, 'utf-8')) as DaemonState;
+
+      expect(await watcherCallbacks.check()).toMatchObject({ healthy: true, level: 'deep' });
+      expect(authorizations).toEqual([`Bearer ${state.gatewayKey}`]);
+      expect(state.gatewayKey).toBe('codemie-proxy-test');
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+  // Last in the file: these cases load the real proxy and the real plugin set, which stay unmocked for what follows.
+  describe('--mode local', () => {
+    beforeEach(() => {
+      vi.doUnmock('../../providers/plugins/sso/index.js');
+      vi.doUnmock('../../providers/plugins/sso/proxy/plugins/index.js');
+      vi.doMock('../../providers/core/codemie-auth-helpers.js', async (importOriginal) => ({
+        ...(await importOriginal<typeof import('../../providers/core/codemie-auth-helpers.js')>()),
+        getStoredPlatformCredentials: storedCredentials,
+      }));
+    });
+
+    /** A port nothing listens on, so no case binds the default 4001. */
+    async function freePort(): Promise<number> {
+      const { createServer } = await import('node:net');
+      const server = createServer();
+      await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+      const { port } = server.address() as { port: number };
+      await new Promise<void>(resolve => server.close(() => resolve()));
+      return port;
+    }
+
+    async function terminate(): Promise<void> {
+      const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+      process.emit('SIGTERM');
+      await waitFor(() => exit.mock.calls.length > 0);
+    }
+
+    async function enabledPluginIds(): Promise<string[]> {
+      const { getPluginRegistry } = await import('../../providers/plugins/sso/proxy/plugins/registry.js');
+      const registry = getPluginRegistry();
+      return registry.getAll().filter(plugin => registry.getConfig(plugin.id)?.enabled).map(plugin => plugin.id).sort();
+    }
+
+    it('binds the real proxy with no target URL and no credentials, serving the local plugin set alone', async () => {
+      const port = await freePort();
+      process.argv = ['node', 'proxy-daemon', '--mode', 'local', '--state-file', stateFile, '--port', String(port)];
+
+      await import('../proxy-daemon.js');
+      try {
+        const state = JSON.parse(await readFile(stateFile, 'utf-8')) as DaemonState;
+        expect(state).toMatchObject({ pid: process.pid, port, mode: 'local', profile: '', version: '1.2.3' });
+        expect(state).not.toHaveProperty('targetUrl');
+        expect(state).not.toHaveProperty('provider');
+        expect(storedCredentials).not.toHaveBeenCalled();
+        expect(loginListeners).toEqual([]);
+        expect(runtimeConfigs).toEqual([]);
+        expect(runtimeStart).not.toHaveBeenCalled();
+        expect(await enabledPluginIds()).toEqual(['@codemie/local-analytics', '@codemie/no-upstream', '@codemie/proxy-gateway-key']);
+
+        const response = await fetch(`${state.url}/v1/messages`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${state.gatewayKey}` },
+          signal: AbortSignal.timeout(5000),
+        });
+        expect(response.status).toBe(404);
+        expect(await watcherCallbacks.check()).toMatchObject({ healthy: true, level: 'shallow' });
+      } finally {
+        await terminate();
+      }
+    });
+
+    it('the watcher\'s restart brings the proxy back on its port and records the recovery; its give-up records the reason', async () => {
+      const port = await freePort();
+      process.argv = ['node', 'proxy-daemon', '--mode', 'local', '--state-file', stateFile, '--port', String(port)];
+
+      await import('../proxy-daemon.js');
+      try {
+        await watcherCallbacks.restart();
+        const state = JSON.parse(await readFile(stateFile, 'utf-8')) as DaemonState & Record<string, unknown>;
+        expect(state).toMatchObject({
+          url: `http://127.0.0.1:${port}`,
+          health: 'ok',
+          lastHealthyAt: expect.any(String),
+          lastRecoveryAt: expect.any(String),
+        });
+        expect(state).not.toHaveProperty('healthReason');
+        const response = await fetch(`http://127.0.0.1:${port}/v1/messages`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${state.gatewayKey}` },
+          signal: AbortSignal.timeout(5000),
+        });
+        expect(response.status).toBe(404);
+
+        await watcherCallbacks.onGiveUp('health check failed 3 times');
+        expect(JSON.parse(await readFile(stateFile, 'utf-8'))).toMatchObject({ health: 'unhealthy', healthReason: 'health check failed 3 times' });
+      } finally {
+        await terminate();
+      }
+    });
+
+    it('without --mode and --target-url exits 1 as before', async () => {
+      process.argv = ['node', 'proxy-daemon', '--state-file', stateFile];
+      const exit = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+        throw new Error(`exit ${code}`);
+      }) as never);
+
+      await expect(import('../proxy-daemon.js')).rejects.toThrow('exit 1');
+      expect(exit).toHaveBeenCalledWith(1);
+    });
+
+    it('without --mode the plugin set is every registered plugin but the local daemon\'s two', async () => {
+      // The proxy itself stays a stand-in here: a real one would start the backend plugins.
+      vi.doMock('../../providers/plugins/sso/index.js', () => ({
+        CodeMieProxy: class {
+          start = async () => ({ port: 47999, url: 'http://127.0.0.1:47999' });
+          stop = async () => undefined;
+        },
+      }));
+      await import('../proxy-daemon.js');
+      const { getPluginRegistry } = await import('../../providers/plugins/sso/proxy/plugins/registry.js');
+      const all = getPluginRegistry().getAll().map(plugin => plugin.id);
+
+      expect(await enabledPluginIds()).toEqual(all.filter(id => id !== '@codemie/local-analytics' && id !== '@codemie/no-upstream').sort());
+      expect(all).toEqual(expect.arrayContaining(['@codemie/otlp', '@codemie/proxy-gateway-key']));
+    });
+  });
 });

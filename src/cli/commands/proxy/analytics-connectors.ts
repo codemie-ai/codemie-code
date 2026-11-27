@@ -18,6 +18,7 @@ import { logger } from '@/utils/logger.js';
 import { hasClaudeCodeOtlpHooks } from './connectors/claude-code-otlp.js';
 import { addClaudeCodeOtlpProject, readClaudeCodeOtlpScope } from './connectors/claude-code-otlp-scope.js';
 import { readDesktopGateway } from './connectors/desktop.js';
+import type { DoctorRemedies } from './doctor/plan.js';
 import {
   collectClaudeAnalyticsStatus,
   collectCopilotAnalyticsStatus,
@@ -41,7 +42,7 @@ export interface AnalyticsConnector {
   /** The connector's effective analytics configuration. */
   collect: () => Promise<AnalyticsConnectorStatus>;
   /** Renders a status produced by this same connector's `collect`. */
-  format: (status: AnalyticsConnectorStatus) => Promise<string>;
+  format: (status: AnalyticsConnectorStatus, remedies: DoctorRemedies) => Promise<string>;
   /** Whether the connector is connected (hooks installed / scope enabled), whatever the collection preference. */
   isActive: () => Promise<boolean>;
   /** The connector's tracking scope from its own store; `{invalid}` when it cannot be read. Never throws. */
@@ -53,7 +54,7 @@ export interface AnalyticsConnector {
 interface ConnectorSpec<S extends AnalyticsConnectorStatus> {
   id: AnalyticsConnectorId;
   collect: () => Promise<S>;
-  format: (status: S) => Promise<string>;
+  format: (status: S, remedies: DoctorRemedies) => Promise<string>;
   isActive: () => Promise<boolean>;
   readScope: () => Promise<ConnectorScopeRead>;
   addProject: (path: string) => Promise<void>;
@@ -61,7 +62,7 @@ interface ConnectorSpec<S extends AnalyticsConnectorStatus> {
 
 /** `format` only ever receives the status its own `collect` returned, so the narrowing is sound. */
 function connector<S extends AnalyticsConnectorStatus>(spec: ConnectorSpec<S>): AnalyticsConnector {
-  return { ...spec, format: (status) => spec.format(status as S) };
+  return { ...spec, format: (status, remedies) => spec.format(status as S, remedies) };
 }
 
 function copilotConnector(id: AnalyticsConnectorId): AnalyticsConnector {

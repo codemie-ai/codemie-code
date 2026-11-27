@@ -100,11 +100,11 @@ describe('MetricsSender prompt reduction', () => {
       { type: 'AgentError', code: 'E1', message: 'secret path /home/me' });
 
     const { attributes } = posted();
-    // The start metric detects its branch from the directory (none here), and a reduced one never carries a raw name.
-    expect(attributes.branch).toBe('REDACTED:BRANCH');
+    // The start metric detects its branch from the directory (none here): an empty branch stays empty, it is not a hidden one.
+    expect(attributes.branch).toBe('');
     expect(attributes.reason).toBe('REDACTED:REASON');
     expect(JSON.stringify(attributes)).not.toContain('secret');
-    expect(postedHeaders()['X-CodeMie-Branch']).toBe('REDACTED:BRANCH');
+    expect(postedHeaders()['X-CodeMie-Branch']).toBe('');
   });
 
   it('reduces a tool usage metric and keeps name lists and counts', async () => {

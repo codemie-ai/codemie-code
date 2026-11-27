@@ -208,6 +208,8 @@ be used as the permanent corporate configuration.
 | `CODEMIE_ANALYTICS_PATH` | Custom local storage path | `~/.codemie/analytics` | `/custom/path` |
 | `CODEMIE_ANALYTICS_ENDPOINT` | Remote analytics endpoint URL | - | `https://analytics.example.com` |
 
+The local analytics mode of `codemie analytics sync` (a machine with no CLI profile) keeps its files under `~/.codemie/analytics/` too, set by no variable: `sessions/` (the analytics folder the daily job delivers from, never cleaned), `spool/` (the local proxy's spool) and `excluded/` (the exclusion marks). See [ANALYTICS-SYNC.md](ANALYTICS-SYNC.md#local-analytics-mode).
+
 #### CLI Behavior
 
 | Variable | Description | Default | Example |

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, stat, writeFile } from 'fs/promises';
+import { mkdtemp, readdir, readFile, stat, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -12,6 +12,7 @@ import {
   hasAnyTarget,
   hasEmbeddedCredentials,
   loadSyncSettings,
+  restoreSyncSettingsRaw,
   validateGitBranch,
   validateGitPath,
   validateGitRepoUrl,
@@ -566,6 +567,31 @@ describe('sync settings file', () => {
       expect(settings?.git).toEqual({ repoUrl: FAKE_GIT_REPO, branch: 'main', path: 'team' });
     });
 
+    it('reads back local and localJob', async () => {
+      const settings = {
+        ...validateInstallOptions({ webhook: FAKE_URL }),
+        local: true as const,
+        localJob: { node: '/usr/bin/node', entry: '/opt/codemie/bin/codemie.js' }
+      };
+      await writeSyncSettings(settings, settingsPath);
+
+      const loaded = await loadSyncSettings(settingsPath);
+      expect(loaded?.local).toBe(true);
+      expect(loaded?.localJob).toEqual({ node: '/usr/bin/node', entry: '/opt/codemie/bin/codemie.js' });
+    });
+
+    it.each([
+      { local: 'yes' },
+      { local: false },
+      { localJob: { node: '', entry: '/opt/codemie/bin/codemie.js' } },
+      { localJob: { node: '/usr/bin/node' } },
+      { localJob: 'node' }
+    ])('throws SyncConfigError on an invalid local field %o', async (field) => {
+      await writeFile(settingsPath, JSON.stringify({ webhookUrl: FAKE_URL, ...field }), 'utf-8');
+
+      await expect(loadSyncSettings(settingsPath)).rejects.toThrow(SyncConfigError);
+    });
+
     it('returns null when the file has neither a usable webhookUrl nor a usable git.repoUrl', async () => {
       await writeFile(settingsPath, JSON.stringify({ includeExternal: 'windows', at: '03:00' }), 'utf-8');
 
@@ -595,6 +621,32 @@ describe('sync settings file', () => {
       await writeSyncSettings(settings, settingsPath);
 
       await expect(loadSyncSettings(settingsPath)).resolves.toEqual(settings);
+    });
+
+    it('replaces the file by a rename, leaving no temporary file', async () => {
+      await writeFile(settingsPath, '{}', 'utf-8');
+      const before = (await stat(settingsPath)).ino;
+
+      await writeSyncSettings(validateInstallOptions({ webhook: FAKE_URL }), settingsPath);
+
+      expect((await stat(settingsPath)).ino).not.toBe(before);
+      expect(await readdir(dir)).toEqual(['analytics-sync.json']);
+    });
+
+    it('restores a raw file by a rename, mode 0600 over a 0644 file', async () => {
+      await writeFile(settingsPath, '{}', 'utf-8');
+      const { chmod } = await import('fs/promises');
+      await chmod(settingsPath, 0o644);
+      const before = (await stat(settingsPath)).ino;
+
+      await restoreSyncSettingsRaw('{"webhookUrl":"x"}', settingsPath);
+
+      expect((await stat(settingsPath)).ino).not.toBe(before);
+      await expect(readFile(settingsPath, 'utf-8')).resolves.toBe('{"webhookUrl":"x"}');
+      expect(await readdir(dir)).toEqual(['analytics-sync.json']);
+      if (process.platform !== 'win32') {
+        expect((await stat(settingsPath)).mode & 0o777).toBe(0o600);
+      }
     });
 
     it('fixes permissions on a pre-existing 0644 file after a write', async () => {

@@ -106,13 +106,13 @@ describe('GitTarget', () => {
     });
 
     const target = new GitTarget(gitSettings, EMAIL, run, dir);
-    await target.deliver(report());
+    await target.deliver([report()]);
 
     expect(calls[0].args).toEqual(['remote', 'get-url', 'origin']);
     expect(calls[1].args).toEqual(['clone', '--depth', '1', '--', REPO_URL, dir]);
     expect(calls[1].opts.network).toBe(true);
     expect(calls[2].args).toEqual(['symbolic-ref', '--short', 'HEAD']);
-    expect(calls[3].args).toEqual(['add', '--', SLUG]);
+    expect(calls[3].args).toEqual(['add', '-f', '--', `${SLUG}/${report().fileName}`]);
     expect(calls[4].args).toEqual(['diff', '--cached', '--quiet', '--', SLUG]);
     const commitCall = calls[5];
     expect(commitCall.args).toEqual([
@@ -153,11 +153,11 @@ describe('GitTarget', () => {
     });
 
     const target = new GitTarget(settings, EMAIL, run, dir);
-    await target.deliver(report());
+    await target.deliver([report()]);
 
     expect(calls[1].args).toEqual(['clone', '--depth', '1', '--branch', 'develop', '--', REPO_URL, dir]);
     expect(calls.some((c) => c.sub[0] === 'symbolic-ref')).toBe(false);
-    expect(calls[2].args).toEqual(['add', '--', relFolder]);
+    expect(calls[2].args).toEqual(['add', '-f', '--', `${relFolder}/${report().fileName}`]);
     expect(calls[5].args).toEqual(['push', '--no-verify', 'origin', 'HEAD:develop']);
 
     const written = await readFile(join(dir, 'team', 'reports', SLUG, report().fileName), 'utf-8');
@@ -183,7 +183,7 @@ describe('GitTarget', () => {
     });
 
     const target = new GitTarget(gitSettings, EMAIL, run, dir);
-    await target.deliver(report());
+    await target.deliver([report()]);
 
     expect(calls[0].args).toEqual(['remote', 'get-url', 'origin']);
     expect(calls[1].args).toEqual(['ls-remote', '--symref', 'origin', 'HEAD']);
@@ -208,7 +208,7 @@ describe('GitTarget', () => {
     });
 
     const target = new GitTarget(gitSettings, EMAIL, run, dir);
-    await expect(target.deliver(report())).resolves.toBeUndefined();
+    await expect(target.deliver([report()])).resolves.toBeUndefined();
 
     expect(calls.some((c) => c.sub[0] === 'commit')).toBe(false);
     expect(calls.some((c) => c.sub[0] === 'push')).toBe(false);
@@ -230,7 +230,7 @@ describe('GitTarget', () => {
     });
 
     const target = new GitTarget(gitSettings, EMAIL, run, dir);
-    await target.deliver(report());
+    await target.deliver([report()]);
 
     expect(calls.some((c) => c.sub[0] === 'fetch')).toBe(false);
     expect(calls[1].args[0]).toBe('clone');
@@ -254,7 +254,7 @@ describe('GitTarget', () => {
     });
 
     const target = new GitTarget(gitSettings, EMAIL, run, dir);
-    await target.deliver(report());
+    await target.deliver([report()]);
 
     const cloneIndex = calls.findIndex((c) => c.sub[0] === 'clone');
     expect(cloneIndex).toBeGreaterThan(-1);
@@ -284,7 +284,7 @@ describe('GitTarget', () => {
     });
 
     const target = new GitTarget(gitSettings, EMAIL, run, dir);
-    await target.deliver(report());
+    await target.deliver([report()]);
 
     expect(pushCalls).toBe(2);
     expect(calls.some((c) => c.sub[0] === 'fetch')).toBe(true);
@@ -314,7 +314,7 @@ describe('GitTarget', () => {
 
     const target = new GitTarget(gitSettings, EMAIL, run, dir);
 
-    await expect(target.deliver(report())).rejects.toMatchObject({
+    await expect(target.deliver([report()])).rejects.toMatchObject({
       name: 'SyncGitError',
       gitCause: 'rejected',
     });
@@ -341,7 +341,7 @@ describe('GitTarget', () => {
 
     const target = new GitTarget(gitSettings, EMAIL, run, dir);
 
-    await expect(target.deliver(report())).rejects.toMatchObject({
+    await expect(target.deliver([report()])).rejects.toMatchObject({
       name: 'SyncGitError',
       gitCause: 'auth',
     });
@@ -364,7 +364,7 @@ describe('GitTarget', () => {
     const target = new GitTarget(gitSettings, EMAIL, run, dir);
     await target.testPush();
 
-    expect(calls.some((c) => c.sub[0] === 'add' && c.sub[2] === SLUG)).toBe(true);
+    expect(calls.find((c) => c.sub[0] === 'add')?.args).toEqual(['add', '-f', '--', `${SLUG}/.codemie-sync-check`]);
     expect(calls.some((c) => c.sub[0] === 'push')).toBe(true);
 
     const written = await readFile(join(dir, SLUG, '.codemie-sync-check'), 'utf-8');
@@ -388,7 +388,7 @@ describe('GitTarget', () => {
     });
 
     const target = new GitTarget(gitSettings, EMAIL, run, dir);
-    await target.deliver(report());
+    await target.deliver([report()]);
 
     expect(calls.some((c) => c.sub[0] === 'fetch')).toBe(false);
     expect(calls.some((c) => c.sub[0] === 'clone')).toBe(true);
@@ -411,7 +411,7 @@ describe('GitTarget', () => {
     });
 
     const target = new GitTarget({ repoUrl: REPO_URL, branch: 'main' }, EMAIL, run, dir);
-    await target.deliver(report());
+    await target.deliver([report()]);
 
     expect(calls.some((c) => c.sub[0] === 'fetch')).toBe(false);
     expect(calls.find((c) => c.sub[0] === 'clone')?.args).toEqual([
@@ -437,7 +437,7 @@ describe('GitTarget', () => {
 
     const target = new GitTarget(gitSettings, EMAIL, run, dir);
 
-    await expect(target.deliver(report())).rejects.toThrow(/CONFLICT/);
+    await expect(target.deliver([report()])).rejects.toThrow(/CONFLICT/);
     const rebaseIndex = calls.findIndex((c) => c.sub[0] === 'rebase' && c.sub[1] === '--onto');
     expect(calls[rebaseIndex + 1].sub).toEqual(['rebase', '--abort']);
     const rebaseCall = calls[rebaseIndex];
@@ -462,7 +462,7 @@ describe('GitTarget', () => {
     });
 
     const target = new GitTarget({ repoUrl: REPO_URL, branch: 'main' }, EMAIL, run, dir);
-    await target.deliver(report());
+    await target.deliver([report()]);
 
     await expect(readdir(join(dir, '.git'))).resolves.toEqual([]);
   });
@@ -478,7 +478,41 @@ describe('GitTarget', () => {
 
     const target = new GitTarget({ repoUrl: REPO_URL, path: '../../escape' }, EMAIL, run, join(dir, 'a', 'b'));
 
-    await expect(target.deliver(report())).rejects.toThrow(/outside the working copy/);
+    await expect(target.deliver([report()])).rejects.toThrow(/outside the working copy/);
     await expect(readdir(dir)).resolves.toEqual(['a']);
+  });
+
+  it('three files land in one commit named for the folder, replayed as that one commit after a rejected push', async () => {
+    const names = ['part-01-of-03.otlp.jsonl.gz', 'part-02-of-03.otlp.jsonl.gz', 'part-03-of-03.otlp.jsonl.gz'];
+    let pushes = 0;
+    const { run, calls } = createFakeRunner((call) => {
+      const [cmd] = call.sub;
+      if (cmd === 'remote') throw new Error('not a repo');
+      if (cmd === 'clone') return '';
+      if (cmd === 'symbolic-ref') return 'main';
+      if (cmd === 'add') return '';
+      if (cmd === 'diff') throw errorWith('other');
+      if (cmd === 'commit') return '';
+      if (cmd === 'fetch') return '';
+      if (cmd === 'rebase') return '';
+      if (cmd === 'push') {
+        pushes += 1;
+        if (pushes === 1) throw rejectedError();
+        return '';
+      }
+      throw new Error(`unexpected git call: ${call.args.join(' ')}`);
+    });
+
+    await new GitTarget(gitSettings, EMAIL, run, dir).deliver(names.map((name) => report(name)));
+
+    expect(calls.filter((c) => c.sub[0] === 'add').map((c) => c.args)).toEqual([
+      ['add', '-f', '--', ...names.map((name) => `${SLUG}/${name}`)],
+    ]);
+    expect(calls.filter((c) => c.sub[0] === 'commit').map((c) => c.sub)).toEqual([
+      ['commit', '--no-verify', '-m', `analytics sync: ${SLUG} (3 files)`],
+    ]);
+    expect(calls.map((c) => c.sub[0]).slice(-4)).toEqual(['push', 'fetch', 'rebase', 'push']);
+    expect(calls.find((c) => c.sub[0] === 'rebase')?.sub).toEqual(['rebase', '--onto', 'origin/main', 'HEAD~1']);
+    expect((await readdir(join(dir, SLUG))).sort()).toEqual(names);
   });
 });

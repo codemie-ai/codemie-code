@@ -5,6 +5,7 @@
  * header builder. Synthetic: SSO credentials, profile config, the daemon spool transport (captured, not sent).
  */
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+import { BackendPolicy } from '@/agents/core/collection-policy.js';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -71,6 +72,7 @@ let n = 0;
 let sid = '';
 const spooled: Array<{ events: Record<string, unknown>[]; options?: { evidenceV?: 1 } }> = [];
 const deps = {
+  policy: new BackendPolicy(),
   ensureOtlpProxy: vi.fn(async () => {}),
   forwardOtlpEventsToSpool: vi.fn(async (events: Record<string, unknown>[], _agent: string, options?: { evidenceV?: 1 }) => {
     spooled.push({ events, options });
