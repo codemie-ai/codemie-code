@@ -9,7 +9,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { expectExit, realDir, runIsolatedCli } from '../../helpers/isolated-cli.js';
@@ -23,7 +23,7 @@ const ROOT_OPTIONS = ['--version', '--help'];
 const has = (shell: string): boolean => process.platform !== 'win32' && spawnSync(shell, ['--version']).status === 0;
 
 /** Writes `codemie completion <shell>` to `<file>.tmp`, then moves it to `file`, as the docs do. */
-function installCompletion(home: string, shell: 'zsh' | 'fish', file: string): string {
+function installCompletion(home: string, shell: 'bash' | 'zsh' | 'fish', file: string): string {
   mkdirSync(join(file, '..'), { recursive: true });
   const res = runIsolatedCli({ codemieHome: join(home, '.codemie'), userHome: home }, ['completion', shell], { cwd: home });
   expectExit(res, 0);
@@ -117,5 +117,121 @@ for (const shell of ['zsh', 'fish'] as const) {
     expect(fish("functions -q __codemie_state; echo $status; complete -C 'codemie ' >/dev/null; functions -q __codemie_state; echo $status").trim().split('\n')).toEqual(['1', '0']);
     expect(complete('codemie ')).toEqual(expect.arrayContaining(TOP_LEVEL));
     expect(complete('codemie --')).toEqual(expect.arrayContaining(ROOT_OPTIONS));
+  });
+});
+
+/** First bash 4+ among PATH and the usual Homebrew locations (macOS ships bash 3.2 in /bin). */
+function findBash4(): string | undefined {
+  if (process.platform === 'win32') return undefined;
+  return ['bash', '/opt/homebrew/bin/bash', '/usr/local/bin/bash'].find(candidate => {
+    const r = spawnSync(candidate, ['--norc', '--noprofile', '-c', 'echo "${BASH_VERSINFO[0]}"'], { encoding: 'utf8' });
+    return r.status === 0 && Number(r.stdout.trim()) >= 4;
+  });
+}
+
+/** The bash-completion v2 main script (or a profile.d shim that loads it), confirmed by BASH_COMPLETION_VERSINFO. */
+function findBashCompletionV2(bash: string | undefined): string | undefined {
+  if (!bash) return undefined;
+  const candidates = [
+    '/usr/share/bash-completion/bash_completion',
+    '/opt/homebrew/share/bash-completion/bash_completion',
+    '/usr/local/share/bash-completion/bash_completion',
+    '/etc/profile.d/bash_completion.sh',
+    '/opt/homebrew/etc/profile.d/bash_completion.sh',
+    '/usr/local/etc/profile.d/bash_completion.sh',
+  ];
+  return candidates.find(file => {
+    if (!existsSync(file)) return false;
+    const r = spawnSync(bash, ['--norc', '--noprofile', '-i', '-c', '. "$1" >/dev/null 2>&1; echo "v=${BASH_COMPLETION_VERSINFO[0]}"', '_', file], {
+      encoding: 'utf8',
+      env: { ...process.env, PS1: '$ ' },
+    });
+    return r.stdout.includes('v=2');
+  });
+}
+
+const BASH4 = findBash4();
+const BASH_COMPLETION = findBashCompletionV2(BASH4);
+const bashReady = BASH4 !== undefined && BASH_COMPLETION !== undefined;
+
+if (!bashReady && process.platform !== 'win32') {
+  if (process.env.CI === 'true') {
+    describe('documented bash completion setup', () => {
+      it('requires bash-completion v2 in CI', () => {
+        throw new Error(`bash 4+ (${BASH4 ?? 'missing'}) with bash-completion v2 (${BASH_COMPLETION ?? 'missing'}) is not installed but CI=true: documented setup tests cannot be skipped`);
+      });
+    });
+  } else {
+    console.warn(`[skip] documented bash completion setup: ${BASH4 ? 'bash-completion v2 not found' : 'bash 4+ not found'}`);
+  }
+}
+
+(bashReady ? describe : describe.skip)('documented bash completion setup', () => {
+  let home: string;
+  let installed: string;
+
+  beforeAll(() => {
+    home = realDir(mkdtempSync(join(tmpdir(), 'codemie-bash-setup-')));
+    // docs/SHELL-COMPLETIONS.md:33 - save as ~/.local/share/bash-completion/completions/codemie via a .tmp file and mv.
+    installed = installCompletion(home, 'bash', join(home, '.local', 'share', 'bash-completion', 'completions', 'codemie'));
+    // `codemie` on PATH runs the built CLI, as an installed one would.
+    const bin = join(home, 'bin');
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, 'codemie'), `#!/bin/sh\nexec "${process.execPath}" "${resolve('bin/codemie.js')}" "$@"\n`);
+    chmodSync(join(bin, 'codemie'), 0o755);
+    // A login shell that loads bash-completion v2 the usual way; the codemie script is never sourced by hand.
+    writeFileSync(join(home, '.bash_profile'), `PATH="$HOME/bin:$PATH"\n. "${BASH_COMPLETION}"\n`);
+    return () => rmSync(home, { recursive: true, force: true });
+  });
+
+  /** Runs `script` in a new interactive login bash with the isolated home; returns `key=value` lines it echoes. */
+  function bash(script: string): Map<string, string> {
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home };
+    for (const key of Object.keys(env)) {
+      if (/^(XDG_|BASH_COMPLETION|BASH_ENV$|ENV$|CODEMIE_)/.test(key)) delete env[key];
+    }
+    const r = spawnSync(BASH4 as string, ['-l', '-i', '-c', script], { cwd: home, env, encoding: 'utf8', timeout: 30000 });
+    expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+    const out = new Map<string, string>();
+    for (const line of r.stdout.split('\n')) {
+      const m = /^(\w+)=(.*)$/.exec(line);
+      if (m) out.set(m[1], m[2]);
+    }
+    return out;
+  }
+
+  // @case add-bash-zsh-and-fish_TC_005
+  it('installs the generated script with its header at ~/.local/share/bash-completion/completions/codemie', () => {
+    // Grounding: src/cli/completion/bash.ts:77 (first line is the generated-by header).
+    expect(installed.split('\n')[0]).toBe(`# codemie completion bash — generated by codemie v${VERSION}`);
+  });
+
+  // @case add-bash-zsh-and-fish_TC_005
+  it('a new shell loads the file on first completion and completes codemie <Tab>, codemie --<Tab> and codemie completion <Tab>', () => {
+    // bash-completion 2.12+ names the default handler _comp_complete_load; older v2 uses _completion_loader.
+    // Grounding: src/cli/completion/bash.ts:123 (`complete -F _codemie codemie`).
+    const out = bash(
+      [
+        'echo "before=$(complete -p codemie 2>/dev/null)"',
+        'loader=$(complete -p -D 2>/dev/null | sed -n \'s/.*-F \\([^ ]*\\).*/\\1/p\')',
+        'echo "loader=$loader"',
+        '"$loader" codemie "" codemie',
+        'echo "after=$(complete -p codemie 2>/dev/null)"',
+        'COMP_WORDS=(codemie ""); COMP_CWORD=1; COMP_LINE="codemie "; COMP_POINT=${#COMP_LINE}; COMPREPLY=()',
+        '_codemie codemie "" codemie; (IFS=,; echo "words=${COMPREPLY[*]}")',
+        'COMP_WORDS=(codemie --); COMP_CWORD=1; COMP_LINE="codemie --"; COMP_POINT=${#COMP_LINE}; COMPREPLY=()',
+        '_codemie codemie -- codemie; (IFS=,; echo "options=${COMPREPLY[*]}")',
+        'COMP_WORDS=(codemie completion ""); COMP_CWORD=2; COMP_LINE="codemie completion "; COMP_POINT=${#COMP_LINE}; COMPREPLY=()',
+        '_codemie codemie "" completion; (IFS=,; echo "shells=${COMPREPLY[*]}")',
+      ].join('\n')
+    );
+    expect(out.get('before')).toBe('');
+    expect(['_comp_complete_load', '_completion_loader']).toContain(out.get('loader'));
+    expect(out.get('after')).toBe('complete -F _codemie codemie');
+    expect(out.get('words')?.split(',')).toEqual(expect.arrayContaining(TOP_LEVEL));
+    expect(out.get('options')?.split(',')).toEqual(expect.arrayContaining(ROOT_OPTIONS));
+    // Grounding: src/cli/commands/completion.ts:21 (<shell> choices COMPLETION_SHELLS: bash, zsh, fish);
+    // the empty word also offers the subcommand's own options, left out as in bash.test.ts.
+    expect(out.get('shells')?.split(',').filter(w => !w.startsWith('-')).sort()).toEqual(['bash', 'fish', 'zsh']);
   });
 });
