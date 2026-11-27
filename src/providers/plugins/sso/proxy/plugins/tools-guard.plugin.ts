@@ -7,7 +7,17 @@
  * as in compaction-style requests. This plugin injects an inert placeholder tool (and
  * optional tool_choice "none", currently disabled) based on body shape only, never on the model or a Bedrock check.
  *
- * Owner: proxy plugin owner. Superseded by an effective `modify_params` in the `codemie` repo.
+ * Shape-only on purpose: the proxy sees client-side model aliases and cannot reliably tell Bedrock from
+ * other upstreams. A request with tool history but no `tools` is invalid on most providers anyway, so the
+ * placeholder is low-risk there; requests that already define `tools` are never touched.
+ *
+ * Why `modify_params` has not made this unnecessary: EPMCDME-13136 added `modify_params: true` to the
+ * `codemie` repo's litellm_config.yaml for this same error, and EPMCDME-13808 reported the symptom again,
+ * so the flag evidently does not prevent the rejection for these requests. The cause is NOT yet confirmed
+ * (flag not applied to the Claude aliases, Converse check running before it, or a LiteLLM version issue);
+ * it must be diagnosed in the `codemie` repo and a follow-up ticket linked here.
+ *
+ * Owner: proxy plugin owner. Remove once `modify_params` is verified effective for the Claude aliases.
  * Remove this plugin and `claude-tools-guard.ts` once that server flag is confirmed effective
  * for the Claude aliases.
  */

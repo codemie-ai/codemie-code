@@ -18,6 +18,14 @@ const anthropicBody = (extra: Record<string, unknown> = {}): Record<string, unkn
 });
 
 describe('applyToolsGuard', () => {
+  describe('model-agnostic (shape-only) behavior', () => {
+    it('injects the placeholder for a non-Bedrock model with tool history and empty tools', () => {
+      const body = anthropicBody({ model: 'gpt-4o', tools: [] });
+      expect(applyToolsGuard(body)).toBe('anthropic');
+      expect((body.tools as Array<{ name: string }>)[0].name).toBe(PLACEHOLDER);
+    });
+  });
+
   describe('no injection', () => {
     it('returns null and leaves the body untouched when tools is non-empty', () => {
       const body = anthropicBody({ tools: [{ name: 'real' }] });
