@@ -102,7 +102,7 @@ async function ssoCredentialsProblem(config: LoadedConfig, name: string): Promis
  * Loads the recorded profile (a repo-local one wins over the global one) and checks it can
  * start a daemon. Returns the config, or the reason it cannot, with the scope that was found.
  */
-async function resolveColdStartProfile(
+export async function resolveColdStartProfile(
   name: string
 ): Promise<{ scope?: 'local' | 'global'; config?: LoadedConfig; skipReason?: string }> {
   const cwd = process.cwd();
@@ -163,6 +163,15 @@ async function startDaemon(
 }
 
 /**
+ * The working directory's profile as a cold start without a connection record loads it: the active profile's name,
+ * then the config for it. Shared with `resolveHookCredentials`, so a hook names the login that start will use.
+ */
+export async function loadWorkingDirectoryProfile(cwd: string = process.cwd()): Promise<LoadedConfig> {
+  const activeProfileName = await ConfigLoader.getActiveProfileName(cwd);
+  return ConfigLoader.load(cwd, activeProfileName ? { name: activeProfileName } : undefined);
+}
+
+/**
  * Cold start when there is no usable connection record and no live daemon (first hook after an
  * upgrade, or a deleted or malformed record): start on the working directory's profile as hooks
  * did before the record existed. The daemon's successful start creates the record. Like the
@@ -173,6 +182,7 @@ async function coldStartOnWorkingDirectoryProfile(port: number, stopOlder: boole
   const cwd = process.cwd();
   let name = 'default';
   try {
+    // Same two steps as loadWorkingDirectoryProfile, kept apart so a load failure still names the active profile.
     const activeProfileName = await ConfigLoader.getActiveProfileName(cwd);
     if (activeProfileName) name = activeProfileName;
     const config = await ConfigLoader.load(cwd, activeProfileName ? { name: activeProfileName } : undefined);

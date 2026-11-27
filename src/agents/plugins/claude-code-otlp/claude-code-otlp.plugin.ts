@@ -154,6 +154,7 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
         routing,
         funding_route: fundingRoute({ ...routingInput, apiKeyHelper: settings.apiKeyHelper }, routing),
         collection_generation: prefs.kind === 'ok' ? prefs.value.collectionGeneration : 0,
+        ...(this.holdsUntilDelivered(hookInput) ? { recoverWithoutDaemon: true as const } : {}),
       };
     });
     return {
@@ -290,6 +291,12 @@ export class ClaudeCodeOtlpPlugin extends OtlpAgentAdapter<HookInput, UserPrompt
       logger.debug(`[${this.name}] transition check failed: ${err instanceof Error ? err.name : 'error'}`);
       return 'stop';
     }
+  }
+
+  /** A fresh session's start/env batch carries the session's only start: held for the daemon when it cannot be reached. */
+  protected override holdsUntilDelivered(hookInput: HookInput): boolean {
+    const source = readOptionalString(hookInput, 'source');
+    return hookInput.hook_event_name === 'SessionStart' && (source === 'startup' || source === 'clear');
   }
 
   /** Why this hook's folder/generation/consent no longer fits the recorded session; 'unreadable' = preferences cannot be read. */

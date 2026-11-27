@@ -27,7 +27,15 @@ export interface OtlpAdapterDeps {
   policy: CollectionPolicy;
   ensureOtlpProxy: (agentName: string, event?: string) => Promise<void>;
   // Sends one hook invocation's events as a single batch; true only for a 2xx response.
-  forwardOtlpEventsToSpool: (events: Record<string, unknown>[], agentName: string) => Promise<boolean>;
+  forwardOtlpEventsToSpool: (
+    events: Record<string, unknown>[],
+    agentName: string,
+    opts?: {
+      evidenceV?: 1;
+      evidenceLoss?: { sessionId: string; reason: string; events: number };
+      undelivered?: { value: boolean }; // set when the daemon certainly did not take the batch (see §3.4)
+    }
+  ) => Promise<boolean>;
 }
 
 export interface OtlpHookSpoolData {
@@ -168,7 +176,9 @@ Each handler returns its own full `ForwardDecision`. The trailing fallthrough re
 
 The base class's `processOtlpEvent` is the only call site of `deps.forwardOtlpEventsToSpool`: after `evaluate()` resolves it computes the common (git, story, identity, project, version) and agent fields once (in parallel), builds the event for every `payload` record, then sends the whole invocation as **one batch** in **one request**. `forwardOtlpEventsToSpool` never throws, aborts after 3s, and returns a boolean (true only for a 2xx response); on `false` with `decision.retryOnce` set, the base class resends the same already-built events once more (same `event_id`s — never rebuilt) before giving up. The block path is unchanged: it prints the decision and returns before any enrichment. Handlers never forward anything themselves, so every event reaches the spool exactly once per attempt, in order, under the adapter's registered name.
 
-**Commit-after-send.** A handler whose `ForwardDecision` carries a `finalize` is holding a resource (`claude-code-otlp`: the per-session parse-state lock, with its derived-but-not-yet-saved state) that must only be committed once the send is known to have landed. `processOtlpEvent` calls `finalize(accepted)` exactly once, in a `finally`, after the send attempt(s) — `accepted` is the boolean `forwardOtlpEventsToSpool` returned (after any retry). A handler's own `finalize` typically persists its state when `accepted` is true and always releases its lock, so a failed send leaves everything exactly as it was: the next hook re-derives and re-sends the same events from whatever log it reads (a transcript, for `claude-code-otlp`), with no separate retry queue needed. An empty `payload` skips straight to `finalize(true)` without resolving context or sending anything — there is nothing to lose, so no need to pay for git/identity/story resolution.
+**Commit-after-send.** A handler whose `ForwardDecision` carries a `finalize` is holding a resource (`claude-code-otlp`: the per-session parse-state lock, with its derived-but-not-yet-saved state) that must only be committed once the send is known to have landed. `processOtlpEvent` calls `finalize(accepted)` exactly once, in a `finally`, after the send attempt(s) — `accepted` is true when `forwardOtlpEventsToSpool` returned true (after any retry) or when the batch was durably held in the owner-pending queue (below). A handler's own `finalize` typically persists its state when `accepted` is true and always releases its lock, so a failed send leaves everything exactly as it was: the next hook re-derives and re-sends the same events from whatever log it reads (a transcript, for `claude-code-otlp`). The only retry queue is the owner-pending one described next, and only for the cases named there. An empty `payload` skips straight to `finalize(true)` without resolving context or sending anything — there is nothing to lose, so no need to pay for git/identity/story resolution.
+
+`accepted` is true when the daemon's spool took the batch **or** the batch is durably stored in the owner-pending queue (`owner-pending.ts`, temp file + rename), which the daemon replays into the spool: a batch held for an owner it could not resolve yet, and, for a hook that opts in through `holdsUntilDelivered` (Claude Code's `SessionStart` with `source` `startup` or `clear`), a batch the daemon certainly did not take. That same opt-in sets `recoverWithoutDaemon` in the hook's `evidenceInputs`: the daemon's state still names the login when there is one; with none, the stamp names it from the profile `proxy connect` recorded (else the working directory's profile), and the events of that hook carry that login's identity; every other hook resolves its login and event identity as before. "Certainly did not take" is exactly: no daemon state, a refused connection (every address, so `localhost` counts), or a `401` (the gateway key or a daemon still awaiting its login answers before anything is spooled). The `undelivered` option of `forwardOtlpEventsToSpool` reports that, per attempt. An enqueue that fails (queue full, disk error) leaves `accepted` false and the cursor uncommitted. Limit: a timeout, a connection reset or a `5xx` may come after the daemon spooled the batch, so such a batch is never held or replayed on a guess; if the daemon had not taken it, those events are lost for that hook (commit-after-send re-derives them only for a handler with a cursor). A held batch replays once, behind bytes a later hook already put in the spool, with its hook-time facts; a replay is not exactly-once across a daemon crash in the middle of the append (event ids dedup on the backend).
 
 ### 3.5 Proxy readiness is the adapter's own responsibility
 
