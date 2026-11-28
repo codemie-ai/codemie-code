@@ -737,21 +737,26 @@ describe('openMainTranscriptPass — compactions', () => {
   it('does not hold the per-session lock during the lock-free wait, so a sibling pass is never blocked by it', async () => {
     const sessionId = 'session-compaction-no-lock-contention';
     const transcriptPath = writeTranscript('transcript-compaction-no-lock-contention.jsonl', []);
-
-    // No boundary line ever appears, so openPostCompactPass spends its whole wait budget
-    // lock-free. A sibling openMainTranscriptPass for the same session must still complete
-    // promptly instead of queueing behind it.
-    const postCompactPromise = openPostCompactPass(sessionId, transcriptPath, 300);
-
     const siblingTranscriptPath = writeTranscript('transcript-compaction-no-lock-contention-sibling.jsonl', [
       usageLine({ uuid: 'uuid-1', messageId: 'msg-1', outputTokens: 50 }),
     ]);
-    const started = Date.now();
+
+    // No boundary line ever appears, so openPostCompactPass spends its whole wait budget
+    // lock-free, then takes the lock and holds it until its finalize below. A sibling
+    // openMainTranscriptPass for the same session must complete while that wait is still running.
+    // Asserted by order, not by a wall-clock limit: a sibling that reached the lock only after a
+    // short budget ran out would queue behind the pass and wait out the 10 s lock budget, which a
+    // slow Windows runner did.
+    let postCompactWaitOver = false;
+    const postCompactPromise = openPostCompactPass(sessionId, transcriptPath, 2_000).then((pass) => {
+      postCompactWaitOver = true;
+      return pass;
+    });
+
     const sibling = await openMainTranscriptPass(sessionId, siblingTranscriptPath, 'Stop');
     await sibling.finalize(true);
-    const siblingDurationMs = Date.now() - started;
 
-    expect(siblingDurationMs).toBeLessThan(300);
+    expect(postCompactWaitOver).toBe(false);
     expect(sibling.events.some((e) => e.type === 'agent.usage.request')).toBe(true);
 
     const postCompactPass = await postCompactPromise;

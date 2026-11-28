@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { rm } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -251,8 +252,11 @@ describe('CodexPluginMetadata.lifecycle — timer wiring', () => {
     beforeEach(() => {
       dir = mkdtempSync(join(tmpdir(), 'codex-lifecycle-'));
     });
-    afterEach(() => {
-      rmSync(dir, { recursive: true, force: true });
+    afterEach(async () => {
+      // Removal with retries, as in codex.active-duration.test.ts: on a Windows runner a rollout that
+      // was just written and read can still be held for a moment, and a single synchronous rmdir
+      // then fails the test with ENOTEMPTY.
+      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     });
 
     const turnLine = (ms: number, type: 'task_started' | 'task_complete'): string =>
