@@ -66,6 +66,12 @@ jobs:
           name: dist
           path: dist/
           retention-days: 1
+          # dist/ has one hidden folder, dist/agents/plugins/claude/plugin/.claude-plugin/ (the Claude Code
+          # extension's plugin.json and local-install.json, no secrets). upload-artifact skips hidden files by
+          # default, so without this the test jobs get a dist where the extension install fails its structure
+          # check and codemie-claude runs without it: the hooks stay `codemie hook` and exit 127 on a runner
+          # without a global codemie. tests/integration/claude-user-plugin-dir.test.ts runs that install.
+          include-hidden-files: true
 
   # Test jobs run in parallel, reuse build artifacts
   test-ubuntu:
