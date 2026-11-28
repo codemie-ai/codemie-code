@@ -96,6 +96,13 @@ export async function updateAssistant(
   if (params.top_p !== undefined) mergedParams.top_p = params.top_p;
   else if (existing.top_p === null) delete mergedParams.top_p;
 
+  // Newer codemie-sdk releases validate headroom_config as an optional object, so the
+  // null read back from an assistant that has none must not be sent.
+  const nullable = mergedParams as { headroom_config?: unknown };
+  if (!("headroom_config" in params) && nullable.headroom_config === null) {
+    delete nullable.headroom_config;
+  }
+
   const result = await client.assistants.update(
     assistantId,
     mergedParams as AssistantUpdateParams,
