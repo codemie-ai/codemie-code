@@ -120,6 +120,23 @@ describe("updateAssistant with MCP servers", () => {
   });
 });
 
+describe("updateAssistant with no headroom_config", () => {
+  it("does not send back a null headroom_config", async () => {
+    const update = vi.fn().mockResolvedValue({ message: "ok" });
+    const client = {
+      assistants: {
+        get: vi.fn().mockResolvedValue({ id: "a1", system_prompt: "old", headroom_config: null }),
+        update,
+      },
+      llms: { list: vi.fn().mockResolvedValue([{ base_name: "m", default: true }]) },
+    } as unknown as CodeMieClient;
+
+    await updateAssistant(client, "a1", { system_prompt: "new" });
+
+    expect(update.mock.calls[0][1]).not.toHaveProperty("headroom_config");
+  });
+});
+
 describe("updateAssistant integrity guard", () => {
   function clientReturning(before: Record<string, unknown>, after: Record<string, unknown>) {
     const get = vi.fn().mockResolvedValueOnce(before).mockResolvedValueOnce(after);
