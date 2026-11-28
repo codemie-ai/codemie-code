@@ -1828,6 +1828,16 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
     expect(output).not.toContain('CodeMie URL:');
   });
 
+  it('reports that --copilot-cli-otlp tracks native and managed launches (EPMCDME-16524)', async () => {
+    await withFreshDaemon();
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { copilotCliOtlp: true }, yes: true });
+
+    const lines = console_.log().mock.calls.map(([message]) => stripAnsi(String(message)).trim());
+    expect(lines).toContain('Both native `copilot` and managed `codemie-copilot` launches are tracked.');
+  });
+
   describe('the analytics aggregates', () => {
     /** Each client of `found` is on this machine, under the test's own home and PATH lookup. */
     async function onMachine(...found: Array<'desktop' | 'vscode' | 'claude' | 'copilot'>): Promise<void> {
